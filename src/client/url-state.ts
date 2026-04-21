@@ -1,0 +1,175 @@
+import type { Starfield } from './starfield';
+import { sliderToDist, distToSlider, SLIDER_STEPS } from './controls';
+import { applyTheme, getTheme } from './theme-toggle';
+import { applyUnit } from './unit-toggle';
+import { getUnit, onUnitChange } from './distance-util';
+
+const DEBOUNCE_MS = 300;
+const ALL_SPECT_MASK = 0b111111111;
+
+// Defaults that are omitted from the URL when they match.
+const DEFAULTS = {
+  dmin: 0,
+  dmax: SLIDER_STEPS,
+  mag: 6.5,
+  spect: ALL_SPECT_MASK,
+  con: -1,
+  smin: 2.0,
+  smax: 24.0,
+  span: 6.0,
+  camX: 0,
+  camY: 0,
+  camZ: 30,
+  tgtX: 0,
+  tgtY: 0,
+  tgtZ: 0,
+};
+
+const EPS = 1e-3;
+
+export function applyFromUrl(starfield: Starfield) {
+  const params = new URLSearchParams(location.search);
+  if (params.toString() === '') return;
+
+  // Theme + unit first so any later DOM syncs render in the chosen theme.
+  const t = params.get('t');
+  if (t === 'mono' || t === 'dark') applyTheme(t);
+  const u = params.get('u');
+  if (u === 'ly' || u === 'pc') applyUnit(u);
+
+  // Filter
+  const patch: Record<string, number> = {};
+  if (params.has('dmin') || params.has('dmax')) {
+    const vMin = params.has('dmin') ? Number(params.get('dmin')) : DEFAULTS.dmin;
+    const vMax = params.has('dmax') ? Number(params.get('dmax')) : DEFAULTS.dmax;
+    patch.minDistSol = sliderToDist(vMin, true);
+    patch.maxDistSol = sliderToDist(vMax, false);
+  }
+  if (params.has('mag')) patch.maxAppMag = Number(params.get('mag'));
+  if (params.has('spect')) patch.spectMask = Number(params.get('spect'));
+  if (params.has('con')) patch.highlightCon = Number(params.get('con'));
+  if (params.has('smin')) patch.sizeMin = Number(params.get('smin'));
+  if (params.has('smax')) patch.sizeMax = Number(params.get('smax'));
+  if (params.has('span')) patch.sizeSpan = Number(params.get('span'));
+  if (Object.keys(patch).length) starfield.setFilter(patch);
+
+  // Detect camera params up-front so focus handling can decide whether to
+  // teleport the camera (manually-typed URL) or just set the orbit target
+  // (shared URL where the camera position is explicit).
+  const hasCam = params.has('cx') || params.has('cy') || params.has('cz');
+  const hasTgt = params.has('tx') || params.has('ty') || params.has('tz');
+
+  if (params.has('focus')) {
+    const idx = Number(params.get('focus'));
+    if (idx === -1) starfield.unfocus();
+    else if (Number.isFinite(idx) && idx >= 0 && idx < starfield.catalog.count) {
+      if (hasCam || hasTgt) starfield.setOrbitTarget(idx);
+      else starfield.focusStar(idx);
+    }
+  }
+  if (params.has('to')) {
+    const idx = Number(params.get('to'));
+    if (Number.isFinite(idx) && idx >= 0 && idx < starfield.catalog.count) {
+      starfield.setVectorTo(idx);
+    }
+  }
+  // Camera overrides whatever focusStar/setOrbitTarget set above.
+  if (hasCam) {
+    starfield.camera.position.set(
+      Number(params.get('cx') ?? DEFAULTS.camX),
+      Number(params.get('cy') ?? DEFAULTS.camY),
+      Number(params.get('cz') ?? DEFAULTS.camZ),
+    );
+  }
+  if (hasTgt) {
+    starfield.controls.target.set(
+      Number(params.get('tx') ?? DEFAULTS.tgtX),
+      Number(params.get('ty') ?? DEFAULTS.tgtY),
+      Number(params.get('tz') ?? DEFAULTS.tgtZ),
+    );
+  }
+  if (hasCam || hasTgt) starfield.controls.update();
+}
+
+export function startUrlSync(starfield: Starfield) {
+  let timer: number | undefined;
+  let lastCamHash = '';
+
+  const serialize = (): string => {
+    const f = starfield.getFilter();
+    const p = new URLSearchParams();
+
+    const sMin = distToSlider(f.minDistSol, true);
+    const sMax = distToSlider(f.maxDistSol, false);
+    if (sMin !== DEFAULTS.dmin) p.set('dmin', String(sMin));
+    if (sMax !== DEFAULTS.dmax) p.set('dmax', String(sMax));
+    if (!approx(f.maxAppMag, DEFAULTS.mag)) p.set('mag', fmt(f.maxAppMag));
+    if (f.spectMask !== DEFAULTS.spect) p.set('spect', String(f.spectMask));
+    if (f.highlightCon !== DEFAULTS.con) p.set('con', String(f.highlightCon));
+    if (!approx(f.sizeMin, DEFAULTS.smin)) p.set('smin', fmt(f.sizeMin));
+    if (!approx(f.sizeMax, DEFAULTS.smax)) p.set('smax', fmt(f.sizeMax));
+    if (!approx(f.sizeSpan, DEFAULTS.span)) p.set('span', fmt(f.sizeSpan));
+
+    if (getUnit() !== 'pc') p.set('u', getUnit());
+    if (getTheme() !== 'dark') p.set('t', getTheme());
+
+    const focus = starfield.getFocusedStar();
+    const sol = starfield.catalog.solIndex;
+    if (focus === null) p.set('focus', '-1');
+    else if (focus !== sol) p.set('focus', String(focus));
+
+    const to = starfield.getVectorTo();
+    if (to !== null) p.set('to', String(to));
+
+    const c = starfield.camera.position;
+    const tgt = starfield.controls.target;
+    const camDefault =
+      approx(c.x, DEFAULTS.camX) && approx(c.y, DEFAULTS.camY) && approx(c.z, DEFAULTS.camZ) &&
+      approx(tgt.x, DEFAULTS.tgtX) && approx(tgt.y, DEFAULTS.tgtY) && approx(tgt.z, DEFAULTS.tgtZ);
+    if (!camDefault) {
+      p.set('cx', fmt(c.x));
+      p.set('cy', fmt(c.y));
+      p.set('cz', fmt(c.z));
+      p.set('tx', fmt(tgt.x));
+      p.set('ty', fmt(tgt.y));
+      p.set('tz', fmt(tgt.z));
+    }
+    return p.toString();
+  };
+
+  const write = () => {
+    const qs = serialize();
+    const url = location.pathname + (qs ? '?' + qs : '');
+    if (url !== location.pathname + location.search) {
+      history.replaceState(null, '', url);
+    }
+  };
+
+  const schedule = () => {
+    if (timer !== undefined) clearTimeout(timer);
+    timer = window.setTimeout(write, DEBOUNCE_MS);
+  };
+
+  starfield.onStateChange(schedule);
+  onUnitChange(schedule);
+
+  starfield.onFrame(() => {
+    const c = starfield.camera.position;
+    const t = starfield.controls.target;
+    const hash = `${c.x.toFixed(3)},${c.y.toFixed(3)},${c.z.toFixed(3)}|${t.x.toFixed(3)},${t.y.toFixed(3)},${t.z.toFixed(3)}`;
+    if (hash !== lastCamHash) {
+      lastCamHash = hash;
+      schedule();
+    }
+  });
+}
+
+function approx(a: number, b: number): boolean {
+  return Math.abs(a - b) < EPS;
+}
+
+function fmt(v: number): string {
+  // Trim unneeded decimal zeros. Up to 3 decimals is plenty for sharing views.
+  const rounded = Math.round(v * 1000) / 1000;
+  return rounded.toString();
+}

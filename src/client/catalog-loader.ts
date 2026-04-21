@@ -1,0 +1,140 @@
+export interface Constellation {
+  code: string;
+  name: string;
+}
+
+export interface Catalog {
+  count: number;
+  positions: Float32Array;       // length = count * 3
+  absmag: Float32Array;          // length = count
+  ci: Float32Array;              // length = count
+  spectClass: Float32Array;      // length = count (as float for vertex attrib)
+  constellation: Float32Array;   // length = count (as float for vertex attrib)
+  flags: Uint8Array;             // length = count
+  names: Map<number, string>;    // star index -> proper name (named stars only)
+  solIndex: number;              // -1 if not found
+  constellations: Constellation[];
+}
+
+const HEADER_SIZE = 32;
+const RECORD_SIZE = 32;
+
+export interface LoadProgress {
+  bytes: number;
+  total: number | null;
+}
+
+export async function loadCatalog(
+  binUrl: string,
+  conUrl: string,
+  onProgress?: (p: LoadProgress) => void,
+): Promise<Catalog> {
+  const [binBuf, constellations] = await Promise.all([
+    fetchBinary(binUrl, onProgress),
+    fetch(conUrl).then((r) => r.json() as Promise<Constellation[]>),
+  ]);
+
+  return parseBinary(binBuf, constellations);
+}
+
+async function fetchBinary(
+  url: string,
+  onProgress?: (p: LoadProgress) => void,
+): Promise<ArrayBuffer> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Failed to load ${url}: ${res.status}`);
+
+  const totalHeader = res.headers.get('Content-Length');
+  const total = totalHeader ? Number(totalHeader) : null;
+
+  if (!res.body || !onProgress) {
+    return res.arrayBuffer();
+  }
+
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    bytes += value.byteLength;
+    onProgress({ bytes, total });
+  }
+  const out = new Uint8Array(bytes);
+  let off = 0;
+  for (const c of chunks) {
+    out.set(c, off);
+    off += c.byteLength;
+  }
+  return out.buffer;
+}
+
+function parseBinary(ab: ArrayBuffer, constellations: Constellation[]): Catalog {
+  const view = new DataView(ab);
+  const magic = new TextDecoder().decode(new Uint8Array(ab, 0, 4));
+  if (magic !== 'HYG3') throw new Error(`Bad magic: ${magic}`);
+  const version = view.getUint32(4, true);
+  if (version !== 1) throw new Error(`Unsupported version: ${version}`);
+  const count = view.getUint32(8, true);
+  const nameTableOffset = view.getUint32(12, true);
+  const nameTableLength = view.getUint32(16, true);
+
+  const positions = new Float32Array(count * 3);
+  const absmag = new Float32Array(count);
+  const ci = new Float32Array(count);
+  const spectClass = new Float32Array(count);
+  const constellation = new Float32Array(count);
+  const flags = new Uint8Array(count);
+  const nameOffsetArr = new Uint32Array(count);
+
+  let solIndex = -1;
+  for (let i = 0; i < count; i++) {
+    const off = HEADER_SIZE + i * RECORD_SIZE;
+    positions[i * 3 + 0] = view.getFloat32(off + 0, true);
+    positions[i * 3 + 1] = view.getFloat32(off + 4, true);
+    positions[i * 3 + 2] = view.getFloat32(off + 8, true);
+    absmag[i] = view.getFloat32(off + 12, true);
+    ci[i] = view.getFloat32(off + 16, true);
+    spectClass[i] = view.getUint8(off + 20);
+    constellation[i] = view.getUint8(off + 21);
+    flags[i] = view.getUint8(off + 22);
+    nameOffsetArr[i] = view.getUint32(off + 24, true);
+    if (flags[i] & 0x02) solIndex = i;
+  }
+
+  const names = new Map<number, string>();
+  if (nameTableLength > 0) {
+    const td = new TextDecoder('utf-8');
+    const nameData = new Uint8Array(ab, nameTableOffset, nameTableLength);
+    const ntView = new DataView(ab, nameTableOffset, nameTableLength);
+    const offsetToName = new Map<number, string>();
+    let p = 0;
+    while (p < nameTableLength) {
+      const len = ntView.getUint16(p, true);
+      p += 2;
+      const name = td.decode(nameData.subarray(p, p + len));
+      offsetToName.set(p - 2, name);
+      p += len;
+    }
+    for (let i = 0; i < count; i++) {
+      if (flags[i] & 0x01) {
+        const name = offsetToName.get(nameOffsetArr[i]);
+        if (name) names.set(i, name);
+      }
+    }
+  }
+
+  return {
+    count,
+    positions,
+    absmag,
+    ci,
+    spectClass,
+    constellation,
+    flags,
+    names,
+    solIndex,
+    constellations,
+  };
+}

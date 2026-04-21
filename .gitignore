@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.wrangler/
+.DS_Store
+*.log
+
+# Generated catalog artifacts (regenerated from source CSV)
+public/catalog.bin
+public/constellations.json
+
+# Source CSV is large; keep out of git
+data/*.csv

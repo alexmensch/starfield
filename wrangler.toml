@@ -1,0 +1,14 @@
+name = "starfield"
+main = "src/worker.ts"
+compatibility_date = "2025-01-01"
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+
+# Route mounts the app at alxm.me/starfield. The Worker strips the /starfield
+# prefix before handing requests to the static-assets binding.
+routes = [
+  { pattern = "alxm.me/starfield", zone_name = "alxm.me" },
+  { pattern = "alxm.me/starfield/*", zone_name = "alxm.me" },
+]
