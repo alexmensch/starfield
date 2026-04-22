@@ -323,8 +323,9 @@ npx tsx scripts/verify-catalog.ts   # dump header + spot-check records
 - **Info-modal dismissal** — cleared by removing the
   `starfield.info-dismissed` localStorage key.
 - **Panel collapse default** — persisted under `starfield.panel-collapsed`
-  (`'1'` = collapsed). To make it collapsed-by-default for first-time
-  visitors, change the initial state in `panel-layout.ts`.
+  (`'0'` = expanded, `'1'` = collapsed, missing = collapsed by default for
+  first-time visitors). The default-collapsed check is phrased as
+  `!== '0'` in `panel-layout.ts` so absence of the key means collapsed.
 
 ## Things deliberately kept out of v1
 

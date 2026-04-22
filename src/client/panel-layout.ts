@@ -25,6 +25,6 @@ export function bindPanelLayout() {
     localStorage.setItem(STORAGE_KEY, next ? '1' : '0');
   };
 
-  applyCollapsed(localStorage.getItem(STORAGE_KEY) === '1');
+  applyCollapsed(localStorage.getItem(STORAGE_KEY) !== '0');
   header.addEventListener('click', toggle);
 }
