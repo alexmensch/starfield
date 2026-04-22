@@ -20,8 +20,10 @@ Stack: TypeScript, Three.js (WebGL2), Vite, Cloudflare Workers.
   Substring / fuzzy matching over all ~500 named stars.
 - Hover any star for a 280 ms-delayed tooltip with name, constellation, and
   distance from Sol.
-- Constellation overlay draws a convex hull around the twelve stars that
-  define each classical asterism — reshapes naturally as the viewpoint moves.
+- Constellation overlay draws the classical stick-figure asterism lines
+  (sourced from Stellarium's HIP-indexed sky culture data). The figure
+  deforms in true 3D as the viewpoint moves away from Sol and leaves a
+  gap around every figure-star so the glyph stays visible.
 - Scale bar in the bottom-left adapts to the current zoom in round pc or ly
   units.
 - Two themes: dark (glowing stars on a deep-blue field) and chart (dark stars
@@ -137,9 +139,9 @@ pan) works the same everywhere.
 - **Search is limited to stars with proper names** (~500 stars). Bayer
   (e.g. "Alpha Cen") and Flamsteed designations are in the source CSV but
   not carried into the binary, so searching by them won't work in v1.
-- **No constellation asterism lines.** Only the convex hull is drawn. Adding
-  the classical stick-figures would need the IAU constellation-lines dataset
-  as a separate asset.
+- **No IAU constellation *boundary* dataset.** The stick-figure asterism
+  lines are included (from Stellarium); the 1930 IAU region boundaries are
+  not.
 - **No Milky Way or galactic-plane reference.** Orientation beyond the
   nearest few constellations is easy to lose.
 - **No proper motion over time.** Stars are rendered at their catalog
@@ -158,5 +160,10 @@ The code in this repository is MIT licensed. See [`LICENSE`](./LICENSE).
 The HYG / AT-HYG catalog data used by this project is made available by
 David Nash under a CC-BY-SA-4.0 license. The generated `catalog.bin` is a
 derivative of that data and carries the same licence. See the
-[athyg repository](https://github.com/astronexus/athyg) for attribution
+[athyg repository](https://codeberg.org/astronexus/athyg) for attribution
 requirements.
+
+The classical constellation stick-figure lines are taken from
+[Stellarium's modern sky culture](https://github.com/Stellarium/stellarium/tree/master/skycultures/modern).
+The line data is MIT-licensed (illustrations, which this project does not
+use, are separately under the Free Art License).

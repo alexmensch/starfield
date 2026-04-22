@@ -1,6 +1,10 @@
 export interface Constellation {
   code: string;
   name: string;
+  // Classical stick-figure polylines, each a list of star indices into the
+  // catalog record array. Populated by the build step from Stellarium's
+  // modern sky culture; absent for constellations with no asterism lines.
+  lines?: number[][];
 }
 
 export interface Catalog {

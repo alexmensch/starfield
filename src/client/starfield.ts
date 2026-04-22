@@ -219,6 +219,58 @@ export class Starfield {
     this.setFocus(starIndex);
   }
 
+  // Swing the camera to face the selected constellation while keeping the
+  // orbit target and orbit radius unchanged — only the camera's position on
+  // the orbit sphere moves. The aim point is the brightness-weighted
+  // centroid of the figure stars as seen from the current target, so a
+  // constellation looks "centered" on whichever of its members visually
+  // dominate from the user's current vantage, even when the user has
+  // travelled deep into 3D space.
+  aimAtConstellation(conIndex: number) {
+    const cons = this.catalog.constellations;
+    const lines = conIndex >= 0 && conIndex < cons.length ? cons[conIndex].lines : undefined;
+    if (!lines || lines.length === 0) return;
+
+    const seen = new Set<number>();
+    for (const polyline of lines) for (const i of polyline) seen.add(i);
+    if (seen.size === 0) return;
+
+    const positions = this.catalog.positions;
+    const absmag = this.catalog.absmag;
+    const t = this.controls.target;
+
+    const scored: Array<{ idx: number; appMag: number }> = [];
+    for (const i of seen) {
+      const dx = positions[i * 3] - t.x;
+      const dy = positions[i * 3 + 1] - t.y;
+      const dz = positions[i * 3 + 2] - t.z;
+      const dist = Math.max(Math.sqrt(dx * dx + dy * dy + dz * dz), 0.001);
+      const appMag = absmag[i] + 5 * (Math.log10(dist) - 1);
+      scored.push({ idx: i, appMag });
+    }
+    scored.sort((a, b) => a.appMag - b.appMag);
+    const top = scored.slice(0, Math.min(8, scored.length));
+
+    const c = new THREE.Vector3();
+    for (const { idx } of top) {
+      c.x += positions[idx * 3];
+      c.y += positions[idx * 3 + 1];
+      c.z += positions[idx * 3 + 2];
+    }
+    c.divideScalar(top.length);
+
+    const dir = new THREE.Vector3().subVectors(c, t);
+    if (dir.lengthSq() < 1e-6) return; // aim point coincides with target
+    dir.normalize();
+
+    const r = this.camera.position.distanceTo(t);
+    // Put the camera on the opposite side of target from the centroid at the
+    // current orbit radius — the forward vector (target − position) then
+    // points toward the centroid.
+    this.camera.position.copy(t).addScaledVector(dir, -r);
+    this.controls.update();
+  }
+
   starWorldPosition(i: number): THREE.Vector3 {
     const p = this.catalog.positions;
     return new THREE.Vector3(p[i * 3 + 0], p[i * 3 + 1], p[i * 3 + 2]);

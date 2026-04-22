@@ -17,7 +17,8 @@ scripts/
   build-catalog.ts        CSV → binary preprocessor (run at build time)
   verify-catalog.ts       sanity-check tool for the generated binary
 data/
-  hyglike_from_athyg_v33.csv   source CSV (gitignored, ~38 MB)
+  hyglike_from_athyg_v33.csv         source CSV (gitignored, ~38 MB)
+  stellarium-modern-skyculture.json  Stellarium constellation lines (committed, ~200 KB)
 public/
   catalog.bin             generated (gitignored, ~3.8 MB)
   constellations.json     generated (gitignored)
@@ -92,13 +93,77 @@ If you add fields, keep the 32-byte stride (pad as needed) and **bump
 
 This is the UX the user settled on. No double-click, no modifier keys.
 
-### Constellation polygon uses top-12 by *apparent* magnitude
+### Picking a constellation aims the camera
 
-`constellation-overlay.ts buildFigures` ranks by appmag-from-Sol, **not**
-absolute magnitude. This matters — the classical asterism is defined by what
-looked bright from Earth, so Orion's seven canonical stars (Betelgeuse, Rigel,
-belt, etc.) are the ones we want. Sorting by absmag would pick intrinsically
-bright but faint-from-Sol stars and break the recognisable shape.
+`Starfield.aimAtConstellation(conIndex)` swings the camera so the chosen
+constellation is centred in view, without moving `controls.target` or
+changing orbit radius — only the camera's position on the orbit sphere
+moves. The aim point is the brightness-weighted centroid of the top-8
+figure stars as ranked by apparent magnitude **from the current orbit
+target** (not from Sol). This matters when the user has travelled far
+from Sol: the same constellation is still centred on whichever members
+visually dominate from *there*, not from Earth.
+
+Called **only from the constellation dropdown change handler** in
+`controls.ts`. URL state restore, reset button, and any other path that
+sets `highlightCon` via `setFilter` deliberately do **not** trigger the
+aim — a shareable URL's camera pose is authoritative, and the "reset"
+button means "clear the selection", not "jump somewhere".
+
+### Constellation stick-figure overlay
+
+When a constellation is highlighted, `constellation-overlay.ts` draws the
+classical asterism lines (sourced from Stellarium — see next section) as
+an SVG `<path id="con-figure">`. Every segment is emitted as a separate
+`M..L..` subpath with both endpoints pulled back by `STAR_GAP_PX`, and
+the path uses `stroke-linecap: round`. Net effect: each stick-figure
+line is a rounded-end segment with a circular gap around every
+vertex star, so the actual star glyphs remain visible through the figure.
+
+Earlier versions also drew a convex hull around the top-N brightest
+constellation members. That layer was removed — the hull is defined by
+*what's bright from Earth*, while the figure is defined by *what humans
+traditionally drew as the shape*. When the camera isn't at Sol those
+two answers diverge, and showing the hull was more confusing than
+helpful. The 3D-deforming stick figure alone conveys the intent.
+
+### Stick figures from Stellarium
+
+Classical asterism lines are sourced from Stellarium's modern sky culture
+`index.json` (CC/MIT-compatible, HIP-indexed). The source file is
+committed to `data/stellarium-modern-skyculture.json` — it essentially
+never changes, so fetching it at build time each time would be wasted
+work.
+
+Pipeline in `scripts/build-catalog.ts`:
+
+1. The HYG CSV parser reads the `hip` column into each star record.
+2. After sorting stars by absmag (so record indices are final), a
+   `hipToIndex: Map<number, number>` is built from the post-sort order.
+   Duplicate HIPs (rare — binary companions) keep the brightest entry
+   (first-write wins).
+3. `buildFigureLines(hipToIndex)` walks each Stellarium constellation's
+   `lines` array and resolves every HIP to a record index, producing
+   `Map<conIndex, number[][]>`.
+4. Resolved `lines` are merged into the emitted `constellations.json`
+   alongside `{ code, name }`. A polyline is kept only if ≥2 points
+   survive.
+
+**Reliability rule: any unresolved HIP is a hard build error** — unless
+it's in `KNOWN_MISSING_HIPS`. That map documents HIPs that Stellarium
+references but HYG has no 3D position for (empty x/y/z/parallax in the
+CSV), with a human-readable justification each. Currently:
+
+- `5165` (α Phe / Ankaa) — Phoenix loses most of its figure without this
+  star, but HYG can't carry it.
+- `89341` (μ Sgr / Polis) — one Sagittarius polyline degrades from 3
+  points to 2, shape still recognisable.
+
+If a future Stellarium update introduces new references to missing HIPs,
+the build fails until each is explicitly added to
+`KNOWN_MISSING_HIPS` with rationale. Don't relax the check to a soft
+warning — the whole point of using Stellarium's HIP-indexed data (vs.
+fuzzy RA/Dec position matching) is deterministic mapping.
 
 ### Vector clipping at the near plane
 
@@ -318,7 +383,7 @@ npx tsx scripts/verify-catalog.ts   # dump header + spot-check records
   matching slider `value`s in `index.html`.
 - **Max apparent magnitude presets** — `data-mag` attributes on
   `.mag-preset` buttons in `index.html`.
-- **Constellation figure membership** — `FIGURE_STARS_PER_CON` in
+- **Star-gap radius around constellation lines** — `STAR_GAP_PX` in
   `constellation-overlay.ts`.
 - **Info-modal dismissal** — cleared by removing the
   `starfield.info-dismissed` localStorage key.
@@ -331,7 +396,8 @@ npx tsx scripts/verify-catalog.ts   # dump header + spot-check records
 
 Noted here so we don't re-debate scope:
 
-- IAU constellation boundary/line datasets (would need extra asset).
+- IAU constellation **boundary** datasets (only the asterism lines are
+  included — boundaries would be a separate Stellarium dataset).
 - Milky Way galactic-plane reference grid.
 - HR diagram side panel.
 - Bayer / Flamsteed designations in search (binary doesn't carry them).

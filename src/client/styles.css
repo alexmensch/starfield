@@ -475,14 +475,6 @@ select {
   width: 100vw;
   height: 100vh;
 }
-#con-polygon {
-  fill: rgba(125, 211, 252, 0.025);
-  stroke: rgba(125, 211, 252, 0.75);
-  stroke-width: 0.75;
-  stroke-linejoin: round;
-  fill-rule: evenodd;
-}
-
 #dist-line {
   fill: none;
   stroke: rgba(253, 230, 138, 0.9);
@@ -583,9 +575,15 @@ body.monochrome input[type="range"]::-webkit-slider-thumb,
 body.monochrome input[type="range"]::-moz-range-thumb {
   background: var(--fg);
 }
-body.monochrome #con-polygon {
-  fill: rgba(30, 64, 175, 0.04);
-  stroke: rgba(30, 64, 175, 0.65);
+#con-figure {
+  fill: none;
+  stroke: rgba(125, 211, 252, 0.85);
+  stroke-width: 1.1;
+  stroke-linecap: round;
+}
+body.monochrome #con-figure {
+  fill: none;
+  stroke: rgba(30, 64, 175, 0.8);
 }
 body.monochrome #dist-line {
   stroke: rgba(146, 64, 14, 0.9);
@@ -660,6 +658,20 @@ body.monochrome .search-results li.active {
   padding: 4px 8px;
 }
 .modal-close:hover { color: var(--fg); }
+.modal-credits {
+  margin-top: 18px;
+  margin-bottom: 10px;
+  font-size: 10.5px;
+  color: var(--fg-dim);
+  line-height: 1.6;
+}
+.modal-credits a {
+  color: var(--fg-dim);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.modal-credits a:hover { color: var(--fg); }
+
 .modal-dismiss {
   display: inline-flex;
   align-items: center;

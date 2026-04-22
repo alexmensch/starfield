@@ -10,7 +10,7 @@
     <canvas id="scene"></canvas>
 
     <svg id="overlay" class="overlay" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
-      <polygon id="con-polygon" />
+      <path id="con-figure" />
       <path id="dist-line" />
       <text id="dist-label" class="dist-label" text-anchor="middle" dominant-baseline="central"></text>
       <circle id="focus-ring" class="focus-ring" />
@@ -24,11 +24,9 @@
         <button class="modal-close" id="info-close" type="button" aria-label="Close">×</button>
         <h2 id="info-title">Welcome to Starfield</h2>
         <p>
-          Starfield is an interactive 3D map of ~118,000 real stars from the
-          <a href="https://www.astronexus.com/projects/at-hyg" target="_blank" rel="noopener noreferrer">HYG catalogue</a>
-          maintained by David Nash. Each star is rendered at the colour and
-          apparent brightness you would actually see from the camera's current
-          position.
+          Starfield is an interactive 3D map of ~118,000 real stars. Each
+          star is rendered at the colour and apparent brightness you would
+          actually see from the camera's current position.
         </p>
         <p>
           Drag to orbit, scroll to zoom, and hover over a star to see its
@@ -36,6 +34,12 @@
           the distance between them, then click the far end of the line to
           travel there. Search for &ldquo;Sol&rdquo; to return home to our
           sun. Enjoy!
+        </p>
+        <p class="modal-credits">
+          Star data:
+          <a href="https://codeberg.org/astronexus/athyg" target="_blank" rel="noopener noreferrer">AT-HYG catalogue</a>
+          by David Nash. Constellation figures:
+          <a href="https://stellarium.org/" target="_blank" rel="noopener noreferrer">Stellarium</a>.
         </p>
         <label class="modal-dismiss">
           <input type="checkbox" id="info-dontshow" /> Don't show this again

@@ -1,17 +1,14 @@
 import * as THREE from 'three';
 import type { Starfield } from './starfield';
-import type { Catalog } from './catalog-loader';
 
-// Number of apparent-magnitude-brightest stars per constellation that define
-// its visible "figure". Picked empirically to cover the recognisable
-// asterism plus a frame of fainter but still significant stars.
-const FIGURE_STARS_PER_CON = 12;
+// Pixel radius left blank around every figure-star so lines don't obscure
+// the star glyph.
+export const STAR_GAP_PX = 9;
 
 export function createConstellationOverlay(starfield: Starfield) {
   const overlay = document.getElementById('overlay') as unknown as SVGSVGElement;
-  const polygon = document.getElementById('con-polygon') as unknown as SVGPolygonElement;
+  const figure = document.getElementById('con-figure') as unknown as SVGPathElement;
 
-  const figures = buildFigures(starfield.catalog);
   const v = new THREE.Vector3();
 
   let current = -1;
@@ -19,7 +16,7 @@ export function createConstellationOverlay(starfield: Starfield) {
   const update = () => {
     current = starfield.getFilter().highlightCon;
     if (current < 0) {
-      polygon.setAttribute('points', '');
+      figure.setAttribute('d', '');
       return;
     }
     tick();
@@ -27,9 +24,11 @@ export function createConstellationOverlay(starfield: Starfield) {
 
   const tick = () => {
     if (current < 0) return;
-    const stars = figures.get(current);
-    if (!stars || stars.length < 3) {
-      polygon.setAttribute('points', '');
+
+    const cons = starfield.catalog.constellations;
+    const lines = current < cons.length ? cons[current].lines : undefined;
+    if (!lines || lines.length === 0) {
+      figure.setAttribute('d', '');
       return;
     }
 
@@ -37,25 +36,27 @@ export function createConstellationOverlay(starfield: Starfield) {
     const h = window.innerHeight;
     const camera = starfield.camera;
     const positions = starfield.catalog.positions;
-    const screen: Array<[number, number]> = [];
-    for (const i of stars) {
-      v.set(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
-      // Transform to view space so we can reject points behind the camera
-      // before projecting; project() alone can wrap sign and produce
-      // misleading NDC coords for behind-camera points.
-      v.applyMatrix4(camera.matrixWorldInverse);
-      if (v.z > -camera.near) continue;
-      v.applyMatrix4(camera.projectionMatrix);
-      screen.push([(v.x + 1) * 0.5 * w, (1 - v.y) * 0.5 * h]);
-    }
 
-    if (screen.length < 3) {
-      polygon.setAttribute('points', '');
-      return;
-    }
+    const segments: string[] = [];
+    for (const polyline of lines) {
+      // Project each vertex; null if behind the near plane.
+      const projected: Array<[number, number] | null> = polyline.map((i) => {
+        v.set(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
+        v.applyMatrix4(camera.matrixWorldInverse);
+        if (v.z > -camera.near) return null;
+        v.applyMatrix4(camera.projectionMatrix);
+        return [(v.x + 1) * 0.5 * w, (1 - v.y) * 0.5 * h];
+      });
 
-    const hull = convexHull(screen);
-    polygon.setAttribute('points', hull.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' '));
+      for (let j = 0; j < projected.length - 1; j++) {
+        const a = projected[j];
+        const b = projected[j + 1];
+        if (!a || !b) continue;
+        const seg = shortenedSegment(a, b);
+        if (seg) segments.push(seg);
+      }
+    }
+    figure.setAttribute('d', segments.join(''));
   };
 
   starfield.onFilterChange(update);
@@ -65,58 +66,22 @@ export function createConstellationOverlay(starfield: Starfield) {
   return { overlay };
 }
 
-function buildFigures(catalog: Catalog): Map<number, number[]> {
-  // For each constellation, pick the N stars with the lowest apparent magnitude
-  // from Sol. These are the ones humans traditionally used to draw the
-  // asterism — so the hull of their (fixed) 3D positions gives a shape that
-  // deforms recognisably as the viewpoint moves.
-  const byCon = new Map<number, Array<{ idx: number; appMag: number }>>();
-  for (let i = 0; i < catalog.count; i++) {
-    const ci = catalog.constellation[i];
-    if (ci === 255) continue;
-    const x = catalog.positions[i * 3];
-    const y = catalog.positions[i * 3 + 1];
-    const z = catalog.positions[i * 3 + 2];
-    const dSol = Math.max(Math.sqrt(x * x + y * y + z * z), 0.001);
-    const appMag = catalog.absmag[i] + 5 * (Math.log10(dSol) - 1);
-    const arr = byCon.get(ci);
-    if (!arr) byCon.set(ci, [{ idx: i, appMag }]);
-    else arr.push({ idx: i, appMag });
-  }
-
-  const out = new Map<number, number[]>();
-  for (const [ci, list] of byCon) {
-    list.sort((a, b) => a.appMag - b.appMag);
-    out.set(ci, list.slice(0, FIGURE_STARS_PER_CON).map((e) => e.idx));
-  }
-  return out;
-}
-
-// Andrew's monotone chain convex hull. Returns the hull counter-clockwise.
-function convexHull(points: Array<[number, number]>): Array<[number, number]> {
-  const n = points.length;
-  if (n < 4) return points.slice();
-  const pts = points.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-  const lower: Array<[number, number]> = [];
-  for (const p of pts) {
-    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) {
-      lower.pop();
-    }
-    lower.push(p);
-  }
-  const upper: Array<[number, number]> = [];
-  for (let i = pts.length - 1; i >= 0; i--) {
-    const p = pts[i];
-    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) {
-      upper.pop();
-    }
-    upper.push(p);
-  }
-  lower.pop();
-  upper.pop();
-  return lower.concat(upper);
-}
-
-function cross(o: [number, number], a: [number, number], b: [number, number]): number {
-  return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+// `M..L..` subpath with both endpoints pulled back by STAR_GAP_PX so the
+// vertex stars sit in clean circular gaps (combined with stroke-linecap:
+// round on the path).
+function shortenedSegment(
+  a: [number, number],
+  b: [number, number],
+): string | null {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const len = Math.hypot(dx, dy);
+  if (len <= STAR_GAP_PX * 2) return null;
+  const ux = dx / len;
+  const uy = dy / len;
+  const sx = a[0] + ux * STAR_GAP_PX;
+  const sy = a[1] + uy * STAR_GAP_PX;
+  const ex = b[0] - ux * STAR_GAP_PX;
+  const ey = b[1] - uy * STAR_GAP_PX;
+  return `M${sx.toFixed(1)},${sy.toFixed(1)}L${ex.toFixed(1)},${ey.toFixed(1)}`;
 }

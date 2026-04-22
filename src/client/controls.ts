@@ -116,7 +116,9 @@ export function bindControls(starfield: Starfield) {
     });
   }
   conSelect.addEventListener('change', () => {
-    starfield.setFilter({ highlightCon: Number(conSelect.value) });
+    const idx = Number(conSelect.value);
+    starfield.setFilter({ highlightCon: idx });
+    if (idx >= 0) starfield.aimAtConstellation(idx);
   });
   sizeMin.addEventListener('input', () => {
     let vMin = Number(sizeMin.value);

@@ -1,4 +1,4 @@
-import { createReadStream, statSync, existsSync } from 'node:fs';
+import { createReadStream, statSync, existsSync, readFileSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +9,7 @@ const __dirname = dirname(__filename);
 const ROOT = resolve(__dirname, '..');
 
 const SRC_CSV = resolve(ROOT, 'data/hyglike_from_athyg_v33.csv');
+const SRC_STELLARIUM = resolve(ROOT, 'data/stellarium-modern-skyculture.json');
 const OUT_BIN = resolve(ROOT, 'public/catalog.bin');
 const OUT_CON = resolve(ROOT, 'public/constellations.json');
 
@@ -119,6 +120,16 @@ const CON_INDEX: Map<string, number> = new Map(
   CONSTELLATIONS.map((c, i) => [c.code.toLowerCase(), i])
 );
 
+// HIPs that Stellarium's modern sky culture references but HYG does not
+// carry 3D positions for (CSV rows exist but x/y/z/parallax are empty).
+// Every entry must include a human-readable reason so a future audit can
+// decide whether upstream data has been fixed. `buildFigureLines` silently
+// skips these; any *other* unmatched HIP is a hard build error.
+const KNOWN_MISSING_HIPS: Map<number, string> = new Map([
+  [5165, 'α Phoenicis (Ankaa) — HYG lacks parallax for this multiple-star system; upstream data gap'],
+  [89341, 'μ Sagittarii (Polis) — HYG lacks parallax; upstream data gap'],
+]);
+
 function spectClassIndex(spect: string): number {
   if (!spect) return 8;
   const c = spect.charAt(0).toUpperCase();
@@ -139,8 +150,13 @@ function isUpToDate(): boolean {
   if (!existsSync(OUT_BIN) || !existsSync(OUT_CON)) return false;
   const binMtime = statSync(OUT_BIN).mtimeMs;
   const srcMtime = statSync(SRC_CSV).mtimeMs;
+  const stellariumMtime = existsSync(SRC_STELLARIUM)
+    ? statSync(SRC_STELLARIUM).mtimeMs
+    : 0;
   const scriptMtime = statSync(__filename).mtimeMs;
-  return binMtime > srcMtime && binMtime > scriptMtime;
+  return (
+    binMtime > srcMtime && binMtime > scriptMtime && binMtime > stellariumMtime
+  );
 }
 
 interface Star {
@@ -151,6 +167,7 @@ interface Star {
   conIndex: number;
   flags: number;
   name: string | null;
+  hip: number | null;
 }
 
 function parseFloatOrNull(s: string): number | null {
@@ -214,16 +231,75 @@ async function readStars(): Promise<{
     let flags = 0;
     if (name) flags |= 0x01;
     if (isSol) flags |= 0x02;
+    const hipRaw = parseFloatOrNull(row.hip);
+    const hip = hipRaw !== null && hipRaw > 0 ? Math.trunc(hipRaw) : null;
 
-    stars.push({ x, y, z, absmag, ci, spectClass, conIndex, flags, name });
+    stars.push({ x, y, z, absmag, ci, spectClass, conIndex, flags, name, hip });
   }
 
   return { stars, stats: { total, dropped } };
 }
 
+// Extracts classical stick-figure lines per IAU constellation from
+// Stellarium's modern sky culture `index.json`. Each polyline in the source
+// is a list of HIP integers; we resolve each HIP to a record index via
+// `hipToIndex`. Missing HIPs are a hard error — the whole point of using
+// Stellarium data (vs. fuzzy RA/Dec match) is deterministic mapping.
+function buildFigureLines(
+  hipToIndex: Map<number, number>,
+): Map<number, number[][]> {
+  const raw = JSON.parse(readFileSync(SRC_STELLARIUM, 'utf8'));
+  const source: Array<{ id: string; lines?: number[][] }> = raw.constellations ?? [];
+
+  const out = new Map<number, number[][]>();
+  const missing: Array<{ code: string; hip: number }> = [];
+
+  for (const entry of source) {
+    if (!entry.lines || entry.lines.length === 0) continue;
+    // id is "CON modern XXX" where XXX is the 3-letter IAU code (mixed case).
+    const parts = entry.id.split(/\s+/);
+    const code = parts[parts.length - 1];
+    const conIndex = CON_INDEX.get(code.toLowerCase());
+    if (conIndex === undefined) {
+      throw new Error(`Stellarium constellation code not in IAU-88 table: ${code}`);
+    }
+
+    const resolved: number[][] = [];
+    for (const polyline of entry.lines) {
+      const starIndices: number[] = [];
+      for (const hip of polyline) {
+        const idx = hipToIndex.get(hip);
+        if (idx === undefined) {
+          if (!KNOWN_MISSING_HIPS.has(hip)) missing.push({ code, hip });
+          continue;
+        }
+        starIndices.push(idx);
+      }
+      // Keep a polyline only if at least two adjacent points survived.
+      if (starIndices.length >= 2) resolved.push(starIndices);
+    }
+    if (resolved.length) out.set(conIndex, resolved);
+  }
+
+  if (missing.length) {
+    const sample = missing.slice(0, 10).map((m) => `${m.code}/HIP ${m.hip}`);
+    throw new Error(
+      `Stellarium figures reference ${missing.length} HIP(s) not found in HYG and not in KNOWN_MISSING_HIPS. ` +
+        `First ${sample.length}: ${sample.join(', ')}. ` +
+        `If this is expected, add each HIP to KNOWN_MISSING_HIPS with a justification; otherwise investigate the data mismatch.`,
+    );
+  }
+
+  return out;
+}
+
 async function main() {
   if (!existsSync(SRC_CSV)) {
     console.error(`Source CSV not found: ${SRC_CSV}`);
+    process.exit(1);
+  }
+  if (!existsSync(SRC_STELLARIUM)) {
+    console.error(`Stellarium sky culture JSON not found: ${SRC_STELLARIUM}`);
     process.exit(1);
   }
 
@@ -241,6 +317,19 @@ async function main() {
 
   // Sort by absolute magnitude ascending (brightest first).
   stars.sort((a, b) => a.absmag - b.absmag);
+
+  // Build HIP → record index map against the post-sort order. Duplicate HIPs
+  // are rare but possible (binary companions recorded as separate rows with
+  // the same HIP); keep the brightest by sort order (first write wins).
+  const hipToIndex = new Map<number, number>();
+  for (let i = 0; i < stars.length; i++) {
+    const h = stars[i].hip;
+    if (h !== null && !hipToIndex.has(h)) hipToIndex.set(h, i);
+  }
+
+  // Resolve Stellarium stick-figure lines to star indices. Throws if any
+  // referenced HIP is missing from the catalog.
+  const figureLines = buildFigureLines(hipToIndex);
 
   // Build name table.
   const encoder = new TextEncoder();
@@ -308,14 +397,25 @@ async function main() {
   }
 
   await writeFile(OUT_BIN, Buffer.from(out));
+
+  const constellationsOut = CONSTELLATIONS.map((c, idx) => {
+    const lines = figureLines.get(idx);
+    return lines ? { ...c, lines } : { ...c };
+  });
   await writeFile(
     OUT_CON,
-    JSON.stringify(CONSTELLATIONS, null, 2) + '\n'
+    JSON.stringify(constellationsOut) + '\n',
   );
 
+  const figureCount = [...figureLines.values()].reduce(
+    (n, arr) => n + arr.length,
+    0,
+  );
   const mb = (totalLength / 1024 / 1024).toFixed(2);
   console.log(`Wrote ${OUT_BIN} (${mb} MB, ${stars.length} records)`);
-  console.log(`Wrote ${OUT_CON} (${CONSTELLATIONS.length} constellations)`);
+  console.log(
+    `Wrote ${OUT_CON} (${CONSTELLATIONS.length} constellations, ${figureCount} stick-figure polylines across ${figureLines.size})`,
+  );
   if (solIndex >= 0) {
     console.log(`Sol at record index ${solIndex} (absmag=${stars[solIndex].absmag})`);
   } else {
