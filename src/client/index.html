@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>HYG 3D — Interactive Star Catalog</title>
+    <title>Starfield — Interactive Star Catalog</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
@@ -16,12 +16,32 @@
       <circle id="focus-ring" class="focus-ring" />
     </svg>
 
-    <div id="scale-bar" class="scale-bar" hidden>
-      <div class="scale-bar-line" id="scale-bar-line"></div>
-      <div class="scale-bar-label" id="scale-bar-label">—</div>
-    </div>
-
     <div id="tooltip" class="tooltip" hidden></div>
+
+    <div id="info-modal" class="modal" hidden>
+      <div class="modal-backdrop" id="info-backdrop"></div>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="info-title">
+        <button class="modal-close" id="info-close" type="button" aria-label="Close">×</button>
+        <h2 id="info-title">Welcome to Starfield</h2>
+        <p>
+          Starfield is an interactive 3D map of ~118,000 real stars from the
+          <a href="https://www.astronexus.com/projects/at-hyg" target="_blank" rel="noopener noreferrer">HYG catalogue</a>
+          maintained by David Nash. Each star is rendered at the colour and
+          apparent brightness you would actually see from the camera's current
+          position.
+        </p>
+        <p>
+          Drag to orbit, scroll to zoom, and hover over a star to see its
+          name. Click a star to focus on it, click a second star to measure
+          the distance between them, then click the far end of the line to
+          travel there. Search for &ldquo;Sol&rdquo; to return home to our
+          sun. Enjoy!
+        </p>
+        <label class="modal-dismiss">
+          <input type="checkbox" id="info-dontshow" /> Don't show this again
+        </label>
+      </div>
+    </div>
 
     <div id="loading" class="loading">
       <div class="loading-inner">
@@ -31,40 +51,43 @@
       </div>
     </div>
 
-    <header class="topbar" hidden id="topbar">
-      <div class="brand">HYG·3D</div>
-      <div class="search-wrap">
-        <div class="search-row" id="search-focus-row">
-          <span class="search-tag">Focus</span>
-          <input
-            id="search-focus"
-            type="search"
-            placeholder="Search stars…"
-            autocomplete="off"
-            spellcheck="false"
-          />
-          <button class="search-clear" id="search-focus-clear" type="button" title="Unfocus" hidden>×</button>
+    <div class="ui-top" id="ui-top">
+      <header class="topbar" hidden id="topbar">
+        <div class="brand">Starfield</div>
+        <div class="search-wrap">
+          <div class="search-row" id="search-focus-row">
+            <span class="search-tag">Focus</span>
+            <input
+              id="search-focus"
+              type="search"
+              placeholder="Search stars…"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button class="search-clear" id="search-focus-clear" type="button" title="Unfocus" hidden>×</button>
+          </div>
+          <div class="search-row" id="search-to-row" hidden>
+            <span class="search-tag">To</span>
+            <input
+              id="search-to"
+              type="search"
+              placeholder="Search destination…"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button class="search-clear" id="search-to-clear" type="button" title="Clear measurement" hidden>×</button>
+          </div>
+          <ul id="search-results" class="search-results" hidden></ul>
         </div>
-        <div class="search-row" id="search-to-row" hidden>
-          <span class="search-tag">To</span>
-          <input
-            id="search-to"
-            type="search"
-            placeholder="Search destination…"
-            autocomplete="off"
-            spellcheck="false"
-          />
-          <button class="search-clear" id="search-to-clear" type="button" title="Clear measurement" hidden>×</button>
-        </div>
-        <ul id="search-results" class="search-results" hidden></ul>
-      </div>
-      <div class="meta" id="meta"></div>
-    </header>
+      </header>
 
-    <aside class="panel" hidden id="panel">
-      <div class="panel-inner">
+      <aside class="panel" hidden id="panel">
+        <div class="panel-header" id="panel-header">
+          <span>Display settings</span>
+          <button class="panel-toggle" id="panel-toggle" type="button" aria-label="Collapse settings" aria-expanded="true">−</button>
+        </div>
+        <div class="panel-inner" id="panel-inner">
         <section class="group">
-          <h3>Display</h3>
           <label class="sub-label">Units</label>
           <div class="toggle-group" id="unit-toggle">
             <button class="toggle-btn on" data-unit="pc" type="button">parsecs</button>
@@ -114,32 +137,49 @@
         </section>
 
         <section class="group">
-          <h3>Constellation</h3>
+          <h3>
+            Constellation
+            <span class="row-actions">
+              <button id="con-reset" class="link-btn" type="button">reset</button>
+            </span>
+          </h3>
           <select id="con-select">
             <option value="-1">— None —</option>
           </select>
         </section>
 
         <section class="group">
-          <h3>Star size <span class="unit">px</span></h3>
+          <h3>
+            Star size <span class="unit">px</span>
+            <span class="row-actions">
+              <button id="size-reset" class="link-btn" type="button">reset</button>
+            </span>
+          </h3>
           <label class="sub-label">Min</label>
           <input id="size-min" type="range" min="0.5" max="6" step="0.1" value="2.0" />
           <label class="sub-label">Max</label>
           <input id="size-max" type="range" min="2" max="32" step="0.5" value="24" />
-          <label class="sub-label">Dynamic range <span class="unit">mag</span></label>
+          <label class="sub-label sub-label-row">
+            <span>Dynamic range <span class="unit">mag</span></span>
+            <span class="row-actions">
+              <button id="span-reset" class="link-btn" type="button">reset</button>
+            </span>
+          </label>
           <input id="size-span" type="range" min="2" max="20" step="0.5" value="6" />
           <div class="readout" id="size-readout">2.0 – 24.0 px · span 6 mag</div>
         </section>
 
-        <section class="group footer">
-          <div class="hint">
-            Drag to orbit · scroll to zoom<br />
-            Click a star to focus. Click another to measure distance.<br />
-            Click the far end of the line to travel there.
-          </div>
-        </section>
+        </div>
+      </aside>
+    </div>
+
+    <div class="ui-bottom">
+      <div id="scale-bar" class="scale-bar" hidden>
+        <div class="scale-bar-line" id="scale-bar-line"></div>
+        <div class="scale-bar-label" id="scale-bar-label">—</div>
       </div>
-    </aside>
+      <div class="meta" id="meta" hidden></div>
+    </div>
 
     <script type="module" src="./main.ts"></script>
   </body>

@@ -22,6 +22,17 @@ export interface StarfieldOptions {
 
 const ALL_SPECT_MASK = 0b111111111;
 
+export const DEFAULT_FILTER: FilterState = {
+  minDistSol: 0,
+  maxDistSol: 50_000,
+  maxAppMag: 6.5,
+  spectMask: ALL_SPECT_MASK,
+  highlightCon: -1,
+  sizeMin: 2.0,
+  sizeMax: 24.0,
+  sizeSpan: 6.0,
+};
+
 export class Starfield {
   readonly catalog: Catalog;
   readonly renderer: THREE.WebGLRenderer;
@@ -33,16 +44,7 @@ export class Starfield {
   private material: THREE.ShaderMaterial;
   private geometry: THREE.BufferGeometry;
 
-  private filter: FilterState = {
-    minDistSol: 0,
-    maxDistSol: 50_000,
-    maxAppMag: 6.5,
-    spectMask: ALL_SPECT_MASK,
-    highlightCon: -1,
-    sizeMin: 2.0,
-    sizeMax: 24.0,
-    sizeSpan: 6.0,
-  };
+  private filter: FilterState = { ...DEFAULT_FILTER };
 
   private disposed = false;
   private onFocusHandlers: Array<(starIndex: number | null) => void> = [];

@@ -1,4 +1,4 @@
-import { Starfield, ALL_SPECT_MASK } from './starfield';
+import { Starfield, ALL_SPECT_MASK, DEFAULT_FILTER } from './starfield';
 import { fmtDist, onUnitChange, getUnit } from './distance-util';
 
 const SPECT_LABELS: { key: string; label: string; bit: number }[] = [
@@ -132,6 +132,19 @@ export function bindControls(starfield: Starfield) {
   });
   sizeSpan.addEventListener('input', () => {
     starfield.setFilter({ sizeSpan: Number(sizeSpan.value) });
+  });
+
+  document.getElementById('con-reset')!.addEventListener('click', () => {
+    starfield.setFilter({ highlightCon: -1 });
+  });
+  document.getElementById('size-reset')!.addEventListener('click', () => {
+    starfield.setFilter({
+      sizeMin: DEFAULT_FILTER.sizeMin,
+      sizeMax: DEFAULT_FILTER.sizeMax,
+    });
+  });
+  document.getElementById('span-reset')!.addEventListener('click', () => {
+    starfield.setFilter({ sizeSpan: DEFAULT_FILTER.sizeSpan });
   });
 
   // Reverse sync: any filter change (user input, URL restore, presets) updates

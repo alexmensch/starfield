@@ -72,32 +72,70 @@ html, body {
   font-size: 11px;
 }
 
-.topbar {
+/* Global `[hidden]` override — class selectors like `.modal` / `.panel`
+ * that set `display:*` share specificity with the UA `[hidden]` rule, so
+ * without this the HTML `hidden` attribute silently does nothing. */
+[hidden] { display: none !important; }
+
+/* Top-right stack — brand + search, then panel, share one flex column.
+ * Browser handles wrapping/shrinking; no JS layout. */
+.ui-top {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
+  top: 10px;
+  right: 14px;
+  bottom: 56px;
+  width: 280px;
+  max-width: calc(100vw - 28px);
   display: flex;
-  align-items: flex-start;
-  gap: 16px;
-  padding: 10px 14px;
+  flex-direction: column;
+  gap: 8px;
   z-index: 10;
-  background: linear-gradient(to bottom, rgba(7, 9, 18, 0.85), rgba(7, 9, 18, 0));
   pointer-events: none;
 }
-.topbar > * { pointer-events: auto; }
+.ui-top > * { pointer-events: auto; }
+
+.ui-bottom {
+  position: fixed;
+  left: 14px;
+  right: 14px;
+  bottom: 16px;
+  z-index: 7;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+  pointer-events: none;
+}
+.ui-bottom > * { pointer-events: auto; }
+/* Split scale-bar (start) and meta (end) apart on wide viewports; on narrow
+ * viewports flex-wrap stacks them and the auto-margin still right-aligns
+ * meta on its own line. */
+.ui-bottom .meta { margin-left: auto; }
+
+.topbar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: rgba(7, 9, 18, 0.85);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(6px);
+  flex: 0 0 auto;
+  /* Lift topbar above panel so the search dropdown (trapped inside
+   * topbar's backdrop-filter stacking context) can render over the panel
+   * below. Panel's own backdrop-filter otherwise wins on DOM-order ties. */
+  z-index: 1;
+}
 .brand {
   letter-spacing: 0.3em;
   text-transform: uppercase;
   font-size: 11px;
   color: var(--fg-dim);
-  padding: 6px 10px;
-  border: 1px solid var(--border);
+  padding: 2px 2px 6px;
+  border-bottom: 1px solid var(--border);
 }
 .search-wrap {
   position: relative;
-  flex: 1;
-  max-width: 460px;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -181,25 +219,62 @@ html, body {
   font-size: 11px;
 }
 .meta {
-  margin-left: auto;
   color: var(--fg-dim);
   font-size: 11px;
   text-align: right;
+  line-height: 1.5;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .panel {
-  position: fixed;
-  top: 50px;
-  right: 14px;
-  width: 280px;
-  max-height: calc(100vh - 64px);
-  overflow-y: auto;
+  overflow: hidden;
   background: rgba(7, 9, 18, 0.85);
   border: 1px solid var(--border);
-  z-index: 10;
   backdrop-filter: blur(6px);
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 auto;
+  min-height: 0;
 }
-.panel-inner { padding: 12px 14px; }
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px 8px 14px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  user-select: none;
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+  flex: 0 0 auto;
+}
+.panel-toggle {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg-dim);
+  width: 22px;
+  height: 22px;
+  line-height: 1;
+  font-family: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0;
+}
+.panel-toggle:hover {
+  color: var(--fg);
+  border-color: var(--border-strong);
+}
+.panel.collapsed .panel-header { border-bottom: none; }
+.panel.collapsed .panel-inner { display: none; }
+.panel-inner {
+  padding: 12px 14px;
+  overflow-y: auto;
+  flex: 1 1 auto;
+}
 
 .group {
   padding: 10px 0;
@@ -213,6 +288,10 @@ html, body {
   letter-spacing: 0.2em;
   color: var(--fg-dim);
   font-weight: normal;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
 }
 .group h3 .unit {
   color: var(--fg-dim);
@@ -236,6 +315,12 @@ html, body {
 }
 .sub-label:first-child { margin-top: 0; }
 .sub-label .unit { opacity: 0.6; }
+.sub-label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
 
 input[type="range"] {
   -webkit-appearance: none;
@@ -328,13 +413,6 @@ select {
   gap: 6px;
   cursor: pointer;
 }
-
-.hint {
-  color: var(--fg-dim);
-  font-size: 10.5px;
-  line-height: 1.5;
-}
-.footer { padding-top: 10px; }
 
 .row-split {
   display: flex;
@@ -432,14 +510,9 @@ select {
 }
 
 .scale-bar {
-  position: fixed;
-  left: 18px;
-  bottom: 16px;
-  z-index: 6;
   color: var(--fg);
   font-size: 10.5px;
   letter-spacing: 0.08em;
-  pointer-events: none;
 }
 .scale-bar-line {
   height: 6px;
@@ -493,7 +566,7 @@ body.monochrome select {
   color: var(--fg);
 }
 body.monochrome .topbar {
-  background: linear-gradient(to bottom, rgba(245, 242, 234, 0.85), rgba(245, 242, 234, 0));
+  background: rgba(255, 255, 255, 0.92);
 }
 body.monochrome .loading {
   background: var(--bg);
@@ -530,12 +603,107 @@ body.monochrome .search-results li.active {
   color: var(--accent);
 }
 
-@media (max-width: 640px) {
-  .panel {
-    width: calc(100vw - 28px);
-    right: 14px;
-    top: 50px;
-    max-height: 60vh;
-  }
-  .topbar .meta { display: none; }
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+}
+.modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+}
+.modal-card {
+  position: relative;
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  overflow-y: auto;
+  background: rgba(7, 9, 18, 0.96);
+  border: 1px solid var(--border-strong);
+  padding: 28px 28px 22px;
+  color: var(--fg);
+}
+.modal-card h2 {
+  margin: 0 0 16px;
+  font-size: 14px;
+  font-weight: normal;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: var(--fg);
+}
+.modal-card p {
+  margin: 0 0 14px;
+  color: var(--fg);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.modal-card a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.modal-card a:hover { text-decoration: none; }
+.modal-close {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  background: transparent;
+  border: none;
+  color: var(--fg-dim);
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  font-family: inherit;
+  padding: 4px 8px;
+}
+.modal-close:hover { color: var(--fg); }
+.modal-dismiss {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  color: var(--fg-dim);
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+.modal-dismiss input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  cursor: pointer;
+  margin: 0;
+  position: relative;
+  display: inline-block;
+  vertical-align: middle;
+}
+.modal-dismiss input[type="checkbox"]:hover { border-color: var(--fg-dim); }
+.modal-dismiss input[type="checkbox"]:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.modal-dismiss input[type="checkbox"]:checked::after {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 0;
+  width: 4px;
+  height: 8px;
+  border: solid var(--bg);
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+}
+
+body.monochrome .modal-card {
+  background: rgba(255, 255, 255, 0.98);
+}
+body.monochrome .modal-backdrop {
+  background: rgba(0, 0, 0, 0.3);
 }
