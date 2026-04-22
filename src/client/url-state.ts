@@ -23,6 +23,9 @@ const DEFAULTS = {
   tgtX: 0,
   tgtY: 0,
   tgtZ: 0,
+  upX: 0,
+  upY: 1,
+  upZ: 0,
 };
 
 const EPS = 1e-3;
@@ -58,6 +61,17 @@ export function applyFromUrl(starfield: Starfield) {
   // (shared URL where the camera position is explicit).
   const hasCam = params.has('cx') || params.has('cy') || params.has('cz');
   const hasTgt = params.has('tx') || params.has('ty') || params.has('tz');
+  const hasUp = params.has('ux') || params.has('uy') || params.has('uz');
+
+  // Apply camera.up before focus handling — focusStar/setOrbitTarget call
+  // controls.update() which reads camera.up to orient the view.
+  if (hasUp) {
+    starfield.camera.up.set(
+      Number(params.get('ux') ?? DEFAULTS.upX),
+      Number(params.get('uy') ?? DEFAULTS.upY),
+      Number(params.get('uz') ?? DEFAULTS.upZ),
+    ).normalize();
+  }
 
   if (params.has('focus')) {
     const idx = Number(params.get('focus'));
@@ -88,7 +102,7 @@ export function applyFromUrl(starfield: Starfield) {
       Number(params.get('tz') ?? DEFAULTS.tgtZ),
     );
   }
-  if (hasCam || hasTgt) starfield.controls.update();
+  if (hasCam || hasTgt || hasUp) starfield.controls.update();
 }
 
 export function startUrlSync(starfield: Starfield) {
@@ -134,6 +148,13 @@ export function startUrlSync(starfield: Starfield) {
       p.set('ty', fmt(tgt.y));
       p.set('tz', fmt(tgt.z));
     }
+
+    const up = starfield.camera.up;
+    if (!approx(up.x, DEFAULTS.upX) || !approx(up.y, DEFAULTS.upY) || !approx(up.z, DEFAULTS.upZ)) {
+      p.set('ux', fmt(up.x));
+      p.set('uy', fmt(up.y));
+      p.set('uz', fmt(up.z));
+    }
     return p.toString();
   };
 
@@ -156,7 +177,8 @@ export function startUrlSync(starfield: Starfield) {
   starfield.onFrame(() => {
     const c = starfield.camera.position;
     const t = starfield.controls.target;
-    const hash = `${c.x.toFixed(3)},${c.y.toFixed(3)},${c.z.toFixed(3)}|${t.x.toFixed(3)},${t.y.toFixed(3)},${t.z.toFixed(3)}`;
+    const u = starfield.camera.up;
+    const hash = `${c.x.toFixed(3)},${c.y.toFixed(3)},${c.z.toFixed(3)}|${t.x.toFixed(3)},${t.y.toFixed(3)},${t.z.toFixed(3)}|${u.x.toFixed(3)},${u.y.toFixed(3)},${u.z.toFixed(3)}`;
     if (hash !== lastCamHash) {
       lastCamHash = hash;
       schedule();

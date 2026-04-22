@@ -1,4 +1,4 @@
-# HYG 3D
+# Starfield
 
 A browser-based interactive 3D star catalog viewer. Loads the ~118,000-star
 [HYG catalog](https://github.com/astronexus/athyg) and renders it on the GPU
@@ -28,6 +28,14 @@ Stack: TypeScript, Three.js (WebGL2), Vite, Cloudflare Workers.
   "inked" onto an off-white background via multiply blending).
 - URL state sync: all settings plus camera pose are serialised to query
   params, so any view is bookmarkable and shareable.
+- First-visit welcome modal with a "Don't show this again" opt-out
+  (persisted to `localStorage`).
+- Mobile-friendly responsive layout (pure CSS flex, no breakpoints) with a
+  collapsible display-settings panel whose state is remembered across visits.
+- Targeted reset buttons next to constellation selection, star size, and
+  dynamic-range controls.
+- Two-finger rotate gesture to roll the view around the center of the
+  screen. See [Gesture support](#gesture-support) for platform notes.
 
 ## Prerequisites
 
@@ -106,8 +114,23 @@ need. See `CLAUDE.md` for the binary layout.
 - **WebGL2** — the vertex shader uses GLSL ES 3.00 with `uint` uniforms and
   bitwise operators for the spectral-class mask. All browsers from 2018
   onward support this (Safari 15+, Chrome 56+, Firefox 51+).
-- Desktop or tablet recommended. Mobile phones will work but the controls
-  panel on the right dominates narrow viewports.
+- Works on desktop and mobile. On narrow viewports the display-settings
+  panel collapses by default and floats above the scene.
+
+## Gesture support
+
+The two-finger rotate gesture (roll the view around the screen center) is
+available on:
+
+- **Mobile / touch** — iOS Safari, Android Chrome, any browser that exposes
+  multi-touch `touchmove` events.
+- **Desktop Safari** — via the macOS trackpad two-finger rotate gesture,
+  detected through Safari's non-standard `gesturechange` event.
+
+Chrome and Firefox on desktop do **not** expose a rotate gesture (they
+consume two-finger trackpad input for scroll/pinch only), so roll is
+unavailable in those browsers by design. All other navigation (orbit, zoom,
+pan) works the same everywhere.
 
 ## Known limitations
 

@@ -271,12 +271,23 @@ export class Starfield {
   }
 
   private pointerDownAt: { x: number; y: number; t: number } | null = null;
+  private twoFingerAngle: number | null = null;
+  private gestureLastRotation = 0;
 
   private attachEvents() {
     window.addEventListener('resize', this.onResize);
     const canvas = this.renderer.domElement;
     canvas.addEventListener('pointerdown', this.onPointerDown);
     canvas.addEventListener('pointerup', this.onPointerUp);
+    // Two-finger roll. Touch events for mobile; gesture* events for Safari
+    // desktop trackpad. Chrome/Firefox desktop don't expose a rotate gesture,
+    // so roll is unavailable there by design.
+    canvas.addEventListener('touchstart', this.onTouchStart);
+    canvas.addEventListener('touchmove', this.onTouchMove);
+    canvas.addEventListener('touchend', this.onTouchEnd);
+    canvas.addEventListener('touchcancel', this.onTouchEnd);
+    canvas.addEventListener('gesturestart', this.onGestureStart as EventListener);
+    canvas.addEventListener('gesturechange', this.onGestureChange as EventListener);
   }
 
   private onResize = () => {
@@ -328,6 +339,59 @@ export class Starfield {
     this.setVectorTo(idx);
   };
 
+  private onTouchStart = (e: TouchEvent) => {
+    if (e.touches.length === 2) {
+      this.twoFingerAngle = this.touchAngle(e.touches);
+    } else {
+      this.twoFingerAngle = null;
+    }
+  };
+
+  private onTouchMove = (e: TouchEvent) => {
+    if (e.touches.length !== 2 || this.twoFingerAngle === null) return;
+    const a = this.touchAngle(e.touches);
+    let d = a - this.twoFingerAngle;
+    if (d > Math.PI) d -= 2 * Math.PI;
+    else if (d < -Math.PI) d += 2 * Math.PI;
+    this.twoFingerAngle = a;
+    this.rollCamera(-d);
+  };
+
+  private onTouchEnd = (e: TouchEvent) => {
+    if (e.touches.length !== 2) this.twoFingerAngle = null;
+  };
+
+  private touchAngle(t: TouchList): number {
+    return Math.atan2(
+      t[1].clientY - t[0].clientY,
+      t[1].clientX - t[0].clientX,
+    );
+  }
+
+  private onGestureStart = (e: Event) => {
+    e.preventDefault();
+    this.gestureLastRotation = 0;
+  };
+
+  private onGestureChange = (e: Event) => {
+    e.preventDefault();
+    const rot = (e as Event & { rotation: number }).rotation;
+    const delta = ((rot - this.gestureLastRotation) * Math.PI) / 180;
+    this.gestureLastRotation = rot;
+    this.rollCamera(-delta);
+  };
+
+  // Rotate the camera's up vector around the view direction. TrackballControls
+  // reads camera.up on every update() so the new orientation persists through
+  // subsequent orbit/zoom without needing to touch the controls' internals.
+  private rollCamera(angle: number) {
+    const forward = new THREE.Vector3()
+      .subVectors(this.controls.target, this.camera.position);
+    if (forward.lengthSq() === 0) return;
+    forward.normalize();
+    this.camera.up.applyAxisAngle(forward, angle).normalize();
+  }
+
   private animate = () => {
     if (this.disposed) return;
     this.controls.update();
@@ -343,6 +407,12 @@ export class Starfield {
     const canvas = this.renderer.domElement;
     canvas.removeEventListener('pointerdown', this.onPointerDown);
     canvas.removeEventListener('pointerup', this.onPointerUp);
+    canvas.removeEventListener('touchstart', this.onTouchStart);
+    canvas.removeEventListener('touchmove', this.onTouchMove);
+    canvas.removeEventListener('touchend', this.onTouchEnd);
+    canvas.removeEventListener('touchcancel', this.onTouchEnd);
+    canvas.removeEventListener('gesturestart', this.onGestureStart as EventListener);
+    canvas.removeEventListener('gesturechange', this.onGestureChange as EventListener);
     this.controls.dispose();
     this.geometry.dispose();
     this.material.dispose();

@@ -1,4 +1,4 @@
-# HYG 3D — Claude project notes
+# Starfield — Claude project notes
 
 Project context and non-obvious constraints for future Claude Code sessions.
 Read this before editing.
@@ -36,6 +36,8 @@ src/
     unit-toggle.ts, theme-toggle.ts  display-mode toggles
     distance-util.ts      fmtDist, unit state + broadcast, niceRound
     url-state.ts          URL ↔ state sync (debounced)
+    info-modal.ts         first-visit welcome modal (localStorage opt-out)
+    panel-layout.ts       collapse-toggle for the display-settings panel
     shaders/star.vert.glsl, star.frag.glsl    GLSL3/WebGL2
     index.html, styles.css
 ```
@@ -144,7 +146,13 @@ to handle it in `syncFromFilter`.
   `focusStar` which teleports the camera. If it has camera params too, we use
   `setOrbitTarget` so the explicit camera wins.
 - Camera changes are tracked via `onFrame` with a stringified-coord hash and
-  a 300 ms debounced writer.
+  a 300 ms debounced writer. The hash covers position, target, **and**
+  `camera.up` — so two-finger roll (which only mutates `up`) still triggers
+  a URL update.
+- `camera.up` round-trips via `ux/uy/uz` params. They're written only when
+  `up` differs from `(0, 1, 0)` and applied **before** `focusStar` /
+  `setOrbitTarget` in `applyFromUrl` because those call `controls.update()`
+  which reads `camera.up` to derive orientation.
 
 ### Shader requires WebGL2 / GLSL3
 
@@ -180,12 +188,103 @@ Current settings:
 - `noPan = false` (right-click pans; set `true` to disable)
 - `minDistance = 0.005`, `maxDistance = 100_000`
 
+### Two-finger roll gesture (platform-split)
+
+`starfield.ts` adds a two-finger rotate gesture that rolls the view around
+the center of the screen by rotating `camera.up` around the forward vector
+(`target - position`). TrackballControls reads `camera.up` every `update()`,
+so the new orientation persists through subsequent orbit/zoom without
+touching the controls' internals.
+
+Implementation split:
+
+- **Mobile / touch** — listens for `touchstart`/`touchmove` with exactly two
+  touches, computes the `atan2` angle between them, and applies the delta
+  per move. Single-finger drags are ignored (TrackballControls handles them
+  via pointer events, separate from the touch event stream, so there is no
+  conflict).
+- **Desktop Safari** — listens for the non-standard `gesturestart` /
+  `gesturechange` events (WebKit only). `event.rotation` is degrees,
+  cumulative since `gesturestart`, positive clockwise. We `preventDefault`
+  to suppress Safari's page-level zoom; TrackballControls still receives
+  the accompanying wheel events for pinch-zoom.
+- **Chrome / Firefox on desktop** — no rotate gesture exists in those
+  browsers (two-finger trackpad is scroll-only, pinch fires wheel+ctrlKey
+  but no rotation). Roll is unavailable there by design. Do not spend
+  effort trying to polyfill it.
+
+Sign convention: finger rotation CW on the screen → world rotates CW.
+`rollCamera(-delta)` achieves this because `applyAxisAngle(forward, θ)`
+rotates `camera.up` CCW when viewed from behind the forward vector
+(standard right-hand rule), and rotating `up` CCW in world space makes
+world content appear CW in the camera's view.
+
+### Layout containers: `.ui-top` and `.ui-bottom`
+
+The whole overlay UI is two pure-CSS flex containers — **no breakpoints, no
+JS measurements**. An earlier attempt used `ResizeObserver` to drive
+`panel.style.top` / `maxHeight`; the user explicitly rejected that ("use
+native html/css... we shouldn't dictate layout"). Do not reintroduce it.
+
+- `.ui-top` — fixed top-right, `flex-direction: column`, bottom-bounded.
+  Children in DOM order: topbar (brand + search), then panel (display
+  settings). Because panel is a flex child below the topbar, it can never
+  overlap it — no measurement needed.
+- `.ui-bottom` — fixed full-width along the bottom, `flex-wrap: wrap`,
+  `align-items: flex-end`. Children: scale-bar (left), meta (right, with
+  `margin-left: auto` for pull-apart). When the row doesn't fit, wrap puts
+  them on separate rows naturally.
+- `.meta` has `overflow-wrap: anywhere` — star names can be long and we
+  want them to break within the narrow column when necessary.
+- Both containers set `pointer-events: none` on themselves and `auto` on
+  direct children, so clicks fall through empty regions to the canvas.
+
+### `[hidden]` specificity and `.modal { display: grid }`
+
+The HTML `hidden` attribute maps to `[hidden] { display: none }` in the UA
+stylesheet — specificity (0,1,0). `.modal { display: grid }` has the same
+specificity (0,1,0), and site stylesheets win ties, so `modal.hidden = true`
+had **no visible effect** on the modal. Fixed globally with
+`[hidden] { display: none !important; }` in `styles.css`. If you add
+another class that sets `display` on an element that may be `hidden`ed
+imperatively, you're already covered — but don't remove the `!important`
+rule.
+
+### `backdrop-filter` creates stacking contexts
+
+Both `.topbar` and `.panel` use `backdrop-filter: blur(6px)`, which
+silently creates a stacking context. Children's `z-index` is then clamped
+to that context — so `.search-results` with `z-index: 12` inside `.topbar`
+was painted **below** `.panel` (which has no z-index but appears later in
+DOM order). Fixed by giving `.topbar` an explicit `z-index: 1` to lift its
+whole context above `.panel`. If you add more blurred panels, remember
+that every one of them is a new stacking boundary.
+
 ### `@cloudflare/workers-types` leaks globally
 
 Do not add it to the tsconfig `types` array — its DOM re-declarations bleed
 into the client types and break `querySelector<T>`. `src/worker.ts` currently
 inlines its own minimal `Fetcher` interface; don't swap back to the type
 package without a second tsconfig for the worker build.
+
+### Wrangler config: observability + smart placement
+
+`wrangler.toml` currently has `placement = { mode = "smart" }` and an
+`[observability]` block split into `[observability.logs]` (enabled,
+persisted, 10% head sampling, with invocation logs) and
+`[observability.traces]` (defined but disabled). The top-level
+`[observability]` block must keep `head_sampling_rate` defined for the
+deployment to accept the nested subsection config — wrangler treats the
+top-level field as the default applied when sub-blocks omit their own
+rate.
+
+`compatibility_date` is pinned to `2026-04-22`. Bump deliberately when you
+need new runtime features; `wrangler deploy` will log that it's overriding
+whatever the dashboard has.
+
+`routes` must appear **before** `[assets]` in the TOML — TOML sections
+claim every line after them until the next section header, so a top-level
+array after a `[section]` would be parsed as part of that section.
 
 ### Preprocessor idempotency
 
@@ -221,6 +320,11 @@ npx tsx scripts/verify-catalog.ts   # dump header + spot-check records
   `.mag-preset` buttons in `index.html`.
 - **Constellation figure membership** — `FIGURE_STARS_PER_CON` in
   `constellation-overlay.ts`.
+- **Info-modal dismissal** — cleared by removing the
+  `starfield.info-dismissed` localStorage key.
+- **Panel collapse default** — persisted under `starfield.panel-collapsed`
+  (`'1'` = collapsed). To make it collapsed-by-default for first-time
+  visitors, change the initial state in `panel-layout.ts`.
 
 ## Things deliberately kept out of v1
 
@@ -231,5 +335,6 @@ Noted here so we don't re-debate scope:
 - HR diagram side panel.
 - Bayer / Flamsteed designations in search (binary doesn't carry them).
 - WASD / flight controls (removed after v1 review).
-- Mobile-specific touch tuning beyond TrackballControls defaults.
+- Desktop two-finger roll on Chrome / Firefox (no rotate gesture exists in
+  those browsers; Safari-only on desktop by design).
 - Time-series proper motion (positions are snapshot-only).
