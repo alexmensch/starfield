@@ -12,11 +12,16 @@
     <svg id="overlay" class="overlay" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
       <path id="con-figure" />
       <path id="dist-line" />
-      <text id="dist-label" class="dist-label" text-anchor="middle" dominant-baseline="central"></text>
+      <g id="dist-ui">
+        <text id="dist-label" class="dist-label" text-anchor="middle" dominant-baseline="central"></text>
+        <text id="dist-warp-text" class="dist-warp-text" text-anchor="start" dominant-baseline="central">→ Warp</text>
+      </g>
       <circle id="focus-ring" class="focus-ring" />
     </svg>
 
     <div id="tooltip" class="tooltip" hidden></div>
+
+    <button id="warp-btn" class="warp-btn" type="button" hidden></button>
 
     <div id="info-modal" class="modal" hidden>
       <div class="modal-backdrop" id="info-backdrop"></div>

@@ -39,6 +39,7 @@ src/
     url-state.ts          URL ↔ state sync (debounced)
     info-modal.ts         first-visit welcome modal (localStorage opt-out)
     panel-layout.ts       collapse-toggle for the display-settings panel
+    warp-button.ts        warp trigger (on distance label) + skip pill
     shaders/star.vert.glsl, star.frag.glsl    GLSL3/WebGL2
     index.html, styles.css
 ```
@@ -235,7 +236,10 @@ on a dark canvas. `depthTest` is off in both.
 `camera.near = 0.001`, `controls.minDistance = 0.005`. The near plane must
 stay **strictly less** than the closest orbit distance, otherwise a centered
 star lands on the clip plane at max zoom and gets culled. If adjusting, keep
-that invariant.
+that invariant. `WARP_END_OFFSET_PC` (currently `0.005`) is kept equal to
+`minDistance` so the warp's arrival parks exactly at the closest user-
+orbitable distance — earlier attempts to go closer hit float32 precision
+jitter when the destination star is far from the world origin.
 
 ### TrackballControls tuning
 
@@ -252,6 +256,64 @@ Current settings:
 - `staticMoving = false` (keeps damping on)
 - `noPan = false` (right-click pans; set `true` to disable)
 - `minDistance = 0.005`, `maxDistance = 100_000`
+
+### Warp animation
+
+An animated camera flight between the focused star (A) and the distance
+vector destination (B). Trigger: click the yellow distance label on the
+SVG overlay (hovering reveals a "→ Warp" suffix), or press `W`. Skip: the
+muted ghost pill at top-center (shown only while warping), or `Esc` /
+`Space`. Click-tip-to-travel remains as an instant teleport — unchanged.
+
+Two-phase animation in `starfield.ts updateWarp`:
+
+1. **Reorient** (`WARP_REORIENT_MS` = 2000). Camera keeps
+   `camera.lookAt(A)` locked the whole time; its position spherically
+   slerps around A from wherever the user was to `A + dirBack *
+   WARP_END_OFFSET_PC` (i.e. on the travel line, offset behind A from B's
+   perspective). Simultaneously the orbit distance eases linearly from
+   `mag0` down to `WARP_END_OFFSET_PC`. End state: A is centered and B is
+   straight ahead, beyond A. Quaternion slerp is used for the angular
+   interp (robust against antipodal starting positions).
+
+2. **Fly** (log-scaled duration, `WARP_T_MIN_MS` to `WARP_T_MAX_MS`).
+   Straight-line lerp from `pStart` to `pEnd` with a symmetric
+   accelerate/decelerate profile: `f(t) = 2t²` for `t < 0.5`, else
+   `1 - 2(1-t)²`. `camera.lookAt(B)` throughout.
+
+Scale bar smoothness: `controls.target` is pointed at **B** from the
+moment the warp begins (not just at arrival). Camera orientation is
+controlled independently via `camera.lookAt`, so the reorient phase can
+still keep A centered visually while the scale bar already reflects
+distance-to-destination — this avoids a jarring scale-bar snap when the
+target would otherwise switch from A to B at arrival.
+
+During warp: `controls.enabled = false` (no orbit), pointer-up click
+handling is short-circuited, URL writer skips frame-hash updates (camera
+is changing every frame and we don't want to serialise intermediate
+poses), and `body.warping` toggles a CSS class that hides the entire
+SVG overlay (distance vector, figure, focus ring) since their per-frame
+reprojection looks chaotic under fast travel.
+
+Distance-label-as-warp-trigger UI:
+`index.html` wraps the distance label and a static `→ Warp` sibling
+`<text>` in a `<g id="dist-ui">`. The group has `pointer-events: auto`
+and `:hover` reveals the warp suffix via CSS opacity transition. The
+label itself is still `text-anchor="middle"` and positioned dead-center
+on the measurement vector; the warp suffix is computed each frame as
+`mx + label.getComputedTextLength()/2 + WARP_GAP_PX` so the distance
+stays visually anchored while the suffix extends to the right.
+
+**Known issue**: visible position jitter on stars when orbiting at the
+minimum distance (~0.005 pc) from stars that are far from the world
+origin (~1000+ pc out). Classic float32 catastrophic cancellation in the
+vertex shader's `distance(worldPos, uCameraPos)` and
+`modelViewMatrix * position` — both large magnitudes subtracting to a
+tiny delta. An earlier emulated-double-precision fix (split camera
+uniform into Hi/Lo float32 pair, use `mat3(modelViewMatrix) * (worldPos
+- uCameraPosHi - uCameraPosLo)`) didn't resolve it visibly and was
+reverted. Needs revisiting with a better diagnosis — possibly the
+projection matrix at very-close near plane also loses precision.
 
 ### Two-finger roll gesture (platform-split)
 
@@ -385,6 +447,9 @@ npx tsx scripts/verify-catalog.ts   # dump header + spot-check records
   `.mag-preset` buttons in `index.html`.
 - **Star-gap radius around constellation lines** — `STAR_GAP_PX` in
   `constellation-overlay.ts`.
+- **Warp duration curve** — `WARP_T_MIN_MS`, `WARP_T_MAX_MS`,
+  `WARP_T_K_MS` (ms-per-log10-parsec slope) in `starfield.ts`. Also
+  `WARP_REORIENT_MS` and `WARP_END_OFFSET_PC` there.
 - **Info-modal dismissal** — cleared by removing the
   `starfield.info-dismissed` localStorage key.
 - **Panel collapse default** — persisted under `starfield.panel-collapsed`

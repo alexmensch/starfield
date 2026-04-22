@@ -16,13 +16,19 @@ const LABEL_PADDING_PX = 50;
 export function createDistanceVectorOverlay(starfield: Starfield) {
   const line = document.getElementById('dist-line') as unknown as SVGPathElement;
   const label = document.getElementById('dist-label') as unknown as SVGTextElement;
+  const distUi = document.getElementById('dist-ui') as unknown as SVGGElement;
+  const warpText = document.getElementById('dist-warp-text') as unknown as SVGTextElement;
+  const WARP_GAP_PX = 10;
 
   const tmpA = new THREE.Vector3();
   const tmpB = new THREE.Vector3();
 
   const hide = () => {
     line.setAttribute('d', '');
-    label.textContent = '';
+    // Hide the whole UI group so both label and warp suffix disappear at
+    // once. Using display rather than clearing textContent keeps the static
+    // warp element in the DOM so its :hover styling keeps working on show.
+    distUi.style.display = 'none';
   };
 
   starfield.onVectorChange(() => {
@@ -59,9 +65,17 @@ export function createDistanceVectorOverlay(starfield: Starfield) {
     const rawMy = (pA[1] + pB[1]) / 2 - 10;
     const mx = Math.max(LABEL_PADDING_PX, Math.min(w - LABEL_PADDING_PX, rawMx));
     const my = Math.max(LABEL_PADDING_PX, Math.min(h - LABEL_PADDING_PX, rawMy));
+    distUi.style.display = '';
     label.setAttribute('x', mx.toFixed(1));
     label.setAttribute('y', my.toFixed(1));
     label.textContent = fmtDist(distPc);
+
+    // Position the warp affordance to the right of the distance label. The
+    // label is anchor-middle so its right edge sits at (mx + width/2); the
+    // warp text is anchor-start so its left edge is placed there plus a gap.
+    const halfWidth = label.getComputedTextLength() / 2;
+    warpText.setAttribute('x', (mx + halfWidth + WARP_GAP_PX).toFixed(1));
+    warpText.setAttribute('y', my.toFixed(1));
   });
 }
 

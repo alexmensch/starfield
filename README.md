@@ -15,7 +15,9 @@ Stack: TypeScript, Three.js (WebGL2), Vite, Cloudflare Workers.
   `binoculars` / `all` presets), spectral class, and constellation.
 - Click a star to focus; click another to draw a measured distance vector
   (chevron-marked, clipped when the destination goes off-screen); click the
-  far tip to travel there.
+  far tip to travel there instantly, or hover the distance label and click
+  the "→ Warp" affordance (or press `W`) for an animated flight between the
+  two stars.
 - Dual search inputs: one for focusing, one for measurement destination.
   Substring / fuzzy matching over all ~500 named stars.
 - Hover any star for a 280 ms-delayed tooltip with name, constellation, and
@@ -136,6 +138,9 @@ pan) works the same everywhere.
 
 ## Known limitations
 
+- **Visible position jitter** when orbiting at the minimum distance from
+  stars that are far from the world origin — a float32 precision issue in
+  the vertex shader. Workaround: zoom out slightly.
 - **Search is limited to stars with proper names** (~500 stars). Bayer
   (e.g. "Alpha Cen") and Flamsteed designations are in the source CSV but
   not carried into the binary, so searching by them won't work in v1.

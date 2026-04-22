@@ -9,6 +9,7 @@ import { createScaleBar } from './scale-bar';
 import { bindUnitToggle } from './unit-toggle';
 import { bindThemeToggle } from './theme-toggle';
 import { bindPanelLayout } from './panel-layout';
+import { bindWarpButton } from './warp-button';
 import { maybeShowInfoModal } from './info-modal';
 import { applyFromUrl, startUrlSync } from './url-state';
 import { fmtDist, onUnitChange } from './distance-util';
@@ -52,6 +53,7 @@ async function main() {
     createDistanceVectorOverlay(starfield);
     createFocusRingOverlay(starfield);
     createScaleBar(starfield);
+    bindWarpButton(starfield);
 
     // Apply any URL state before starting the URL writer so we don't echo
     // the same params back into history on load.

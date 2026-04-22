@@ -490,7 +490,7 @@ select {
   stroke-dasharray: 3 3;
   pointer-events: none;
 }
-.dist-label {
+.dist-label, .dist-warp-text {
   fill: rgba(253, 230, 138, 1);
   font-family: var(--font-mono);
   font-size: 11px;
@@ -499,6 +499,17 @@ select {
   stroke: rgba(7, 9, 18, 0.9);
   stroke-width: 3px;
   stroke-linejoin: round;
+}
+#dist-ui {
+  pointer-events: auto;
+  cursor: pointer;
+}
+.dist-warp-text {
+  opacity: 0;
+  transition: opacity 0.14s ease;
+}
+#dist-ui:hover .dist-warp-text {
+  opacity: 1;
 }
 
 .scale-bar {
@@ -591,7 +602,8 @@ body.monochrome #dist-line {
 body.monochrome .focus-ring {
   stroke: rgba(31, 35, 48, 0.6);
 }
-body.monochrome .dist-label {
+body.monochrome .dist-label,
+body.monochrome .dist-warp-text {
   fill: rgba(146, 64, 14, 1);
   stroke: rgba(255, 255, 255, 0.9);
 }
@@ -658,6 +670,39 @@ body.monochrome .search-results li.active {
   padding: 4px 8px;
 }
 .modal-close:hover { color: var(--fg); }
+.warp-btn {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 11;
+  padding: 6px 16px;
+  font-family: inherit;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  color: var(--fg);
+  background: rgba(7, 9, 18, 0.85);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+}
+.warp-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+body.warping #overlay { display: none; }
+body.monochrome .warp-btn {
+  color: var(--fg);
+  background: rgba(245, 242, 234, 0.9);
+  border-color: rgba(30, 64, 175, 0.35);
+}
+body.monochrome .warp-btn:hover {
+  color: rgba(30, 64, 175, 1);
+  border-color: rgba(30, 64, 175, 0.8);
+}
+
 .modal-credits {
   margin-top: 18px;
   margin-bottom: 10px;

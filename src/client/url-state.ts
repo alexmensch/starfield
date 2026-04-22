@@ -175,6 +175,11 @@ export function startUrlSync(starfield: Starfield) {
   onUnitChange(schedule);
 
   starfield.onFrame(() => {
+    // Skip URL writes while a warp is in flight — the camera mutates every
+    // frame and we don't want to serialise every intermediate pose. The
+    // finishWarp() path fires a state change and a focus change that will
+    // flush the final URL on arrival.
+    if (starfield.getWarpActive()) return;
     const c = starfield.camera.position;
     const t = starfield.controls.target;
     const u = starfield.camera.up;
