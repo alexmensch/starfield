@@ -5,10 +5,11 @@ Read this before editing.
 
 ## What this is
 
-A browser-based interactive 3D star catalog viewer. Loads the ~118k-star HYG
-catalog, computes per-vertex apparent magnitude on the GPU as the camera moves,
-and renders stars as additive point sprites coloured by B–V index. Ships as a
-Cloudflare Workers static-assets site.
+A browser-based interactive 3D star catalog viewer. Loads the ~313k-star
+AT-HYG v3.3 catalog (classic-IDs subset), computes per-vertex apparent
+magnitude on the GPU as the camera moves, and renders stars as additive
+point sprites coloured by B–V index. Ships as a Cloudflare Workers
+static-assets site.
 
 ## Repo layout
 
@@ -17,11 +18,12 @@ scripts/
   build-catalog.ts        CSV → binary preprocessor (run at build time)
   verify-catalog.ts       sanity-check tool for the generated binary
 data/
-  hyglike_from_athyg_v33.csv         source CSV (gitignored, ~38 MB)
+  athyg_33_classic_ids.csv           source CSV (gitignored, ~64 MB)
   stellarium-modern-skyculture.json  Stellarium constellation lines (committed, ~200 KB)
 public/
-  catalog.bin             generated (gitignored, ~3.8 MB)
+  catalog.bin             generated (gitignored, ~12 MB)
   constellations.json     generated (gitignored)
+  search-index.json       generated (gitignored, ~11 MB, gzips to ~2 MB)
 src/
   worker.ts               Cloudflare Worker entry (just delegates to ASSETS)
   client/
@@ -46,29 +48,60 @@ src/
 
 ## Binary catalog format (`public/catalog.bin`)
 
-Fixed-size records, sorted brightest-first by `absmag`. Stride is 32 bytes.
+Fixed-size records, sorted brightest-first by `absmag`. Current version is
+**v2** with a 40-byte stride. Magic stayed `HYG3` — only the version field
+changed to disambiguate.
 
 - Header (32 bytes)
   - 0–3   ASCII `HYG3`
-  - 4–7   `uint32` version (currently 1)
+  - 4–7   `uint32` version (currently 2)
   - 8–11  `uint32` count
   - 12–15 `uint32` nameTableOffset
   - 16–19 `uint32` nameTableLength
   - 20–31 reserved
-- Record (32 bytes per star)
+- Record (40 bytes per star)
   - 0–11  `float32 × 3`  x, y, z in parsecs (equatorial, Sol at origin)
   - 12–15 `float32`      absmag
   - 16–19 `float32`      ci (B–V colour index, default 0.65 for missing)
-  - 20    `uint8`        spectClass (0=O 1=B 2=A 3=F 4=G 5=K 6=M 7=C/S/W 8=?)
-  - 21    `uint8`        constellation index (0–87 into `constellations.json`; 255=none)
-  - 22    `uint8`        flags (bit 0 = has name, bit 1 = is Sol)
-  - 23    reserved (alignment)
-  - 24–27 `uint32`       nameOffset (into name table, only valid when bit 0 set)
-  - 28–31 reserved
-- Name table: length-prefixed UTF-8 strings (`uint16` length then bytes)
+  - 20–23 `float32`      physicalRadius in solar radii (computed at build time)
+  - 24–27 `uint32`       companionIdx (record index of binary companion; `0xFFFFFFFF` = none)
+  - 28–31 `uint32`       nameOffset (into name table, valid when flag bit 0 set; `0` = none)
+  - 32    `uint8`        spectClass (0=O 1=B 2=A 3=F 4=G 5=K 6=M 7=C/S/W 8=?)
+  - 33    `uint8`        luminosityClass (0=VII/D … 9=Ia+/0, 255=unknown — see below)
+  - 34    `uint8`        constellation index (0–87 into `constellations.json`; 255=none)
+  - 35    `uint8`        flags (bit 0=has_name, 1=is_sol, 2=has_bayer, 4=is_binary_primary)
+  - 36–39 reserved (alignment)
+- Name table: length-prefixed UTF-8 strings (`uint16` length then bytes).
+  **Offset 0 is reserved** as the "no name" sentinel (2 zero bytes of
+  padding); real names start at offset ≥ 2.
 
-If you add fields, keep the 32-byte stride (pad as needed) and **bump
+Luminosity class encoding (Morgan–Keenan):
+`0=VII/D (white dwarf), 1=VI/sd, 2=V (dwarf), 3=IV (subgiant), 4=III
+(giant), 5=II (bright giant), 6=Ib, 7=Iab, 8=Ia, 9=Ia+/0 (hypergiant),
+255=unknown`.
+
+If you add fields, keep the 40-byte stride (pad as needed) and **bump
 `version`** in both the writer and reader.
+
+## Search index (`public/search-index.json`)
+
+Separate from `catalog.bin` so the main binary stays rendering-focused.
+One JSON array entry per star that has at least one searchable identifier
+(proper name, Bayer, Flamsteed, HIP, HD, HR, or Gliese). Short keys
+(`i/p/b/f/hip/hd/hr/gl/c`) to keep wire size down — file is ~11 MB raw,
+~2 MB gzipped. Loaded in parallel with `catalog.bin` in `main.ts`.
+
+Identifier dispatch in `search.ts`:
+- Regex-prefix forms (`HIP 27989`, `HD 39801`, `HR 2061`, `Gl 559A`) go
+  through `Map<number, number>` direct lookups — no fuzzy scoring.
+- Flamsteed (`58 Ori`) also uses a direct `"${num} ${con}"` map.
+- Everything else (proper name, Bayer forms) is Fuse-fuzzy.
+- For each Bayer'd star, multiple index entries are emitted so any of
+  `α Cen` / `Alpha Cen` / `Alp Cen` / `Alf Cen` / `Alpha Centaurus` find
+  the star. "Alf" is added only for α (most-commonly alternate-spelled).
+
+The dropdown deduplicates by star index so a star with multiple matching
+Bayer variants shows up once.
 
 ## Architectural notes you'll want before touching code
 
@@ -413,12 +446,65 @@ whatever the dashboard has.
 claim every line after them until the next section header, so a top-level
 array after a `[section]` would be parsed as part of that section.
 
+### Physical radius and spectral parsing
+
+`parseSpectral` in `build-catalog.ts` walks tolerant regexes over the (often
+messy) AT-HYG `spect` string to extract `{ classIdx, subclass, lumClass,
+isWhiteDwarf }`. It handles the common pathological forms seen in the
+catalog (composite `"K0III+K6V"`, prefix colons, ranges like `"F5-F9"`,
+subdwarf `sdB`, white-dwarf `DA2`, etc.) by using prefix-anchored matches
+for the luminosity numeral and falling back to `lumClass=255` when no
+pattern matches.
+
+`physicalRadius` then computes R/R☉ via Stefan–Boltzmann:
+
+```
+T       = interp(T_TABLE[classIdx], subclass)
+BC      = interp(BC_TABLE[classIdx], subclass)
+Mbol    = absmag + BC
+L/L☉    = 10^((4.74 − Mbol) / 2.5)
+R/R☉    = sqrt(L/L☉) × (T_sun/T)²
+```
+
+Tables are main-sequence values — cooler for giants/supergiants in reality
+— but the Mbol side of the equation absorbs the luminosity-class
+difference, so the end result lands close to published radii (Sol≈1.03,
+Sirius≈1.81, Vega≈2.68, Rigel≈75, Betelgeuse≈700, all within ~10% of
+canonical values). Clamped to `[0.08, 2500]` so pathological catalog
+rows don't produce absurd sizes. White dwarfs are special-cased to
+0.013 R☉ (typical WD radius; absmag doesn't translate reliably for them).
+
+### Geometric binary inference
+
+`inferBinaries` in `build-catalog.ts` runs after the absmag sort so record
+indices are final. Spatial grid keyed at `BINARY_MAX_SEP_PC = 0.005 pc`
+(≈1030 AU) using a three-axis hash; for each star, check own cell + 26
+neighbours and record the nearest neighbour within the threshold.
+
+Why this threshold: at the current `minDistance = 0.005 pc` orbit,
+anything farther than that subtends >45° from the camera — it wouldn't
+fit the viewport as a visual "system", which is what the render layer
+wants. Wider bound pairs exist in the catalog but won't render usefully.
+
+What you'll see from the classic_ids subset: ~14 pairs. Feels low but is
+accurate. The subset selects stars with classical designations, and most
+"wide binary" companions in physically-bound pairs don't have their own
+classical ID — the brighter primary does. The pairs we do find are
+almost all famous named visual binaries (α Cen A/B, Alula Australis,
+Struve 2398, etc.). Reaching thousands of pairs would require the fuller
+`reduced_m10` subset, which has a different selection profile.
+
+Each side of a pair stores the other's index in `companionIdx`. The
+**brighter** of the two (lower absmag) is flagged as primary via flag
+bit 4, so the renderer can quickly identify system anchors.
+
 ### Preprocessor idempotency
 
-`scripts/build-catalog.ts isUpToDate` skips rebuild if `catalog.bin` is newer
-than both the source CSV and the script itself. If you change field mapping
-but not the script mtime (e.g. edit in a way that updates atime only), you
-may need to `touch scripts/build-catalog.ts` or delete `public/catalog.bin`.
+`scripts/build-catalog.ts isUpToDate` skips rebuild if `catalog.bin`,
+`constellations.json`, **and** `search-index.json` are newer than both the
+source CSV and the script itself. If you change field mapping but not the
+script mtime (e.g. edit in a way that updates atime only), you may need to
+`touch scripts/build-catalog.ts` or delete the generated files.
 
 ## Local commands
 

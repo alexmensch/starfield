@@ -1,15 +1,15 @@
 # Starfield
 
-A browser-based interactive 3D star catalog viewer. Loads the ~118,000-star
-[HYG catalog](https://github.com/astronexus/athyg) and renders it on the GPU
-with per-frame, camera-relative apparent magnitude, filterable by distance,
-magnitude, spectral class, and constellation.
+A browser-based interactive 3D star catalog viewer. Loads the ~313,000-star
+classic-IDs subset of the [AT-HYG catalog](https://codeberg.org/astronexus/athyg)
+and renders it on the GPU with per-frame, camera-relative apparent magnitude,
+filterable by distance, magnitude, spectral class, and constellation.
 
 Stack: TypeScript, Three.js (WebGL2), Vite, Cloudflare Workers.
 
 ## Features
 
-- All 118k stars rendered as GPU points, sized and coloured by apparent
+- All 313k stars rendered as GPU points, sized and coloured by apparent
   magnitude computed in the vertex shader from the current camera position.
 - Filter by distance from Sol, maximum apparent magnitude (with `naked eye` /
   `binoculars` / `all` presets), spectral class, and constellation.
@@ -19,7 +19,9 @@ Stack: TypeScript, Three.js (WebGL2), Vite, Cloudflare Workers.
   the "→ Warp" affordance (or press `W`) for an animated flight between the
   two stars.
 - Dual search inputs: one for focusing, one for measurement destination.
-  Substring / fuzzy matching over all ~500 named stars.
+  Matches proper names (fuzzy), Bayer designations (`α Cen` / `Alpha Cen` /
+  `Alf Cen` all work), Flamsteed numbers (`58 Ori`), and numeric catalog
+  IDs (`HIP 27989`, `HD 39801`, `HR 2061`, `Gl 559A`) via direct lookup.
 - Hover any star for a 280 ms-delayed tooltip with name, constellation, and
   distance from Sol.
 - Constellation overlay draws the classical stick-figure asterism lines
@@ -54,9 +56,12 @@ cd starfield
 npm install
 ```
 
-Place the source CSV at `data/hyglike_from_athyg_v33.csv` (the path is
-gitignored). The file is available from
-[astronexus/athyg](https://github.com/astronexus/athyg/blob/main/data/subsets/hyglike_from_athyg_v33.csv).
+Place the source CSV at `data/athyg_33_classic_ids.csv` (the path is
+gitignored). The file is available from the
+[AT-HYG subsets folder on Codeberg](https://codeberg.org/astronexus/athyg/src/branch/main/data/subsets)
+— the classic-IDs subset selects only stars with a proper name, Bayer /
+Flamsteed designation, or a catalog ID in HIPPARCOS, Henry Draper, Yale
+Bright Star, or Gliese/Jahreiss (~317k stars, ~64 MB).
 
 ## Running
 
@@ -91,27 +96,36 @@ static asset alongside the HTML/JS.
 
 ## Input data format
 
-The preprocessor (`scripts/build-catalog.ts`) expects an HYG-format CSV, as
-produced by the [athyg project](https://github.com/astronexus/athyg). The
-columns it actually reads:
+The preprocessor (`scripts/build-catalog.ts`) expects an AT-HYG v3.3
+classic-IDs CSV, as produced by the
+[AT-HYG project](https://codeberg.org/astronexus/athyg). The columns it
+reads:
 
-| Column    | Required | Purpose                                              |
-| --------- | -------- | ---------------------------------------------------- |
-| `x, y, z` | yes      | Parsecs, equatorial, Sol at origin                   |
-| `absmag`  | yes      | Absolute magnitude                                   |
-| `dist`    | no       | Used only for the `dist > 50,000 pc` outlier filter  |
-| `ci`      | no       | B–V colour index (defaults to 0.65 when missing)     |
-| `spect`   | no       | First character mapped to spectral class             |
-| `con`     | no       | 3-letter IAU constellation code (case-insensitive)   |
-| `proper`  | no       | Human-readable star name (populates search index)    |
+| Column        | Required | Purpose                                                              |
+| ------------- | -------- | -------------------------------------------------------------------- |
+| `x0, y0, z0`  | yes      | Parsecs, equatorial, Sol at origin                                   |
+| `absmag`      | yes      | Absolute magnitude — drives the physical-radius computation          |
+| `dist`        | no       | Used only for the `dist > 50,000 pc` outlier filter                  |
+| `ci`          | no       | B–V colour index (defaults to 0.65 when missing)                     |
+| `spect`       | no       | Parsed into spectral class, subclass, and luminosity class           |
+| `con`         | no       | 3-letter IAU constellation code (case-insensitive)                   |
+| `proper`      | no       | Human-readable star name                                             |
+| `bayer`       | no       | Bayer designation short code (e.g. `Alp`, `Alp-2`)                   |
+| `flam`        | no       | Flamsteed number                                                     |
+| `hip`         | no       | Hipparcos ID — also used to align Stellarium stick-figure lines      |
+| `hd`          | no       | Henry Draper ID (searchable as `HD nnnn`)                            |
+| `hr`          | no       | Yale Bright Star ID                                                  |
+| `gl`          | no       | Gliese / GJ ID                                                       |
 
-Rows are dropped when any of `x`, `y`, `z`, or `absmag` is missing, or when
-`dist` exceeds 50,000 parsecs (a few HYG rows contain distances up to
-~312,500 pc which appear to be bad data or extragalactic).
+Rows are dropped when any of `x0`, `y0`, `z0`, or `absmag` is missing, or
+when `dist` exceeds 50,000 parsecs.
 
-Columns such as `bayer`, `flam`, `hip`, `hd`, `rv`, proper motion values,
-etc. are ignored — the binary only carries what the renderer and search
-need. See `CLAUDE.md` for the binary layout.
+The renderer-facing `catalog.bin` carries positions, absmag, colour index,
+spectral + luminosity class, computed physical radius in solar radii, a
+binary-companion pointer, and the proper name. The search layer is a
+separate `search-index.json` carrying the full identifier set per star,
+loaded in parallel. Columns such as `rv`, proper-motion values, and `tyc`
+are not used. See `CLAUDE.md` for the binary layout.
 
 ## Browser requirements
 
@@ -141,9 +155,6 @@ pan) works the same everywhere.
 - **Visible position jitter** when orbiting at the minimum distance from
   stars that are far from the world origin — a float32 precision issue in
   the vertex shader. Workaround: zoom out slightly.
-- **Search is limited to stars with proper names** (~500 stars). Bayer
-  (e.g. "Alpha Cen") and Flamsteed designations are in the source CSV but
-  not carried into the binary, so searching by them won't work in v1.
 - **No IAU constellation *boundary* dataset.** The stick-figure asterism
   lines are included (from Stellarium); the 1930 IAU region boundaries are
   not.

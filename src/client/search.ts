@@ -2,25 +2,37 @@ import Fuse from 'fuse.js';
 import type { Starfield } from './starfield';
 import type { Catalog } from './catalog-loader';
 
-interface SearchEntry {
+export interface SearchIndexEntry {
+  i: number;
+  p?: string;
+  b?: string;
+  f?: number;
+  hip?: number;
+  hd?: number;
+  hr?: number;
+  gl?: string;
+  c?: number;
+}
+
+interface FuzzyEntry {
   index: number;
-  name: string;
-  con: string;
-  conCode: string;
+  label: string;        // what Fuse matches on
+  primary: string;      // shown in dropdown primary line (same across all entries for one star)
+  displayCon: string;   // shown in dropdown secondary line
 }
 
 let activeBox: SearchBox | null = null;
 
 class SearchBox {
   private displayName = '';
-  private results: SearchEntry[] = [];
+  private results: FuzzyEntry[] = [];
   private hoverIdx = -1;
 
   constructor(
     readonly input: HTMLInputElement,
     private clearBtn: HTMLButtonElement,
     private resultsEl: HTMLUListElement,
-    private fuse: Fuse<SearchEntry>,
+    private runQuery: (q: string) => FuzzyEntry[],
     private onSelect: (idx: number) => void,
     private onClear: () => void,
   ) {
@@ -30,7 +42,6 @@ class SearchBox {
       if (input.value) this.render(input.value);
     });
     input.addEventListener('blur', () => {
-      // Delay so a mousedown on a result can fire first.
       setTimeout(() => {
         if (activeBox === this) {
           resultsEl.hidden = true;
@@ -53,8 +64,6 @@ class SearchBox {
   }
 
   private restore() {
-    // If the user typed but didn't pick a result, put the current state name
-    // back so the input always reflects truth.
     this.input.value = this.displayName;
   }
 
@@ -66,12 +75,10 @@ class SearchBox {
       this.hoverIdx = -1;
       return;
     }
-    const res = this.fuse.search(q, { limit: 12 });
-    this.results = res.map((r) => r.item);
+    this.results = this.runQuery(q);
     this.hoverIdx = this.results.length > 0 ? 0 : -1;
     this.renderResultsDom();
     this.resultsEl.hidden = this.results.length === 0;
-    // Position dropdown under the row that owns this input.
     const row = this.input.closest('.search-row') as HTMLElement | null;
     if (row) {
       this.resultsEl.style.top = row.offsetTop + row.offsetHeight + 'px';
@@ -84,7 +91,7 @@ class SearchBox {
       const e = this.results[i];
       const li = document.createElement('li');
       li.className = i === this.hoverIdx ? 'active' : '';
-      li.innerHTML = `<span>${escapeHtml(e.name)}</span><span class="sub">${escapeHtml(e.con || '—')}</span>`;
+      li.innerHTML = `<span>${escapeHtml(e.primary)}</span><span class="sub">${escapeHtml(e.displayCon || '—')}</span>`;
       li.addEventListener('mousedown', (ev) => {
         ev.preventDefault();
         this.pick(i);
@@ -97,7 +104,6 @@ class SearchBox {
     const e = this.results[i];
     if (!e) return;
     this.onSelect(e.index);
-    // The Starfield state change will call setName with the new display value.
     this.resultsEl.hidden = true;
     this.input.blur();
   }
@@ -122,28 +128,255 @@ class SearchBox {
   }
 }
 
-export function bindSearch(starfield: Starfield, catalog: Catalog) {
-  const entries: SearchEntry[] = [];
-  for (const [index, name] of catalog.names) {
-    const conIdx = catalog.constellation[index];
-    const con = conIdx !== 255 ? catalog.constellations[conIdx] : null;
-    entries.push({
-      index,
-      name,
-      con: con?.name ?? '',
-      conCode: con?.code ?? '',
-    });
+// Canonical Greek letter forms keyed by AT-HYG's 3-letter Latin abbreviation.
+const BAYER_FULL: Record<string, string> = {
+  Alp: 'Alpha', Bet: 'Beta', Gam: 'Gamma', Del: 'Delta', Eps: 'Epsilon',
+  Zet: 'Zeta', Eta: 'Eta', The: 'Theta', Iot: 'Iota', Kap: 'Kappa',
+  Lam: 'Lambda', Mu: 'Mu', Nu: 'Nu', Xi: 'Xi', Omi: 'Omicron',
+  Pi: 'Pi', Rho: 'Rho', Sig: 'Sigma', Tau: 'Tau', Ups: 'Upsilon',
+  Phi: 'Phi', Chi: 'Chi', Psi: 'Psi', Ome: 'Omega',
+};
+const BAYER_GREEK: Record<string, string> = {
+  Alp: 'α', Bet: 'β', Gam: 'γ', Del: 'δ', Eps: 'ε',
+  Zet: 'ζ', Eta: 'η', The: 'θ', Iot: 'ι', Kap: 'κ',
+  Lam: 'λ', Mu: 'μ', Nu: 'ν', Xi: 'ξ', Omi: 'ο',
+  Pi: 'π', Rho: 'ρ', Sig: 'σ', Tau: 'τ', Ups: 'υ',
+  Phi: 'φ', Chi: 'χ', Psi: 'ψ', Ome: 'ω',
+};
+
+// Returns { letter3, suffix } for a Bayer string like "Alp" or "Alp-2".
+// Unknown letter returns null.
+function splitBayer(bayer: string): { letter3: string; suffix: string } | null {
+  const m = bayer.match(/^([A-Za-z]+)(?:-(\d))?$/);
+  if (!m) return null;
+  const letter3 = m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
+  if (!(letter3 in BAYER_FULL)) return null;
+  return { letter3, suffix: m[2] ? `-${m[2]}` : '' };
+}
+
+// Human-facing Bayer display string, e.g. "α¹ Cen".
+function formatBayerDisplay(bayer: string, conCode: string): string {
+  const split = splitBayer(bayer);
+  if (!split) return `${bayer} ${conCode}`;
+  const greek = BAYER_GREEK[split.letter3];
+  const sup = split.suffix ? superscript(split.suffix.slice(1)) : '';
+  return `${greek}${sup} ${conCode}`;
+}
+
+function superscript(digit: string): string {
+  const map: Record<string, string> = { '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴', '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹' };
+  return digit.split('').map((d) => map[d] ?? d).join('');
+}
+
+// Each Bayer'd star gets several fuzzy-index entries so the user can type any
+// of "Alpha Cen", "Alp Cen", "α Cen", or "Alpha Centaurus" and find it. The
+// "-1/-2" superscript from AT-HYG (which distinguishes the A/B components of
+// a multiple system) is deliberately NOT in the search labels — users type
+// "Alpha Cen" to mean the system, not "Alpha 1 Cen". Both A and B stars emit
+// the same labels and will both appear in the results, letting the user pick.
+// The superscript DOES show in the display form ("α¹ Cen") to disambiguate.
+function buildBayerLabels(
+  bayer: string,
+  conCode: string,
+  conName: string,
+): string[] {
+  const split = splitBayer(bayer);
+  if (!split) return [`${bayer} ${conCode}`];
+  const full = BAYER_FULL[split.letter3];
+  const greek = BAYER_GREEK[split.letter3];
+  const labels = new Set<string>();
+  labels.add(`${full} ${conCode}`);
+  labels.add(`${full} ${conName}`);
+  labels.add(`${split.letter3} ${conCode}`);
+  labels.add(`${greek} ${conCode}`);
+  labels.add(`${greek} ${conName}`);
+  if (split.letter3 === 'Alp') {
+    labels.add(`Alf ${conCode}`);
+    labels.add(`Alf ${conName}`);
   }
-  const fuse = new Fuse(entries, {
-    keys: [
-      { name: 'name', weight: 0.7 },
-      { name: 'con', weight: 0.15 },
-      { name: 'conCode', weight: 0.15 },
-    ],
-    threshold: 0.35,
+  return [...labels];
+}
+
+// Best human-readable label for a star, falling back through identifier
+// tiers: proper name → Bayer designation → Flamsteed → HIP → HD → HR → Gl.
+// For use in the focus display, meta bar, tooltip, and the search-box
+// value when a star is picked.
+export function buildStarLabels(
+  catalog: Catalog,
+  raw: SearchIndexEntry[],
+): Map<number, string> {
+  const labels = new Map<number, string>();
+  for (const [idx, name] of catalog.names) labels.set(idx, name);
+
+  for (const entry of raw) {
+    if (labels.has(entry.i)) continue;
+    const conIdx = entry.c ?? 255;
+    const con = conIdx !== 255 ? catalog.constellations[conIdx] : null;
+    const conCode = con?.code ?? '';
+    if (entry.b && conCode) {
+      labels.set(entry.i, formatBayerDisplay(entry.b, conCode));
+    } else if (entry.f !== undefined && conCode) {
+      labels.set(entry.i, `${entry.f} ${conCode}`);
+    } else if (entry.hip !== undefined) {
+      labels.set(entry.i, `HIP ${entry.hip}`);
+    } else if (entry.hd !== undefined) {
+      labels.set(entry.i, `HD ${entry.hd}`);
+    } else if (entry.hr !== undefined) {
+      labels.set(entry.i, `HR ${entry.hr}`);
+    } else if (entry.gl) {
+      labels.set(entry.i, `Gl ${entry.gl}`);
+    }
+  }
+  return labels;
+}
+
+export function bindSearch(
+  starfield: Starfield,
+  catalog: Catalog,
+  raw: SearchIndexEntry[],
+  starLabels: Map<number, string>,
+) {
+  // Direct-lookup maps for numeric IDs. Prefix form ("HIP 12345", "HD 128620")
+  // dispatches here rather than through the fuzzy index.
+  const hipMap = new Map<number, number>();
+  const hdMap = new Map<number, number>();
+  const hrMap = new Map<number, number>();
+  const glMap = new Map<string, number>();
+  const flamMap = new Map<string, number>(); // key: `${flam} ${conCode}` lowercased
+
+  const fuzzyEntries: FuzzyEntry[] = [];
+  const conByIdx = catalog.constellations;
+
+  for (const entry of raw) {
+    if (entry.hip !== undefined) hipMap.set(entry.hip, entry.i);
+    if (entry.hd !== undefined) hdMap.set(entry.hd, entry.i);
+    if (entry.hr !== undefined) hrMap.set(entry.hr, entry.i);
+    if (entry.gl !== undefined) {
+      // Normalize "Gl 559A" / "GJ 559" / "Gliese 559A" all to "559a".
+      const norm = entry.gl.replace(/^(GJ|Gl|Gliese)\s*/i, '').toLowerCase();
+      if (norm) glMap.set(norm, entry.i);
+    }
+
+    const conIdx = entry.c !== undefined ? entry.c : 255;
+    const con = conIdx !== 255 ? conByIdx[conIdx] : null;
+    const conCode = con?.code ?? '';
+    const conName = con?.name ?? '';
+
+    if (entry.f !== undefined && conCode) {
+      // Flamsteed: the same number can recur across constellations, so key by
+      // both. Also add the 3-letter form since most users type that.
+      flamMap.set(`${entry.f} ${conCode.toLowerCase()}`, entry.i);
+      flamMap.set(`${entry.f} ${conName.toLowerCase()}`, entry.i);
+    }
+
+    // Build the display form once per star so every label for this star
+    // shares the same presentation. Format: "ProperName (α¹ Cen)" when
+    // both are available, else whichever exists. The Bayer portion in the
+    // display preserves the AT-HYG component suffix as a Unicode superscript
+    // to disambiguate A/B pairs in the dropdown (even though the search
+    // labels drop it — see buildBayerLabels).
+    const properName = entry.p ?? null;
+    const bayerDisplay = entry.b && conCode ? formatBayerDisplay(entry.b, conCode) : null;
+    let primary: string;
+    if (properName && bayerDisplay) primary = `${properName} (${bayerDisplay})`;
+    else if (properName) primary = properName;
+    else if (bayerDisplay) primary = bayerDisplay;
+    else continue; // no human-readable label and no Bayer — only findable via numeric ID
+    const displayCon = con?.name ?? '';
+
+    if (properName) {
+      fuzzyEntries.push({ index: entry.i, label: properName, primary, displayCon });
+    }
+    if (entry.b && conCode) {
+      for (const label of buildBayerLabels(entry.b, conCode, conName)) {
+        fuzzyEntries.push({ index: entry.i, label, primary, displayCon });
+      }
+    }
+    if (entry.f !== undefined && conCode) {
+      fuzzyEntries.push({
+        index: entry.i,
+        label: `${entry.f} ${conCode}`,
+        primary,
+        displayCon,
+      });
+      fuzzyEntries.push({
+        index: entry.i,
+        label: `${entry.f} ${conName}`,
+        primary,
+        displayCon,
+      });
+    }
+  }
+
+  // Threshold 0.25 trims the long tail of loose matches (e.g. "alpha cen"
+  // used to dredge up "Aldebaran" via shared letters). 0.35 was too lenient
+  // for short queries against a few-thousand-entry corpus.
+  const fuse = new Fuse(fuzzyEntries, {
+    keys: ['label'],
+    threshold: 0.25,
     ignoreLocation: true,
     includeScore: true,
   });
+
+  // Run a query, dispatching to direct-lookup maps when the form matches,
+  // otherwise falling back to fuzzy search. Deduplicates by star index so the
+  // dropdown doesn't show "Alpha Cen", "Alpha Centaurus", "α Cen" for the
+  // same star.
+  const runQuery = (q: string): FuzzyEntry[] => {
+    const trimmed = q.trim();
+
+    // Numeric-prefixed ID lookups.
+    const idPatterns: Array<{ re: RegExp; map: Map<number, number>; prefix: string }> = [
+      { re: /^hip\s*(\d+)$/i, map: hipMap, prefix: 'HIP' },
+      { re: /^hd\s*(\d+)$/i, map: hdMap, prefix: 'HD' },
+      { re: /^hr\s*(\d+)$/i, map: hrMap, prefix: 'HR' },
+    ];
+    for (const { re, map, prefix } of idPatterns) {
+      const m = trimmed.match(re);
+      if (m) {
+        const idx = map.get(Number(m[1]));
+        return idx !== undefined ? [directResult(idx, `${prefix} ${m[1]}`)] : [];
+      }
+    }
+    // Gliese: "Gl 559A", "GJ 581", "Gliese 411"
+    const glMatch = trimmed.match(/^(?:gl|gj|gliese)\s*(\d+\s*[a-z]?)$/i);
+    if (glMatch) {
+      const key = glMatch[1].replace(/\s+/g, '').toLowerCase();
+      const idx = glMap.get(key);
+      return idx !== undefined ? [directResult(idx, `Gl ${glMatch[1].toUpperCase()}`)] : [];
+    }
+    // Flamsteed: "58 Ori"
+    const flamMatch = trimmed.match(/^(\d+)\s+([A-Za-z]+)$/);
+    if (flamMatch) {
+      const key = `${flamMatch[1]} ${flamMatch[2].toLowerCase()}`;
+      const idx = flamMap.get(key);
+      if (idx !== undefined) return [directResult(idx, `${flamMatch[1]} ${flamMatch[2]}`)];
+      // Fall through to fuzzy — maybe "58 Ori" is a partial match on a label.
+    }
+
+    const res = fuse.search(trimmed, { limit: 30 });
+    const seen = new Set<number>();
+    const out: FuzzyEntry[] = [];
+    for (const r of res) {
+      if (seen.has(r.item.index)) continue;
+      seen.add(r.item.index);
+      out.push(r.item);
+      if (out.length >= 12) break;
+    }
+    return out;
+  };
+
+  const directResult = (idx: number, label: string): FuzzyEntry => {
+    const conIdx = catalog.constellation[idx];
+    const con = conIdx !== 255 ? catalog.constellations[conIdx] : null;
+    const name = catalog.names.get(idx);
+    return {
+      index: idx,
+      label,
+      primary: name ? `${name} (${label})` : label,
+      displayCon: con?.name ?? '',
+    };
+  };
 
   const resultsEl = document.getElementById('search-results') as HTMLUListElement;
   const focusInput = document.getElementById('search-focus') as HTMLInputElement;
@@ -153,14 +386,14 @@ export function bindSearch(starfield: Starfield, catalog: Catalog) {
   const toRow = document.getElementById('search-to-row')!;
 
   const describe = (idx: number): string => {
-    return catalog.names.get(idx) ?? `Unnamed #${idx}`;
+    return starLabels.get(idx) ?? `Unnamed #${idx}`;
   };
 
   const focusBox = new SearchBox(
     focusInput,
     focusClear,
     resultsEl,
-    fuse,
+    runQuery,
     (idx) => starfield.focusStar(idx),
     () => starfield.unfocus(),
   );
@@ -169,7 +402,7 @@ export function bindSearch(starfield: Starfield, catalog: Catalog) {
     toInput,
     toClear,
     resultsEl,
-    fuse,
+    runQuery,
     (idx) => starfield.setVectorTo(idx),
     () => starfield.setVectorTo(null),
   );
@@ -186,7 +419,6 @@ export function bindSearch(starfield: Starfield, catalog: Catalog) {
   starfield.onFocusChange(syncFocus);
   starfield.onVectorChange(syncVector);
 
-  // Seed initial state (focus may already be Sol at boot).
   syncFocus(starfield.getFocusedStar());
   syncVector(starfield.getVectorTo());
 }

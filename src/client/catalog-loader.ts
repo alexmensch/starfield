@@ -13,15 +13,20 @@ export interface Catalog {
   absmag: Float32Array;          // length = count
   ci: Float32Array;              // length = count
   spectClass: Float32Array;      // length = count (as float for vertex attrib)
+  luminosityClass: Uint8Array;   // length = count, 255 = unknown
+  physicalRadius: Float32Array;  // length = count, in solar radii
   constellation: Float32Array;   // length = count (as float for vertex attrib)
-  flags: Uint8Array;             // length = count
+  flags: Uint8Array;             // length = count (bit 0 has_name, 1 is_sol, 2 has_bayer, 4 is_binary_primary)
+  companion: Int32Array;         // length = count, -1 = no companion
   names: Map<number, string>;    // star index -> proper name (named stars only)
   solIndex: number;              // -1 if not found
   constellations: Constellation[];
 }
 
 const HEADER_SIZE = 32;
-const RECORD_SIZE = 32;
+const RECORD_SIZE = 40;
+const EXPECTED_VERSION = 2;
+const NO_COMPANION = 0xffffffff;
 
 export interface LoadProgress {
   bytes: number;
@@ -79,7 +84,9 @@ function parseBinary(ab: ArrayBuffer, constellations: Constellation[]): Catalog 
   const magic = new TextDecoder().decode(new Uint8Array(ab, 0, 4));
   if (magic !== 'HYG3') throw new Error(`Bad magic: ${magic}`);
   const version = view.getUint32(4, true);
-  if (version !== 1) throw new Error(`Unsupported version: ${version}`);
+  if (version !== EXPECTED_VERSION) {
+    throw new Error(`Unsupported catalog version: ${version} (expected ${EXPECTED_VERSION})`);
+  }
   const count = view.getUint32(8, true);
   const nameTableOffset = view.getUint32(12, true);
   const nameTableLength = view.getUint32(16, true);
@@ -87,9 +94,12 @@ function parseBinary(ab: ArrayBuffer, constellations: Constellation[]): Catalog 
   const positions = new Float32Array(count * 3);
   const absmag = new Float32Array(count);
   const ci = new Float32Array(count);
+  const physicalRadius = new Float32Array(count);
   const spectClass = new Float32Array(count);
+  const luminosityClass = new Uint8Array(count);
   const constellation = new Float32Array(count);
   const flags = new Uint8Array(count);
+  const companion = new Int32Array(count);
   const nameOffsetArr = new Uint32Array(count);
 
   let solIndex = -1;
@@ -100,10 +110,14 @@ function parseBinary(ab: ArrayBuffer, constellations: Constellation[]): Catalog 
     positions[i * 3 + 2] = view.getFloat32(off + 8, true);
     absmag[i] = view.getFloat32(off + 12, true);
     ci[i] = view.getFloat32(off + 16, true);
-    spectClass[i] = view.getUint8(off + 20);
-    constellation[i] = view.getUint8(off + 21);
-    flags[i] = view.getUint8(off + 22);
-    nameOffsetArr[i] = view.getUint32(off + 24, true);
+    physicalRadius[i] = view.getFloat32(off + 20, true);
+    const comp = view.getUint32(off + 24, true);
+    companion[i] = comp === NO_COMPANION ? -1 : comp;
+    nameOffsetArr[i] = view.getUint32(off + 28, true);
+    spectClass[i] = view.getUint8(off + 32);
+    luminosityClass[i] = view.getUint8(off + 33);
+    constellation[i] = view.getUint8(off + 34);
+    flags[i] = view.getUint8(off + 35);
     if (flags[i] & 0x02) solIndex = i;
   }
 
@@ -113,12 +127,15 @@ function parseBinary(ab: ArrayBuffer, constellations: Constellation[]): Catalog 
     const nameData = new Uint8Array(ab, nameTableOffset, nameTableLength);
     const ntView = new DataView(ab, nameTableOffset, nameTableLength);
     const offsetToName = new Map<number, string>();
-    let p = 0;
+    // Offset 0 is reserved as the "no name" sentinel and contains two zero
+    // bytes of padding — skip past it.
+    let p = 2;
     while (p < nameTableLength) {
       const len = ntView.getUint16(p, true);
+      const nameOffset = p;
       p += 2;
       const name = td.decode(nameData.subarray(p, p + len));
-      offsetToName.set(p - 2, name);
+      offsetToName.set(nameOffset, name);
       p += len;
     }
     for (let i = 0; i < count; i++) {
@@ -135,8 +152,11 @@ function parseBinary(ab: ArrayBuffer, constellations: Constellation[]): Catalog 
     absmag,
     ci,
     spectClass,
+    luminosityClass,
+    physicalRadius,
     constellation,
     flags,
+    companion,
     names,
     solIndex,
     constellations,

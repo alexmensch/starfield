@@ -8,7 +8,8 @@ const BIN = resolve(ROOT, 'public/catalog.bin');
 const CON = resolve(ROOT, 'public/constellations.json');
 
 const HEADER_SIZE = 32;
-const RECORD_SIZE = 32;
+const RECORD_SIZE = 40;
+const NO_COMPANION = 0xffffffff;
 
 const buf = await readFile(BIN);
 const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
@@ -26,11 +27,11 @@ console.log(`file size=${ab.byteLength}, expected=${HEADER_SIZE + count * RECORD
 
 const constellations = JSON.parse(await readFile(CON, 'utf-8'));
 
-// Walk name table to build offset -> name map.
+// Walk name table. First 2 bytes are reserved as the "no name" sentinel.
 const nameAt = new Map<number, string>();
 {
   const td = new TextDecoder('utf-8');
-  let p = nameTableOffset;
+  let p = nameTableOffset + 2;
   const end = nameTableOffset + nameTableLength;
   while (p < end) {
     const relOff = p - nameTableOffset;
@@ -44,9 +45,11 @@ const nameAt = new Map<number, string>();
 
 function readRecord(i: number) {
   const off = HEADER_SIZE + i * RECORD_SIZE;
-  const flags = view.getUint8(off + 22);
-  const nameOffset = view.getUint32(off + 24, true);
+  const flags = view.getUint8(off + 35);
+  const nameOffset = view.getUint32(off + 28, true);
   const name = flags & 0x01 ? nameAt.get(nameOffset) : null;
+  const comp = view.getUint32(off + 24, true);
+  const conIdx = view.getUint8(off + 34);
   return {
     i,
     x: view.getFloat32(off + 0, true),
@@ -54,11 +57,14 @@ function readRecord(i: number) {
     z: view.getFloat32(off + 8, true),
     absmag: view.getFloat32(off + 12, true),
     ci: view.getFloat32(off + 16, true),
-    spectClass: view.getUint8(off + 20),
-    conIndex: view.getUint8(off + 21),
-    flags,
+    physicalRadius: view.getFloat32(off + 20, true),
+    companion: comp === NO_COMPANION ? null : comp,
+    spectClass: view.getUint8(off + 32),
+    lumClass: view.getUint8(off + 33),
+    conIndex: conIdx,
+    flags: flags.toString(2).padStart(8, '0'),
     name,
-    con: view.getUint8(off + 21) === 255 ? null : constellations[view.getUint8(off + 21)],
+    con: conIdx === 255 ? null : constellations[conIdx]?.code,
   };
 }
 
@@ -68,11 +74,12 @@ for (let i = 0; i < 5; i++) console.log(readRecord(i));
 console.log('\nDimmest 3 records:');
 for (let i = count - 3; i < count; i++) console.log(readRecord(i));
 
-console.log('\nSearch for Sirius / Sol / Betelgeuse:');
+console.log('\nSearch for Sirius / Sol / Betelgeuse / Rigil Kentaurus / Toliman:');
+const targets = new Set(['Sirius', 'Sol', 'Betelgeuse', 'Rigil Kentaurus', 'Toliman']);
 let founds = 0;
-for (let i = 0; i < count && founds < 3; i++) {
+for (let i = 0; i < count && founds < targets.size; i++) {
   const r = readRecord(i);
-  if (r.name === 'Sirius' || r.name === 'Sol' || r.name === 'Betelgeuse') {
+  if (r.name && targets.has(r.name)) {
     const dist = Math.sqrt(r.x * r.x + r.y * r.y + r.z * r.z);
     console.log({ ...r, dist_pc: dist.toFixed(3) });
     founds++;

@@ -1,7 +1,7 @@
 import { loadCatalog } from './catalog-loader';
 import { Starfield } from './starfield';
 import { bindControls } from './controls';
-import { bindSearch } from './search';
+import { bindSearch, buildStarLabels, type SearchIndexEntry } from './search';
 import { createConstellationOverlay } from './constellation-overlay';
 import { createDistanceVectorOverlay } from './distance-vector-overlay';
 import { createFocusRingOverlay } from './focus-ring-overlay';
@@ -27,28 +27,35 @@ async function main() {
   const tooltip = document.getElementById('tooltip')!;
 
   try {
-    const catalog = await loadCatalog(
-      `${import.meta.env.BASE_URL}catalog.bin`,
-      `${import.meta.env.BASE_URL}constellations.json`,
-      ({ bytes, total }) => {
-        if (total) {
-          const pct = (bytes / total) * 100;
-          loadingBar.style.width = pct.toFixed(0) + '%';
-          loadingStatus.textContent = `${(bytes / 1024 / 1024).toFixed(1)} / ${(total / 1024 / 1024).toFixed(1)} MB`;
-        } else {
-          loadingStatus.textContent = `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-        }
-      },
-    );
+    const [catalog, searchIndex] = await Promise.all([
+      loadCatalog(
+        `${import.meta.env.BASE_URL}catalog.bin`,
+        `${import.meta.env.BASE_URL}constellations.json`,
+        ({ bytes, total }) => {
+          if (total) {
+            const pct = (bytes / total) * 100;
+            loadingBar.style.width = pct.toFixed(0) + '%';
+            loadingStatus.textContent = `${(bytes / 1024 / 1024).toFixed(1)} / ${(total / 1024 / 1024).toFixed(1)} MB`;
+          } else {
+            loadingStatus.textContent = `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+          }
+        },
+      ),
+      fetch(`${import.meta.env.BASE_URL}search-index.json`).then(
+        (r) => r.json() as Promise<SearchIndexEntry[]>,
+      ),
+    ]);
 
     loadingStatus.textContent = `Parsed ${catalog.count.toLocaleString()} stars`;
     loadingBar.style.width = '100%';
+
+    const starLabels = buildStarLabels(catalog, searchIndex);
 
     const starfield = new Starfield({ canvas, catalog });
     bindUnitToggle();
     bindThemeToggle(starfield);
     bindControls(starfield);
-    bindSearch(starfield, catalog);
+    bindSearch(starfield, catalog, searchIndex, starLabels);
     createConstellationOverlay(starfield);
     createDistanceVectorOverlay(starfield);
     createFocusRingOverlay(starfield);
@@ -60,7 +67,7 @@ async function main() {
     applyFromUrl(starfield);
     startUrlSync(starfield);
 
-    const countLabel = `${catalog.count.toLocaleString()} stars · ${catalog.names.size} named`;
+    const countLabel = `${catalog.count.toLocaleString()} stars · ${catalog.names.size.toLocaleString()} named`;
     let lastSelected: number | null = starfield.getFocusedStar();
     const renderMeta = () => {
       meta.textContent = lastSelected !== null
@@ -89,7 +96,7 @@ async function main() {
     }, 400);
 
     function describeStar(idx: number): string {
-      const name = catalog.names.get(idx) ?? 'Unnamed';
+      const name = starLabels.get(idx) ?? `Unnamed #${idx}`;
       const conIdx = catalog.constellation[idx];
       const con = conIdx !== 255 ? catalog.constellations[conIdx].name : '';
       const p = catalog.positions;
