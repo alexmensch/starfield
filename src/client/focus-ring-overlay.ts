@@ -28,6 +28,15 @@ export function createFocusRingOverlay(starfield: Starfield) {
       hide();
       return;
     }
+    // When the focused star's rendered disc exceeds the ring diameter,
+    // the ring becomes redundant chrome on top of the star — hide it.
+    // Keeps the zoomed-in view of a resolved disc clean. Hysteresis via
+    // the diameter comparison (not diameter + some margin) is acceptable
+    // because zoom steps rarely land exactly on the threshold.
+    if (starfield.renderedSizePx(idx) > RADIUS_PX * 2) {
+      hide();
+      return;
+    }
     v.applyMatrix4(camera.projectionMatrix);
     if (ring.style.display === 'none') show();
     const sx = (v.x + 1) * 0.5 * window.innerWidth;

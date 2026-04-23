@@ -67,7 +67,7 @@ async function main() {
     applyFromUrl(starfield);
     startUrlSync(starfield);
 
-    const countLabel = `${catalog.count.toLocaleString()} stars · ${catalog.names.size.toLocaleString()} named`;
+    const countLabel = `${catalog.count.toLocaleString()} stars`;
     let lastSelected: number | null = starfield.getFocusedStar();
     const renderMeta = () => {
       meta.textContent = lastSelected !== null

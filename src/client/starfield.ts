@@ -22,28 +22,39 @@ export interface StarfieldOptions {
 
 const ALL_SPECT_MASK = 0b111111111;
 
+// Default minimum orbit distance from a focused star. Per-focus code below
+// may bump this for binary systems so both components stay in the viewport.
+const DEFAULT_MIN_DIST_PC = 0.005;
+
+// When a focused star has a binary companion, minDistance is set so the
+// companion subtends at most this half-angle from the camera axis — gives
+// the system a bit of viewport padding. tan(25°) ≈ 0.466; we store 1/tan.
+const BINARY_VIEWPORT_HALF_ANGLE_RAD = (25 * Math.PI) / 180;
+const BINARY_MIN_DIST_FACTOR = 1 / Math.tan(BINARY_VIEWPORT_HALF_ANGLE_RAD);
+
 // Warp animation tuning. A warp has two phases:
 //   1. Reorient (WARP_REORIENT_MS) — camera keeps looking at the source star
 //      while spherically rotating around it from its current orbit direction
 //      to the "behind A, facing B" direction, simultaneously zooming to
-//      WARP_END_OFFSET_PC from A. End state: A is centered, B is straight
+//      the end-offset from A. End state: A is centered, B is straight
 //      ahead beyond A.
 //   2. Fly — straight-line flight from pStart to pEnd with a symmetric
 //      accelerate/decelerate profile. Duration scales log-linearly with
 //      distance and caps at MAX.
-// End offset is the same on both sides of the trip: as close as we can get
-// to a star without tripping the near-plane.
+// End offset matches the destination star's effective minDistance so the
+// warp parks exactly where the user can then orbit.
 export const WARP_T_MIN_MS = 5000;
 export const WARP_T_MAX_MS = 20000;
 export const WARP_T_K_MS = 2000;
 export const WARP_REORIENT_MS = 2000;
-export const WARP_END_OFFSET_PC = 0.005;
 
 // Arbitrary reference axis for the reorient slerp. Any fixed unit vector
 // works — the two setFromUnitVectors calls each produce a quaternion rotating
 // this vector to one of the two endpoints, and slerp between them gives the
 // shortest-arc interpolation on the sphere.
 const WARP_BASE_DIR = new THREE.Vector3(0, 0, 1);
+
+export { DEFAULT_MIN_DIST_PC };
 
 interface WarpState {
   startTimeMs: number;
@@ -53,8 +64,9 @@ interface WarpState {
   dir0: THREE.Vector3;     // unit vector from A toward camera at warp start
   mag0: number;            // |camera - A| at warp start
   dirBack: THREE.Vector3;  // unit vector from A away from B (reorient end direction)
-  pStart: THREE.Vector3;   // fly start = A + dirBack * WARP_END_OFFSET_PC
-  pEnd: THREE.Vector3;     // fly end = B - forward * WARP_END_OFFSET_PC
+  pStart: THREE.Vector3;   // fly start = A + dirBack * endOffset
+  pEnd: THREE.Vector3;     // fly end = B - forward * endOffset
+  endOffset: number;       // effective minDistance for the destination star
   destIdx: number;
 }
 
@@ -76,9 +88,14 @@ export class Starfield {
   readonly controls: TrackballControls;
 
   private scene: THREE.Scene;
-  private points: THREE.Points;
-  private material: THREE.ShaderMaterial;
-  private geometry: THREE.BufferGeometry;
+  private discMesh: THREE.Mesh;
+  private glowMesh: THREE.Mesh;
+  // Shared uniforms object so changing uMaxAppMag/uSpectMask/etc. affects
+  // both passes. The per-pass uRenderMode differs; we split into two
+  // materials but give them the same uniforms map (minus uRenderMode).
+  private material: THREE.ShaderMaterial;      // disc pass (opaque)
+  private glowMaterial: THREE.ShaderMaterial;  // glow pass (additive)
+  private geometry: THREE.InstancedBufferGeometry;
 
   private filter: FilterState = { ...DEFAULT_FILTER };
 
@@ -108,6 +125,11 @@ export class Starfield {
     this.renderer.setSize(window.innerWidth, window.innerHeight, false);
     this.renderer.setClearColor(0x000000, 0);
 
+    const gl = this.renderer.getContext();
+    const pointSizeRange = gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE);
+    console.log('[stage2a] gl_PointSize range:', pointSizeRange[0], 'to', pointSizeRange[1]);
+    console.log('[stage2a] viewport (CSS px):', window.innerWidth, '×', window.innerHeight, 'pixelRatio:', this.renderer.getPixelRatio());
+
     this.scene = new THREE.Scene();
 
     // Near plane must be strictly smaller than controls.minDistance,
@@ -131,42 +153,120 @@ export class Starfield {
     this.controls.noPan = false;
     this.controls.staticMoving = false;
     this.controls.dynamicDampingFactor = 0.15;
-    this.controls.minDistance = 0.005;
+    this.controls.minDistance = DEFAULT_MIN_DIST_PC;
     this.controls.maxDistance = 100_000;
     this.controls.target.set(0, 0, 0);
 
-    this.geometry = new THREE.BufferGeometry();
-    this.geometry.setAttribute('position', new THREE.BufferAttribute(catalog.positions, 3));
-    this.geometry.setAttribute('aAbsmag', new THREE.BufferAttribute(catalog.absmag, 1));
-    this.geometry.setAttribute('aCi', new THREE.BufferAttribute(catalog.ci, 1));
-    this.geometry.setAttribute('aSpectClass', new THREE.BufferAttribute(catalog.spectClass, 1));
+    // Precompute log10(physicalRadius) per star for the shader, and the
+    // catalog-wide min/max for uniform bounds. Done once at load so the
+    // vertex shader can just do a linear mix.
+    const logRadii = new Float32Array(catalog.count);
+    let logRMin = Infinity;
+    let logRMax = -Infinity;
+    for (let i = 0; i < catalog.count; i++) {
+      const r = Math.max(catalog.physicalRadius[i], 1e-6);
+      const lr = Math.log10(r);
+      logRadii[i] = lr;
+      if (lr < logRMin) logRMin = lr;
+      if (lr > logRMax) logRMax = lr;
+    }
+    const physMaxPx = this.computePhysMaxPx();
+    console.log('[stage2a] logR range:', logRMin.toFixed(3), 'to', logRMax.toFixed(3), '(span', (logRMax - logRMin).toFixed(3), ')');
+    console.log('[stage2a] uPhysMaxPx:', physMaxPx, 'uPhysMinPx: 2');
+    if (catalog.solIndex >= 0) {
+      const solLogR = logRadii[catalog.solIndex];
+      const solRatio = (solLogR - logRMin) / (logRMax - logRMin);
+      const solSizePx = 2 + solRatio * (physMaxPx - 2);
+      console.log(`[stage2a] Sol: logR=${solLogR.toFixed(3)} ratio=${solRatio.toFixed(3)} sizeAtRefDist=${solSizePx.toFixed(0)}px`);
+    }
+
+    // Instanced quads: one unit square per star, expanded in screen space in
+    // the vertex shader. This replaces the earlier THREE.Points approach,
+    // which was capped by the driver-defined gl_PointSize maximum (often
+    // 64–255 px) — too small for the physical-size rendering to reach the
+    // 50%-viewport ceiling we want for supergiants at close range.
+    this.geometry = new THREE.InstancedBufferGeometry();
+    this.geometry.setAttribute(
+      'aCorner',
+      new THREE.BufferAttribute(
+        new Float32Array([-0.5, -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, 0.5]),
+        2,
+      ),
+    );
+    this.geometry.setIndex([0, 1, 2, 1, 3, 2]);
+    this.geometry.setAttribute('iPosition', new THREE.InstancedBufferAttribute(catalog.positions, 3));
+    this.geometry.setAttribute('iAbsmag', new THREE.InstancedBufferAttribute(catalog.absmag, 1));
+    this.geometry.setAttribute('iCi', new THREE.InstancedBufferAttribute(catalog.ci, 1));
+    this.geometry.setAttribute('iSpectClass', new THREE.InstancedBufferAttribute(catalog.spectClass, 1));
+    this.geometry.setAttribute('iLogRadius', new THREE.InstancedBufferAttribute(logRadii, 1));
+    this.geometry.instanceCount = catalog.count;
     this.geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 60_000);
 
+    // Shared uniforms — both materials point at the same objects, so any
+    // setFilter / theme / resize update propagates to both passes without
+    // duplicate bookkeeping. uRenderMode is the only divergent uniform and
+    // is bound directly to its material.
+    const sharedUniforms = {
+      uCameraPos: { value: new THREE.Vector3() },
+      uMaxAppMag: { value: this.filter.maxAppMag },
+      uMinDistSol: { value: this.filter.minDistSol },
+      uMaxDistSol: { value: this.filter.maxDistSol },
+      uSpectMask: { value: this.filter.spectMask },
+      uPixelRatio: { value: this.renderer.getPixelRatio() },
+      uSizeMin: { value: this.filter.sizeMin },
+      uSizeMax: { value: this.filter.sizeMax },
+      uSizeSpan: { value: this.filter.sizeSpan },
+      uMonochrome: { value: 0 },
+      uLogRMin: { value: logRMin },
+      uLogRMax: { value: logRMax },
+      uPhysMinPx: { value: 2.0 },
+      uPhysMaxPx: { value: physMaxPx },
+      uRefDistPc: { value: DEFAULT_MIN_DIST_PC },
+      uViewport: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+    };
+
+    // Disc pass: opaque-over (premultiplied alpha) so close stars fully
+    // occlude anything behind. Rendered first with depth write on so the
+    // glow pass can depth-test against the disc silhouettes.
     this.material = new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3,
-      uniforms: {
-        uCameraPos: { value: new THREE.Vector3() },
-        uMaxAppMag: { value: this.filter.maxAppMag },
-        uMinDistSol: { value: this.filter.minDistSol },
-        uMaxDistSol: { value: this.filter.maxDistSol },
-        uSpectMask: { value: this.filter.spectMask },
-        uPixelRatio: { value: this.renderer.getPixelRatio() },
-        uSizeMin: { value: this.filter.sizeMin },
-        uSizeMax: { value: this.filter.sizeMax },
-        uSizeSpan: { value: this.filter.sizeSpan },
-        uMonochrome: { value: 0 },
-      },
+      uniforms: { ...sharedUniforms, uRenderMode: { value: 1 } },
+      vertexShader,
+      fragmentShader,
+      transparent: true,
+      depthWrite: true,
+      depthTest: true,
+      blending: THREE.CustomBlending,
+      blendSrc: THREE.OneFactor,
+      blendDst: THREE.OneMinusSrcAlphaFactor,
+      blendEquation: THREE.AddEquation,
+    });
+
+    // Glow pass: additive so overlapping distant stars accumulate brightness
+    // (dense starfield density preserved). No depth write, so multiple glows
+    // at the same pixel all contribute. Depth *test* is on so glows behind
+    // a disc drawn in the disc pass are correctly occluded.
+    this.glowMaterial = new THREE.ShaderMaterial({
+      glslVersion: THREE.GLSL3,
+      uniforms: { ...sharedUniforms, uRenderMode: { value: 0 } },
       vertexShader,
       fragmentShader,
       transparent: true,
       depthWrite: false,
-      depthTest: false,
+      depthTest: true,
       blending: THREE.AdditiveBlending,
     });
 
-    this.points = new THREE.Points(this.geometry, this.material);
-    this.points.frustumCulled = false;
-    this.scene.add(this.points);
+    // renderOrder ensures discs render first (write depth) before glows
+    // (which depth-test against the disc silhouettes).
+    this.discMesh = new THREE.Mesh(this.geometry, this.material);
+    this.discMesh.frustumCulled = false;
+    this.discMesh.renderOrder = 0;
+    this.scene.add(this.discMesh);
+    this.glowMesh = new THREE.Mesh(this.geometry, this.glowMaterial);
+    this.glowMesh.frustumCulled = false;
+    this.glowMesh.renderOrder = 1;
+    this.scene.add(this.glowMesh);
 
     // Seed focus on Sol if it exists so measurement works from the start.
     if (catalog.solIndex >= 0) this.focusedStar = catalog.solIndex;
@@ -190,6 +290,7 @@ export class Starfield {
   private setFocus(idx: number | null) {
     if (this.focusedStar === idx) return;
     this.focusedStar = idx;
+    this.controls.minDistance = idx !== null ? this.minDistForStar(idx) : DEFAULT_MIN_DIST_PC;
     for (const h of this.onFocusHandlers) h(idx);
     this.fireStateChange();
   }
@@ -231,10 +332,28 @@ export class Starfield {
     if (this.monochrome === on) return;
     this.monochrome = on;
     this.material.uniforms.uMonochrome.value = on ? 1 : 0;
-    // Additive blending over a dark canvas makes bright stars glow; multiply
-    // blending over a light canvas makes darker stars "ink" the page.
-    this.material.blending = on ? THREE.MultiplyBlending : THREE.AdditiveBlending;
+    // Both materials share the uMonochrome uniform via sharedUniforms, so
+    // one assignment covers both. Blending and depth settings differ per
+    // pass, though — disc pass is opaque-over in colour mode, multiply in
+    // chart mode; glow pass is additive in colour mode, multiply in chart.
+    if (on) {
+      this.material.blending = THREE.MultiplyBlending;
+      this.material.depthWrite = false;
+      this.material.depthTest = false;
+      this.glowMaterial.blending = THREE.MultiplyBlending;
+      this.glowMaterial.depthTest = false;
+    } else {
+      this.material.blending = THREE.CustomBlending;
+      this.material.blendSrc = THREE.OneFactor;
+      this.material.blendDst = THREE.OneMinusSrcAlphaFactor;
+      this.material.blendEquation = THREE.AddEquation;
+      this.material.depthWrite = true;
+      this.material.depthTest = true;
+      this.glowMaterial.blending = THREE.AdditiveBlending;
+      this.glowMaterial.depthTest = true;
+    }
     this.material.needsUpdate = true;
+    this.glowMaterial.needsUpdate = true;
     this.renderer.setClearColor(on ? 0xf5f2ea : 0x000000, on ? 1 : 0);
     this.fireStateChange();
   }
@@ -280,8 +399,12 @@ export class Starfield {
     // after the reorient A is in front of the camera and B is further along
     // the same line.
     const dirBack = forward.clone().negate();
-    const pStart = A.clone().addScaledVector(dirBack, WARP_END_OFFSET_PC);
-    const pEnd = B.clone().addScaledVector(forward, -WARP_END_OFFSET_PC);
+    // End offset at arrival is the destination's own effective minDistance
+    // — so the warp parks exactly at the closest user-orbitable distance
+    // for that star, which is larger than the default for binary systems.
+    const endOffset = this.minDistForStar(destIdx);
+    const pStart = A.clone().addScaledVector(dirBack, endOffset);
+    const pEnd = B.clone().addScaledVector(forward, -endOffset);
 
     const p0 = this.camera.position.clone();
     const radial = new THREE.Vector3().subVectors(p0, A);
@@ -299,7 +422,7 @@ export class Starfield {
     this.controls.enabled = false;
     // Point orbit-target at the destination from the moment the warp begins
     // so the scale bar reflects distance-to-destination throughout the flight
-    // (decreases monotonically from ~|AB| to WARP_END_OFFSET_PC). Otherwise
+    // (decreases monotonically from ~|AB| to the destination's endOffset).
     // it would show distance-to-A during the flight and snap at arrival.
     // Camera orientation is controlled separately via camera.lookAt during
     // updateWarp, so the reorient phase can still keep A centered visually.
@@ -314,6 +437,7 @@ export class Starfield {
       dirBack,
       pStart,
       pEnd,
+      endOffset,
       destIdx,
     };
     for (const h of this.onWarpHandlers) h(true);
@@ -335,7 +459,7 @@ export class Starfield {
     // we animated to — no visible snap between the last fly frame and the
     // parked state.
     const forward = new THREE.Vector3().subVectors(B, state.pStart).normalize();
-    this.camera.position.copy(B).addScaledVector(forward, -WARP_END_OFFSET_PC);
+    this.camera.position.copy(B).addScaledVector(forward, -state.endOffset);
     this.controls.target.copy(B);
     this.warpState = null;
     this.controls.enabled = true;
@@ -404,10 +528,10 @@ export class Starfield {
 
   pickStar(clientX: number, clientY: number, pixelThreshold = 16): number {
     const rect = this.renderer.domElement.getBoundingClientRect();
-    const ndcX = ((clientX - rect.left) / rect.width) * 2 - 1;
-    const ndcY = -((clientY - rect.top) / rect.height) * 2 + 1;
-    const ndcThresholdX = (pixelThreshold / rect.width) * 2;
-    const ndcThresholdY = (pixelThreshold / rect.height) * 2;
+    const viewportW = rect.width;
+    const viewportH = rect.height;
+    const cursorX = clientX - rect.left;
+    const cursorY = clientY - rect.top;
 
     const camPos = this.camera.position;
     const positions = this.catalog.positions;
@@ -415,8 +539,16 @@ export class Starfield {
     const f = this.filter;
     const v = new THREE.Vector3();
 
-    let bestIdx = -1;
-    let bestScore = Infinity;
+    // Two-tier picking:
+    //   1. Cursor inside a star's rendered disc → prime candidate. Among
+    //      prime hits, closest-to-camera wins (foreground occludes).
+    //   2. Otherwise proximity within pixelThreshold, with mag bias so
+    //      brighter stars win ties. Prime hits always beat fallback hits.
+    let discIdx = -1;
+    let discBestCamDist = Infinity;
+    let fbIdx = -1;
+    let fbBestScore = Infinity;
+
     for (let i = 0; i < this.catalog.count; i++) {
       const x = positions[i * 3 + 0];
       const y = positions[i * 3 + 1];
@@ -434,18 +566,25 @@ export class Starfield {
 
       v.set(x, y, z).project(this.camera);
       if (v.z < -1 || v.z > 1) continue;
-      const pdx = (v.x - ndcX) / ndcThresholdX;
-      const pdy = (v.y - ndcY) / ndcThresholdY;
-      const ndcDistSq = pdx * pdx + pdy * pdy;
-      if (ndcDistSq > 1) continue;
+      const screenX = (v.x + 1) * 0.5 * viewportW;
+      const screenY = (1 - v.y) * 0.5 * viewportH;
+      const pxDist = Math.hypot(cursorX - screenX, cursorY - screenY);
+      const pxSize = this.renderedSizePx(i);
 
-      const score = ndcDistSq + appMag * 0.0005;
-      if (score < bestScore) {
-        bestScore = score;
-        bestIdx = i;
+      if (pxDist <= pxSize * 0.5) {
+        if (dCam < discBestCamDist) {
+          discBestCamDist = dCam;
+          discIdx = i;
+        }
+      } else if (discIdx === -1 && pxDist <= pixelThreshold) {
+        const score = pxDist + appMag * 0.05;
+        if (score < fbBestScore) {
+          fbBestScore = score;
+          fbIdx = i;
+        }
       }
     }
-    return bestIdx;
+    return discIdx !== -1 ? discIdx : fbIdx;
   }
 
   private pointerDownAt: { x: number; y: number; t: number } | null = null;
@@ -475,7 +614,70 @@ export class Starfield {
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h, false);
     this.material.uniforms.uPixelRatio.value = this.renderer.getPixelRatio();
+    this.material.uniforms.uPhysMaxPx.value = this.computePhysMaxPx();
+    this.material.uniforms.uViewport.value.set(w, h);
   };
+
+  // The physical-size ceiling: the biggest star in the catalog renders at
+  // this pixel size when the camera is at the reference distance. 50% of
+  // the smaller viewport axis (in CSS pixels) — dominant but not stuffed
+  // edge-to-edge. Tune here if you want supergiants to feel bigger/smaller.
+  private computePhysMaxPx(): number {
+    return 0.5 * Math.min(window.innerWidth, window.innerHeight);
+  }
+
+  // Rendered pixel size (final gl_PointSize-equivalent diameter) for a star
+  // from the current camera. Mirrors the vertex-shader math exactly —
+  // callers include the focus-ring overlay (hide when disc > ring) and
+  // pickStar (hit-test against the true rendered extent). Keep in sync
+  // with star.vert.glsl if the shader size computation changes.
+  renderedSizePx(idx: number): number {
+    const positions = this.catalog.positions;
+    const { physicalRadius, absmag } = this.catalog;
+    const camPos = this.camera.position;
+    const u = this.material.uniforms;
+
+    const dx = positions[idx * 3] - camPos.x;
+    const dy = positions[idx * 3 + 1] - camPos.y;
+    const dz = positions[idx * 3 + 2] - camPos.z;
+    const dCam = Math.max(Math.sqrt(dx * dx + dy * dy + dz * dz), 0.001);
+    const appMag = absmag[idx] + 5 * (Math.log10(dCam) - 1);
+
+    const f = this.filter;
+    const brightness = Math.max(
+      0,
+      Math.min(1, (f.maxAppMag - appMag) / Math.max(f.sizeSpan, 0.001)),
+    );
+    const appSize = f.sizeMin + brightness * (f.sizeMax - f.sizeMin);
+
+    const logRMin = u.uLogRMin.value as number;
+    const logRMax = u.uLogRMax.value as number;
+    const physMinPx = u.uPhysMinPx.value as number;
+    const physMaxPx = u.uPhysMaxPx.value as number;
+    const refDistPc = u.uRefDistPc.value as number;
+    const logSpan = Math.max(logRMax - logRMin, 0.001);
+    const logR = Math.log10(Math.max(physicalRadius[idx], 1e-6));
+    const logRatio = Math.max(0, Math.min(1, (logR - logRMin) / logSpan));
+    const sizeAtRef = physMinPx + logRatio * (physMaxPx - physMinPx);
+    const physSize = sizeAtRef * (refDistPc / dCam);
+
+    return Math.max(appSize, physSize);
+  }
+
+  // Effective minimum orbit distance from a star. For stars with a binary
+  // companion, bumps the distance so the companion still fits within the
+  // viewport half-angle (keeps the whole system in view at max zoom). For
+  // solo stars, returns the default.
+  minDistForStar(idx: number): number {
+    const comp = this.catalog.companion[idx];
+    if (comp < 0) return DEFAULT_MIN_DIST_PC;
+    const p = this.catalog.positions;
+    const dx = p[comp * 3] - p[idx * 3];
+    const dy = p[comp * 3 + 1] - p[idx * 3 + 1];
+    const dz = p[comp * 3 + 2] - p[idx * 3 + 2];
+    const sep = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    return Math.max(DEFAULT_MIN_DIST_PC, sep * BINARY_MIN_DIST_FACTOR);
+  }
 
   private onPointerDown = (e: PointerEvent) => {
     if (e.button !== 0) return;
@@ -592,7 +794,7 @@ export class Starfield {
     if (elapsed < state.reorientMs) {
       // Reorient phase: spherically slerp the camera's radial direction from
       // the user's starting angle around A to `dirBack`, while linearly
-      // easing the distance from A from `mag0` down to WARP_END_OFFSET_PC.
+      // easing the distance from A from `mag0` down to state.endOffset.
       // Look-at stays locked on A so A remains centered in view the whole
       // time. Quaternion slerp robustly handles any starting angle including
       // antipodal cases (user looking at A from the B side).
@@ -604,7 +806,7 @@ export class Starfield {
       this.warpQ0.slerp(this.warpQ1, f);
       this.warpTmp.copy(WARP_BASE_DIR).applyQuaternion(this.warpQ0);
 
-      const mag = state.mag0 * (1 - f) + WARP_END_OFFSET_PC * f;
+      const mag = state.mag0 * (1 - f) + state.endOffset * f;
       this.camera.position.copy(state.A).addScaledVector(this.warpTmp, mag);
       this.camera.lookAt(state.A);
       return;
@@ -639,6 +841,7 @@ export class Starfield {
     this.controls.dispose();
     this.geometry.dispose();
     this.material.dispose();
+    this.glowMaterial.dispose();
     this.renderer.dispose();
   }
 }
