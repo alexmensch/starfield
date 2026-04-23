@@ -744,8 +744,11 @@ export class Starfield {
       return;
     }
     if (idx === this.vectorTo) {
-      this.setVectorTo(null);
-      this.setOrbitTarget(idx);
+      // Use focusStar (the same path as search-select) for click-tip travel
+      // so both "jumps" land the camera at the consistent 2 pc viewing
+      // distance. This also teleports the camera (not just the orbit
+      // target), so the old focused star doesn't linger as a full disc.
+      this.focusStar(idx);
       return;
     }
     this.setVectorTo(idx);
