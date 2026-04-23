@@ -154,8 +154,12 @@ export class Starfield {
 
     // Precompute log10(physicalRadius) per star for the shader, and the
     // catalog-wide min/max for uniform bounds. Done once at load so the
-    // vertex shader can just do a linear mix.
+    // vertex shader can just do a linear mix. Luminosity class is
+    // converted from Uint8 to Float32 since the vertex attribute is a
+    // float; 255 (unknown) survives the conversion and is handled inside
+    // the shader.
     const logRadii = new Float32Array(catalog.count);
+    const lumClassF32 = new Float32Array(catalog.count);
     let logRMin = Infinity;
     let logRMax = -Infinity;
     for (let i = 0; i < catalog.count; i++) {
@@ -164,6 +168,7 @@ export class Starfield {
       logRadii[i] = lr;
       if (lr < logRMin) logRMin = lr;
       if (lr > logRMax) logRMax = lr;
+      lumClassF32[i] = catalog.luminosityClass[i];
     }
     const physMaxPx = this.computePhysMaxPx();
 
@@ -188,6 +193,7 @@ export class Starfield {
     this.geometry.setAttribute('iLogRadius', new THREE.InstancedBufferAttribute(logRadii, 1));
     this.geometry.setAttribute('iPeriodDays', new THREE.InstancedBufferAttribute(catalog.periodDays, 1));
     this.geometry.setAttribute('iAmplitudeMag', new THREE.InstancedBufferAttribute(catalog.amplitudeMag, 1));
+    this.geometry.setAttribute('iLumClass', new THREE.InstancedBufferAttribute(lumClassF32, 1));
     this.geometry.instanceCount = catalog.count;
     this.geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 60_000);
 

@@ -47,6 +47,7 @@ in float iSpectClass;
 in float iLogRadius;
 in float iPeriodDays;   // 0 = not a variable
 in float iAmplitudeMag; // 0 = not a variable
+in float iLumClass;     // 0=WD, 2=V, 4=III, 6-9=supergiant/hypergiant, 255=?
 
 out float vAppMag;
 out vec3 vColor;
@@ -55,6 +56,8 @@ out float vPhysRatio;  // physSize / pxSize, in [0,1] — 1 means the physical
                        // term is driving the size (close range, resolve as a
                        // disc); 0 means the apparent-mag term is driving
                        // (distant, render as a soft glow)
+out float vSoftness;   // 0 = crisp (white dwarf), 1 = fuzzy (hypergiant) —
+                       // drives halo falloff and disc-edge AA width
 
 const float LOG10 = 2.302585093;
 
@@ -117,18 +120,27 @@ void main() {
     bool magOk = appMag <= uMaxAppMag;
     bool visible = spectOk && distOk && magOk;
 
+    // Luminosity-class softness: linear from white dwarf (0) → hypergiant
+    // (9). Unknown (iLumClass = 255) falls back to main-sequence-dwarf
+    // softness. Feeds the fragment shader's glow falloff and disc-edge AA
+    // width so supergiants look "fluffier" than dwarfs at the same radius.
+    float lumClass = iLumClass < 100.0 ? iLumClass : 2.0;
+    float softness = clamp(lumClass / 9.0, 0.0, 1.0);
+
     if (!visible) {
         gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
         vAppMag = appMag;
         vColor = vec3(0.0);
         vUv = aCorner;
         vPhysRatio = 0.0;
+        vSoftness = softness;
         return;
     }
 
     vAppMag = appMag;
     vColor = ciToColor(iCi);
     vUv = aCorner;
+    vSoftness = softness;
 
     // Apparent-magnitude size term (CSS pixels).
     float brightness = clamp((uMaxAppMag - appMag) / max(uSizeSpan, 0.001), 0.0, 1.0);
