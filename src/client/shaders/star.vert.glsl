@@ -25,6 +25,16 @@ uniform float uPhysMaxPx; // pixel size ceiling at ref distance — typically
 uniform float uRefDistPc; // the distance at which uPhysMaxPx applies
 uniform vec2 uViewport;   // viewport size in CSS pixels (for quad expansion)
 
+// Variability. uTime is real elapsed seconds. Per-star period is in days
+// (0 = not a variable), per-star amplitude is in magnitudes. uSecondsPerDay
+// scales simulated time (how many real seconds pass per catalog day); lower
+// values = faster-appearing cycles. uMinPeriodSec clamps the effective
+// cycle period so even short-period variables (RR Lyrae, ~half a day) don't
+// strobe faster than that threshold.
+uniform float uTime;
+uniform float uSecondsPerDay;
+uniform float uMinPeriodSec;
+
 // Per-vertex: unit-square corner in [-0.5, +0.5] × [-0.5, +0.5], used to
 // expand each instanced quad around its projected star centre.
 in vec2 aCorner;
@@ -35,6 +45,8 @@ in float iAbsmag;
 in float iCi;
 in float iSpectClass;
 in float iLogRadius;
+in float iPeriodDays;   // 0 = not a variable
+in float iAmplitudeMag; // 0 = not a variable
 
 out float vAppMag;
 out vec3 vColor;
@@ -62,6 +74,44 @@ void main() {
     float dPc = max(distCam, 0.001);
     float appMag = iAbsmag + 5.0 * (log(dPc) / LOG10 - 1.0);
 
+    // Variability. The same magnitude modulation drives two visual effects:
+    //   (1) appMag shifts — changes the point-glow size at ranges where the
+    //       star isn't already at max brightness. Handles distant variables.
+    //   (2) physical-radius scaling — at close range the point-glow is
+    //       saturated so appMag clipping hides the modulation; scaling the
+    //       resolved disc radius makes the pulse visible instead. Stefan-
+    //       Boltzmann-style: radius scales as sqrt(linear brightness), i.e.
+    //       10^(-magMod / 5). Physically motivated for Miras and Cepheids.
+    //
+    // The effective amplitude is compressed per-frame so that at the star's
+    // current baseSize the pulse stays within a sensible display range —
+    // peak ≤ uPhysMaxPx, trough ≥ VAR_TROUGH_FLOOR_FRACTION × baseSize.
+    // Keeps the sine smooth (no plateau at peak, no disappearing at trough)
+    // even for extreme-amplitude variables like Mira.
+    float radiusFactor = 1.0;
+    float magMod = 0.0;
+    if (iPeriodDays > 0.0 && iAmplitudeMag > 0.0) {
+        float periodSec = max(iPeriodDays * uSecondsPerDay, uMinPeriodSec);
+        float phase = uTime / periodSec;
+
+        // Precompute base (un-modulated) physSize to know how much headroom
+        // we have in each direction.
+        float logSpan0 = max(uLogRMax - uLogRMin, 0.001);
+        float logRatio0 = clamp((iLogRadius - uLogRMin) / logSpan0, 0.0, 1.0);
+        float sizeAtRef0 = mix(uPhysMinPx, uPhysMaxPx, logRatio0);
+        float baseSize0 = sizeAtRef0 * (uRefDistPc / dPc);
+
+        const float VAR_TROUGH_FLOOR_FRACTION = 0.2;
+        float maxUpLog10 = log(max(uPhysMaxPx / max(baseSize0, 1.0), 1.0)) / LOG10;
+        float maxDownLog10 = -log(VAR_TROUGH_FLOOR_FRACTION) / LOG10; // ≈ 0.699
+        float ampLimitMag = 10.0 * min(maxUpLog10, maxDownLog10);
+        float ampEff = min(iAmplitudeMag, max(0.0, ampLimitMag));
+
+        magMod = 0.5 * ampEff * sin(6.2831853 * phase);
+        appMag += magMod;
+        radiusFactor = pow(10.0, -magMod / 5.0);
+    }
+
     bool spectOk = (uSpectMask & (1u << uint(iSpectClass))) != 0u;
     bool distOk = distSol >= uMinDistSol && distSol <= uMaxDistSol;
     bool magOk = appMag <= uMaxAppMag;
@@ -86,10 +136,11 @@ void main() {
 
     // Physical-size term. Log-map the star's radius into the size range,
     // then scale by ref/distance so the curve falls off with distance.
+    // radiusFactor is the already-compressed variability modulation above.
     float logSpan = max(uLogRMax - uLogRMin, 0.001);
     float logRatio = clamp((iLogRadius - uLogRMin) / logSpan, 0.0, 1.0);
     float sizeAtRef = mix(uPhysMinPx, uPhysMaxPx, logRatio);
-    float physSize = sizeAtRef * (uRefDistPc / dPc);
+    float physSize = sizeAtRef * (uRefDistPc / dPc) * radiusFactor;
 
     float pxSize = max(appSize, physSize);
     vPhysRatio = clamp(physSize / max(pxSize, 0.001), 0.0, 1.0);

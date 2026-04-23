@@ -12,6 +12,7 @@ export interface SearchIndexEntry {
   hr?: number;
   gl?: string;
   c?: number;
+  s?: string;  // spectral designation string, cleaned for display
 }
 
 interface FuzzyEntry {
@@ -228,6 +229,17 @@ export function buildStarLabels(
     }
   }
   return labels;
+}
+
+// Map of star index → spectral designation string ("G2 V", "M1.5Iab-b",
+// "K0III+K7V", etc.), as carried from the source catalog via search-index.
+// Used by the hover tooltip to show full classification info.
+export function buildSpectralMap(raw: SearchIndexEntry[]): Map<number, string> {
+  const out = new Map<number, string>();
+  for (const entry of raw) {
+    if (entry.s) out.set(entry.i, entry.s);
+  }
+  return out;
 }
 
 export function bindSearch(

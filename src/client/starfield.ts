@@ -125,11 +125,6 @@ export class Starfield {
     this.renderer.setSize(window.innerWidth, window.innerHeight, false);
     this.renderer.setClearColor(0x000000, 0);
 
-    const gl = this.renderer.getContext();
-    const pointSizeRange = gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE);
-    console.log('[stage2a] gl_PointSize range:', pointSizeRange[0], 'to', pointSizeRange[1]);
-    console.log('[stage2a] viewport (CSS px):', window.innerWidth, '×', window.innerHeight, 'pixelRatio:', this.renderer.getPixelRatio());
-
     this.scene = new THREE.Scene();
 
     // Near plane must be strictly smaller than controls.minDistance,
@@ -171,14 +166,6 @@ export class Starfield {
       if (lr > logRMax) logRMax = lr;
     }
     const physMaxPx = this.computePhysMaxPx();
-    console.log('[stage2a] logR range:', logRMin.toFixed(3), 'to', logRMax.toFixed(3), '(span', (logRMax - logRMin).toFixed(3), ')');
-    console.log('[stage2a] uPhysMaxPx:', physMaxPx, 'uPhysMinPx: 2');
-    if (catalog.solIndex >= 0) {
-      const solLogR = logRadii[catalog.solIndex];
-      const solRatio = (solLogR - logRMin) / (logRMax - logRMin);
-      const solSizePx = 2 + solRatio * (physMaxPx - 2);
-      console.log(`[stage2a] Sol: logR=${solLogR.toFixed(3)} ratio=${solRatio.toFixed(3)} sizeAtRefDist=${solSizePx.toFixed(0)}px`);
-    }
 
     // Instanced quads: one unit square per star, expanded in screen space in
     // the vertex shader. This replaces the earlier THREE.Points approach,
@@ -199,6 +186,8 @@ export class Starfield {
     this.geometry.setAttribute('iCi', new THREE.InstancedBufferAttribute(catalog.ci, 1));
     this.geometry.setAttribute('iSpectClass', new THREE.InstancedBufferAttribute(catalog.spectClass, 1));
     this.geometry.setAttribute('iLogRadius', new THREE.InstancedBufferAttribute(logRadii, 1));
+    this.geometry.setAttribute('iPeriodDays', new THREE.InstancedBufferAttribute(catalog.periodDays, 1));
+    this.geometry.setAttribute('iAmplitudeMag', new THREE.InstancedBufferAttribute(catalog.amplitudeMag, 1));
     this.geometry.instanceCount = catalog.count;
     this.geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 60_000);
 
@@ -223,6 +212,15 @@ export class Starfield {
       uPhysMaxPx: { value: physMaxPx },
       uRefDistPc: { value: DEFAULT_MIN_DIST_PC },
       uViewport: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+      // Variability time. uTime advances in real seconds; uSecondsPerDay is
+      // the compression factor — lower values make catalog periods cycle
+      // faster on-screen. uMinPeriodSec clamps the shortest cycle so sub-day
+      // variables (RR Lyrae, Algol) don't pulse too rapidly to read. 4 s is
+      // a comfortable floor — Algol's 0.57 s natural cycle becomes 4 s,
+      // clearly visible but not jarring.
+      uTime: { value: 0 },
+      uSecondsPerDay: { value: 0.2 },
+      uMinPeriodSec: { value: 4.0 },
     };
 
     // Disc pass: opaque-over (premultiplied alpha) so close stars fully
@@ -628,12 +626,13 @@ export class Starfield {
 
   // Rendered pixel size (final gl_PointSize-equivalent diameter) for a star
   // from the current camera. Mirrors the vertex-shader math exactly —
-  // callers include the focus-ring overlay (hide when disc > ring) and
-  // pickStar (hit-test against the true rendered extent). Keep in sync
-  // with star.vert.glsl if the shader size computation changes.
+  // callers include the focus-ring overlay, the disc mask, and pickStar.
+  // Variability modulation + the uPhysMaxPx clamp are replicated here so
+  // the mask shrinks in sync with the disc (no gap as a variable pulses).
+  // Keep in sync with star.vert.glsl if the shader size computation changes.
   renderedSizePx(idx: number): number {
     const positions = this.catalog.positions;
-    const { physicalRadius, absmag } = this.catalog;
+    const { physicalRadius, absmag, periodDays, amplitudeMag } = this.catalog;
     const camPos = this.camera.position;
     const u = this.material.uniforms;
 
@@ -641,14 +640,7 @@ export class Starfield {
     const dy = positions[idx * 3 + 1] - camPos.y;
     const dz = positions[idx * 3 + 2] - camPos.z;
     const dCam = Math.max(Math.sqrt(dx * dx + dy * dy + dz * dz), 0.001);
-    const appMag = absmag[idx] + 5 * (Math.log10(dCam) - 1);
-
-    const f = this.filter;
-    const brightness = Math.max(
-      0,
-      Math.min(1, (f.maxAppMag - appMag) / Math.max(f.sizeSpan, 0.001)),
-    );
-    const appSize = f.sizeMin + brightness * (f.sizeMax - f.sizeMin);
+    let appMag = absmag[idx] + 5 * (Math.log10(dCam) - 1);
 
     const logRMin = u.uLogRMin.value as number;
     const logRMax = u.uLogRMax.value as number;
@@ -659,7 +651,40 @@ export class Starfield {
     const logR = Math.log10(Math.max(physicalRadius[idx], 1e-6));
     const logRatio = Math.max(0, Math.min(1, (logR - logRMin) / logSpan));
     const sizeAtRef = physMinPx + logRatio * (physMaxPx - physMinPx);
-    const physSize = sizeAtRef * (refDistPc / dCam);
+    const baseSize = sizeAtRef * (refDistPc / dCam);
+
+    // Variability — same compression rule as the shader: effective
+    // amplitude is clamped so peak ≤ physMaxPx and trough ≥ 20% of
+    // baseSize, keeping the sinusoidal pulse smooth at both ends.
+    let radiusFactor = 1;
+    const period = periodDays[idx];
+    const amp = amplitudeMag[idx];
+    if (period > 0 && amp > 0) {
+      const periodSec = Math.max(
+        period * (u.uSecondsPerDay.value as number),
+        u.uMinPeriodSec.value as number,
+      );
+      const phase = (u.uTime.value as number) / periodSec;
+
+      const VAR_TROUGH_FLOOR_FRACTION = 0.2;
+      const maxUpLog10 = Math.log10(Math.max(physMaxPx / Math.max(baseSize, 1), 1));
+      const maxDownLog10 = -Math.log10(VAR_TROUGH_FLOOR_FRACTION);
+      const ampLimitMag = 10 * Math.min(maxUpLog10, maxDownLog10);
+      const ampEff = Math.min(amp, Math.max(0, ampLimitMag));
+
+      const magMod = 0.5 * ampEff * Math.sin(2 * Math.PI * phase);
+      appMag += magMod;
+      radiusFactor = Math.pow(10, -magMod / 5);
+    }
+
+    const f = this.filter;
+    const brightness = Math.max(
+      0,
+      Math.min(1, (f.maxAppMag - appMag) / Math.max(f.sizeSpan, 0.001)),
+    );
+    const appSize = f.sizeMin + brightness * (f.sizeMax - f.sizeMin);
+
+    const physSize = baseSize * radiusFactor;
 
     return Math.max(appSize, physSize);
   }
@@ -773,6 +798,7 @@ export class Starfield {
     this.camera.up.applyAxisAngle(forward, angle).normalize();
   }
 
+  private animateStartMs = performance.now();
   private animate = () => {
     if (this.disposed) return;
     if (this.warpState) {
@@ -781,6 +807,9 @@ export class Starfield {
       this.controls.update();
     }
     this.material.uniforms.uCameraPos.value.copy(this.camera.position);
+    // Advance variability clock (seconds since start). Shared with glow
+    // material via sharedUniforms so both passes see the same time.
+    this.material.uniforms.uTime.value = (performance.now() - this.animateStartMs) / 1000;
     this.renderer.render(this.scene, this.camera);
     for (const h of this.onFrameHandlers) h();
     requestAnimationFrame(this.animate);

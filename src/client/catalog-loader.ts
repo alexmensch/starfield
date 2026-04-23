@@ -18,6 +18,8 @@ export interface Catalog {
   constellation: Float32Array;   // length = count (as float for vertex attrib)
   flags: Uint8Array;             // length = count (bit 0 has_name, 1 is_sol, 2 has_bayer, 4 is_binary_primary)
   companion: Int32Array;         // length = count, -1 = no companion
+  periodDays: Float32Array;      // length = count, 0 = not variable
+  amplitudeMag: Float32Array;    // length = count, 0 = not variable
   names: Map<number, string>;    // star index -> proper name (named stars only)
   solIndex: number;              // -1 if not found
   constellations: Constellation[];
@@ -25,7 +27,7 @@ export interface Catalog {
 
 const HEADER_SIZE = 32;
 const RECORD_SIZE = 40;
-const EXPECTED_VERSION = 2;
+const EXPECTED_VERSION = 3;
 const NO_COMPANION = 0xffffffff;
 
 export interface LoadProgress {
@@ -100,6 +102,8 @@ function parseBinary(ab: ArrayBuffer, constellations: Constellation[]): Catalog 
   const constellation = new Float32Array(count);
   const flags = new Uint8Array(count);
   const companion = new Int32Array(count);
+  const periodDays = new Float32Array(count);
+  const amplitudeMag = new Float32Array(count);
   const nameOffsetArr = new Uint32Array(count);
 
   let solIndex = -1;
@@ -118,6 +122,10 @@ function parseBinary(ab: ArrayBuffer, constellations: Constellation[]): Catalog 
     luminosityClass[i] = view.getUint8(off + 33);
     constellation[i] = view.getUint8(off + 34);
     flags[i] = view.getUint8(off + 35);
+    // Variability (v3): amplitude in 0.05 mag units, period in 0.1 days.
+    // Zero period = not a known variable.
+    amplitudeMag[i] = view.getUint8(off + 36) * 0.05;
+    periodDays[i] = view.getUint16(off + 38, true) * 0.1;
     if (flags[i] & 0x02) solIndex = i;
   }
 
@@ -157,6 +165,8 @@ function parseBinary(ab: ArrayBuffer, constellations: Constellation[]): Catalog 
     constellation,
     flags,
     companion,
+    periodDays,
+    amplitudeMag,
     names,
     solIndex,
     constellations,

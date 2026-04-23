@@ -1,8 +1,9 @@
 import { loadCatalog } from './catalog-loader';
 import { Starfield } from './starfield';
 import { bindControls } from './controls';
-import { bindSearch, buildStarLabels, type SearchIndexEntry } from './search';
+import { bindSearch, buildStarLabels, buildSpectralMap, type SearchIndexEntry } from './search';
 import { createConstellationOverlay } from './constellation-overlay';
+import { createDiscMask } from './disc-mask';
 import { createDistanceVectorOverlay } from './distance-vector-overlay';
 import { createFocusRingOverlay } from './focus-ring-overlay';
 import { createScaleBar } from './scale-bar';
@@ -50,12 +51,14 @@ async function main() {
     loadingBar.style.width = '100%';
 
     const starLabels = buildStarLabels(catalog, searchIndex);
+    const spectralMap = buildSpectralMap(searchIndex);
 
     const starfield = new Starfield({ canvas, catalog });
     bindUnitToggle();
     bindThemeToggle(starfield);
     bindControls(starfield);
     bindSearch(starfield, catalog, searchIndex, starLabels);
+    createDiscMask(starfield);
     createConstellationOverlay(starfield);
     createDistanceVectorOverlay(starfield);
     createFocusRingOverlay(starfield);
@@ -81,7 +84,7 @@ async function main() {
     });
     onUnitChange(renderMeta);
 
-    bindHoverTooltip(canvas, tooltip, starfield, describeStar);
+    bindHoverTooltip(canvas, tooltip, starfield, describeStarDetailed);
 
     await new Promise((r) => requestAnimationFrame(r));
     loading.style.transition = 'opacity 0.4s ease';
@@ -95,6 +98,8 @@ async function main() {
       maybeShowInfoModal();
     }, 400);
 
+    // Short one-line form — used in the meta bar where horizontal space
+    // is tight.
     function describeStar(idx: number): string {
       const name = starLabels.get(idx) ?? `Unnamed #${idx}`;
       const conIdx = catalog.constellation[idx];
@@ -104,6 +109,34 @@ async function main() {
         p[idx * 3] ** 2 + p[idx * 3 + 1] ** 2 + p[idx * 3 + 2] ** 2,
       );
       return `${name}${con ? ' · ' + con : ''} · ${fmtDist(dist)}`;
+    }
+
+    // Detailed, multi-line form for the hover tooltip. Line 1 is the star
+    // name; subsequent lines progressively disclose: constellation +
+    // distance, full spectral classification (from the catalog, preserving
+    // composite/peculiar markers), and variability info if any.
+    function describeStarDetailed(idx: number): { name: string; lines: string[] } {
+      const name = starLabels.get(idx) ?? `Unnamed #${idx}`;
+      const conIdx = catalog.constellation[idx];
+      const con = conIdx !== 255 ? catalog.constellations[conIdx].name : '';
+      const p = catalog.positions;
+      const dist = Math.sqrt(
+        p[idx * 3] ** 2 + p[idx * 3 + 1] ** 2 + p[idx * 3 + 2] ** 2,
+      );
+      const lines: string[] = [];
+      const ctx = [con, fmtDist(dist)].filter(Boolean).join(' · ');
+      if (ctx) lines.push(ctx);
+      const spect = spectralMap.get(idx);
+      if (spect) lines.push(spect);
+      const period = catalog.periodDays[idx];
+      const amp = catalog.amplitudeMag[idx];
+      if (period > 0 && amp > 0) {
+        const periodStr = period >= 10
+          ? `${period.toFixed(0)}d`
+          : `${period.toFixed(2)}d`;
+        lines.push(`Variable · P=${periodStr}, Δ=${amp.toFixed(1)}mag`);
+      }
+      return { name, lines };
     }
   } catch (err) {
     console.error(err);
@@ -115,7 +148,7 @@ function bindHoverTooltip(
   canvas: HTMLCanvasElement,
   tooltip: HTMLElement,
   starfield: Starfield,
-  describe: (i: number) => string,
+  detailed: (i: number) => { name: string; lines: string[] },
 ) {
   let timer: number | undefined;
   let dragging = false;
@@ -142,11 +175,13 @@ function bindHoverTooltip(
     timer = window.setTimeout(() => {
       const idx = starfield.pickStar(lastX, lastY, 14);
       if (idx < 0) return;
-      const text = describe(idx);
-      const [name, ...rest] = text.split(' · ');
-      tooltip.innerHTML = `<div class="tt-name">${escapeHtml(name)}</div>${rest.length ? `<div class="tt-sub">${escapeHtml(rest.join(' · '))}</div>` : ''}`;
-      const maxLeft = window.innerWidth - 260;
-      const maxTop = window.innerHeight - 64;
+      const { name, lines } = detailed(idx);
+      const subLines = lines
+        .map((l) => `<div class="tt-sub">${escapeHtml(l)}</div>`)
+        .join('');
+      tooltip.innerHTML = `<div class="tt-name">${escapeHtml(name)}</div>${subLines}`;
+      const maxLeft = window.innerWidth - 300;
+      const maxTop = window.innerHeight - 96;
       tooltip.style.left = Math.min(lastX + 14, maxLeft) + 'px';
       tooltip.style.top = Math.min(lastY + 14, maxTop) + 'px';
       tooltip.hidden = false;

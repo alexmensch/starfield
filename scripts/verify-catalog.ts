@@ -63,6 +63,8 @@ function readRecord(i: number) {
     lumClass: view.getUint8(off + 33),
     conIndex: conIdx,
     flags: flags.toString(2).padStart(8, '0'),
+    amplitudeMag: view.getUint8(off + 36) * 0.05,
+    periodDays: view.getUint16(off + 38, true) * 0.1,
     name,
     con: conIdx === 255 ? null : constellations[conIdx]?.code,
   };
@@ -85,3 +87,16 @@ for (let i = 0; i < count && founds < targets.size; i++) {
     founds++;
   }
 }
+
+console.log('\nVariable star count and 5 examples:');
+let varCount = 0;
+const varSamples: ReturnType<typeof readRecord>[] = [];
+for (let i = 0; i < count; i++) {
+  const r = readRecord(i);
+  if (r.periodDays > 0) {
+    varCount++;
+    if (r.name && varSamples.length < 5) varSamples.push(r);
+  }
+}
+console.log(`  ${varCount} variable stars`);
+for (const r of varSamples) console.log(`    ${r.name}: P=${r.periodDays.toFixed(2)}d, A=${r.amplitudeMag.toFixed(2)}mag (${r.con})`);

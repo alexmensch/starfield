@@ -10,6 +10,8 @@ const ROOT = resolve(__dirname, '..');
 
 const SRC_CSV = resolve(ROOT, 'data/athyg_33_classic_ids.csv');
 const SRC_STELLARIUM = resolve(ROOT, 'data/stellarium-modern-skyculture.json');
+const SRC_GCVS = resolve(ROOT, 'data/gcvs5.txt');
+const SRC_GCVS_XREF = resolve(ROOT, 'data/crossid.txt');
 const OUT_BIN = resolve(ROOT, 'public/catalog.bin');
 const OUT_CON = resolve(ROOT, 'public/constellations.json');
 const OUT_SEARCH = resolve(ROOT, 'public/search-index.json');
@@ -23,7 +25,7 @@ const BINARY_MAX_SEP_PC = 0.005;
 
 const HEADER_SIZE = 32;
 const RECORD_SIZE = 40;
-const BINARY_VERSION = 2;
+const BINARY_VERSION = 3;
 
 const CONSTELLATIONS: { code: string; name: string }[] = [
   { code: 'And', name: 'Andromeda' },
@@ -316,10 +318,116 @@ function isUpToDate(): boolean {
   const stellariumMtime = existsSync(SRC_STELLARIUM)
     ? statSync(SRC_STELLARIUM).mtimeMs
     : 0;
+  const gcvsMtime = existsSync(SRC_GCVS) ? statSync(SRC_GCVS).mtimeMs : 0;
+  const xrefMtime = existsSync(SRC_GCVS_XREF) ? statSync(SRC_GCVS_XREF).mtimeMs : 0;
   const scriptMtime = statSync(__filename).mtimeMs;
   return (
-    binMtime > srcMtime && binMtime > scriptMtime && binMtime > stellariumMtime
+    binMtime > srcMtime &&
+    binMtime > scriptMtime &&
+    binMtime > stellariumMtime &&
+    binMtime > gcvsMtime &&
+    binMtime > xrefMtime
   );
+}
+
+// GCVS variable-star catalogue parsing. We load two files:
+//   - gcvs5.txt    : the main catalogue with period, max/min magnitudes,
+//                    and variability type for each variable star (keyed by
+//                    GCVS designation like "R And", "V0640 Cas").
+//   - crossid.txt  : the cross-identification file that maps foreign
+//                    catalogue IDs (Hip/HD/Tyc/SAO/etc.) to those GCVS
+//                    designations.
+// Together they let us cross-match most AT-HYG stars with HIP or HD to a
+// GCVS entry and carry its period + amplitude into the binary.
+
+interface VarStarData {
+  periodDays: number;
+  amplitudeMag: number;
+}
+
+// GCVS designations in both files are space-padded fixed-width, e.g.
+// "R     And *" or "Z     Peg". Trailing asterisk is an indicator that we
+// don't need; collapse internal whitespace to a single space.
+function normalizeGcvsName(raw: string): string {
+  return raw
+    .replace(/\*+$/, '')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
+// Parse a possibly-annotated GCVS number field: entries may carry "<", ">",
+// ":", "()" uncertainty markers or trailing "*"; strip them before parsing.
+function parseGcvsNumber(s: string): number | null {
+  const t = s.trim().replace(/[<>():;*]/g, '').trim();
+  if (!t) return null;
+  const v = parseFloat(t);
+  return Number.isFinite(v) ? v : null;
+}
+
+function parseGcvsMain(): Map<string, VarStarData> {
+  const out = new Map<string, VarStarData>();
+  if (!existsSync(SRC_GCVS)) return out;
+  const text = readFileSync(SRC_GCVS, 'utf8');
+  const lines = text.split(/\r?\n/);
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const fields = line.split('|');
+    // Expect ~22 fields; headers / malformed rows are shorter.
+    if (fields.length < 12) continue;
+    const name = normalizeGcvsName(fields[1] ?? '');
+    if (!name) continue;
+    const maxMag = parseGcvsNumber(fields[4] ?? '');
+    const minMag = parseGcvsNumber(fields[5] ?? '');
+    const periodDays = parseGcvsNumber(fields[10] ?? '');
+    if (periodDays === null || periodDays <= 0) continue;
+    if (maxMag === null || minMag === null) continue;
+    const amp = minMag - maxMag; // min is dimmer (higher number) than max
+    if (amp <= 0) continue;
+    out.set(name, { periodDays, amplitudeMag: amp });
+  }
+  return out;
+}
+
+interface VarStarXref {
+  byHip: Map<number, string>;
+  byHd: Map<number, string>;
+}
+
+function parseGcvsCrossref(): VarStarXref {
+  const byHip = new Map<number, string>();
+  const byHd = new Map<number, string>();
+  if (!existsSync(SRC_GCVS_XREF)) return { byHip, byHd };
+  const text = readFileSync(SRC_GCVS_XREF, 'utf8');
+  const lines = text.split(/\r?\n/);
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    // Each line: "<CATALOG> <NUM>          | = <GCVS_NAME>  | | |"
+    // We only care about Hip and HD since those are what AT-HYG carries.
+    const bar = line.indexOf('|');
+    if (bar < 0) continue;
+    const leftRaw = line.substring(0, bar).trim();
+    const rest = line.substring(bar + 1);
+    const rightBar = rest.indexOf('|');
+    const rightRaw = (rightBar >= 0 ? rest.substring(0, rightBar) : rest).trim();
+
+    // Left side examples: "Hip  000008", "HD   000015"
+    const leftMatch = leftRaw.match(/^(\w+)\s+(\d+)/);
+    if (!leftMatch) continue;
+    const prefix = leftMatch[1].toLowerCase();
+    if (prefix !== 'hip' && prefix !== 'hd') continue;
+    const num = parseInt(leftMatch[2], 10);
+    if (!Number.isFinite(num) || num <= 0) continue;
+
+    // Right side: "=<GCVS_NAME>", strip the leading "=" and normalize.
+    const rightMatch = rightRaw.match(/^=\s*(.+?)\s*$/);
+    if (!rightMatch) continue;
+    const gcvsName = normalizeGcvsName(rightMatch[1]);
+    if (!gcvsName) continue;
+
+    if (prefix === 'hip') byHip.set(num, gcvsName);
+    else byHd.set(num, gcvsName);
+  }
+  return { byHip, byHd };
 }
 
 interface Star {
@@ -338,7 +446,10 @@ interface Star {
   hr: number | null;
   flam: number | null;
   gl: string | null;
-  companionIdx: number;    // assigned later in inferBinaries; -1 = none
+  spectDisplay: string | null; // cleaned-up spectral string for tooltip display
+  companionIdx: number;     // assigned later in inferBinaries; -1 = none
+  periodDays: number;       // 0 = not a variable known to GCVS
+  amplitudeMag: number;     // 0 if not variable
 }
 
 function parseFloatOrNull(s: string | undefined | null): number | null {
@@ -418,6 +529,9 @@ async function readStars(): Promise<{
     const hd = parseIntOrNull(row.hd);
     const hr = parseIntOrNull(row.hr);
     const gl = nonEmpty(row.gl);
+    const spectDisplay = spectRaw
+      ? spectRaw.replace(/\*+$/, '').trim().replace(/\s+/g, ' ')
+      : null;
 
     const isSol = proper === 'Sol';
     let flags = 0;
@@ -432,11 +546,39 @@ async function readStars(): Promise<{
       physicalRadius: physRadius,
       conIndex, flags,
       proper, bayer, hip, hd, hr, flam, gl,
+      spectDisplay,
       companionIdx: -1,
+      periodDays: 0,
+      amplitudeMag: 0,
     });
   }
 
   return { stars, stats: { total, dropped } };
+}
+
+// Cross-match each star against GCVS via HIP (first) or HD (fallback). Most
+// AT-HYG stars with a Hipparcos or HD designation that appears in GCVS will
+// get period + amplitude here; stars without either ID, or whose cross-ref
+// GCVS entry lacks a period (irregular variables, SN, etc.), stay at 0/0
+// and won't pulse.
+function applyVariability(
+  stars: Star[],
+  gcvsData: Map<string, VarStarData>,
+  xref: VarStarXref,
+): { matched: number } {
+  let matched = 0;
+  for (const s of stars) {
+    let gcvsName: string | undefined;
+    if (s.hip !== null) gcvsName = xref.byHip.get(s.hip);
+    if (!gcvsName && s.hd !== null) gcvsName = xref.byHd.get(s.hd);
+    if (!gcvsName) continue;
+    const data = gcvsData.get(gcvsName);
+    if (!data) continue;
+    s.periodDays = data.periodDays;
+    s.amplitudeMag = data.amplitudeMag;
+    matched++;
+  }
+  return { matched };
 }
 
 // Spatial-grid nearest-neighbour pass. For each star, find its nearest
@@ -613,6 +755,21 @@ async function main() {
     `  ${binStats.pairs} companion assignments (${binStats.primaries} primaries) in ${Date.now() - tBin}ms`,
   );
 
+  // GCVS variable-star cross-match. Optional — if the files aren't present
+  // we just skip, no variability rendered.
+  if (existsSync(SRC_GCVS) && existsSync(SRC_GCVS_XREF)) {
+    console.log('Parsing GCVS variable-star catalogue...');
+    const tGcvs = Date.now();
+    const gcvsData = parseGcvsMain();
+    const xref = parseGcvsCrossref();
+    const { matched } = applyVariability(stars, gcvsData, xref);
+    console.log(
+      `  ${gcvsData.size} GCVS entries, ${xref.byHip.size} Hip + ${xref.byHd.size} HD xrefs, ${matched} catalog stars matched in ${Date.now() - tGcvs}ms`,
+    );
+  } else {
+    console.log('GCVS files not found; skipping variability cross-match.');
+  }
+
   // Build name table — just proper names. Bayer/Flam/HIP/etc. go in
   // search-index.json so the main binary stays compact.
   const encoder = new TextEncoder();
@@ -655,6 +812,7 @@ async function main() {
   // Records.
   let off = HEADER_SIZE;
   let solIndex = -1;
+  let variableCount = 0;
   const NO_COMPANION = 0xffffffff;
   for (let i = 0; i < stars.length; i++) {
     const s = stars[i];
@@ -670,7 +828,25 @@ async function main() {
     view.setUint8(off + 33, s.lumClass);
     view.setUint8(off + 34, s.conIndex);
     view.setUint8(off + 35, s.flags);
-    // off + 36..39: reserved.
+    // Variability fields (v3). Packed into bytes 36..39:
+    //   36:    amplitude in 0.05 mag units (uint8, 0 = not variable or <0.05 mag)
+    //   37:    reserved (future: variability type)
+    //   38-39: period in 0.1 days (uint16, 0 = not variable, max 6553.5 days)
+    // Amplitudes > 12.75 mag (extreme Miras) clamp to the uint8 max; periods
+    // > 6553 days (rare long-period symbiotics) clamp to the uint16 max.
+    // Period = 0 is the "not variable" sentinel the shader checks.
+    if (s.periodDays > 0 && s.amplitudeMag > 0) {
+      const ampUnits = Math.min(255, Math.max(0, Math.round(s.amplitudeMag * 20)));
+      const periodUnits = Math.min(65535, Math.max(0, Math.round(s.periodDays * 10)));
+      view.setUint8(off + 36, ampUnits);
+      view.setUint8(off + 37, 0);
+      view.setUint16(off + 38, periodUnits, true);
+      if (ampUnits > 0 && periodUnits > 0) variableCount++;
+    } else {
+      view.setUint8(off + 36, 0);
+      view.setUint8(off + 37, 0);
+      view.setUint16(off + 38, 0, true);
+    }
     if (s.flags & 0x02) solIndex = i;
     off += RECORD_SIZE;
   }
@@ -709,6 +885,7 @@ async function main() {
     if (s.hr !== null) entry.hr = s.hr;
     if (s.gl) entry.gl = s.gl;
     if (s.conIndex !== 255) entry.c = s.conIndex;
+    if (s.spectDisplay) entry.s = s.spectDisplay;
     searchEntries.push(entry);
   }
   await writeFile(OUT_SEARCH, JSON.stringify(searchEntries) + '\n');

@@ -15,6 +15,7 @@ const LABEL_PADDING_PX = 50;
 
 export function createDistanceVectorOverlay(starfield: Starfield) {
   const line = document.getElementById('dist-line') as unknown as SVGPathElement;
+  const lineBg = document.getElementById('dist-line-bg') as unknown as SVGPathElement;
   const label = document.getElementById('dist-label') as unknown as SVGTextElement;
   const distUi = document.getElementById('dist-ui') as unknown as SVGGElement;
   const warpText = document.getElementById('dist-warp-text') as unknown as SVGTextElement;
@@ -25,6 +26,7 @@ export function createDistanceVectorOverlay(starfield: Starfield) {
 
   const hide = () => {
     line.setAttribute('d', '');
+    lineBg.setAttribute('d', '');
     // Hide the whole UI group so both label and warp suffix disappear at
     // once. Using display rather than clearing textContent keeps the static
     // warp element in the DOM so its :hover styling keeps working on show.
@@ -54,6 +56,7 @@ export function createDistanceVectorOverlay(starfield: Starfield) {
 
     const d = buildChevronPath(pA[0], pA[1], pB[0], pB[1]);
     line.setAttribute('d', d);
+    lineBg.setAttribute('d', d);
 
     // True 3D distance, always shown regardless of clipping.
     const dx = tmpB.x - tmpA.x;

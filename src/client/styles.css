@@ -488,6 +488,13 @@ select {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+#dist-line-bg {
+  fill: none;
+  stroke: rgba(7, 9, 18, 0.9);
+  stroke-width: 3.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
 
 .focus-ring {
   fill: none;
@@ -545,10 +552,21 @@ select {
   border: 1px solid var(--border-strong);
   padding: 8px 10px;
   pointer-events: none;
-  max-width: 240px;
+  max-width: 280px;
   line-height: 1.5;
-  white-space: nowrap;
   backdrop-filter: blur(6px);
+}
+/* Primary name stays on a single line but overflows the fixed max-width
+   gracefully. Each detail line is its own block so they stack vertically,
+   and overflow-wrap: anywhere makes spectral codes without whitespace
+   (e.g. "K0III+K7V") break rather than punch out of the card. */
+.tooltip .tt-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tooltip .tt-sub {
+  overflow-wrap: anywhere;
 }
 .tooltip .tt-name { color: var(--fg); }
 .tooltip .tt-sub { color: var(--fg-dim); font-size: 11px; }

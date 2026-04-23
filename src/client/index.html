@@ -10,7 +10,21 @@
     <canvas id="scene"></canvas>
 
     <svg id="overlay" class="overlay" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
-      <path id="con-figure" />
+      <defs>
+        <!-- Mask applied to overlays that should appear BEHIND the rendered
+             star disc for the focused star. White = visible, black = cut out.
+             The circle is sized and positioned each frame in
+             constellation-overlay.ts / focus-ring-overlay.ts. -->
+        <mask id="disc-occlude-mask" maskUnits="userSpaceOnUse">
+          <rect id="disc-mask-bg" x="0" y="0" width="100%" height="100%" fill="white" />
+          <circle id="disc-mask-cutout" cx="-100" cy="-100" r="0" fill="black" />
+        </mask>
+      </defs>
+      <path id="con-figure" mask="url(#disc-occlude-mask)" />
+      <!-- Dark backing stroke so chevrons stay readable over bright discs;
+           mirrors the `paint-order: stroke` halo on the distance label. Its
+           `d` attribute is kept in sync with #dist-line by the overlay code. -->
+      <path id="dist-line-bg" />
       <path id="dist-line" />
       <g id="dist-ui">
         <text id="dist-label" class="dist-label" text-anchor="middle" dominant-baseline="central"></text>
