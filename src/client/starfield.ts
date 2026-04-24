@@ -97,6 +97,20 @@ export class Starfield {
   private glowMaterial: THREE.ShaderMaterial;  // glow pass (additive)
   private geometry: THREE.InstancedBufferGeometry;
 
+  // Floating origin to dodge float32 catastrophic cancellation when zoomed
+  // close to stars far from Sol. `worldOffset` is the absolute-space
+  // coordinate that currently sits at the renderer's local origin (0,0,0).
+  // `_localPositions` mirrors catalog.positions shifted by -worldOffset and
+  // is the buffer bound to the iPosition instance attribute; overlays read
+  // from it via the `localPositions` getter so every projection math path
+  // operates in the same frame as the camera. Recentering on focus change
+  // keeps all large-magnitude subtractions on the CPU side (JS Number =
+  // float64), so the GPU never sees kiloparsec-scale translations in its
+  // modelview matrix.
+  private worldOffset = new THREE.Vector3();
+  private _localPositions: Float32Array;
+  private iPositionAttr!: THREE.InstancedBufferAttribute;
+
   private filter: FilterState = { ...DEFAULT_FILTER };
 
   private disposed = false;
@@ -160,6 +174,7 @@ export class Starfield {
     // the shader.
     const logRadii = new Float32Array(catalog.count);
     const lumClassF32 = new Float32Array(catalog.count);
+    const distSol = new Float32Array(catalog.count);
     let logRMin = Infinity;
     let logRMax = -Infinity;
     for (let i = 0; i < catalog.count; i++) {
@@ -169,7 +184,15 @@ export class Starfield {
       if (lr < logRMin) logRMin = lr;
       if (lr > logRMax) logRMax = lr;
       lumClassF32[i] = catalog.luminosityClass[i];
+      const x = catalog.positions[i * 3];
+      const y = catalog.positions[i * 3 + 1];
+      const z = catalog.positions[i * 3 + 2];
+      distSol[i] = Math.sqrt(x * x + y * y + z * z);
     }
+    // Local-frame position buffer — starts identical to catalog.positions
+    // since worldOffset is (0,0,0) at construction. Recenter rewrites this
+    // in place.
+    this._localPositions = new Float32Array(catalog.positions);
     const physMaxPx = this.computePhysMaxPx();
 
     // Instanced quads: one unit square per star, expanded in screen space in
@@ -186,7 +209,10 @@ export class Starfield {
       ),
     );
     this.geometry.setIndex([0, 1, 2, 1, 3, 2]);
-    this.geometry.setAttribute('iPosition', new THREE.InstancedBufferAttribute(catalog.positions, 3));
+    this.iPositionAttr = new THREE.InstancedBufferAttribute(this._localPositions, 3);
+    // iPosition is dynamic: overwritten on every recenterOrigin().
+    this.iPositionAttr.setUsage(THREE.DynamicDrawUsage);
+    this.geometry.setAttribute('iPosition', this.iPositionAttr);
     this.geometry.setAttribute('iAbsmag', new THREE.InstancedBufferAttribute(catalog.absmag, 1));
     this.geometry.setAttribute('iCi', new THREE.InstancedBufferAttribute(catalog.ci, 1));
     this.geometry.setAttribute('iSpectClass', new THREE.InstancedBufferAttribute(catalog.spectClass, 1));
@@ -194,6 +220,12 @@ export class Starfield {
     this.geometry.setAttribute('iPeriodDays', new THREE.InstancedBufferAttribute(catalog.periodDays, 1));
     this.geometry.setAttribute('iAmplitudeMag', new THREE.InstancedBufferAttribute(catalog.amplitudeMag, 1));
     this.geometry.setAttribute('iLumClass', new THREE.InstancedBufferAttribute(lumClassF32, 1));
+    // Precomputed distance-from-Sol per star. The shader's distSol filter
+    // used to derive this from length(iPosition), but iPosition is now
+    // local-frame (camera-relative when focused) so the computed length is
+    // no longer distance from Sol. Precomputing is also ~one sqrt per
+    // vertex cheaper than the old path.
+    this.geometry.setAttribute('iDistSol', new THREE.InstancedBufferAttribute(distSol, 1));
     this.geometry.instanceCount = catalog.count;
     this.geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 60_000);
 
@@ -294,10 +326,69 @@ export class Starfield {
   private setFocus(idx: number | null) {
     if (this.focusedStar === idx) return;
     this.focusedStar = idx;
+    // Recenter the floating origin on every focus change. Focused: origin
+    // snaps to the focused star's absolute position, so close-range rendering
+    // happens with tiny coordinate values. Unfocused: origin snaps back to
+    // Sol (0,0,0) so the URL-serialised camera pose is in absolute space
+    // whenever no focus anchor is in play.
+    if (idx !== null) {
+      const p = this.catalog.positions;
+      this.recenterOrigin(this.tmpRecenter.set(
+        p[idx * 3], p[idx * 3 + 1], p[idx * 3 + 2],
+      ));
+    } else {
+      this.recenterOrigin(this.tmpRecenter.set(0, 0, 0));
+    }
     this.controls.minDistance = idx !== null ? this.minDistForStar(idx) : DEFAULT_MIN_DIST_PC;
     for (const h of this.onFocusHandlers) h(idx);
     this.fireStateChange();
   }
+
+  private tmpRecenter = new THREE.Vector3();
+
+  // Shift the renderer's local origin to `newOrigin` (an absolute-space
+  // coordinate). The instance-position buffer is rewritten as `absolute −
+  // newOrigin` in JS Number precision (= float64) before being truncated to
+  // float32 — the per-axis subtractions happen in high precision first, so
+  // the resulting local coordinates near the new origin retain full float32
+  // resolution (~10⁻³⁸ near zero). Camera position and orbit target are
+  // shifted by the same delta so the user sees no visible jump; only
+  // numerical precision improves.
+  //
+  // Triggered automatically from setFocus(). Don't call externally — it
+  // bypasses the state-change bookkeeping that setFocus threads through.
+  private recenterOrigin(newOrigin: THREE.Vector3) {
+    const dx = newOrigin.x - this.worldOffset.x;
+    const dy = newOrigin.y - this.worldOffset.y;
+    const dz = newOrigin.z - this.worldOffset.z;
+    if (dx === 0 && dy === 0 && dz === 0) return;
+
+    const abs = this.catalog.positions;
+    const loc = this._localPositions;
+    const ox = newOrigin.x, oy = newOrigin.y, oz = newOrigin.z;
+    const n = this.catalog.count;
+    for (let i = 0; i < n; i++) {
+      const j = i * 3;
+      loc[j] = abs[j] - ox;
+      loc[j + 1] = abs[j + 1] - oy;
+      loc[j + 2] = abs[j + 2] - oz;
+    }
+    this.iPositionAttr.needsUpdate = true;
+
+    this.camera.position.x -= dx;
+    this.camera.position.y -= dy;
+    this.camera.position.z -= dz;
+    this.controls.target.x -= dx;
+    this.controls.target.y -= dy;
+    this.controls.target.z -= dz;
+
+    this.worldOffset.copy(newOrigin);
+  }
+
+  // Read-only view of the local-frame star positions, bound to the GPU
+  // iPosition attribute. Overlays should project through this rather than
+  // catalog.positions so their math runs in the same frame as the camera.
+  get localPositions(): Float32Array { return this._localPositions; }
 
   setVectorTo(idx: number | null) {
     if (this.vectorTo === idx) return;
@@ -363,7 +454,7 @@ export class Starfield {
   }
 
   focusStar(starIndex: number, distancePc = 2) {
-    const target = this.starWorldPosition(starIndex);
+    const target = this.starLocalPosition(starIndex);
     const offset = new THREE.Vector3()
       .subVectors(this.camera.position, this.controls.target)
       .normalize()
@@ -377,7 +468,7 @@ export class Starfield {
   }
 
   setOrbitTarget(starIndex: number) {
-    this.controls.target.copy(this.starWorldPosition(starIndex));
+    this.controls.target.copy(this.starLocalPosition(starIndex));
     this.controls.update();
     this.setFocus(starIndex);
   }
@@ -392,8 +483,8 @@ export class Starfield {
     if (this.warpState) return;
     const fromIdx = this.focusedStar;
     if (fromIdx === null || destIdx === fromIdx) return;
-    const A = this.starWorldPosition(fromIdx);
-    const B = this.starWorldPosition(destIdx);
+    const A = this.starLocalPosition(fromIdx);
+    const B = this.starLocalPosition(destIdx);
     const AB = new THREE.Vector3().subVectors(B, A);
     const distPc = AB.length();
     if (distPc < 1e-6) return;
@@ -458,7 +549,7 @@ export class Starfield {
   private finishWarp() {
     const state = this.warpState;
     if (!state) return;
-    const B = this.starWorldPosition(state.destIdx);
+    const B = this.starLocalPosition(state.destIdx);
     // Park at the configured end offset so orbit radius matches the arrival
     // we animated to — no visible snap between the last fly frame and the
     // parked state.
@@ -489,7 +580,9 @@ export class Starfield {
     for (const polyline of lines) for (const i of polyline) seen.add(i);
     if (seen.size === 0) return;
 
-    const positions = this.catalog.positions;
+    // Project in local frame so camera/target math stays internally
+    // consistent under the floating origin.
+    const positions = this._localPositions;
     const absmag = this.catalog.absmag;
     const t = this.controls.target;
 
@@ -525,8 +618,14 @@ export class Starfield {
     this.controls.update();
   }
 
-  starWorldPosition(i: number): THREE.Vector3 {
-    const p = this.catalog.positions;
+  // Star position in the renderer's local frame — i.e. in the same space
+  // as `camera.position` and `controls.target`. This is what overlays want
+  // for projection math and what the orbit camera operates in. It is NOT
+  // the absolute (Sol-centric) catalog position when a star is focused;
+  // use `catalog.positions[i*3..]` directly if you need absolute space
+  // (e.g. distance-from-Sol labels).
+  starLocalPosition(i: number): THREE.Vector3 {
+    const p = this._localPositions;
     return new THREE.Vector3(p[i * 3 + 0], p[i * 3 + 1], p[i * 3 + 2]);
   }
 
@@ -538,7 +637,11 @@ export class Starfield {
     const cursorY = clientY - rect.top;
 
     const camPos = this.camera.position;
-    const positions = this.catalog.positions;
+    // Absolute positions drive the distance-from-Sol filter; local-frame
+    // positions drive camera-relative math and screen projection (since the
+    // camera lives in local frame under the floating origin).
+    const absPos = this.catalog.positions;
+    const locPos = this._localPositions;
     const { absmag, spectClass } = this.catalog;
     const f = this.filter;
     const v = new THREE.Vector3();
@@ -554,13 +657,16 @@ export class Starfield {
     let fbBestScore = Infinity;
 
     for (let i = 0; i < this.catalog.count; i++) {
-      const x = positions[i * 3 + 0];
-      const y = positions[i * 3 + 1];
-      const z = positions[i * 3 + 2];
-      const distSol = Math.sqrt(x * x + y * y + z * z);
+      const ax = absPos[i * 3 + 0];
+      const ay = absPos[i * 3 + 1];
+      const az = absPos[i * 3 + 2];
+      const distSol = Math.sqrt(ax * ax + ay * ay + az * az);
       if (distSol < f.minDistSol || distSol > f.maxDistSol) continue;
       const bit = 1 << (spectClass[i] | 0);
       if (!(f.spectMask & bit)) continue;
+      const x = locPos[i * 3 + 0];
+      const y = locPos[i * 3 + 1];
+      const z = locPos[i * 3 + 2];
       const dx = x - camPos.x;
       const dy = y - camPos.y;
       const dz = z - camPos.z;
@@ -637,7 +743,7 @@ export class Starfield {
   // the mask shrinks in sync with the disc (no gap as a variable pulses).
   // Keep in sync with star.vert.glsl if the shader size computation changes.
   renderedSizePx(idx: number): number {
-    const positions = this.catalog.positions;
+    const positions = this._localPositions;
     const { physicalRadius, absmag, periodDays, amplitudeMag } = this.catalog;
     const camPos = this.camera.position;
     const u = this.material.uniforms;
@@ -855,7 +961,7 @@ export class Starfield {
     const t = Math.min(flyElapsed / state.durationMs, 1);
     const f = t < 0.5 ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t);
     this.camera.position.lerpVectors(state.pStart, state.pEnd, f);
-    const B = this.starWorldPosition(state.destIdx);
+    const B = this.starLocalPosition(state.destIdx);
     this.camera.lookAt(B);
     if (t >= 1) this.finishWarp();
   }

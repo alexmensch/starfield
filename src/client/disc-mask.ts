@@ -46,7 +46,7 @@ export function createDiscMask(starfield: Starfield) {
   const placeCircle = (c: SVGCircleElement, idx: number): boolean => {
     const size = starfield.renderedSizePx(idx);
     if (size <= DISC_THRESHOLD_PX) return false;
-    const positions = starfield.catalog.positions;
+    const positions = starfield.localPositions;
     const camera = starfield.camera;
     v.set(positions[idx * 3], positions[idx * 3 + 1], positions[idx * 3 + 2]);
     v.applyMatrix4(camera.matrixWorldInverse);

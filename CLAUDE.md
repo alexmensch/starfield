@@ -489,16 +489,54 @@ on the measurement vector; the warp suffix is computed each frame as
 `mx + label.getComputedTextLength()/2 + WARP_GAP_PX` so the distance
 stays visually anchored while the suffix extends to the right.
 
-**Known issue**: visible position jitter on stars when orbiting at the
-minimum distance (~0.005 pc) from stars that are far from the world
-origin (~1000+ pc out). Classic float32 catastrophic cancellation in the
-vertex shader's `distance(worldPos, uCameraPos)` and
-`modelViewMatrix * position` — both large magnitudes subtracting to a
-tiny delta. An earlier emulated-double-precision fix (split camera
-uniform into Hi/Lo float32 pair, use `mat3(modelViewMatrix) * (worldPos
-- uCameraPosHi - uCameraPosLo)`) didn't resolve it visibly and was
-reverted. Needs revisiting with a better diagnosis — possibly the
-projection matrix at very-close near plane also loses precision.
+### Floating origin (large-world precision)
+
+Close-range orbit of a star far from Sol used to jitter visibly because
+Three.js composes its `modelViewMatrix` at float32 precision. At 1 kpc
+from Sol, the translation column quantises to ~10⁻⁴ pc — 2–3% of the
+min-orbit radius — so every frame the projected position snapped around
+by a few pixels.
+
+Fix: the renderer runs in a **floating local frame** whose origin tracks
+the currently focused star.
+
+- `Starfield.worldOffset` is the absolute-space coordinate that
+  currently sits at the renderer's (0,0,0). Starts at Sol.
+- `Starfield._localPositions` (exposed via `starfield.localPositions`)
+  is a `Float32Array` of `catalog.positions − worldOffset`. It's bound
+  to the `iPosition` instance attribute and is what every overlay and
+  pick path projects through.
+- `recenterOrigin(newOrigin)` rewrites the local-positions buffer using
+  JS Number (= float64) subtraction and shifts `camera.position` and
+  `controls.target` by the same delta so the user sees no jump.
+- `setFocus(idx)` calls `recenterOrigin` automatically — focusing a star
+  pins the frame to it, unfocusing snaps the origin back to Sol.
+
+The key precision win: the big `absolute − offset` subtractions happen
+in JS float64 on the CPU, producing small float32 deltas near zero with
+~10⁻³⁸ resolution. The GPU's modelview matrix then only carries
+kilo-parsec-scale values when the camera is far from the local origin
+(i.e. zoomed out, where pixel-level jitter is imperceptible anyway).
+
+Implications for code that reads positions:
+- **Rendering / projection math** must use `starfield.localPositions`
+  (same frame as `camera.position` and `controls.target`). The disc
+  mask, focus ring, distance vector, constellation overlay, and all
+  `pickStar` / `renderedSizePx` / `aimAtConstellation` paths do this.
+- **Distance-from-Sol** (UI labels, distSol filter, `describeStar`) must
+  use `catalog.positions` — that's the immutable absolute buffer. The
+  shader's distSol filter consumes a precomputed per-instance `iDistSol`
+  attribute instead of `length(iPosition)`, because the latter is now a
+  local-frame value.
+- `starLocalPosition(i)` (formerly `starWorldPosition`) returns the
+  local-frame vector — use it for camera math, never for Sol-distance.
+
+URL round-trip works without special handling because sender and
+receiver both recenter on the same focus star. Camera/target serialise
+in local frame; loading the URL recenters to the same absolute origin
+and the local coordinates apply unchanged. The unfocused state has
+`worldOffset = (0,0,0)` by construction, so camera/target in that state
+are already in absolute space.
 
 ### Two-finger roll gesture (platform-split)
 

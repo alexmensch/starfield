@@ -40,6 +40,10 @@ uniform float uMinPeriodSec;
 in vec2 aCorner;
 
 // Per-instance: attributes that vary from star to star.
+// iPosition is in the renderer's local frame — which may be offset from
+// absolute catalog space via the CPU-side floating-origin mechanism (see
+// Starfield.recenterOrigin). Do NOT use length(iPosition) for any
+// distance-from-Sol computation; use iDistSol instead.
 in vec3 iPosition;
 in float iAbsmag;
 in float iCi;
@@ -48,6 +52,7 @@ in float iLogRadius;
 in float iPeriodDays;   // 0 = not a variable
 in float iAmplitudeMag; // 0 = not a variable
 in float iLumClass;     // 0=WD, 2=V, 4=III, 6-9=supergiant/hypergiant, 255=?
+in float iDistSol;      // |absolute position| — precomputed at load
 
 out float vAppMag;
 out vec3 vColor;
@@ -71,7 +76,6 @@ vec3 ciToColor(float ciVal) {
 
 void main() {
     vec3 worldPos = iPosition;
-    float distSol = length(worldPos);
     float distCam = distance(worldPos, uCameraPos);
 
     float dPc = max(distCam, 0.001);
@@ -116,7 +120,7 @@ void main() {
     }
 
     bool spectOk = (uSpectMask & (1u << uint(iSpectClass))) != 0u;
-    bool distOk = distSol >= uMinDistSol && distSol <= uMaxDistSol;
+    bool distOk = iDistSol >= uMinDistSol && iDistSol <= uMaxDistSol;
     bool magOk = appMag <= uMaxAppMag;
     bool visible = spectOk && distOk && magOk;
 

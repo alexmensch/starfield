@@ -35,7 +35,7 @@ export function createConstellationOverlay(starfield: Starfield) {
     const w = window.innerWidth;
     const h = window.innerHeight;
     const camera = starfield.camera;
-    const positions = starfield.catalog.positions;
+    const positions = starfield.localPositions;
 
     const segments: string[] = [];
     for (const polyline of lines) {

@@ -20,7 +20,7 @@ export function createFocusRingOverlay(starfield: Starfield) {
   starfield.onFrame(() => {
     const idx = starfield.getFocusedStar();
     if (idx === null) return;
-    const positions = starfield.catalog.positions;
+    const positions = starfield.localPositions;
     const camera = starfield.camera;
     v.set(positions[idx * 3], positions[idx * 3 + 1], positions[idx * 3 + 2]);
     v.applyMatrix4(camera.matrixWorldInverse);

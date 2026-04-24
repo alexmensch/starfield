@@ -43,7 +43,9 @@ export function createDistanceVectorOverlay(starfield: Starfield) {
     if (fromIdx === null || toIdx === null) { hide(); return; }
 
     const camera = starfield.camera;
-    const positions = starfield.catalog.positions;
+    // Local-frame positions — the camera and projection math operate in
+    // whatever frame the floating origin has set (see starfield.ts).
+    const positions = starfield.localPositions;
     const w = window.innerWidth;
     const h = window.innerHeight;
 
