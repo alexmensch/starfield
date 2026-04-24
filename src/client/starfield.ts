@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls.js';
 import type { Catalog } from './catalog-loader';
+import type { DustField } from './dust-loader';
 import vertexShader from './shaders/star.vert.glsl?raw';
 import fragmentShader from './shaders/star.frag.glsl?raw';
 
@@ -259,6 +260,28 @@ export class Starfield {
       uTime: { value: 0 },
       uSecondsPerDay: { value: 0.2 },
       uMinPeriodSec: { value: 4.0 },
+
+      // Interstellar-dust extinction. Off by default (uDustEnabled = 0) —
+      // attachDust() wires in the Data3DTexture progressively as chunks
+      // arrive from the network and bumps uDustEnabled to 1 once the
+      // texture is GPU-resident. A separate uExtinctionStrength is a
+      // user-facing knob (0 = off, 1 = realism, >1 = amplified).
+      //
+      // The shader reconstructs absolute positions via iPosition +
+      // uWorldOffset / uCameraPos + uWorldOffset, then raymarches through
+      // the dust texture in ICRS heliocentric pc to integrate A_V.
+      uDustTexture: { value: null as THREE.Data3DTexture | null },
+      uDustBoundsPc: { value: 1250.0 },
+      // Log-window decode: density = uDustDensityMin * exp(sample * uDustLogRatio).
+      // Defaults are overwritten by attachDust() with the manifest's
+      // autotuned range; this placeholder avoids divide-by-zero if the
+      // shader runs before dust attaches.
+      uDustDensityMin: { value: 1e-7 },
+      uDustLogRatio: { value: Math.log(1e3) },
+      uDustAvPerDensityPc: { value: 2.742 },
+      uDustEnabled: { value: 0.0 },
+      uExtinctionStrength: { value: 1.0 },
+      uWorldOffset: { value: new THREE.Vector3() },
     };
 
     // Disc pass: opaque-over (premultiplied alpha) so close stars fully
@@ -383,6 +406,36 @@ export class Starfield {
     this.controls.target.z -= dz;
 
     this.worldOffset.copy(newOrigin);
+    // Shader needs the world offset to reconstruct absolute positions for
+    // dust-texture sampling (local-frame iPosition + uWorldOffset).
+    (this.material.uniforms.uWorldOffset.value as THREE.Vector3).copy(newOrigin);
+  }
+
+  // Wire a loaded DustField into the star shader. Safe to call after the
+  // Starfield is already rendering — uniforms flip atomically on the next
+  // frame. Safe to call multiple times; the most recent dust wins. Pass
+  // null to detach (e.g. to disable extinction for a mode toggle).
+  attachDust(dust: DustField | null) {
+    const u = this.material.uniforms;
+    if (dust === null) {
+      u.uDustTexture.value = null;
+      u.uDustEnabled.value = 0;
+      return;
+    }
+    u.uDustTexture.value = dust.texture;
+    u.uDustBoundsPc.value = dust.params.boundsHalfPc;
+    u.uDustDensityMin.value = dust.params.densityMin;
+    u.uDustLogRatio.value = dust.params.logRatio;
+    u.uDustAvPerDensityPc.value = dust.params.avPerDensityPerPc;
+    u.uDustEnabled.value = 1;
+  }
+
+  /** User-facing extinction multiplier. 0 disables; 1 = physical realism;
+   *  values above 1 amplify dust visually (useful for making weak features
+   *  obvious). Independent of attachDust — if no dust is loaded, this has
+   *  no effect. */
+  setExtinctionStrength(x: number) {
+    this.material.uniforms.uExtinctionStrength.value = Math.max(0, x);
   }
 
   // Read-only view of the local-frame star positions, bound to the GPU

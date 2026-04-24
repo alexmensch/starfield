@@ -1,4 +1,5 @@
 import { loadCatalog } from './catalog-loader';
+import { DustField, loadDustManifest } from './dust-loader';
 import { Starfield } from './starfield';
 import { bindControls } from './controls';
 import { bindSearch, buildStarLabels, buildSpectralMap, type SearchIndexEntry } from './search';
@@ -54,6 +55,31 @@ async function main() {
     const spectralMap = buildSpectralMap(searchIndex);
 
     const starfield = new Starfield({ canvas, catalog });
+    // Dev-console access: `starfield.setExtinctionStrength(X)` etc. Handy for
+    // dust debugging and not worth gating behind an env check on a solo
+    // project.
+    (window as unknown as { starfield: Starfield }).starfield = starfield;
+
+    // Interstellar dust loads in the background — never blocks first paint.
+    // Extinction fades in as each voxel chunk lands on the GPU. If the
+    // manifest is missing (fresh clone without data/dust/, CI without the
+    // preprocessor, etc.) the starfield renders exactly as it did before
+    // dust was introduced.
+    void (async () => {
+      const dustBase = `${import.meta.env.BASE_URL}dust/`;
+      const manifest = await loadDustManifest(dustBase);
+      if (!manifest) {
+        console.info('dust manifest not found; skipping extinction layer');
+        return;
+      }
+      const dust = new DustField(starfield.renderer, dustBase, manifest);
+      starfield.attachDust(dust);
+      await dust.startLoading();
+      console.info(
+        `dust loaded: ${manifest.totalChunks} chunks, synthetic=${manifest.synthetic}`,
+      );
+    })();
+
     bindUnitToggle();
     bindThemeToggle(starfield);
     bindControls(starfield);
