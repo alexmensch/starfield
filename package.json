@@ -7,9 +7,10 @@
   "author": "Alex Marshall",
   "scripts": {
     "build:catalog": "tsx scripts/build-catalog.ts",
+    "build:dust-sync": "tsx scripts/sync-dust.ts",
     "build:client": "vite build",
-    "build": "npm run build:catalog && npm run build:client",
-    "dev": "npm run build:catalog && vite",
+    "build": "npm run build:catalog && npm run build:dust-sync && npm run build:client",
+    "dev": "npm run build:catalog && npm run build:dust-sync && vite",
     "deploy": "npm run build && wrangler deploy",
     "typecheck": "tsc --noEmit"
   },

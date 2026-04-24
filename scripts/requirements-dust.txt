@@ -1,0 +1,5 @@
+numpy>=1.26
+dustmaps>=1.0.13
+astropy>=6.0
+healpy>=1.17
+h5py>=3.10

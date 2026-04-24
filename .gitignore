@@ -9,3 +9,14 @@ public/catalog.bin
 public/constellations.json
 public/search-index.json
 
+# Mirror of data/dust/ — the canonical LFS-tracked copy lives in data/dust/;
+# scripts/build-dust.py copies chunks here so Vite's publicDir serves them.
+public/dust/
+
+# Raw-resample cache for build-dust.py. ~512 MiB float32 grid; lets us
+# re-encode without re-running the 10-minute query phase. Local-only.
+data/dust/.voxels.npy
+
+# Python venv for scripts/build-dust.py
+.venv/
+
