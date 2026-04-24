@@ -1,2 +1,4 @@
+data/*.csv filter=lfs diff=lfs merge=lfs -text
+data/*.txt filter=lfs diff=lfs merge=lfs -text
 data/gcvs5.txt filter=lfs diff=lfs merge=lfs -text
 data/crossid.txt filter=lfs diff=lfs merge=lfs -text

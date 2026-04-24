@@ -9,5 +9,3 @@ public/catalog.bin
 public/constellations.json
 public/search-index.json
 
-# Source CSV is large; keep out of git
-data/*.csv
