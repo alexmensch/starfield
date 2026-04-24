@@ -1,0 +1,854 @@
+{
+  "version": 2,
+  "format": "u8-log-window",
+  "synthetic": false,
+  "gridSize": 512,
+  "chunkSize": 128,
+  "chunksPerAxis": 4,
+  "totalChunks": 64,
+  "boundsPc": [
+    -1250.0,
+    1250.0
+  ],
+  "voxelSizePc": 4.8828125,
+  "axisOrderInFile": "z-major (innermost = x)",
+  "frame": "ICRS heliocentric Cartesian (matches catalog.bin)",
+  "densityMin": 1e-07,
+  "densityMax": 0.005329673178493977,
+  "encoding": "uint8: 255 * (log10(clamp(d,dmin,dmax)) - log10(dmin)) / log10(dmax/dmin)",
+  "avPerDensityPerPc": 2.742,
+  "chunks": [
+    {
+      "ix": 0,
+      "iy": 0,
+      "iz": 0,
+      "file": "chunk_0_0_0.bin",
+      "bytes": 2097152,
+      "sha256": "cc27302a5e7bf406",
+      "centerPc": [
+        -937.5,
+        -937.5,
+        -937.5
+      ]
+    },
+    {
+      "ix": 0,
+      "iy": 0,
+      "iz": 1,
+      "file": "chunk_0_0_1.bin",
+      "bytes": 2097152,
+      "sha256": "07341372dc792374",
+      "centerPc": [
+        -937.5,
+        -937.5,
+        -312.5
+      ]
+    },
+    {
+      "ix": 0,
+      "iy": 0,
+      "iz": 2,
+      "file": "chunk_0_0_2.bin",
+      "bytes": 2097152,
+      "sha256": "c505c8d89a125429",
+      "centerPc": [
+        -937.5,
+        -937.5,
+        312.5
+      ]
+    },
+    {
+      "ix": 0,
+      "iy": 0,
+      "iz": 3,
+      "file": "chunk_0_0_3.bin",
+      "bytes": 2097152,
+      "sha256": "dd1a4ed9b9501acd",
+      "centerPc": [
+        -937.5,
+        -937.5,
+        937.5
+      ]
+    },
+    {
+      "ix": 0,
+      "iy": 1,
+      "iz": 0,
+      "file": "chunk_0_1_0.bin",
+      "bytes": 2097152,
+      "sha256": "773f7fe2b7a47176",
+      "centerPc": [
+        -937.5,
+        -312.5,
+        -937.5
+      ]
+    },
+    {
+      "ix": 0,
+      "iy": 1,
+      "iz": 1,
+      "file": "chunk_0_1_1.bin",
+      "bytes": 2097152,
+      "sha256": "bccc48871d0d53f1",
+      "centerPc": [
+        -937.5,
+        -312.5,
+        -312.5
+      ]
+    },
+    {
+      "ix": 0,
+      "iy": 1,
+      "iz": 2,
+      "file": "chunk_0_1_2.bin",
+      "bytes": 2097152,
+      "sha256": "efb57c6764ff7b20",
+      "centerPc": [
+        -937.5,
+        -312.5,
+        312.5
+      ]
+    },
+    {
+      "ix": 0,
+      "iy": 1,
+      "iz": 3,
+      "file": "chunk_0_1_3.bin",
+      "bytes": 2097152,
+      "sha256": "3c1c809b61052c67",
+      "centerPc": [
+        -937.5,
+        -312.5,
+        937.5
+      ]
+    },
+    {
+      "ix": 0,
+      "iy": 2,
+      "iz": 0,
+      "file": "chunk_0_2_0.bin",
+      "bytes": 2097152,
+      "sha256": "dc57482eea1bb78f",
+      "centerPc": [
+        -937.5,
+        312.5,
+        -937.5
+      ]
+    },
+    {
+      "ix": 0,
+      "iy": 2,
+      "iz": 1,
+      "file": "chunk_0_2_1.bin",
+      "bytes": 2097152,
+      "sha256": "2b13ee914588b142",
+      "centerPc": [
+        -937.5,
+        312.5,
+        -312.5
+      ]
+    },
+    {
+      "ix": 0,
+      "iy": 2,
+      "iz": 2,
+      "file": "chunk_0_2_2.bin",
+      "bytes": 2097152,
+      "sha256": "4f0fa6afa1c3acdb",
+      "centerPc": [
+        -937.5,
+        312.5,
+        312.5
+      ]
+    },
+    {
+      "ix": 0,
+      "iy": 2,
+      "iz": 3,
+      "file": "chunk_0_2_3.bin",
+      "bytes": 2097152,
+      "sha256": "fa880ad25aa6c30c",
+      "centerPc": [
+        -937.5,
+        312.5,
+        937.5
+      ]
+    },
+    {
+      "ix": 0,
+      "iy": 3,
+      "iz": 0,
+      "file": "chunk_0_3_0.bin",
+      "bytes": 2097152,
+      "sha256": "90d95b7b52e9ecc5",
+      "centerPc": [
+        -937.5,
+        937.5,
+        -937.5
+      ]
+    },
+    {
+      "ix": 0,
+      "iy": 3,
+      "iz": 1,
+      "file": "chunk_0_3_1.bin",
+      "bytes": 2097152,
+      "sha256": "81000d1a5b334630",
+      "centerPc": [
+        -937.5,
+        937.5,
+        -312.5
+      ]
+    },
+    {
+      "ix": 0,
+      "iy": 3,
+      "iz": 2,
+      "file": "chunk_0_3_2.bin",
+      "bytes": 2097152,
+      "sha256": "63a5edea2ca6e088",
+      "centerPc": [
+        -937.5,
+        937.5,
+        312.5
+      ]
+    },
+    {
+      "ix": 0,
+      "iy": 3,
+      "iz": 3,
+      "file": "chunk_0_3_3.bin",
+      "bytes": 2097152,
+      "sha256": "9f1ca8a6df77480f",
+      "centerPc": [
+        -937.5,
+        937.5,
+        937.5
+      ]
+    },
+    {
+      "ix": 1,
+      "iy": 0,
+      "iz": 0,
+      "file": "chunk_1_0_0.bin",
+      "bytes": 2097152,
+      "sha256": "ddf7c479e031cf92",
+      "centerPc": [
+        -312.5,
+        -937.5,
+        -937.5
+      ]
+    },
+    {
+      "ix": 1,
+      "iy": 0,
+      "iz": 1,
+      "file": "chunk_1_0_1.bin",
+      "bytes": 2097152,
+      "sha256": "4bff566b7e8565b0",
+      "centerPc": [
+        -312.5,
+        -937.5,
+        -312.5
+      ]
+    },
+    {
+      "ix": 1,
+      "iy": 0,
+      "iz": 2,
+      "file": "chunk_1_0_2.bin",
+      "bytes": 2097152,
+      "sha256": "c630fe300ac9795d",
+      "centerPc": [
+        -312.5,
+        -937.5,
+        312.5
+      ]
+    },
+    {
+      "ix": 1,
+      "iy": 0,
+      "iz": 3,
+      "file": "chunk_1_0_3.bin",
+      "bytes": 2097152,
+      "sha256": "27ca903a6e11345f",
+      "centerPc": [
+        -312.5,
+        -937.5,
+        937.5
+      ]
+    },
+    {
+      "ix": 1,
+      "iy": 1,
+      "iz": 0,
+      "file": "chunk_1_1_0.bin",
+      "bytes": 2097152,
+      "sha256": "f1de6409d4ef9c44",
+      "centerPc": [
+        -312.5,
+        -312.5,
+        -937.5
+      ]
+    },
+    {
+      "ix": 1,
+      "iy": 1,
+      "iz": 1,
+      "file": "chunk_1_1_1.bin",
+      "bytes": 2097152,
+      "sha256": "863adfe4dfdd3529",
+      "centerPc": [
+        -312.5,
+        -312.5,
+        -312.5
+      ]
+    },
+    {
+      "ix": 1,
+      "iy": 1,
+      "iz": 2,
+      "file": "chunk_1_1_2.bin",
+      "bytes": 2097152,
+      "sha256": "b9ff4398cf35959e",
+      "centerPc": [
+        -312.5,
+        -312.5,
+        312.5
+      ]
+    },
+    {
+      "ix": 1,
+      "iy": 1,
+      "iz": 3,
+      "file": "chunk_1_1_3.bin",
+      "bytes": 2097152,
+      "sha256": "f53c18c241739f93",
+      "centerPc": [
+        -312.5,
+        -312.5,
+        937.5
+      ]
+    },
+    {
+      "ix": 1,
+      "iy": 2,
+      "iz": 0,
+      "file": "chunk_1_2_0.bin",
+      "bytes": 2097152,
+      "sha256": "505e9c1fda9c2879",
+      "centerPc": [
+        -312.5,
+        312.5,
+        -937.5
+      ]
+    },
+    {
+      "ix": 1,
+      "iy": 2,
+      "iz": 1,
+      "file": "chunk_1_2_1.bin",
+      "bytes": 2097152,
+      "sha256": "321ede7ed3695803",
+      "centerPc": [
+        -312.5,
+        312.5,
+        -312.5
+      ]
+    },
+    {
+      "ix": 1,
+      "iy": 2,
+      "iz": 2,
+      "file": "chunk_1_2_2.bin",
+      "bytes": 2097152,
+      "sha256": "85ccae5c71b5c6ea",
+      "centerPc": [
+        -312.5,
+        312.5,
+        312.5
+      ]
+    },
+    {
+      "ix": 1,
+      "iy": 2,
+      "iz": 3,
+      "file": "chunk_1_2_3.bin",
+      "bytes": 2097152,
+      "sha256": "f9fe77ab1004404e",
+      "centerPc": [
+        -312.5,
+        312.5,
+        937.5
+      ]
+    },
+    {
+      "ix": 1,
+      "iy": 3,
+      "iz": 0,
+      "file": "chunk_1_3_0.bin",
+      "bytes": 2097152,
+      "sha256": "413dd363ff045bf1",
+      "centerPc": [
+        -312.5,
+        937.5,
+        -937.5
+      ]
+    },
+    {
+      "ix": 1,
+      "iy": 3,
+      "iz": 1,
+      "file": "chunk_1_3_1.bin",
+      "bytes": 2097152,
+      "sha256": "bcda70d118a8ac71",
+      "centerPc": [
+        -312.5,
+        937.5,
+        -312.5
+      ]
+    },
+    {
+      "ix": 1,
+      "iy": 3,
+      "iz": 2,
+      "file": "chunk_1_3_2.bin",
+      "bytes": 2097152,
+      "sha256": "940c985e7a287ed2",
+      "centerPc": [
+        -312.5,
+        937.5,
+        312.5
+      ]
+    },
+    {
+      "ix": 1,
+      "iy": 3,
+      "iz": 3,
+      "file": "chunk_1_3_3.bin",
+      "bytes": 2097152,
+      "sha256": "e96b902582086771",
+      "centerPc": [
+        -312.5,
+        937.5,
+        937.5
+      ]
+    },
+    {
+      "ix": 2,
+      "iy": 0,
+      "iz": 0,
+      "file": "chunk_2_0_0.bin",
+      "bytes": 2097152,
+      "sha256": "834940bbacd4e87f",
+      "centerPc": [
+        312.5,
+        -937.5,
+        -937.5
+      ]
+    },
+    {
+      "ix": 2,
+      "iy": 0,
+      "iz": 1,
+      "file": "chunk_2_0_1.bin",
+      "bytes": 2097152,
+      "sha256": "3224bc888b8ef8f4",
+      "centerPc": [
+        312.5,
+        -937.5,
+        -312.5
+      ]
+    },
+    {
+      "ix": 2,
+      "iy": 0,
+      "iz": 2,
+      "file": "chunk_2_0_2.bin",
+      "bytes": 2097152,
+      "sha256": "3d4aaff850febd98",
+      "centerPc": [
+        312.5,
+        -937.5,
+        312.5
+      ]
+    },
+    {
+      "ix": 2,
+      "iy": 0,
+      "iz": 3,
+      "file": "chunk_2_0_3.bin",
+      "bytes": 2097152,
+      "sha256": "94d24763789c7b27",
+      "centerPc": [
+        312.5,
+        -937.5,
+        937.5
+      ]
+    },
+    {
+      "ix": 2,
+      "iy": 1,
+      "iz": 0,
+      "file": "chunk_2_1_0.bin",
+      "bytes": 2097152,
+      "sha256": "58bf7479bf3a61b6",
+      "centerPc": [
+        312.5,
+        -312.5,
+        -937.5
+      ]
+    },
+    {
+      "ix": 2,
+      "iy": 1,
+      "iz": 1,
+      "file": "chunk_2_1_1.bin",
+      "bytes": 2097152,
+      "sha256": "670c8bfdbbdcd12e",
+      "centerPc": [
+        312.5,
+        -312.5,
+        -312.5
+      ]
+    },
+    {
+      "ix": 2,
+      "iy": 1,
+      "iz": 2,
+      "file": "chunk_2_1_2.bin",
+      "bytes": 2097152,
+      "sha256": "a6e720a83f14f28f",
+      "centerPc": [
+        312.5,
+        -312.5,
+        312.5
+      ]
+    },
+    {
+      "ix": 2,
+      "iy": 1,
+      "iz": 3,
+      "file": "chunk_2_1_3.bin",
+      "bytes": 2097152,
+      "sha256": "1cb2d9f0b0d5dac5",
+      "centerPc": [
+        312.5,
+        -312.5,
+        937.5
+      ]
+    },
+    {
+      "ix": 2,
+      "iy": 2,
+      "iz": 0,
+      "file": "chunk_2_2_0.bin",
+      "bytes": 2097152,
+      "sha256": "2e5e63ba803ddc14",
+      "centerPc": [
+        312.5,
+        312.5,
+        -937.5
+      ]
+    },
+    {
+      "ix": 2,
+      "iy": 2,
+      "iz": 1,
+      "file": "chunk_2_2_1.bin",
+      "bytes": 2097152,
+      "sha256": "31969e65b42d97e1",
+      "centerPc": [
+        312.5,
+        312.5,
+        -312.5
+      ]
+    },
+    {
+      "ix": 2,
+      "iy": 2,
+      "iz": 2,
+      "file": "chunk_2_2_2.bin",
+      "bytes": 2097152,
+      "sha256": "d5096488778ad996",
+      "centerPc": [
+        312.5,
+        312.5,
+        312.5
+      ]
+    },
+    {
+      "ix": 2,
+      "iy": 2,
+      "iz": 3,
+      "file": "chunk_2_2_3.bin",
+      "bytes": 2097152,
+      "sha256": "5a4878a6e08b1086",
+      "centerPc": [
+        312.5,
+        312.5,
+        937.5
+      ]
+    },
+    {
+      "ix": 2,
+      "iy": 3,
+      "iz": 0,
+      "file": "chunk_2_3_0.bin",
+      "bytes": 2097152,
+      "sha256": "78db815004064354",
+      "centerPc": [
+        312.5,
+        937.5,
+        -937.5
+      ]
+    },
+    {
+      "ix": 2,
+      "iy": 3,
+      "iz": 1,
+      "file": "chunk_2_3_1.bin",
+      "bytes": 2097152,
+      "sha256": "c9b0e08fc29ca658",
+      "centerPc": [
+        312.5,
+        937.5,
+        -312.5
+      ]
+    },
+    {
+      "ix": 2,
+      "iy": 3,
+      "iz": 2,
+      "file": "chunk_2_3_2.bin",
+      "bytes": 2097152,
+      "sha256": "d2c58bcd7ed91339",
+      "centerPc": [
+        312.5,
+        937.5,
+        312.5
+      ]
+    },
+    {
+      "ix": 2,
+      "iy": 3,
+      "iz": 3,
+      "file": "chunk_2_3_3.bin",
+      "bytes": 2097152,
+      "sha256": "252d090ba68c7613",
+      "centerPc": [
+        312.5,
+        937.5,
+        937.5
+      ]
+    },
+    {
+      "ix": 3,
+      "iy": 0,
+      "iz": 0,
+      "file": "chunk_3_0_0.bin",
+      "bytes": 2097152,
+      "sha256": "65d4da7c9841950b",
+      "centerPc": [
+        937.5,
+        -937.5,
+        -937.5
+      ]
+    },
+    {
+      "ix": 3,
+      "iy": 0,
+      "iz": 1,
+      "file": "chunk_3_0_1.bin",
+      "bytes": 2097152,
+      "sha256": "884d7263a9a85245",
+      "centerPc": [
+        937.5,
+        -937.5,
+        -312.5
+      ]
+    },
+    {
+      "ix": 3,
+      "iy": 0,
+      "iz": 2,
+      "file": "chunk_3_0_2.bin",
+      "bytes": 2097152,
+      "sha256": "46a045b62b562446",
+      "centerPc": [
+        937.5,
+        -937.5,
+        312.5
+      ]
+    },
+    {
+      "ix": 3,
+      "iy": 0,
+      "iz": 3,
+      "file": "chunk_3_0_3.bin",
+      "bytes": 2097152,
+      "sha256": "2547e0f21de779c8",
+      "centerPc": [
+        937.5,
+        -937.5,
+        937.5
+      ]
+    },
+    {
+      "ix": 3,
+      "iy": 1,
+      "iz": 0,
+      "file": "chunk_3_1_0.bin",
+      "bytes": 2097152,
+      "sha256": "7553d089473af3f6",
+      "centerPc": [
+        937.5,
+        -312.5,
+        -937.5
+      ]
+    },
+    {
+      "ix": 3,
+      "iy": 1,
+      "iz": 1,
+      "file": "chunk_3_1_1.bin",
+      "bytes": 2097152,
+      "sha256": "2247b42e8b5d4ef7",
+      "centerPc": [
+        937.5,
+        -312.5,
+        -312.5
+      ]
+    },
+    {
+      "ix": 3,
+      "iy": 1,
+      "iz": 2,
+      "file": "chunk_3_1_2.bin",
+      "bytes": 2097152,
+      "sha256": "751e5614081b9538",
+      "centerPc": [
+        937.5,
+        -312.5,
+        312.5
+      ]
+    },
+    {
+      "ix": 3,
+      "iy": 1,
+      "iz": 3,
+      "file": "chunk_3_1_3.bin",
+      "bytes": 2097152,
+      "sha256": "9cddd7330ef2b762",
+      "centerPc": [
+        937.5,
+        -312.5,
+        937.5
+      ]
+    },
+    {
+      "ix": 3,
+      "iy": 2,
+      "iz": 0,
+      "file": "chunk_3_2_0.bin",
+      "bytes": 2097152,
+      "sha256": "2b6699be962b99bb",
+      "centerPc": [
+        937.5,
+        312.5,
+        -937.5
+      ]
+    },
+    {
+      "ix": 3,
+      "iy": 2,
+      "iz": 1,
+      "file": "chunk_3_2_1.bin",
+      "bytes": 2097152,
+      "sha256": "239fd10f8a18abb6",
+      "centerPc": [
+        937.5,
+        312.5,
+        -312.5
+      ]
+    },
+    {
+      "ix": 3,
+      "iy": 2,
+      "iz": 2,
+      "file": "chunk_3_2_2.bin",
+      "bytes": 2097152,
+      "sha256": "e751218af1173d2f",
+      "centerPc": [
+        937.5,
+        312.5,
+        312.5
+      ]
+    },
+    {
+      "ix": 3,
+      "iy": 2,
+      "iz": 3,
+      "file": "chunk_3_2_3.bin",
+      "bytes": 2097152,
+      "sha256": "a6d2149f6d55162b",
+      "centerPc": [
+        937.5,
+        312.5,
+        937.5
+      ]
+    },
+    {
+      "ix": 3,
+      "iy": 3,
+      "iz": 0,
+      "file": "chunk_3_3_0.bin",
+      "bytes": 2097152,
+      "sha256": "14e78d3b6bcf5276",
+      "centerPc": [
+        937.5,
+        937.5,
+        -937.5
+      ]
+    },
+    {
+      "ix": 3,
+      "iy": 3,
+      "iz": 1,
+      "file": "chunk_3_3_1.bin",
+      "bytes": 2097152,
+      "sha256": "69aa0036c33e4b20",
+      "centerPc": [
+        937.5,
+        937.5,
+        -312.5
+      ]
+    },
+    {
+      "ix": 3,
+      "iy": 3,
+      "iz": 2,
+      "file": "chunk_3_3_2.bin",
+      "bytes": 2097152,
+      "sha256": "a49e2f135b4182e0",
+      "centerPc": [
+        937.5,
+        937.5,
+        312.5
+      ]
+    },
+    {
+      "ix": 3,
+      "iy": 3,
+      "iz": 3,
+      "file": "chunk_3_3_3.bin",
+      "bytes": 2097152,
+      "sha256": "1114e14385808cd8",
+      "centerPc": [
+        937.5,
+        937.5,
+        937.5
+      ]
+    }
+  ]
+}
