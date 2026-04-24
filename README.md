@@ -1,9 +1,10 @@
 # Starfield
 
-A browser-based interactive 3D star catalog viewer. Loads the ~313,000-star
-classic-IDs subset of the [AT-HYG catalog](https://codeberg.org/astronexus/athyg)
-and renders it on the GPU with per-frame, camera-relative apparent magnitude,
-filterable by distance, magnitude, spectral class, and constellation.
+A browser-based interactive 3D star catalog viewer. Loads the classic-IDs
+subset of the [AT-HYG catalog](https://codeberg.org/astronexus/athyg)
+(~313k stars) and renders it on the GPU with per-frame, camera-relative
+apparent magnitude, filterable by distance, magnitude, spectral class,
+and constellation.
 
 Stack: TypeScript, Three.js (WebGL2), Vite, Cloudflare Workers.
 
@@ -66,21 +67,21 @@ Stack: TypeScript, Three.js (WebGL2), Vite, Cloudflare Workers.
 ## Prerequisites
 
 - Node 20+
-- A copy of the AT-HYG catalog CSV (see [Data sources](#data-sources) below).
-  The GCVS variable-star catalogue and Stellarium constellation-figure
-  data are committed into the repo so you don't need to fetch them.
+- [Git LFS](https://git-lfs.com/) installed — the catalogue source files
+  are tracked via LFS. A clone without LFS will check out pointer stubs
+  instead of the real content and the preprocessor will fail.
 
 ## Setup
 
 ```bash
+git lfs install        # one-time, if you haven't already
 git clone <this-repo>
 cd starfield
 npm install
 ```
 
-Place the AT-HYG source CSV at `data/athyg_33_classic_ids.csv` (gitignored,
-~64 MB). See [Data sources](#data-sources) below for the canonical
-download URL.
+All catalogue source files (AT-HYG, GCVS, Stellarium) are included in
+the repo — no manual downloads needed.
 
 ## Running
 
@@ -117,16 +118,15 @@ is moderate even on mobile networks.
 
 ## Data sources
 
-| File | Purpose | Source | In repo? |
+| File | Purpose | Source | Size |
 | --- | --- | --- | --- |
-| `data/athyg_33_classic_ids.csv` | Stellar catalogue | [AT-HYG v3.3 subsets on Codeberg](https://codeberg.org/astronexus/athyg/src/branch/main/data/subsets) | gitignored (~64 MB) |
-| `data/gcvs5.txt` | Variable-star periods + amplitudes | [GCVS 5.1 · Sternberg Astronomical Institute](http://www.sai.msu.su/gcvs/gcvs/index.htm) | committed (~14 MB) |
-| `data/crossid.txt` | GCVS ↔ Hip/HD cross-references | same as above | committed (~12 MB) |
-| `data/stellarium-modern-skyculture.json` | Classical constellation stick figures | [Stellarium modern sky culture](https://github.com/Stellarium/stellarium/tree/master/skycultures/modern) | committed (~200 KB) |
+| `data/athyg_33_classic_ids.csv` | Stellar catalogue | [AT-HYG v3.3 subsets on Codeberg](https://codeberg.org/astronexus/athyg/src/branch/main/data/subsets) | ~64 MB, LFS |
+| `data/gcvs5.txt` | Variable-star periods + amplitudes | [GCVS 5.1 · Sternberg Astronomical Institute](http://www.sai.msu.su/gcvs/gcvs/index.htm) | ~14 MB, LFS |
+| `data/crossid.txt` | GCVS ↔ Hip/HD cross-references | same as above | ~12 MB, LFS |
+| `data/stellarium-modern-skyculture.json` | Classical constellation stick figures | [Stellarium modern sky culture](https://github.com/Stellarium/stellarium/tree/master/skycultures/modern) | ~200 KB |
 
-AT-HYG is large enough that we keep it out of git; GCVS and the
-Stellarium JSON are small enough and update rarely enough that committing
-them keeps builds reproducible without a fetch step.
+The larger catalogue files are tracked via Git LFS so they don't balloon
+the git pack. Small files (Stellarium JSON) stay as regular blobs.
 
 The AT-HYG **classic-IDs** subset selects stars that have at least one
 classical designation (IAU proper name, Bayer, Flamsteed, HIP, HD, HR, or

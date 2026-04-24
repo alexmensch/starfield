@@ -20,11 +20,11 @@ Ships as a Cloudflare Workers static-assets site.
 scripts/
   build-catalog.ts        CSV → binary preprocessor (run at build time)
   verify-catalog.ts       sanity-check tool for the generated binary
-data/
-  athyg_33_classic_ids.csv           AT-HYG source CSV (gitignored, ~64 MB)
-  gcvs5.txt                          GCVS main catalogue (committed, ~14 MB)
-  crossid.txt                        GCVS cross-reference (committed, ~12 MB)
-  stellarium-modern-skyculture.json  Stellarium constellation lines (committed, ~200 KB)
+data/                                All tracked via Git LFS except the Stellarium JSON.
+  athyg_33_classic_ids.csv           AT-HYG source CSV (~64 MB, LFS)
+  gcvs5.txt                          GCVS main catalogue (~14 MB, LFS)
+  crossid.txt                        GCVS cross-reference (~12 MB, LFS)
+  stellarium-modern-skyculture.json  Stellarium constellation lines (~200 KB)
 public/
   catalog.bin             generated (gitignored, ~12 MB, binary v3)
   constellations.json     generated (gitignored)
@@ -709,10 +709,10 @@ most catalog stars aren't variable, but the ones that are tend to be
 the astronomically interesting ones (Betelgeuse, Mira, Algol,
 Cepheids, etc.).
 
-Both GCVS files are committed into the repo rather than downloaded at
-build time — they update rarely (yearly-ish) and at ~14 MB + ~12 MB
-they're manageable. If bumping to a new GCVS version, re-download from
-http://www.sai.msu.su/gcvs/ and replace.
+Both GCVS files are tracked via Git LFS rather than downloaded at build
+time — they update rarely (yearly-ish). If bumping to a new GCVS
+version, re-download from http://www.sai.msu.su/gcvs/ and replace the
+existing files; LFS handles the large-blob storage on push.
 
 ### Preprocessor idempotency
 

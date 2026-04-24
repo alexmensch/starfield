@@ -43,9 +43,10 @@
         <button class="modal-close" id="info-close" type="button" aria-label="Close">×</button>
         <h2 id="info-title">Welcome to Starfield</h2>
         <p>
-          Starfield is an interactive 3D map of ~118,000 real stars. Each
-          star is rendered at the colour and apparent brightness you would
-          actually see from the camera's current position.
+          Starfield is an interactive 3D map of <span id="info-star-count">—</span>
+          real stars. Each star is rendered at the colour and apparent
+          brightness you would actually see from the camera's current
+          position.
         </p>
         <p>
           Drag to orbit, scroll to zoom, and hover over a star to see its
@@ -54,12 +55,22 @@
           travel there. Search for &ldquo;Sol&rdquo; to return home to our
           sun. Enjoy!
         </p>
-        <p class="modal-credits">
-          Star data:
-          <a href="https://codeberg.org/astronexus/athyg" target="_blank" rel="noopener noreferrer">AT-HYG catalogue</a>
-          by David Nash. Constellation figures:
-          <a href="https://stellarium.org/" target="_blank" rel="noopener noreferrer">Stellarium</a>.
-        </p>
+        <div class="modal-credits">
+          <div>
+            Stars —
+            <a href="https://codeberg.org/astronexus/athyg" target="_blank" rel="noopener noreferrer">AT-HYG v3.3</a>
+            by David Nash
+          </div>
+          <div>
+            Variables —
+            <a href="http://www.sai.msu.su/gcvs/gcvs/" target="_blank" rel="noopener noreferrer">GCVS 5.1</a>,
+            Samus et al. (Sternberg Astronomical Institute)
+          </div>
+          <div>
+            Constellations —
+            <a href="https://github.com/Stellarium/stellarium/tree/master/skycultures/modern" target="_blank" rel="noopener noreferrer">Stellarium modern sky culture</a>
+          </div>
+        </div>
         <label class="modal-dismiss">
           <input type="checkbox" id="info-dontshow" /> Don't show this again
         </label>

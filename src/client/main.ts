@@ -95,7 +95,7 @@ async function main() {
       panel.hidden = false;
       meta.hidden = false;
       bindPanelLayout();
-      maybeShowInfoModal();
+      maybeShowInfoModal(catalog.count);
     }, 400);
 
     // Short one-line form — used in the meta bar where horizontal space
