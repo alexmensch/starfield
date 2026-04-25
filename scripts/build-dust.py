@@ -69,6 +69,18 @@ DENSITY_MIN = 1e-7
 DENSITY_MAX_SYNTHETIC = 0.1
 DENSITY_MAX_PERCENTILE = 99.95
 
+# Particle cloud — for visualising dust as discrete additive billboards
+# (replaces the fullscreen raymarch fog, which had unfixable banding/
+# jitter at far zoom). Particles are importance-sampled with probability
+# proportional to voxel density: dense regions get many particles, diffuse
+# regions get few or none. The result is a smooth-looking cloud with no
+# voxel aliasing because adjacent particles are at different sub-voxel
+# positions (per-particle jitter).
+PARTICLE_COUNT_DEFAULT = 50_000
+# Voxels below this density threshold contribute no particles — keeps the
+# sampling concentrated where there's actually visible structure.
+PARTICLE_DENSITY_THRESHOLD = 1e-6
+
 # Zhang-Green-Rix 2023 "E" unit → V-band extinction. Edenhofer outputs
 # density in units of E_ZGR per parsec, so path-integral × this factor
 # yields A_V magnitudes. Reference: Zhang, Green & Rix 2023 (Zenodo
@@ -99,6 +111,8 @@ def main() -> int:
                         help="Skip mirroring to public/dust/ (useful for alt output dirs).")
     parser.add_argument("--force-resample", action="store_true",
                         help="Ignore any cached .voxels.npy and re-run the full resample.")
+    parser.add_argument("--particle-count", type=int, default=PARTICLE_COUNT_DEFAULT,
+                        help=f"Number of dust particles to emit (default: {PARTICLE_COUNT_DEFAULT}).")
     args = parser.parse_args()
 
     args.output.mkdir(parents=True, exist_ok=True)
@@ -141,7 +155,19 @@ def main() -> int:
     # so Vite and the Cloudflare asset build see them; data/dust/ remains
     # the canonical LFS-tracked source.
     chunks = write_chunks(encoded, args.output)
-    manifest = build_manifest(chunks, synthetic=args.synthetic, density_max=density_max)
+
+    # Particle cloud — importance-sampled from the float voxel grid (not
+    # the encoded uint8) so dense cores get representative particle density.
+    print(f"Sampling {args.particle_count} dust particles…", file=sys.stderr)
+    particles = sample_particles(voxels, args.particle_count)
+    write_particles(particles, args.output / "particles.bin")
+    print(f"Wrote particles.bin ({particles.shape[0]} particles, "
+          f"{(particles.shape[0] * 16 + 16) / 1024:.1f} KiB)", file=sys.stderr)
+
+    manifest = build_manifest(
+        chunks, synthetic=args.synthetic, density_max=density_max,
+        particle_count=int(particles.shape[0]),
+    )
     (args.output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     print(f"Wrote {len(chunks)} chunks + manifest to {args.output.relative_to(ROOT)}/", file=sys.stderr)
 
@@ -149,6 +175,65 @@ def main() -> int:
         copy_to_public()
 
     return 0
+
+
+def sample_particles(voxels: np.ndarray, n: int, seed: int = 42) -> np.ndarray:
+    """Importance-sample `n` particles from the density grid.
+
+    Returns an (n, 4) float32 array: columns are (x, y, z, density). Each
+    particle is placed at a uniformly-jittered position within its source
+    voxel so the sampled cloud isn't quantised to voxel centres.
+
+    Sampling probability is proportional to voxel density (clipped at the
+    threshold); regions of zero density contribute no particles.
+    """
+    rng = np.random.default_rng(seed)
+
+    flat = voxels.ravel()
+    weights = np.where(flat > PARTICLE_DENSITY_THRESHOLD, flat, 0.0).astype(np.float64)
+    total = weights.sum()
+    if total <= 0.0:
+        return np.zeros((0, 4), dtype=np.float32)
+    weights /= total
+
+    flat_idx = rng.choice(weights.size, size=n, replace=True, p=weights)
+
+    # voxels.ravel() is C-order with last axis innermost, so for our [ix,iy,iz]
+    # layout the flat index decomposes as iz innermost.
+    n_axis = voxels.shape[0]
+    iz = flat_idx % n_axis
+    iy = (flat_idx // n_axis) % n_axis
+    ix = flat_idx // (n_axis * n_axis)
+
+    # Per-particle jitter inside the voxel breaks the voxel-grid look that
+    # would otherwise show in dense regions where many particles share a
+    # voxel.
+    jitter = rng.uniform(-0.5, 0.5, size=(n, 3)).astype(np.float32) * VOXEL_SIZE_PC
+    centres_x = (ix.astype(np.float32) + 0.5) * VOXEL_SIZE_PC - BOUNDS_PC
+    centres_y = (iy.astype(np.float32) + 0.5) * VOXEL_SIZE_PC - BOUNDS_PC
+    centres_z = (iz.astype(np.float32) + 0.5) * VOXEL_SIZE_PC - BOUNDS_PC
+    pos = np.stack([centres_x, centres_y, centres_z], axis=1) + jitter
+    density = flat[flat_idx].astype(np.float32)
+    return np.column_stack([pos, density]).astype(np.float32)
+
+
+def write_particles(particles: np.ndarray, path: Path) -> None:
+    """Write particles as a tiny binary file: 16-byte header + raw float32.
+
+    Header (16 bytes):
+      0..3   ASCII 'PART'
+      4..7   uint32 version (= 1)
+      8..11  uint32 count
+      12..15 reserved (zero)
+    Records: count × 16 bytes (4 float32: x, y, z, density)."""
+    count = int(particles.shape[0])
+    header = bytearray(16)
+    header[0:4] = b"PART"
+    header[4:8] = (1).to_bytes(4, "little")
+    header[8:12] = count.to_bytes(4, "little")
+    with open(path, "wb") as f:
+        f.write(header)
+        f.write(particles.astype(np.float32).tobytes())
 
 
 def encode_log_uint8(voxels: np.ndarray, dmin: float, dmax: float) -> np.ndarray:
@@ -291,7 +376,8 @@ def write_chunks(encoded: np.ndarray, out_dir: Path) -> list[dict]:
     return chunks
 
 
-def build_manifest(chunks: list[dict], *, synthetic: bool, density_max: float) -> dict:
+def build_manifest(chunks: list[dict], *, synthetic: bool, density_max: float,
+                   particle_count: int) -> dict:
     return {
         "version": 2,
         "format": "u8-log-window",
@@ -309,6 +395,10 @@ def build_manifest(chunks: list[dict], *, synthetic: bool, density_max: float) -
         "encoding": "uint8: 255 * (log10(clamp(d,dmin,dmax)) - log10(dmin)) / log10(dmax/dmin)",
         "avPerDensityPerPc": ZGR_TO_AV,
         "chunks": chunks,
+        "particles": {
+            "file": "particles.bin",
+            "count": particle_count,
+        },
     }
 
 

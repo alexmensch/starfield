@@ -850,5 +850,9 @@
         937.5
       ]
     }
-  ]
+  ],
+  "particles": {
+    "file": "particles.bin",
+    "count": 50000
+  }
 }

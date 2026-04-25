@@ -1,5 +1,5 @@
 import { loadCatalog } from './catalog-loader';
-import { DustField, loadDustManifest } from './dust-loader';
+import { DustField, loadDustManifest, loadDustParticles } from './dust-loader';
 import { Starfield } from './starfield';
 import { bindControls } from './controls';
 import { bindSearch, buildStarLabels, buildSpectralMap, type SearchIndexEntry } from './search';
@@ -74,6 +74,14 @@ async function main() {
       }
       const dust = new DustField(starfield.renderer, dustBase, manifest);
       starfield.attachDust(dust);
+      // Particles load in parallel with chunks — they're tiny (~800 KiB)
+      // and don't depend on the volumetric texture. The mesh stays
+      // hidden (strength 0) until the user opts in via the console.
+      if (manifest.particles) {
+        loadDustParticles(dustBase, manifest.particles).then((particles) => {
+          if (particles) starfield.attachDustParticles(particles);
+        });
+      }
       await dust.startLoading();
       console.info(
         `dust loaded: ${manifest.totalChunks} chunks, synthetic=${manifest.synthetic}`,

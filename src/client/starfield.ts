@@ -1,9 +1,11 @@
 import * as THREE from 'three';
 import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls.js';
 import type { Catalog } from './catalog-loader';
-import type { DustField } from './dust-loader';
+import type { DustField, DustParticleData } from './dust-loader';
 import vertexShader from './shaders/star.vert.glsl?raw';
 import fragmentShader from './shaders/star.frag.glsl?raw';
+import dustParticleVert from './shaders/dust-particle.vert.glsl?raw';
+import dustParticleFrag from './shaders/dust-particle.frag.glsl?raw';
 
 export interface FilterState {
   minDistSol: number;
@@ -91,6 +93,11 @@ export class Starfield {
   private scene: THREE.Scene;
   private discMesh: THREE.Mesh;
   private glowMesh: THREE.Mesh;
+  // Dust particles — null until attachDustParticles() builds the geometry.
+  // Rendered as instanced additive billboards over the star scene; off by
+  // default (uParticleStrength = 0) for the realism-first opening view.
+  private particleMesh: THREE.Mesh | null = null;
+  private particleMaterial: THREE.ShaderMaterial | null = null;
   // Shared uniforms object so changing uMaxAppMag/uSpectMask/etc. affects
   // both passes. The per-pass uRenderMode differs; we split into two
   // materials but give them the same uniforms map (minus uRenderMode).
@@ -437,6 +444,81 @@ export class Starfield {
   setExtinctionStrength(x: number) {
     this.material.uniforms.uExtinctionStrength.value = Math.max(0, x);
   }
+
+  /** Build the dust-particle mesh from the loaded particle data. Called
+   *  once after the network fetch resolves; the mesh stays in the scene
+   *  and gates on uParticleStrength + uDustEnabled. Idempotent — calling
+   *  with the same data is a no-op; calling again replaces the mesh.
+   *
+   *  STATUS (2026-04): the particle visualisation layer is "dark code" —
+   *  loaded but disabled (uParticleStrength = 0 → mesh.visible = false →
+   *  zero per-frame cost). It works but the visual balance between
+   *  "individual particle visible" vs "smooth fog from overlap" needs
+   *  more iteration before promoting to a user-facing toggle. Kept in
+   *  the codebase so future sessions can pick up where this left off
+   *  without re-deriving the preprocessor/loader/shader plumbing. See
+   *  NEXT_STEPS.md "Revisit dust particles" for the open questions. */
+  attachDustParticles(data: DustParticleData) {
+    if (this.particleMesh) {
+      this.scene.remove(this.particleMesh);
+      this.particleMesh.geometry.dispose();
+      this.particleMaterial?.dispose();
+    }
+
+    const geom = new THREE.InstancedBufferGeometry();
+    geom.setAttribute(
+      'aCorner',
+      new THREE.BufferAttribute(
+        new Float32Array([-0.5, -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, 0.5]),
+        2,
+      ),
+    );
+    geom.setIndex([0, 1, 2, 1, 3, 2]);
+    geom.setAttribute('iPosition', new THREE.InstancedBufferAttribute(data.positions, 3));
+    geom.setAttribute('iDensity', new THREE.InstancedBufferAttribute(data.densities, 1));
+    geom.instanceCount = data.count;
+    geom.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 60_000);
+
+    const u = this.material.uniforms;
+    this.particleMaterial = new THREE.ShaderMaterial({
+      glslVersion: THREE.GLSL3,
+      uniforms: {
+        // Share the same wrapper objects as the star material so a single
+        // attachDust() / floating-origin recenter / resize update propagates
+        // here too. uParticleStrength is particle-only.
+        uPixelRatio: u.uPixelRatio,
+        uViewport: u.uViewport,
+        uWorldOffset: u.uWorldOffset,
+        uDustEnabled: u.uDustEnabled,
+        uDustDensityMin: u.uDustDensityMin,
+        uDustLogRatio: u.uDustLogRatio,
+        uParticleStrength: { value: 0.0 },
+      },
+      vertexShader: dustParticleVert,
+      fragmentShader: dustParticleFrag,
+      transparent: true,
+      depthWrite: false,
+      depthTest: true,
+      blending: THREE.AdditiveBlending,
+    });
+    this.particleMesh = new THREE.Mesh(geom, this.particleMaterial);
+    this.particleMesh.frustumCulled = false;
+    this.particleMesh.renderOrder = 2; // after disc + glow passes
+    this.particleMesh.visible = false;  // hidden until strength > 0
+    this.scene.add(this.particleMesh);
+  }
+
+  /** User-facing dust-particle visibility. 0 = hidden (default). 1 = a
+   *  visible cloud where individual particles are clearly resolvable in
+   *  diffuse regions and bright clusters mark dense cores. The mesh is
+   *  hidden entirely at strength 0 so the GPU draw call is skipped. */
+  setParticleStrength(x: number) {
+    if (!this.particleMaterial || !this.particleMesh) return;
+    const v = Math.max(0, x);
+    this.particleMaterial.uniforms.uParticleStrength.value = v;
+    this.particleMesh.visible = v > 0;
+  }
+
 
   // Read-only view of the local-frame star positions, bound to the GPU
   // iPosition attribute. Overlays should project through this rather than

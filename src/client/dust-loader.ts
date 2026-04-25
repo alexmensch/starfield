@@ -32,6 +32,64 @@ export interface DustManifest {
   densityMax: number;
   avPerDensityPerPc: number;
   chunks: DustChunkMeta[];
+  particles?: { file: string; count: number };
+}
+
+/** Pre-computed dust particle cloud — importance-sampled positions +
+ *  densities to render as additive billboards. Replaces the abandoned
+ *  fullscreen-fog raymarch (which had unfixable banding/jitter at far
+ *  zoom). Format: 16-byte header ('PART' magic + version + count) then
+ *  N × 16 bytes of (x, y, z, density) float32 records. */
+export interface DustParticleData {
+  count: number;
+  /** Float32Array of length count × 3, xyz triples in absolute ICRS pc. */
+  positions: Float32Array;
+  /** Float32Array of length count, raw density values from the source grid. */
+  densities: Float32Array;
+}
+
+export async function loadDustParticles(
+  baseUrl: string,
+  meta: { file: string; count: number },
+): Promise<DustParticleData | null> {
+  try {
+    const res = await fetch(`${baseUrl}${meta.file}`);
+    if (!res.ok) return null;
+    const ab = await res.arrayBuffer();
+    const view = new DataView(ab);
+    const magic = String.fromCharCode(
+      view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3),
+    );
+    if (magic !== 'PART') {
+      console.warn(`dust particles: bad magic '${magic}'`);
+      return null;
+    }
+    const version = view.getUint32(4, true);
+    if (version !== 1) {
+      console.warn(`dust particles: unsupported version ${version}`);
+      return null;
+    }
+    const count = view.getUint32(8, true);
+    if (count !== meta.count) {
+      console.warn(`dust particles: count mismatch (manifest ${meta.count}, file ${count})`);
+    }
+    // Records start at byte 16. 4 floats per record (xyz + density),
+    // interleaved. Split into separate xyz and density typed arrays so
+    // the GPU instance attributes can bind directly.
+    const positions = new Float32Array(count * 3);
+    const densities = new Float32Array(count);
+    const records = new Float32Array(ab, 16, count * 4);
+    for (let i = 0; i < count; i++) {
+      positions[i * 3 + 0] = records[i * 4 + 0];
+      positions[i * 3 + 1] = records[i * 4 + 1];
+      positions[i * 3 + 2] = records[i * 4 + 2];
+      densities[i] = records[i * 4 + 3];
+    }
+    return { count, positions, densities };
+  } catch (err) {
+    console.warn('dust particles: load failed', err);
+    return null;
+  }
 }
 
 export interface DustChunkMeta {
