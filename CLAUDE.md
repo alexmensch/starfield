@@ -19,22 +19,30 @@ Ships as a Cloudflare Workers static-assets site.
 ```
 scripts/
   build-catalog.ts        CSV → binary preprocessor (run at build time)
+  build-dust.py           Edenhofer dust resampler + particle sampler (Python; LFS outputs)
+  sync-dust.ts            mirror data/dust → public/dust on every dev/build
   verify-catalog.ts       sanity-check tool for the generated binary
 data/                                All tracked via Git LFS except the Stellarium JSON.
   athyg_33_classic_ids.csv           AT-HYG source CSV (~64 MB, LFS)
   gcvs5.txt                          GCVS main catalogue (~14 MB, LFS)
   crossid.txt                        GCVS cross-reference (~12 MB, LFS)
   stellarium-modern-skyculture.json  Stellarium constellation lines (~200 KB)
+  dust/
+    chunk_X_Y_Z.bin                  64 voxel chunks, 2 MiB each, LFS
+    particles.bin                    50K importance-sampled dust points (LFS)
+    manifest.json                    grid params + chunk index + particle count
 public/
   catalog.bin             generated (gitignored, ~12 MB, binary v3)
   constellations.json     generated (gitignored)
   search-index.json       generated (gitignored, ~13 MB raw, ~2 MB gzipped)
+  dust/                   gitignored mirror of data/dust/
 src/
   worker.ts               Cloudflare Worker entry (just delegates to ASSETS)
   client/
     main.ts               bootstrap
     starfield.ts          Three.js scene + state machine + event bus
     catalog-loader.ts     binary parse into typed arrays
+    dust-loader.ts        progressive 3D-texture chunk loader + particle binary loader
     controls.ts           right-side panel widgets (with reverse-sync)
     search.ts             dual-input focus + destination search
     constellation-overlay.ts   SVG stick-figure overlay
@@ -48,7 +56,9 @@ src/
     info-modal.ts         first-visit welcome modal (localStorage opt-out)
     panel-layout.ts       collapse-toggle for the display-settings panel
     warp-button.ts        warp trigger (on distance label) + skip pill
-    shaders/star.vert.glsl, star.frag.glsl    GLSL3/WebGL2
+    shaders/
+      star.vert.glsl, star.frag.glsl              GLSL3/WebGL2
+      dust-particle.vert.glsl, dust-particle.frag.glsl   shelved dust splats
     index.html, styles.css
 ```
 
@@ -68,6 +78,13 @@ src/
   https://github.com/Stellarium/stellarium/tree/master/skycultures/modern
   — MIT-licensed JSON, HIP-indexed polylines. Committed as
   `data/stellarium-modern-skyculture.json`; essentially never changes.
+- **Edenhofer 2023 3D dust map** (interstellar extinction + ISM density):
+  https://doi.org/10.5281/zenodo.8187943 — Gordian Edenhofer & Greg Green.
+  Downloaded via the `dustmaps` Python package and resampled by
+  `scripts/build-dust.py` onto a 512³ Cartesian voxel grid in ICRS pc.
+  Produces `data/dust/chunk_*.bin` (64 chunks, 128 MiB total, LFS) plus
+  `data/dust/particles.bin` (50K importance-sampled dust points, LFS).
+  Density in E_ZGR per parsec; A_V/E_ZGR ≈ 2.742 at V band.
 
 ## Binary catalog format (`public/catalog.bin`)
 
@@ -775,6 +792,30 @@ npx tsx scripts/verify-catalog.ts   # dump header + spot-check records
   (`'0'` = expanded, `'1'` = collapsed, missing = collapsed by default for
   first-time visitors). The default-collapsed check is phrased as
   `!== '0'` in `panel-layout.ts` so absence of the key means collapsed.
+
+### Dust extinction + the shelved particle layer
+
+Per-star extinction reads the Edenhofer dust texture in `star.vert.glsl`,
+raymarches camera→star, and applies A_V to `appMag` (dimming) and
+E(B−V) = A_V/3.1 to `iCi` (reddening). Default strength = 1 (physical
+realism); user knob: `starfield.setExtinctionStrength(x)` from the dev
+console. This is the canonical "view of the dust" in the app — looking
+through dust dims and reddens stars behind it, which is what you'd
+actually see.
+
+The `dust-particle.{vert,frag}.glsl` shaders, `attachDustParticles()`
+method, and `setParticleStrength()` API render the same dust as discrete
+additive billboards for direct visualisation. **Currently shelved** —
+loaded but disabled (default strength = 0; mesh.visible = false → zero
+draw cost). The visual balance between "individual particles distinct"
+and "smooth additive fog from overlap" needs more iteration before
+promoting to a user-facing feature. There's also a deeper question:
+real interstellar dust is *dark*, not luminous, so additive rendering
+is artistically pretty but inverts physical reality. See
+NEXT_STEPS.md "Revisit dust visualisation" for the open questions.
+
+The data plumbing (preprocessor, manifest, LFS, loader, mesh) is fully
+wired so revisit work is purely render-tuning, not infrastructure.
 
 ## Things deliberately kept out
 
