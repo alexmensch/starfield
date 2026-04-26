@@ -232,6 +232,8 @@ html, body {
   max-width: 100%;
   overflow-wrap: anywhere;
 }
+.meta-focus { color: var(--fg); }
+.meta-count { color: var(--fg-dim); }
 
 .panel {
   overflow: hidden;
@@ -326,6 +328,46 @@ html, body {
   justify-content: space-between;
   align-items: baseline;
   gap: 12px;
+}
+
+.checkbox-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--fg);
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+.checkbox-row input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  cursor: pointer;
+  margin: 0;
+  position: relative;
+  display: inline-block;
+  vertical-align: middle;
+}
+.checkbox-row input[type="checkbox"]:hover { border-color: var(--fg-dim); }
+.checkbox-row input[type="checkbox"]:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.checkbox-row input[type="checkbox"]:checked::after {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 0;
+  width: 4px;
+  height: 8px;
+  border: solid var(--bg);
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
 }
 
 input[type="range"] {
@@ -481,9 +523,12 @@ select {
   width: 100vw;
   height: 100vh;
 }
+/* Rose/pink to contrast with the warm-yellow Sol arrow (#fde68a) and the
+   cyan GC arrow (#9ad7e0). Three distinct colours read as three distinct
+   reference arrows. */
 #dist-line {
   fill: none;
-  stroke: rgba(253, 230, 138, 0.9);
+  stroke: rgba(249, 168, 212, 0.95);
   stroke-width: 1.25;
   stroke-linecap: round;
   stroke-linejoin: round;
@@ -504,7 +549,7 @@ select {
   pointer-events: none;
 }
 .dist-label, .dist-warp-text {
-  fill: rgba(253, 230, 138, 1);
+  fill: rgba(249, 168, 212, 1);
   font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: 0.05em;
@@ -523,6 +568,51 @@ select {
 }
 #dist-ui:hover .dist-warp-text {
   opacity: 1;
+}
+
+/* Galactic locator arrows (Sol / GC). Same stroke + halo treatment as the
+   distance vector for visual consistency: dark backing stroke laid down
+   first, coloured stroke on top. */
+.gal-arrow-bg {
+  fill: none;
+  stroke: rgba(7, 9, 18, 0.9);
+  stroke-width: 3.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.gal-arrow {
+  fill: none;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.gal-arrow.sol { stroke: rgba(253, 230, 138, 0.95); }
+.gal-arrow.gc { stroke: rgba(154, 215, 224, 0.95); }
+body.monochrome .gal-arrow-bg {
+  stroke: rgba(255, 255, 255, 0.9);
+}
+body.monochrome .gal-arrow.sol,
+body.monochrome .gal-arrow.gc {
+  stroke: rgba(31, 35, 48, 0.85);
+}
+
+/* Arrow labels — reuse the distance-label paint-order halo so the text
+   stays readable over bright stars. Sol gets warm yellow, GC gets cyan. */
+.gal-arrow-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  paint-order: stroke;
+  stroke: rgba(7, 9, 18, 0.9);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+.gal-arrow-label.sol { fill: rgba(253, 230, 138, 1); }
+.gal-arrow-label.gc { fill: rgba(154, 215, 224, 1); }
+body.monochrome .gal-arrow-label {
+  fill: rgba(31, 35, 48, 0.9);
+  stroke: rgba(255, 255, 255, 0.9);
 }
 
 .scale-bar {
@@ -620,15 +710,21 @@ body.monochrome #con-figure {
   fill: none;
   stroke: rgba(30, 64, 175, 0.8);
 }
+/* In chart mode the three reference arrows (distance vector + Sol/GC) all
+   collapse to the same dark-grey-on-white palette — chart aesthetic
+   treats them as identical paper-chart annotations. */
 body.monochrome #dist-line {
-  stroke: rgba(146, 64, 14, 0.9);
+  stroke: rgba(31, 35, 48, 0.85);
+}
+body.monochrome #dist-line-bg {
+  stroke: rgba(255, 255, 255, 0.9);
 }
 body.monochrome .focus-ring {
   stroke: rgba(31, 35, 48, 0.6);
 }
 body.monochrome .dist-label,
 body.monochrome .dist-warp-text {
-  fill: rgba(146, 64, 14, 1);
+  fill: rgba(31, 35, 48, 0.9);
   stroke: rgba(255, 255, 255, 0.9);
 }
 body.monochrome .search-results li:hover,

@@ -94,7 +94,7 @@ async function main() {
     bindSearch(starfield, catalog, searchIndex, starLabels);
     createDiscMask(starfield);
     createConstellationOverlay(starfield);
-    createDistanceVectorOverlay(starfield);
+    createDistanceVectorOverlay(starfield, starLabels);
     createFocusRingOverlay(starfield);
     createScaleBar(starfield);
     bindWarpButton(starfield);
@@ -107,9 +107,22 @@ async function main() {
     const countLabel = `${catalog.count.toLocaleString()} stars`;
     let lastSelected: number | null = starfield.getFocusedStar();
     const renderMeta = () => {
-      meta.textContent = lastSelected !== null
-        ? `${describeStar(lastSelected)} · ${countLabel}`
-        : countLabel;
+      // Two-line layout: focused name + constellation on top, total count
+      // beneath. Distance from Sol used to live here but is now in the Sol
+      // locator arrow's label, so it'd be redundant — skip it.
+      if (lastSelected === null) {
+        meta.innerHTML = `<div class="meta-count">${escapeHtml(countLabel)}</div>`;
+        return;
+      }
+      const name = starLabels.get(lastSelected) ?? `Unnamed #${lastSelected}`;
+      const conIdx = catalog.constellation[lastSelected];
+      const con = conIdx !== 255 ? catalog.constellations[conIdx].name : '';
+      const focusLine = con
+        ? `${escapeHtml(name)} · ${escapeHtml(con)}`
+        : escapeHtml(name);
+      meta.innerHTML =
+        `<div class="meta-focus">${focusLine}</div>` +
+        `<div class="meta-count">${escapeHtml(countLabel)}</div>`;
     };
     renderMeta();
     starfield.onFocusChange((idx) => {
@@ -131,19 +144,6 @@ async function main() {
       bindPanelLayout();
       maybeShowInfoModal(catalog.count);
     }, 400);
-
-    // Short one-line form — used in the meta bar where horizontal space
-    // is tight.
-    function describeStar(idx: number): string {
-      const name = starLabels.get(idx) ?? `Unnamed #${idx}`;
-      const conIdx = catalog.constellation[idx];
-      const con = conIdx !== 255 ? catalog.constellations[conIdx].name : '';
-      const p = catalog.positions;
-      const dist = Math.sqrt(
-        p[idx * 3] ** 2 + p[idx * 3 + 1] ** 2 + p[idx * 3 + 2] ** 2,
-      );
-      return `${name}${con ? ' · ' + con : ''} · ${fmtDist(dist)}`;
-    }
 
     // Detailed, multi-line form for the hover tooltip. Line 1 is the star
     // name; subsequent lines progressively disclose: constellation +

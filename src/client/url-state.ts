@@ -17,6 +17,7 @@ const DEFAULTS = {
   smin: 2.0,
   smax: 24.0,
   span: 6.0,
+  gov: 0,
   camX: 0,
   camY: 0,
   camZ: 30,
@@ -41,7 +42,7 @@ export function applyFromUrl(starfield: Starfield) {
   if (u === 'ly' || u === 'pc') applyUnit(u);
 
   // Filter
-  const patch: Record<string, number> = {};
+  const patch: Record<string, number | boolean> = {};
   if (params.has('dmin') || params.has('dmax')) {
     const vMin = params.has('dmin') ? Number(params.get('dmin')) : DEFAULTS.dmin;
     const vMax = params.has('dmax') ? Number(params.get('dmax')) : DEFAULTS.dmax;
@@ -54,6 +55,7 @@ export function applyFromUrl(starfield: Starfield) {
   if (params.has('smin')) patch.sizeMin = Number(params.get('smin'));
   if (params.has('smax')) patch.sizeMax = Number(params.get('smax'));
   if (params.has('span')) patch.sizeSpan = Number(params.get('span'));
+  if (params.has('gov')) patch.showGalacticOverlays = params.get('gov') === '1';
   if (Object.keys(patch).length) starfield.setFilter(patch);
 
   // Detect camera params up-front so focus handling can decide whether to
@@ -123,6 +125,7 @@ export function startUrlSync(starfield: Starfield) {
     if (!approx(f.sizeMin, DEFAULTS.smin)) p.set('smin', fmt(f.sizeMin));
     if (!approx(f.sizeMax, DEFAULTS.smax)) p.set('smax', fmt(f.sizeMax));
     if (!approx(f.sizeSpan, DEFAULTS.span)) p.set('span', fmt(f.sizeSpan));
+    if (f.showGalacticOverlays) p.set('gov', '1');
 
     if (getUnit() !== 'pc') p.set('u', getUnit());
     if (getTheme() !== 'dark') p.set('t', getTheme());

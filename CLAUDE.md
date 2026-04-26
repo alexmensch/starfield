@@ -817,13 +817,59 @@ NEXT_STEPS.md "Revisit dust visualisation" for the open questions.
 The data plumbing (preprocessor, manifest, LFS, loader, mesh) is fully
 wired so revisit work is purely render-tuning, not infrastructure.
 
+### Galactic reference system
+
+Three layers anchor the local star clump against the Milky Way's geometry:
+
+- **Galactic disc outline** — *always on*. A 15 kpc midplane ring, two
+  thickness rings at ±400 pc, and a 3 kpc × 1.5 kpc bulge wireframe,
+  centred on the galactic centre (Sol sits ~8 kpc inside, not at the
+  middle). Opacity smoothsteps from 0 to ~0.55 between **500 pc and
+  5 kpc** "distance from Sol" so the disc stays out of the way for
+  local browsing and reveals as the user zooms out. Built once in the
+  galactic frame, transformed to absolute ICRS via `GAL_TO_ICRS`,
+  rebased per frame by setting `discGroup.position = -worldOffset`
+  (using `.copy(worldOffset).negate()` on the group's own position so
+  the shared `worldOffset` is never mutated).
+- **Galactic coordinate sphere** (toggleable) — equator, b=±30°/±60°
+  latitude circles, 12 meridians every 30° of l, and small + crosses at
+  NGP/SGP. Radius 50 kpc. Per-frame `gridGroup.position.copy(camera.position)`
+  so the sphere always centres on the observer; orientation is fixed in
+  galactic space so the equator and l=0 meridian stay correctly aimed
+  through any camera move.
+- **Sol + Galactic Centre arrows** (toggleable, gated by the same
+  switch). Origin = focused star's local-frame position when focused,
+  else `controls.target`. Length = `clamp(0.08 × orbit_radius, 0.5 pc,
+  1000 pc)`. Sol arrow hidden when focused on Sol. SVG distance labels
+  drawn into `#overlay` (`#sol-arrow-label`, `#gc-arrow-label`) — they
+  inherit the existing `body.warping #overlay { display: none }` rule
+  and need no per-warp wiring.
+
+Shared module `galactic-coords.ts` exports `GAL_TO_ICRS` (Matrix4) and
+`GALACTIC_CENTRE_PC` (Vector3 at R₀ = 8.122 kpc). Phase 5's analytic
+Milky Way background is meant to reuse these constants directly — keep
+the module minimal and stable.
+
+State + UI: single FilterState boolean `showGalacticOverlays` controls
+sphere + arrows together. URL param `gov=1`, default-omitted. Panel
+checkbox under "Galactic overlays". The disc has no toggle by design —
+it's the orientation primitive the catalog itself was missing.
+
+Mono mode swaps every layer's stroke to dark grey (`#3a3530`),
+`NoBlending`, full opacity. The disc fade-by-zoom is disabled in mono —
+chart reference layers don't fade. Driven from the same `setMonochrome`
+path as the star materials.
+
+Warp visibility: `updateGalacticLayers` hides all three layers while
+`warpState !== null`. SVG arrow labels are hidden via the existing
+overlay CSS rule.
+
 ## Things deliberately kept out
 
 Noted here so we don't re-debate scope:
 
 - IAU constellation **boundary** datasets (only the asterism lines are
   included — boundaries would be a separate Stellarium dataset).
-- Milky Way galactic-plane reference grid.
 - HR diagram side panel.
 - WASD / flight controls (removed after v1 review).
 - Desktop two-finger roll on Chrome / Firefox (no rotate gesture exists in

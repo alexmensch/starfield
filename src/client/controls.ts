@@ -48,6 +48,7 @@ export function bindControls(starfield: Starfield) {
   const sizeSpan = document.getElementById('size-span') as HTMLInputElement;
   const sizeReadout = document.getElementById('size-readout')!;
   const distUnitLabel = document.getElementById('dist-unit-label');
+  const galOverlays = document.getElementById('gal-overlays') as HTMLInputElement;
 
   distMin.max = String(SLIDER_STEPS);
   distMax.max = String(SLIDER_STEPS);
@@ -135,6 +136,9 @@ export function bindControls(starfield: Starfield) {
   sizeSpan.addEventListener('input', () => {
     starfield.setFilter({ sizeSpan: Number(sizeSpan.value) });
   });
+  galOverlays.addEventListener('change', () => {
+    starfield.setFilter({ showGalacticOverlays: galOverlays.checked });
+  });
 
   document.getElementById('con-reset')!.addEventListener('click', () => {
     starfield.setFilter({ highlightCon: -1 });
@@ -179,6 +183,10 @@ export function bindControls(starfield: Starfield) {
     if (sizeMax.value !== sMaxStr) sizeMax.value = sMaxStr;
     if (sizeSpan.value !== spanStr) sizeSpan.value = spanStr;
     sizeReadout.textContent = `${f.sizeMin.toFixed(1)} – ${f.sizeMax.toFixed(1)} px · span ${f.sizeSpan.toFixed(0)} mag`;
+
+    if (galOverlays.checked !== f.showGalacticOverlays) {
+      galOverlays.checked = f.showGalacticOverlays;
+    }
   };
 
   starfield.onFilterChange(syncFromFilter);

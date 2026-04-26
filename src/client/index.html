@@ -21,15 +21,25 @@
         </mask>
       </defs>
       <path id="con-figure" mask="url(#disc-occlude-mask)" />
+      <!-- Sol/GC locator arrows (Phase 4c). Each gets a dark backing stroke
+           drawn first for halo readability over bright stars, then the
+           coloured stroke on top. Path data is rebuilt each frame by
+           galactic-arrows.ts. -->
+      <path id="sol-arrow-bg" class="gal-arrow-bg" />
+      <path id="sol-arrow" class="gal-arrow sol" />
+      <path id="gc-arrow-bg" class="gal-arrow-bg" />
+      <path id="gc-arrow" class="gal-arrow gc" />
       <!-- Dark backing stroke so chevrons stay readable over bright discs;
            mirrors the `paint-order: stroke` halo on the distance label. Its
            `d` attribute is kept in sync with #dist-line by the overlay code. -->
       <path id="dist-line-bg" />
       <path id="dist-line" />
       <g id="dist-ui">
-        <text id="dist-label" class="dist-label" text-anchor="middle" dominant-baseline="central"></text>
+        <text id="dist-label" class="dist-label" text-anchor="start" dominant-baseline="central"></text>
         <text id="dist-warp-text" class="dist-warp-text" text-anchor="start" dominant-baseline="central">→ Warp</text>
       </g>
+      <text id="sol-arrow-label" class="gal-arrow-label sol" text-anchor="start" dominant-baseline="central"></text>
+      <text id="gc-arrow-label" class="gal-arrow-label gc" text-anchor="start" dominant-baseline="central"></text>
       <circle id="focus-ring" class="focus-ring" />
     </svg>
 
@@ -180,6 +190,14 @@
           <select id="con-select">
             <option value="-1">— None —</option>
           </select>
+        </section>
+
+        <section class="group">
+          <h3>Galactic overlays</h3>
+          <label class="checkbox-row">
+            <input id="gal-overlays" type="checkbox" />
+            <span>Show galactic sphere &amp; arrows</span>
+          </label>
         </section>
 
         <section class="group">

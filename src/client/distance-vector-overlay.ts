@@ -1,19 +1,24 @@
 import * as THREE from 'three';
 import type { Starfield } from './starfield';
 import { fmtDist } from './distance-util';
+import {
+  buildArrowSvgPath,
+  ARROW_HEAD_DEPTH_PX,
+  ARROW_LABEL_OFFSET_PX,
+  ARROW_LABEL_PADDING_PX,
+} from './arrow-path';
 
-const CHEVRON_SPACING_PX = 22;
-const CHEVRON_HALF_WIDTH = 4;
-const CHEVRON_DEPTH = 5;
-const START_OFFSET_PX = 28;
-const END_OFFSET_PX = 14;
+// Symmetric end offsets — the shaft starts and stops the same distance from
+// each star so the line reads as anchored to neither star specifically.
+const SHAFT_OFFSET_PX = 28;
 // Cap how far past the viewport the clipped "off-screen" endpoint can extend,
 // so the generated SVG path doesn't contain absurd coordinates.
 const MAX_OFFSCREEN_FACTOR = 1.5;
-// Label must stay inside the viewport even when the vector points off-screen.
-const LABEL_PADDING_PX = 50;
 
-export function createDistanceVectorOverlay(starfield: Starfield) {
+export function createDistanceVectorOverlay(
+  starfield: Starfield,
+  starLabels: Map<number, string>,
+) {
   const line = document.getElementById('dist-line') as unknown as SVGPathElement;
   const lineBg = document.getElementById('dist-line-bg') as unknown as SVGPathElement;
   const label = document.getElementById('dist-label') as unknown as SVGTextElement;
@@ -56,7 +61,21 @@ export function createDistanceVectorOverlay(starfield: Starfield) {
     if (!projected) { hide(); return; }
     const { pA, pB } = projected;
 
-    const d = buildChevronPath(pA[0], pA[1], pB[0], pB[1]);
+    // Symmetric shaft endpoints inset SHAFT_OFFSET_PX from each projected
+    // star — handed to the shared arrow-path builder.
+    const dxPx = pB[0] - pA[0];
+    const dyPx = pB[1] - pA[1];
+    const lenPx = Math.hypot(dxPx, dyPx);
+    if (lenPx <= SHAFT_OFFSET_PX * 2 + 4) { hide(); return; }
+    const uxPx = dxPx / lenPx;
+    const uyPx = dyPx / lenPx;
+    const shaftStartX = pA[0] + uxPx * SHAFT_OFFSET_PX;
+    const shaftStartY = pA[1] + uyPx * SHAFT_OFFSET_PX;
+    const tipX = pB[0] - uxPx * SHAFT_OFFSET_PX;
+    const tipY = pB[1] - uyPx * SHAFT_OFFSET_PX;
+
+    const d = buildArrowSvgPath(shaftStartX, shaftStartY, tipX, tipY);
+    if (!d) { hide(); return; }
     line.setAttribute('d', d);
     lineBg.setAttribute('d', d);
 
@@ -66,20 +85,26 @@ export function createDistanceVectorOverlay(starfield: Starfield) {
     const dz = tmpB.z - tmpA.z;
     const distPc = Math.sqrt(dx * dx + dy * dy + dz * dz);
 
-    const rawMx = (pA[0] + pB[0]) / 2;
-    const rawMy = (pA[1] + pB[1]) / 2 - 10;
-    const mx = Math.max(LABEL_PADDING_PX, Math.min(w - LABEL_PADDING_PX, rawMx));
-    const my = Math.max(LABEL_PADDING_PX, Math.min(h - LABEL_PADDING_PX, rawMy));
+    // Place the label just past the chevron tip — same offsets as the
+    // Sol/GC arrows so the three reference arrows have identical label
+    // geometry. Clamp inside the viewport so it stays readable when the
+    // tip is near an edge.
+    const labelAnchorX = tipX + ARROW_LABEL_OFFSET_PX + ARROW_HEAD_DEPTH_PX;
+    const labelAnchorY = tipY - ARROW_LABEL_OFFSET_PX;
+    const mx = Math.max(ARROW_LABEL_PADDING_PX, Math.min(w - ARROW_LABEL_PADDING_PX, labelAnchorX));
+    const my = Math.max(ARROW_LABEL_PADDING_PX, Math.min(h - ARROW_LABEL_PADDING_PX, labelAnchorY));
     distUi.style.display = '';
     label.setAttribute('x', mx.toFixed(1));
     label.setAttribute('y', my.toFixed(1));
-    label.textContent = fmtDist(distPc);
+    const destName = starLabels.get(toIdx) ?? `Unnamed #${toIdx}`;
+    label.textContent = `${destName} · ${fmtDist(distPc)}`;
 
     // Position the warp affordance to the right of the distance label. The
-    // label is anchor-middle so its right edge sits at (mx + width/2); the
-    // warp text is anchor-start so its left edge is placed there plus a gap.
-    const halfWidth = label.getComputedTextLength() / 2;
-    warpText.setAttribute('x', (mx + halfWidth + WARP_GAP_PX).toFixed(1));
+    // label is now anchor-start (matching Sol/GC arrows), so its right edge
+    // sits at (mx + getComputedTextLength()); the warp text — also
+    // anchor-start — places its left edge there plus a gap.
+    const fullWidth = label.getComputedTextLength();
+    warpText.setAttribute('x', (mx + fullWidth + WARP_GAP_PX).toFixed(1));
     warpText.setAttribute('y', my.toFixed(1));
   });
 }
@@ -138,40 +163,3 @@ function projectWithNearClip(
   return { pA, pB };
 }
 
-function buildChevronPath(ax: number, ay: number, bx: number, by: number): string {
-  const dx = bx - ax;
-  const dy = by - ay;
-  const len = Math.sqrt(dx * dx + dy * dy);
-  if (len <= START_OFFSET_PX + END_OFFSET_PX + 4) return '';
-
-  const ux = dx / len;
-  const uy = dy / len;
-  const px = -uy;
-  const py = ux;
-
-  const startT = START_OFFSET_PX / len;
-  const endT = 1 - END_OFFSET_PX / len;
-  const usablePx = (endT - startT) * len;
-  const n = Math.max(1, Math.floor(usablePx / CHEVRON_SPACING_PX));
-
-  const parts: string[] = [];
-  for (let i = 0; i < n; i++) {
-    const t = startT + ((i + 0.5) / n) * (endT - startT);
-    const cx = ax + dx * t;
-    const cy = ay + dy * t;
-    const apexX = cx + ux * (CHEVRON_DEPTH * 0.5);
-    const apexY = cy + uy * (CHEVRON_DEPTH * 0.5);
-    const backX = cx - ux * (CHEVRON_DEPTH * 0.5);
-    const backY = cy - uy * (CHEVRON_DEPTH * 0.5);
-    const wingAX = backX + px * CHEVRON_HALF_WIDTH;
-    const wingAY = backY + py * CHEVRON_HALF_WIDTH;
-    const wingBX = backX - px * CHEVRON_HALF_WIDTH;
-    const wingBY = backY - py * CHEVRON_HALF_WIDTH;
-    parts.push(
-      `M ${wingAX.toFixed(1)} ${wingAY.toFixed(1)} ` +
-      `L ${apexX.toFixed(1)} ${apexY.toFixed(1)} ` +
-      `L ${wingBX.toFixed(1)} ${wingBY.toFixed(1)}`,
-    );
-  }
-  return parts.join(' ');
-}

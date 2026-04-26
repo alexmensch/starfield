@@ -6,6 +6,9 @@ import vertexShader from './shaders/star.vert.glsl?raw';
 import fragmentShader from './shaders/star.frag.glsl?raw';
 import dustParticleVert from './shaders/dust-particle.vert.glsl?raw';
 import dustParticleFrag from './shaders/dust-particle.frag.glsl?raw';
+import { GalacticDisc } from './galactic-disc';
+import { GalacticGrid } from './galactic-grid';
+import { GalacticArrows } from './galactic-arrows';
 
 export interface FilterState {
   minDistSol: number;
@@ -16,6 +19,9 @@ export interface FilterState {
   sizeMin: number;
   sizeMax: number;
   sizeSpan: number;
+  // Galactic coordinate sphere + Sol/GC arrows toggle. Disc is always-on
+  // (fades by zoom) so it isn't gated here.
+  showGalacticOverlays: boolean;
 }
 
 export interface StarfieldOptions {
@@ -82,6 +88,7 @@ export const DEFAULT_FILTER: FilterState = {
   sizeMin: 2.0,
   sizeMax: 24.0,
   sizeSpan: 6.0,
+  showGalacticOverlays: false,
 };
 
 export class Starfield {
@@ -133,6 +140,14 @@ export class Starfield {
   private vectorTo: number | null = null;
   private monochrome = false;
   private warpState: WarpState | null = null;
+
+  // Galactic reference layers (Phase 4c). Disc fades in by camera-distance
+  // from Sol and is always-on; grid + arrows are gated by
+  // `filter.showGalacticOverlays`. Mono mode swaps strokes to a paper-chart
+  // palette via setMonochrome on each layer.
+  private galacticDisc: GalacticDisc;
+  private galacticGrid: GalacticGrid;
+  private galacticArrows: GalacticArrows;
 
   constructor({ canvas, catalog }: StarfieldOptions) {
     this.catalog = catalog;
@@ -333,6 +348,22 @@ export class Starfield {
     this.glowMesh.frustumCulled = false;
     this.glowMesh.renderOrder = 1;
     this.scene.add(this.glowMesh);
+
+    // Galactic reference layers — disc is always added; grid hides itself
+    // until enabled. Arrows are pure SVG inside the existing #overlay so they
+    // share the distance vector's stroke + halo styling and inherit the
+    // `body.warping` hide rule for free.
+    this.galacticDisc = new GalacticDisc();
+    this.scene.add(this.galacticDisc.group);
+    this.galacticGrid = new GalacticGrid();
+    this.scene.add(this.galacticGrid.group);
+    const solPath = document.getElementById('sol-arrow') as unknown as SVGPathElement;
+    const solBg = document.getElementById('sol-arrow-bg') as unknown as SVGPathElement;
+    const gcPath = document.getElementById('gc-arrow') as unknown as SVGPathElement;
+    const gcBg = document.getElementById('gc-arrow-bg') as unknown as SVGPathElement;
+    const solLabel = document.getElementById('sol-arrow-label') as unknown as SVGTextElement;
+    const gcLabel = document.getElementById('gc-arrow-label') as unknown as SVGTextElement;
+    this.galacticArrows = new GalacticArrows(solPath, solBg, gcPath, gcBg, solLabel, gcLabel);
 
     // Seed focus on Sol if it exists so measurement works from the start.
     if (catalog.solIndex >= 0) this.focusedStar = catalog.solIndex;
@@ -585,6 +616,9 @@ export class Starfield {
     this.material.needsUpdate = true;
     this.glowMaterial.needsUpdate = true;
     this.renderer.setClearColor(on ? 0xf5f2ea : 0x000000, on ? 1 : 0);
+    this.galacticDisc.setMonochrome(on);
+    this.galacticGrid.setMonochrome(on);
+    this.galacticArrows.setMonochrome(on);
     this.fireStateChange();
   }
 
@@ -861,6 +895,8 @@ export class Starfield {
     this.material.uniforms.uPixelRatio.value = this.renderer.getPixelRatio();
     this.material.uniforms.uPhysMaxPx.value = this.computePhysMaxPx();
     this.material.uniforms.uViewport.value.set(w, h);
+    // Line2 needs the canvas resolution for its screen-space line width.
+    this.galacticGrid.setResolution(w, h);
   };
 
   // The physical-size ceiling: the biggest star in the catalog renders at
@@ -1060,10 +1096,61 @@ export class Starfield {
     // Advance variability clock (seconds since start). Shared with glow
     // material via sharedUniforms so both passes see the same time.
     this.material.uniforms.uTime.value = (performance.now() - this.animateStartMs) / 1000;
+    this.updateGalacticLayers();
     this.renderer.render(this.scene, this.camera);
     for (const h of this.onFrameHandlers) h();
     requestAnimationFrame(this.animate);
   };
+
+  // Drive the disc fade, grid attachment, and arrow projection each frame.
+  // All three layers are hidden during a warp — the camera is in motion and
+  // their reference function is exactly the kind of context warp deliberately
+  // suppresses.
+  private updateGalacticLayers() {
+    if (this.warpState) {
+      this.galacticDisc.group.visible = false;
+      this.galacticGrid.group.visible = false;
+      this.galacticArrows.setVisible(false);
+      return;
+    }
+
+    // Refresh camera matrices before any SVG projection — controls.update()
+    // mutates camera.position/quaternion but doesn't propagate to
+    // matrixWorld/matrixWorldInverse. The renderer would do this for us, but
+    // we project arrow tips into screen space *before* renderer.render() runs,
+    // so without this call the labels lag by one frame during fast moves.
+    this.camera.updateMatrixWorld();
+
+    // Camera distance from Sol in absolute ICRS pc. Computed in JS float64 so
+    // the sum stays exact even with kpc-scale worldOffset values; the disc
+    // fade smoothstep that consumes it is a small range so precision matters.
+    const cam = this.camera.position;
+    const ax = cam.x + this.worldOffset.x;
+    const ay = cam.y + this.worldOffset.y;
+    const az = cam.z + this.worldOffset.z;
+    const distFromSol = Math.sqrt(ax * ax + ay * ay + az * az);
+    this.galacticDisc.update(this.worldOffset, distFromSol);
+
+    if (this.filter.showGalacticOverlays) {
+      this.galacticGrid.group.visible = true;
+      this.galacticGrid.update(this.camera.position);
+    } else {
+      this.galacticGrid.group.visible = false;
+    }
+
+    const focusedLocal =
+      this.focusedStar !== null ? this.starLocalPosition(this.focusedStar) : null;
+    const isSolFocus =
+      this.focusedStar !== null && this.focusedStar === this.catalog.solIndex;
+    this.galacticArrows.update(
+      this.camera,
+      this.controls.target,
+      this.worldOffset,
+      focusedLocal,
+      isSolFocus,
+      this.filter.showGalacticOverlays,
+    );
+  }
 
   private updateWarp() {
     const state = this.warpState;
