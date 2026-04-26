@@ -28,6 +28,10 @@ function main() {
   let copied = 0;
   let skipped = 0;
   for (const name of readdirSync(SRC)) {
+    // Skip dotfiles. build-dust.py emits .voxels.npy as a 512 MiB
+    // intermediate that lives alongside the chunks; it has no business
+    // in public/ (Cloudflare Workers caps assets at 25 MiB).
+    if (name.startsWith('.')) continue;
     const srcPath = resolve(SRC, name);
     const dstPath = resolve(DST, name);
     const srcStat = statSync(srcPath);
