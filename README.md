@@ -49,6 +49,12 @@ Stack: TypeScript, Three.js (WebGL2), Vite, Cloudflare Workers.
   deforms in true 3D as the viewpoint moves away from Sol, leaves a
   gap around every figure-star, and is masked behind a close-range
   resolved disc so lines appear to pass behind the star rather than on top.
+- **Galactic reference layers** to anchor the local catalog against the
+  Milky Way's geometry: an always-on translucent disc outline (15 kpc
+  midplane + bulge wireframe) that fades in as the camera pulls away
+  from Sol, plus a toggleable galactic coordinate sphere (equator + lat
+  circles every 10° + meridians every 10°) and a pair of locator arrows
+  pointing toward Sol and the Galactic Centre with live distance labels.
 - Scale bar in the bottom-left adapts to the current zoom in round pc or ly
   units.
 - Two themes: dark (glowing stars on a deep-blue field) and chart (dark stars
@@ -203,8 +209,6 @@ pan) works the same everywhere.
 - **No IAU constellation *boundary* dataset.** The stick-figure asterism
   lines are included (from Stellarium); the 1930 IAU region boundaries are
   not.
-- **No Milky Way or galactic-plane reference.** Orientation beyond the
-  nearest few constellations is easy to lose.
 - **No proper motion over time.** Stars are rendered at their catalog
   positions; they don't move as you'd see over astronomical timescales.
 - **Distance cap at 50,000 pc** — anything farther is treated as bad data

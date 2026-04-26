@@ -540,11 +540,13 @@ Implications for code that reads positions:
   (same frame as `camera.position` and `controls.target`). The disc
   mask, focus ring, distance vector, constellation overlay, and all
   `pickStar` / `renderedSizePx` / `aimAtConstellation` paths do this.
-- **Distance-from-Sol** (UI labels, distSol filter, `describeStar`) must
-  use `catalog.positions` — that's the immutable absolute buffer. The
-  shader's distSol filter consumes a precomputed per-instance `iDistSol`
-  attribute instead of `length(iPosition)`, because the latter is now a
-  local-frame value.
+- **Distance-from-Sol** (the distSol filter, hover-tooltip distances,
+  the Sol locator-arrow label) must use `catalog.positions` *or* must
+  compute `||localPosition + worldOffset||` in JS float64. The shader's
+  distSol filter consumes a precomputed per-instance `iDistSol`
+  attribute instead of `length(iPosition)`, because the latter is now
+  a local-frame value. The Sol arrow uses the float64 sum approach so
+  its distance label updates correctly under any focus.
 - `starLocalPosition(i)` (formerly `starWorldPosition`) returns the
   local-frame vector — use it for camera math, never for Sol-distance.
 
@@ -602,7 +604,11 @@ native html/css... we shouldn't dictate layout"). Do not reintroduce it.
   `margin-left: auto` for pull-apart). When the row doesn't fit, wrap puts
   them on separate rows naturally.
 - `.meta` has `overflow-wrap: anywhere` — star names can be long and we
-  want them to break within the narrow column when necessary.
+  want them to break within the narrow column when necessary. Layout
+  is two stacked `<div>`s: `.meta-focus` (focused-star name ·
+  constellation, brighter) above `.meta-count` (catalog total, dimmer).
+  Distance-from-Sol used to live in this area but now belongs to the
+  Sol locator arrow's label, so the meta no longer carries it.
 - Both containers set `pointer-events: none` on themselves and `auto` on
   direct children, so clicks fall through empty regions to the canvas.
 
@@ -819,50 +825,132 @@ wired so revisit work is purely render-tuning, not infrastructure.
 
 ### Galactic reference system
 
-Three layers anchor the local star clump against the Milky Way's geometry:
+Three layers anchor the local star clump against the Milky Way's geometry.
 
-- **Galactic disc outline** — *always on*. A 15 kpc midplane ring, two
-  thickness rings at ±400 pc, and a 3 kpc × 1.5 kpc bulge wireframe,
-  centred on the galactic centre (Sol sits ~8 kpc inside, not at the
-  middle). Opacity smoothsteps from 0 to ~0.55 between **500 pc and
-  5 kpc** "distance from Sol" so the disc stays out of the way for
-  local browsing and reveals as the user zooms out. Built once in the
-  galactic frame, transformed to absolute ICRS via `GAL_TO_ICRS`,
-  rebased per frame by setting `discGroup.position = -worldOffset`
-  (using `.copy(worldOffset).negate()` on the group's own position so
-  the shared `worldOffset` is never mutated).
-- **Galactic coordinate sphere** (toggleable) — equator, b=±30°/±60°
-  latitude circles, 12 meridians every 30° of l, and small + crosses at
-  NGP/SGP. Radius 50 kpc. Per-frame `gridGroup.position.copy(camera.position)`
-  so the sphere always centres on the observer; orientation is fixed in
-  galactic space so the equator and l=0 meridian stay correctly aimed
-  through any camera move.
-- **Sol + Galactic Centre arrows** (toggleable, gated by the same
-  switch). Origin = focused star's local-frame position when focused,
-  else `controls.target`. Length = `clamp(0.08 × orbit_radius, 0.5 pc,
-  1000 pc)`. Sol arrow hidden when focused on Sol. SVG distance labels
-  drawn into `#overlay` (`#sol-arrow-label`, `#gc-arrow-label`) — they
-  inherit the existing `body.warping #overlay { display: none }` rule
-  and need no per-warp wiring.
+**Shared module** `galactic-coords.ts` exports `GAL_TO_ICRS` (Matrix4)
+and `GALACTIC_CENTRE_PC` (Vector3 at R₀ = 8.122 kpc), built from the
+J2000 IAU galactic-pole and galactic-centre angles with explicit
+re-orthogonalisation. Phase 5's analytic Milky Way background is meant
+to reuse these constants directly — keep the module minimal and stable.
 
-Shared module `galactic-coords.ts` exports `GAL_TO_ICRS` (Matrix4) and
-`GALACTIC_CENTRE_PC` (Vector3 at R₀ = 8.122 kpc). Phase 5's analytic
-Milky Way background is meant to reuse these constants directly — keep
-the module minimal and stable.
+**Galactic disc outline** (`galactic-disc.ts`) — *always on in dark mode,
+hidden in chart mode*. A 15 kpc midplane ring, two thickness rings at
+±400 pc, and a 3 kpc × 1.5 kpc bulge wireframe (three orthogonal ring
+loops in the galactic frame), all centred on the galactic centre — Sol
+sits ~8 kpc *inside* the disc, not at its middle. Each ring is a basic
+`LineLoop` whose vertices are pre-baked once into absolute ICRS via
+`GAL_TO_ICRS` plus the GC offset; per frame `discGroup.position` is
+rebased to `-worldOffset` (via `.copy(worldOffset).negate()` on the
+group's own position vector so the shared `worldOffset` is never
+mutated). Opacity smoothsteps from 0 to 0.55 between **500 pc and 5 kpc**
+distance-from-Sol so the disc stays out of the way for local browsing
+and reveals as the user zooms out. In chart mode the layer is hidden
+entirely — a 15 kpc reference ring reads as visual noise on a paper-chart
+aesthetic, and the arrows + sphere already provide orientation.
 
-State + UI: single FilterState boolean `showGalacticOverlays` controls
+**Galactic coordinate sphere** (`galactic-grid.ts`, toggleable) —
+equator + 16 latitude rings every 10° (range −80° to +80°) + 36
+meridians every 10°, radius 50 kpc.
+
+- The **equator** is a `Line2` with `LineMaterial` (from
+  `three/examples/jsm/lines/`) at 2.4 px screen-space width — basic
+  `LineBasicMaterial.linewidth` silently clamps to 1 in WebGL on most
+  platforms, so Line2 is the only reliable way to get a thicker stroke.
+  256 segments around the full loop; the small joint-wedge "ticks" you
+  may notice are an inherent artefact of fat-line miters at non-trivial
+  angles. `LineMaterial` requires its `resolution` uniform to track the
+  canvas, so `Starfield.onResize` calls `galacticGrid.setResolution(w, h)`.
+  Bumping segment count to 1024 hides the ticks but was rejected as
+  visually similar; we kept 256.
+- **Latitude rings + meridians** are basic `LineLoop` / `Line` at 0.45
+  opacity. The polar bunching of 36 meridians is eased by trimming
+  every other meridian (l = 10°, 30°, …) to ±80° latitude — the
+  every-20° set still goes pole-to-pole unbroken.
+- **No pole markers.** Earlier iterations had small + crosses at
+  NGP/SGP; they read as visual clutter and were dropped.
+- The whole sphere tracks the camera each frame
+  (`gridGroup.position.copy(camera.position)`), so it conceptually
+  represents "the sky from here". Orientation is fixed in absolute
+  galactic space so b=0 / l=0 stay correctly aimed through any camera
+  move including warp.
+
+**Sol + Galactic Centre arrows** (`galactic-arrows.ts`, toggleable —
+same switch as the sphere). Rendered as **SVG** paths inside `#overlay`,
+not 3D meshes. Geometry is computed entirely in screen space:
+
+1. Project the origin (focused star's local position when focused, else
+   `controls.target`) into screen pixels.
+2. Project an auxiliary point a small step along the 3D direction
+   (toward Sol or GC) to derive the projected arrow direction in 2D.
+3. Build `shaftStart = originScreen + 28 × screenDir` and `tip =
+   shaftStart + 110 × screenDir`, both in pixels. The shared
+   `buildArrowSvgPath` helper emits the chevron arrowhead perpendicular
+   to the projected shaft, so the wings always face the camera by
+   construction (no 3D billboard math required).
+
+Critical invariant: the 28 px shaft offset is applied in **screen
+space**, not 3D world space, so the gap from focus point to shaft start
+is always exactly 28 px regardless of how aligned the arrow's 3D
+direction is with the camera view axis. This is what makes the arrows
+clear the 24 px focus ring at every viewing angle — the same way the
+distance vector does. Computing the offset in 3D world space and then
+projecting (the obvious-but-wrong approach) collapses the gap to
+sub-pixel when `dir` is parallel to the view axis, and the shaft ends
+up rendering inside the focus ring.
+
+Arrow hidden when the projected direction is < 1 px long (camera is
+looking exactly along the arrow's 3D direction); rare and there's no
+useful 2D direction to draw. Sol arrow also hidden when focused on Sol —
+pointing at yourself adds nothing.
+
+SVG distance labels (`#sol-arrow-label`, `#gc-arrow-label`) sit at
+`tip + (LABEL_OFFSET_PX + ARROW_HEAD_DEPTH_PX, -LABEL_OFFSET_PX)` —
+same exact offsets as the distance vector's label.
+
+**Shared arrow path** (`arrow-path.ts`) — the `buildArrowSvgPath(shaftStartX,
+shaftStartY, tipX, tipY)` helper builds shaft + chevron arrowhead given
+two screen-space endpoints. Used by both the distance vector overlay and
+the Sol/GC arrows so all three on-screen arrows share one silhouette,
+one chevron size (5 × 4 px), and one label-placement convention. Also
+exports `ARROW_LABEL_OFFSET_PX` and `ARROW_LABEL_PADDING_PX`.
+
+The **distance vector** (`distance-vector-overlay.ts`) was unified onto
+the same path during Phase 4c — it's now a solid shaft + chevron rather
+than a chain of repeated chevrons. Symmetric 28 px insets from each
+star (was asymmetric 28/14). Label format unified to
+`<destination name> · <distance>` (matches Sol/GC's `<target> ·
+<distance>` form), and the label is anchored at the chevron tip with
+the same offset as the Sol/GC labels rather than at the vector midpoint.
+The warp suffix follows by full label width (label switched from
+`text-anchor="middle"` to `start`).
+
+**State + UI:** single FilterState boolean `showGalacticOverlays` gates
 sphere + arrows together. URL param `gov=1`, default-omitted. Panel
 checkbox under "Galactic overlays". The disc has no toggle by design —
-it's the orientation primitive the catalog itself was missing.
+it's the orientation primitive the catalog itself was missing, and is
+hidden in chart mode anyway.
 
-Mono mode swaps every layer's stroke to dark grey (`#3a3530`),
-`NoBlending`, full opacity. The disc fade-by-zoom is disabled in mono —
-chart reference layers don't fade. Driven from the same `setMonochrome`
-path as the star materials.
+**Chart mode** (mono):
+- Disc layer hides entirely.
+- Sphere + grid swap stroke colour to dark grey (`#3a3530`), no
+  transparency, no blending. The equator/line opacity split is dropped
+  in chart mode (paper-chart aesthetic doesn't fade).
+- Distance vector + Sol/GC arrows all collapse to the same
+  dark-grey-on-white-halo palette via CSS rules on `.gal-arrow*` and
+  `#dist-line*` — no per-frame palette logic; `setMonochrome(on)` on
+  `GalacticArrows` is intentionally empty since the SVG class routing
+  handles it.
 
-Warp visibility: `updateGalacticLayers` hides all three layers while
-`warpState !== null`. SVG arrow labels are hidden via the existing
-overlay CSS rule.
+**Warp visibility:** `updateGalacticLayers` hides the 3D disc + grid
+groups while `warpState !== null`; SVG arrow paths and labels are
+hidden via the existing `body.warping #overlay { display: none }` rule.
+
+**Camera matrix freshness:** `updateGalacticLayers` calls
+`camera.updateMatrixWorld()` before any SVG projection. `controls.update()`
+mutates `camera.position`/`quaternion` but doesn't propagate to
+`matrixWorld`/`matrixWorldInverse` — the renderer would do that for us,
+but the SVG projection runs *before* `renderer.render()`, so without
+this call the labels lag by one frame during fast camera moves.
 
 ## Things deliberately kept out
 
