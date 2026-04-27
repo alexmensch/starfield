@@ -17,13 +17,19 @@ Done:
   progressively uploaded to a `Data3DTexture` on the client, raymarched
   in the star vertex shader to dim + redden stars by line-of-sight A_V.
   See `CLAUDE.md` "Dust extinction" section for details.
+- **Phase 3a: molecular cloud catalog** — 96 named local SF clouds
+  rendered as soft warm ellipsoids. 12 from Zucker 2021 Table 1 with
+  proper 3D bounding boxes (Taurus, Ophiuchus, Orion A/B/λ, Perseus,
+  Cepheus, Lupus, Chamaeleon, Musca, Pipe, Corona Australis); 84 from
+  Zucker 2020 Table A1 as spheres with sightline-spread radii. Search
+  by name, hover for details, click to fly. Default-on; URL `mc=0` to
+  disable. See `CLAUDE.md` "Molecular cloud overlay" section.
 
 Shelved (dark code):
 - **Phase 2: dust visualisation layer** — particles loaded but rendered
   at strength = 0 by default. Revisit notes below.
 
 Not started:
-- Phase 3a: molecular cloud catalog
 - Phase 3b: nebulae catalogs (PN, RNe, H II, SNR)
 - Phase 4a: Local Bubble shell mesh
 - Phase 4b: Radcliffe Wave spine

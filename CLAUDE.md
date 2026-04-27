@@ -19,14 +19,20 @@ Ships as a Cloudflare Workers static-assets site.
 ```
 scripts/
   build-catalog.ts        CSV → binary preprocessor (run at build time)
+  build-clouds.py         Zucker 2020/2021 → clouds.json (Python; tiny output)
   build-dust.py           Edenhofer dust resampler + particle sampler (Python; LFS outputs)
   sync-dust.ts            mirror data/dust → public/dust on every dev/build
   verify-catalog.ts       sanity-check tool for the generated binary
-data/                                All tracked via Git LFS except the Stellarium JSON.
+data/                                All large catalogs tracked via Git LFS.
   athyg_33_classic_ids.csv           AT-HYG source CSV (~64 MB, LFS)
   gcvs5.txt                          GCVS main catalogue (~14 MB, LFS)
   crossid.txt                        GCVS cross-reference (~12 MB, LFS)
   stellarium-modern-skyculture.json  Stellarium constellation lines (~200 KB)
+  molecular-clouds/
+    zucker2020-tablea1.tsv           Zucker 2020 cloud distances (~88 KB)
+    zucker2021-table1.dat            Zucker 2021 3D bounding boxes (~1 KB)
+    zucker2021-table2.dat            Zucker 2021 radial profile fits (kept for future)
+    zucker2021-table3.dat            Zucker 2021 cloud masses (kept for future)
   dust/
     chunk_X_Y_Z.bin                  64 voxel chunks, 2 MiB each, LFS
     particles.bin                    50K importance-sampled dust points (LFS)
@@ -35,6 +41,7 @@ public/
   catalog.bin             generated (gitignored, ~12 MB, binary v3)
   constellations.json     generated (gitignored)
   search-index.json       generated (gitignored, ~13 MB raw, ~2 MB gzipped)
+  clouds.json             generated (gitignored, ~30 KB)
   dust/                   gitignored mirror of data/dust/
 src/
   worker.ts               Cloudflare Worker entry (just delegates to ASSETS)
@@ -49,6 +56,8 @@ src/
     disc-mask.ts          SVG mask tracking the focused star + companion discs
     distance-vector-overlay.ts chevron-based measurement line
     focus-ring-overlay.ts      dashed circle around focused star
+    cloud-loader.ts       fetch + parse public/clouds.json
+    molecular-clouds.ts   3D ellipsoid render layer + raycast pick + fly-to
     scale-bar.ts          bottom-left distance scale
     unit-toggle.ts, theme-toggle.ts  display-mode toggles
     distance-util.ts      fmtDist, unit state + broadcast, niceRound
@@ -59,6 +68,7 @@ src/
     shaders/
       star.vert.glsl, star.frag.glsl              GLSL3/WebGL2
       dust-particle.vert.glsl, dust-particle.frag.glsl   shelved dust splats
+      cloud.vert.glsl, cloud.frag.glsl                   molecular cloud ellipsoids
     index.html, styles.css
 ```
 
@@ -85,6 +95,24 @@ src/
   Produces `data/dust/chunk_*.bin` (64 chunks, 128 MiB total, LFS) plus
   `data/dust/particles.bin` (50K importance-sampled dust points, LFS).
   Density in E_ZGR per parsec; A_V/E_ZGR ≈ 2.742 at V band.
+- **Zucker et al. 2020** (cloud distance compendium):
+  https://doi.org/10.1051/0004-6361/201936145 — VizieR `J/A+A/633/A51`,
+  table A1, fetched via `vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=...`
+  and committed as `data/molecular-clouds/zucker2020-tablea1.tsv`. 326
+  sightlines through ~96 unique named SF clouds (Aquila Rift, Cepheus,
+  IC 1396, etc.) with 5%-precision distances. CC-BY 4.0.
+- **Zucker et al. 2021** (3D structure of local clouds):
+  https://doi.org/10.3847/1538-4357/ac1f96 — Harvard Dataverse, three
+  tables (DOIs `10.7910/DVN/CAVMAQ`, `QKYR3G`, `EIPHPR`). Table 1 (12
+  famous local SF clouds) gives axis-aligned 3D bounding boxes in
+  galactic Cartesian heliocentric pc — these become the ellipsoid axes
+  for Taurus / Ophiuchus / Orion A/B/λ / etc. Tables 2, 3 (radial-profile
+  fits + masses) committed for future use; not consumed today. CC-BY 4.0.
+
+The Zucker tables are processed by `scripts/build-clouds.py` into
+`public/clouds.json` (~30 KB). Z2021 is authoritative for the 12 clouds
+it covers; Z2020 fills the long tail as spheres with radius estimated
+from per-cloud sightline spread (or 5 pc default for singletons).
 
 ## Binary catalog format (`public/catalog.bin`)
 
@@ -951,6 +979,62 @@ mutates `camera.position`/`quaternion` but doesn't propagate to
 `matrixWorld`/`matrixWorldInverse` — the renderer would do that for us,
 but the SVG projection runs *before* `renderer.render()`, so without
 this call the labels lag by one frame during fast camera moves.
+
+### Molecular cloud overlay (Phase 3a)
+
+`molecular-clouds.ts` renders ~96 named local SF clouds as soft warm
+ellipsoids. Default-on; toggle in the Galactic-overlays panel section,
+URL param `mc=0` to disable. Stays visible during warp by design (flying
+past Taurus is a feature, not noise).
+
+**Data:** `public/clouds.json` is the merged output of `build-clouds.py`:
+- Z2021 Table 1 → 12 ellipsoid clouds with axis-aligned bounding boxes in
+  galactic Cartesian. The bbox is converted to centroid + semi-axes; the
+  orientation `quat` is the GAL_TO_ICRS rotation so the ellipsoid local
+  axes correctly point along galactic +X/+Y/+Z when scaled by the renderer.
+- Z2020 Table A1 → 84 sphere clouds (sightline-aggregated by name; sphere
+  radius = max distance of any sightline from the centroid, with a 5 pc
+  default for singletons and a 3 pc floor). `quat` = identity.
+- Z2021 entries take precedence over Z2020 for the clouds both cover
+  (Chamaeleon, Ophiuchus, Lupus, Taurus, Perseus, Pipe, Cepheus, Corona
+  Australis, Orion → A/B/λ split). Sub-regions like `Ophiuchus_Arc` /
+  `Pipe_B59` stay separate Z2020 spheres.
+
+**Render:** every cloud is one shared `SphereGeometry(1, 32, 16)` mesh
+scaled per-instance to its semi-axes and rotated by its quaternion. The
+fragment shader derives a smooth view-direction-based density —
+`pow(|n·v|, 1.5)` — so silhouettes fade rather than hard-edge. Material
+uses `DoubleSide` so the layer reads correctly when the camera is inside
+a cloud, additive blending with depth-test on (foreground stars correctly
+occlude). Mono mode swaps to a soft warm grey with normal alpha blend.
+
+**Picking + hover:** the cloud `Group` carries per-cloud Mesh objects
+that participate in `THREE.Raycaster` intersection. `Starfield.pickCloud`
+does the raycast; the click handler in `onPointerUp` falls back to a
+cloud pick when no star is hit, and `bindHoverTooltip` does the same
+fallback so hovering over a cloud's body shows its name + distance + axes
+in the existing tooltip element. Cloud picks aren't dispatched to the
+focus state machine — they trigger `flyToCloud` (camera reposition with
+no focus change), so the URL/meta-bar focused-star state stays coherent.
+
+**Search:** cloud entries share the same Fuse fuzzy index as star entries,
+discriminated by a `kind: 'star' | 'cloud'` tag. The Focus search box
+dispatches cloud picks to `flyToCloud`; the To (distance vector) box
+filters cloud entries out before they reach the dropdown — clouds aren't
+valid measurement destinations because the vector and warp UX is
+star-to-star.
+
+**Floating-origin handling:** clouds live in absolute ICRS space; the
+group's `position` is rebased to `-worldOffset` per frame, the same
+pattern as `GalacticDisc`. So focusing on a far star (which shifts the
+floating origin to that star's absolute position) doesn't move clouds
+visually — they stay anchored where they should.
+
+**`flyToCloud`:** the camera's orbit target snaps to the cloud centroid
+in local frame; the camera position is moved to `target + viewDir × 2.4×max-axis`
+where `viewDir` preserves the user's current viewing direction. No
+focus-state change. Future work could add a warp-style animation, but
+the snap is fast and serviceable.
 
 ## Things deliberately kept out
 

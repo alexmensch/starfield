@@ -18,6 +18,9 @@ const DEFAULTS = {
   smax: 24.0,
   span: 6.0,
   gov: 0,
+  // Molecular cloud overlay defaults to ON, so the URL param appears only
+  // when the user explicitly turns it off.
+  mc: 1,
   camX: 0,
   camY: 0,
   camZ: 30,
@@ -56,6 +59,7 @@ export function applyFromUrl(starfield: Starfield) {
   if (params.has('smax')) patch.sizeMax = Number(params.get('smax'));
   if (params.has('span')) patch.sizeSpan = Number(params.get('span'));
   if (params.has('gov')) patch.showGalacticOverlays = params.get('gov') === '1';
+  if (params.has('mc')) patch.showMolecularClouds = params.get('mc') === '1';
   if (Object.keys(patch).length) starfield.setFilter(patch);
 
   // Detect camera params up-front so focus handling can decide whether to
@@ -82,6 +86,23 @@ export function applyFromUrl(starfield: Starfield) {
       if (hasCam || hasTgt) starfield.setOrbitTarget(idx);
       else starfield.focusStar(idx);
     }
+  }
+  // Cloud focus mirrors the star-focus pattern: with explicit camera params
+  // we just set the focus state and let the camera params win; without,
+  // flyToCloud both sets focus and snaps the camera. Cloud and star focus
+  // are mutually exclusive in Starfield, so the URL won't carry both —
+  // applying after `focus` lets cloud override on the off chance both are
+  // somehow present.
+  if (params.has('cloud')) {
+    const ci = Number(params.get('cloud'));
+    if (Number.isFinite(ci) && ci >= 0) {
+      if (hasCam || hasTgt) starfield.setFocusedCloud(ci);
+      else starfield.flyToCloud(ci);
+    }
+  }
+  if (params.has('toc')) {
+    const ci = Number(params.get('toc'));
+    if (Number.isFinite(ci) && ci >= 0) starfield.setVectorToCloud(ci);
   }
   if (params.has('to')) {
     const idx = Number(params.get('to'));
@@ -126,17 +147,27 @@ export function startUrlSync(starfield: Starfield) {
     if (!approx(f.sizeMax, DEFAULTS.smax)) p.set('smax', fmt(f.sizeMax));
     if (!approx(f.sizeSpan, DEFAULTS.span)) p.set('span', fmt(f.sizeSpan));
     if (f.showGalacticOverlays) p.set('gov', '1');
+    if (!f.showMolecularClouds) p.set('mc', '0');
 
     if (getUnit() !== 'pc') p.set('u', getUnit());
     if (getTheme() !== 'dark') p.set('t', getTheme());
 
     const focus = starfield.getFocusedStar();
+    const focusCloud = starfield.getFocusedCloud();
     const sol = starfield.catalog.solIndex;
-    if (focus === null) p.set('focus', '-1');
-    else if (focus !== sol) p.set('focus', String(focus));
+    if (focusCloud !== null) {
+      p.set('cloud', String(focusCloud));
+      // No `focus=` when a cloud is focused — they're mutually exclusive.
+    } else if (focus === null) {
+      p.set('focus', '-1');
+    } else if (focus !== sol) {
+      p.set('focus', String(focus));
+    }
 
     const to = starfield.getVectorTo();
+    const toCloud = starfield.getVectorToCloud();
     if (to !== null) p.set('to', String(to));
+    else if (toCloud !== null) p.set('toc', String(toCloud));
 
     const c = starfield.camera.position;
     const tgt = starfield.controls.target;

@@ -1,6 +1,7 @@
 import Fuse from 'fuse.js';
 import type { Starfield } from './starfield';
 import type { Catalog } from './catalog-loader';
+import type { CloudCatalog } from './cloud-loader';
 
 export interface SearchIndexEntry {
   i: number;
@@ -15,10 +16,13 @@ export interface SearchIndexEntry {
   s?: string;  // spectral designation string, cleaned for display
 }
 
+type EntryKind = 'star' | 'cloud';
+
 interface FuzzyEntry {
+  kind: EntryKind;
   index: number;
   label: string;        // what Fuse matches on
-  primary: string;      // shown in dropdown primary line (same across all entries for one star)
+  primary: string;      // shown in dropdown primary line
   displayCon: string;   // shown in dropdown secondary line
 }
 
@@ -34,7 +38,7 @@ class SearchBox {
     private clearBtn: HTMLButtonElement,
     private resultsEl: HTMLUListElement,
     private runQuery: (q: string) => FuzzyEntry[],
-    private onSelect: (idx: number) => void,
+    private onSelect: (entry: FuzzyEntry) => void,
     private onClear: () => void,
   ) {
     input.addEventListener('input', () => this.render(input.value));
@@ -104,7 +108,7 @@ class SearchBox {
   private pick(i: number) {
     const e = this.results[i];
     if (!e) return;
-    this.onSelect(e.index);
+    this.onSelect(e);
     this.resultsEl.hidden = true;
     this.input.blur();
   }
@@ -247,6 +251,7 @@ export function bindSearch(
   catalog: Catalog,
   raw: SearchIndexEntry[],
   starLabels: Map<number, string>,
+  clouds: CloudCatalog | null,
 ) {
   // Direct-lookup maps for numeric IDs. Prefix form ("HIP 12345", "HD 128620")
   // dispatches here rather than through the fuzzy index.
@@ -297,25 +302,43 @@ export function bindSearch(
     const displayCon = con?.name ?? '';
 
     if (properName) {
-      fuzzyEntries.push({ index: entry.i, label: properName, primary, displayCon });
+      fuzzyEntries.push({ kind: 'star', index: entry.i, label: properName, primary, displayCon });
     }
     if (entry.b && conCode) {
       for (const label of buildBayerLabels(entry.b, conCode, conName)) {
-        fuzzyEntries.push({ index: entry.i, label, primary, displayCon });
+        fuzzyEntries.push({ kind: 'star', index: entry.i, label, primary, displayCon });
       }
     }
     if (entry.f !== undefined && conCode) {
       fuzzyEntries.push({
+        kind: 'star',
         index: entry.i,
         label: `${entry.f} ${conCode}`,
         primary,
         displayCon,
       });
       fuzzyEntries.push({
+        kind: 'star',
         index: entry.i,
         label: `${entry.f} ${conName}`,
         primary,
         displayCon,
+      });
+    }
+  }
+
+  // Cloud entries — typed-name match plus a "cloud" badge in the dropdown
+  // secondary line so users can distinguish Taurus (the cloud) from Tau
+  // (any star labelled "Tau …").
+  if (clouds) {
+    for (let i = 0; i < clouds.clouds.length; i++) {
+      const c = clouds.clouds[i];
+      fuzzyEntries.push({
+        kind: 'cloud',
+        index: i,
+        label: c.name,
+        primary: c.name,
+        displayCon: 'Molecular cloud',
       });
     }
   }
@@ -367,11 +390,16 @@ export function bindSearch(
     }
 
     const res = fuse.search(trimmed, { limit: 30 });
-    const seen = new Set<number>();
+    const seen = new Set<string>();
     const out: FuzzyEntry[] = [];
     for (const r of res) {
-      if (seen.has(r.item.index)) continue;
-      seen.add(r.item.index);
+      // Key by kind+index so a star whose name collides with a cloud name
+      // (e.g. "Taurus" the cloud vs. some Tau star) doesn't dedupe across
+      // categories. The fuzzy index intentionally carries multiple labels
+      // per star, so within-kind dedup is still necessary.
+      const key = `${r.item.kind}:${r.item.index}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
       out.push(r.item);
       if (out.length >= 12) break;
     }
@@ -383,6 +411,7 @@ export function bindSearch(
     const con = conIdx !== 255 ? catalog.constellations[conIdx] : null;
     const name = catalog.names.get(idx);
     return {
+      kind: 'star',
       index: idx,
       label,
       primary: name ? `${name} (${label})` : label,
@@ -406,33 +435,67 @@ export function bindSearch(
     focusClear,
     resultsEl,
     runQuery,
-    (idx) => starfield.focusStar(idx),
+    (entry) => {
+      if (entry.kind === 'cloud') starfield.flyToCloud(entry.index);
+      else starfield.focusStar(entry.index);
+    },
     () => starfield.unfocus(),
   );
 
+  // Distance-vector destination — accepts both star and cloud entries.
+  // The pick handler dispatches to the appropriate setter; the two
+  // mutually exclude in Starfield, so flipping between a star and a
+  // cloud destination clears the previous one.
   const toBox = new SearchBox(
     toInput,
     toClear,
     resultsEl,
     runQuery,
-    (idx) => starfield.setVectorTo(idx),
-    () => starfield.setVectorTo(null),
+    (entry) => {
+      if (entry.kind === 'cloud') starfield.setVectorToCloud(entry.index);
+      else starfield.setVectorTo(entry.index);
+    },
+    () => {
+      starfield.setVectorTo(null);
+      starfield.setVectorToCloud(null);
+    },
   );
 
-  const syncFocus = (idx: number | null) => {
-    focusBox.setName(idx !== null ? describe(idx) : '');
-    toRow.hidden = idx === null;
-    if (idx === null) toBox.setName('');
+  // Single sync for both star and cloud focus — the two are mutually
+  // exclusive (setting either clears the other in Starfield), so the
+  // focus search box renders whichever one is set. The To (distance
+  // vector) row is shown whenever a focus is held — clouds participate
+  // in the same measurement / warp flow as stars now.
+  const syncFocusUI = () => {
+    const starIdx = starfield.getFocusedStar();
+    const cloudIdx = starfield.getFocusedCloud();
+    if (starIdx !== null) {
+      focusBox.setName(describe(starIdx));
+      toRow.hidden = false;
+    } else if (cloudIdx !== null && clouds) {
+      focusBox.setName(clouds.clouds[cloudIdx].name);
+      toRow.hidden = false;
+    } else {
+      focusBox.setName('');
+      toRow.hidden = true;
+      toBox.setName('');
+    }
   };
-  const syncVector = (idx: number | null) => {
-    toBox.setName(idx !== null ? describe(idx) : '');
+  const syncVectorUI = () => {
+    const star = starfield.getVectorTo();
+    const cloudVec = starfield.getVectorToCloud();
+    if (star !== null) toBox.setName(describe(star));
+    else if (cloudVec !== null && clouds) toBox.setName(clouds.clouds[cloudVec].name);
+    else toBox.setName('');
   };
 
-  starfield.onFocusChange(syncFocus);
-  starfield.onVectorChange(syncVector);
+  starfield.onFocusChange(syncFocusUI);
+  starfield.onCloudFocusChange(syncFocusUI);
+  starfield.onVectorChange(syncVectorUI);
+  starfield.onVectorCloudChange(syncVectorUI);
 
-  syncFocus(starfield.getFocusedStar());
-  syncVector(starfield.getVectorTo());
+  syncFocusUI();
+  syncVectorUI();
 }
 
 function escapeHtml(s: string) {

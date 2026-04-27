@@ -9,6 +9,8 @@ import dustParticleFrag from './shaders/dust-particle.frag.glsl?raw';
 import { GalacticDisc } from './galactic-disc';
 import { GalacticGrid } from './galactic-grid';
 import { GalacticArrows } from './galactic-arrows';
+import { MolecularClouds, cloudViewingDistancePc } from './molecular-clouds';
+import type { CloudCatalog } from './cloud-loader';
 
 export interface FilterState {
   minDistSol: number;
@@ -22,6 +24,9 @@ export interface FilterState {
   // Galactic coordinate sphere + Sol/GC arrows toggle. Disc is always-on
   // (fades by zoom) so it isn't gated here.
   showGalacticOverlays: boolean;
+  // Molecular cloud overlay (Phase 3a). Default-on; toggle suppresses both
+  // 3D rendering and hover/pick.
+  showMolecularClouds: boolean;
 }
 
 export interface StarfieldOptions {
@@ -69,14 +74,21 @@ interface WarpState {
   startTimeMs: number;
   reorientMs: number;
   durationMs: number;
-  A: THREE.Vector3;        // source star world position
+  A: THREE.Vector3;        // source world position (focused star or cloud centroid)
   dir0: THREE.Vector3;     // unit vector from A toward camera at warp start
   mag0: number;            // |camera - A| at warp start
   dirBack: THREE.Vector3;  // unit vector from A away from B (reorient end direction)
   pStart: THREE.Vector3;   // fly start = A + dirBack * endOffset
   pEnd: THREE.Vector3;     // fly end = B - forward * endOffset
-  endOffset: number;       // effective minDistance for the destination star
+  endOffset: number;       // arrival viewing distance for the destination
+  destKind: 'star' | 'cloud';
   destIdx: number;
+}
+
+type Target = { kind: 'star'; idx: number } | { kind: 'cloud'; idx: number };
+function sameTarget(a: Target | null, b: Target | null): boolean {
+  if (a === null || b === null) return a === b;
+  return a.kind === b.kind && a.idx === b.idx;
 }
 
 export const DEFAULT_FILTER: FilterState = {
@@ -89,6 +101,7 @@ export const DEFAULT_FILTER: FilterState = {
   sizeMax: 24.0,
   sizeSpan: 6.0,
   showGalacticOverlays: false,
+  showMolecularClouds: true,
 };
 
 export class Starfield {
@@ -130,14 +143,25 @@ export class Starfield {
 
   private disposed = false;
   private onFocusHandlers: Array<(starIndex: number | null) => void> = [];
+  private onCloudFocusHandlers: Array<(cloudIndex: number | null) => void> = [];
   private onFrameHandlers: Array<() => void> = [];
   private onFilterHandlers: Array<(f: Readonly<FilterState>) => void> = [];
   private onVectorHandlers: Array<(toIdx: number | null) => void> = [];
+  private onVectorCloudHandlers: Array<(toCloudIdx: number | null) => void> = [];
   private onStateHandlers: Array<() => void> = [];
   private onWarpHandlers: Array<(active: boolean) => void> = [];
 
   private focusedStar: number | null = null;
+  // "Soft" focus on a molecular cloud — mutually exclusive with focusedStar.
+  // Drives the focus search box and meta bar so the user-facing "what am I
+  // looking at" reads as the cloud name. Star-specific UI (focus ring,
+  // distance vector, warp source, floating-origin recenter) ignores this.
+  private focusedCloud: number | null = null;
+  // Distance-vector destination — at most one of these is non-null at a
+  // time. Mutual exclusion is enforced by setVectorTo / setVectorToCloud
+  // both clearing the other slot.
   private vectorTo: number | null = null;
+  private vectorToCloud: number | null = null;
   private monochrome = false;
   private warpState: WarpState | null = null;
 
@@ -148,6 +172,11 @@ export class Starfield {
   private galacticDisc: GalacticDisc;
   private galacticGrid: GalacticGrid;
   private galacticArrows: GalacticArrows;
+
+  // Molecular cloud overlay (Phase 3a). null until attachClouds() runs;
+  // the layer loads asynchronously after the catalog and search index so
+  // first paint isn't gated on it.
+  private clouds: MolecularClouds | null = null;
 
   constructor({ canvas, catalog }: StarfieldOptions) {
     this.catalog = catalog;
@@ -373,19 +402,35 @@ export class Starfield {
   }
 
   onFocusChange(h: (starIndex: number | null) => void) { this.onFocusHandlers.push(h); }
+  onCloudFocusChange(h: (cloudIndex: number | null) => void) { this.onCloudFocusHandlers.push(h); }
   onFrame(h: () => void) { this.onFrameHandlers.push(h); }
   onFilterChange(h: (f: Readonly<FilterState>) => void) { this.onFilterHandlers.push(h); }
   onVectorChange(h: (toIdx: number | null) => void) { this.onVectorHandlers.push(h); }
+  onVectorCloudChange(h: (toCloudIdx: number | null) => void) { this.onVectorCloudHandlers.push(h); }
   onStateChange(h: () => void) { this.onStateHandlers.push(h); }
   onWarpChange(h: (active: boolean) => void) { this.onWarpHandlers.push(h); }
 
   getFocusedStar(): number | null { return this.focusedStar; }
+  getFocusedCloud(): number | null { return this.focusedCloud; }
   getVectorTo(): number | null { return this.vectorTo; }
+  getVectorToCloud(): number | null { return this.vectorToCloud; }
   getMonochrome(): boolean { return this.monochrome; }
   getWarpActive(): boolean { return this.warpState !== null; }
 
   private setFocus(idx: number | null) {
-    if (this.focusedStar === idx) return;
+    // Star and cloud focus are mutually exclusive — selecting either one
+    // clears the other. Both setters end up here for the cloud-clear leg
+    // so the cloud-focus event always fires before the star-focus event,
+    // letting UI listeners settle in the right order.
+    const cloudCleared = this.focusedCloud !== null;
+    if (cloudCleared) {
+      this.focusedCloud = null;
+      for (const h of this.onCloudFocusHandlers) h(null);
+    }
+    if (this.focusedStar === idx) {
+      if (cloudCleared) this.fireStateChange();
+      return;
+    }
     this.focusedStar = idx;
     // Recenter the floating origin on every focus change. Focused: origin
     // snaps to the focused star's absolute position, so close-range rendering
@@ -402,6 +447,25 @@ export class Starfield {
     }
     this.controls.minDistance = idx !== null ? this.minDistForStar(idx) : DEFAULT_MIN_DIST_PC;
     for (const h of this.onFocusHandlers) h(idx);
+    this.fireStateChange();
+  }
+
+  /**
+   * Set or clear the cloud "soft focus". Setting a cloud clears any star
+   * focus first (which also resets the floating origin to Sol). Star-only
+   * UI (focus ring, distance vector, warp) ignores this — clouds aren't
+   * focusable in the way stars are; only the user-facing "what am I
+   * looking at" labels track it.
+   */
+  setFocusedCloud(idx: number | null) {
+    if (idx !== null && this.focusedStar !== null) {
+      // Clear the star focus first; setFocus(null) doesn't touch
+      // focusedCloud unless it was already set, so no event noise.
+      this.setFocus(null);
+    }
+    if (this.focusedCloud === idx) return;
+    this.focusedCloud = idx;
+    for (const h of this.onCloudFocusHandlers) h(idx);
     this.fireStateChange();
   }
 
@@ -475,6 +539,81 @@ export class Starfield {
   setExtinctionStrength(x: number) {
     this.material.uniforms.uExtinctionStrength.value = Math.max(0, x);
   }
+
+  /** Wire the loaded molecular cloud catalog into the scene. Idempotent —
+   *  calling again replaces the layer. Pass null to detach. */
+  attachClouds(catalog: CloudCatalog | null) {
+    if (this.clouds) {
+      this.scene.remove(this.clouds.group);
+      this.clouds.dispose();
+      this.clouds = null;
+    }
+    if (catalog === null || catalog.clouds.length === 0) return;
+    this.clouds = new MolecularClouds(catalog);
+    this.clouds.setMonochrome(this.monochrome);
+    this.scene.add(this.clouds.group);
+  }
+
+  /** Catalog of clouds, or null if none are attached. Exposed for search
+   *  index integration in main.ts. */
+  getCloudCatalog(): CloudCatalog | null {
+    return this.clouds ? { count: this.clouds.clouds.length, clouds: this.clouds.clouds } : null;
+  }
+
+  /** Direct access to the cloud render layer for dev-console tuning
+   *  (`starfield.cloudLayer.setOpacity(0.5)` etc.). null until
+   *  attachClouds runs. */
+  get cloudLayer(): MolecularClouds | null { return this.clouds; }
+
+  /** Hit-test a screen-space cursor against the cloud layer. Returns the
+   *  cloud index of the nearest hit, or null if no cloud is under the
+   *  cursor. Always returns null when the layer is hidden by the toggle
+   *  or warping. */
+  pickCloud(clientX: number, clientY: number): number | null {
+    if (!this.clouds || !this.filter.showMolecularClouds || this.warpState) return null;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const ndc = this.tmpNdc.set(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -(((clientY - rect.top) / rect.height) * 2 - 1),
+    );
+    this.cloudRaycaster.setFromCamera(ndc, this.camera);
+    return this.clouds.raycast(this.cloudRaycaster);
+  }
+
+  private cloudRaycaster = new THREE.Raycaster();
+  private tmpNdc = new THREE.Vector2();
+
+  /** Teleport the camera to a comfortable viewing distance from the
+   *  cloud's centroid and make the cloud the new focus. Cloud-side
+   *  analogue of focusStar — used by search-select and click-vector-tip.
+   *  Clears any prior focus + measurement vector since the user has
+   *  effectively "arrived" at the new target. */
+  flyToCloud(idx: number) {
+    if (!this.clouds) return;
+    const cloud = this.clouds.clouds[idx];
+    if (!cloud) return;
+    if (this.warpState) return;
+
+    // Drop any star focus first. setFocus(null) recenters the floating
+    // origin to Sol, putting both camera and target back into absolute
+    // ICRS space — so we can place the new view directly using the
+    // cloud's absolute centroid, without subtracting worldOffset.
+    if (this.focusedStar !== null) this.setFocus(null);
+    this.setVectorTo(null);
+    this.setVectorToCloud(null);
+
+    const offsetDist = cloudViewingDistancePc(cloud);
+    const dir = this.tmpVec3b.subVectors(this.camera.position, this.controls.target);
+    if (dir.lengthSq() < 1e-6) dir.set(0, 0, 1);
+    dir.normalize().multiplyScalar(offsetDist);
+
+    this.controls.target.copy(cloud.centerAbs);
+    this.camera.position.copy(cloud.centerAbs).add(dir);
+    this.controls.update();
+    this.setFocusedCloud(idx);
+  }
+
+  private tmpVec3b = new THREE.Vector3();
 
   /** Build the dust-particle mesh from the loaded particle data. Called
    *  once after the network fetch resolves; the mesh stays in the scene
@@ -557,16 +696,40 @@ export class Starfield {
   get localPositions(): Float32Array { return this._localPositions; }
 
   setVectorTo(idx: number | null) {
+    // Mutually exclusive with vectorToCloud; setting a star vector clears
+    // any cloud destination.
+    if (idx !== null && this.vectorToCloud !== null) {
+      this.vectorToCloud = null;
+      for (const h of this.onVectorCloudHandlers) h(null);
+    }
     if (this.vectorTo === idx) return;
     this.vectorTo = idx;
     for (const h of this.onVectorHandlers) h(idx);
     this.fireStateChange();
   }
 
+  setVectorToCloud(idx: number | null) {
+    // Mutually exclusive with vectorTo; setting a cloud vector clears
+    // any star destination.
+    if (idx !== null && this.vectorTo !== null) {
+      this.vectorTo = null;
+      for (const h of this.onVectorHandlers) h(null);
+    }
+    if (this.vectorToCloud === idx) return;
+    this.vectorToCloud = idx;
+    for (const h of this.onVectorCloudHandlers) h(idx);
+    this.fireStateChange();
+  }
+
   unfocus() {
-    if (this.focusedStar === null && this.vectorTo === null) return;
+    if (
+      this.focusedStar === null && this.focusedCloud === null &&
+      this.vectorTo === null && this.vectorToCloud === null
+    ) return;
     this.setVectorTo(null);
+    this.setVectorToCloud(null);
     this.setFocus(null);
+    this.setFocusedCloud(null);
   }
 
   private fireStateChange() {
@@ -619,6 +782,7 @@ export class Starfield {
     this.galacticDisc.setMonochrome(on);
     this.galacticGrid.setMonochrome(on);
     this.galacticArrows.setMonochrome(on);
+    this.clouds?.setMonochrome(on);
     this.fireStateChange();
   }
 
@@ -642,18 +806,71 @@ export class Starfield {
     this.setFocus(starIndex);
   }
 
-  // Start an animated journey from the focused star to `destIdx`. Camera
-  // flies in a straight line with a symmetric accelerate/decelerate profile.
-  // Orbit controls are disabled for the duration; overlays listening to
-  // onWarpChange are expected to hide themselves so they don't flail against
-  // the moving camera. No-ops if there's no focus, the destination equals
-  // the focus, or the two stars are coincident.
+  /** Cloud-side analogue of setOrbitTarget — orbit pivot moves to the
+   *  cloud centroid and the cloud becomes the soft focus, but the camera
+   *  stays where it is (no teleport). User then orbits/zooms to view it.
+   *  Mirrors the click-on-star UX without teleporting. */
+  setOrbitTargetCloud(cloudIdx: number) {
+    if (!this.clouds) return;
+    const cloud = this.clouds.clouds[cloudIdx];
+    if (!cloud) return;
+    // setFocusedCloud clears any star focus first, which recenters the
+    // floating origin to Sol — so the cloud's absolute centroid IS its
+    // local-frame coordinate after that.
+    this.setFocusedCloud(cloudIdx);
+    this.controls.target.copy(cloud.centerAbs);
+    this.controls.update();
+  }
+
+  // Start an animated journey from the currently focused thing (star or
+  // cloud) to a star at `destIdx`. Camera flies in a straight line with a
+  // symmetric accelerate/decelerate profile. Orbit controls are disabled
+  // for the duration; overlays listening to onWarpChange are expected to
+  // hide themselves so they don't flail against the moving camera.
+  // No-ops if there's no focus, the destination equals the source, or the
+  // two are coincident.
   warpTo(destIdx: number) {
-    if (this.warpState) return;
-    const fromIdx = this.focusedStar;
-    if (fromIdx === null || destIdx === fromIdx) return;
-    const A = this.starLocalPosition(fromIdx);
+    const A = this.currentFocusLocalPos();
+    if (!A) return;
+    if (destIdx === this.focusedStar) return;
     const B = this.starLocalPosition(destIdx);
+    this.startWarp(A, B, 'star', destIdx, this.minDistForStar(destIdx));
+  }
+
+  /** Cloud-destination warp — flies from the currently focused thing
+   *  (star or cloud) to a cloud's centroid. Arrival distance is the
+   *  cloud's recommended viewing distance (2.4 × max axis). */
+  warpToCloud(destIdx: number) {
+    if (!this.clouds) return;
+    const cloud = this.clouds.clouds[destIdx];
+    if (!cloud) return;
+    if (destIdx === this.focusedCloud) return;
+    const A = this.currentFocusLocalPos();
+    if (!A) return;
+    const B = this.tmpVec3b.copy(cloud.centerAbs).sub(this.worldOffset).clone();
+    this.startWarp(A, B, 'cloud', destIdx, cloudViewingDistancePc(cloud));
+  }
+
+  /** Local-frame position of whatever is currently focused (star or
+   *  cloud), or null if nothing is focused. Both warp paths read from
+   *  this so the source point follows the unified focus state. */
+  private currentFocusLocalPos(): THREE.Vector3 | null {
+    if (this.focusedStar !== null) return this.starLocalPosition(this.focusedStar);
+    if (this.focusedCloud !== null && this.clouds) {
+      const c = this.clouds.clouds[this.focusedCloud];
+      if (c) return c.centerAbs.clone().sub(this.worldOffset);
+    }
+    return null;
+  }
+
+  private startWarp(
+    A: THREE.Vector3,
+    B: THREE.Vector3,
+    destKind: 'star' | 'cloud',
+    destIdx: number,
+    endOffset: number,
+  ) {
+    if (this.warpState) return;
     const AB = new THREE.Vector3().subVectors(B, A);
     const distPc = AB.length();
     if (distPc < 1e-6) return;
@@ -663,10 +880,6 @@ export class Starfield {
     // after the reorient A is in front of the camera and B is further along
     // the same line.
     const dirBack = forward.clone().negate();
-    // End offset at arrival is the destination's own effective minDistance
-    // — so the warp parks exactly at the closest user-orbitable distance
-    // for that star, which is larger than the default for binary systems.
-    const endOffset = this.minDistForStar(destIdx);
     const pStart = A.clone().addScaledVector(dirBack, endOffset);
     const pEnd = B.clone().addScaledVector(forward, -endOffset);
 
@@ -687,7 +900,6 @@ export class Starfield {
     // Point orbit-target at the destination from the moment the warp begins
     // so the scale bar reflects distance-to-destination throughout the flight
     // (decreases monotonically from ~|AB| to the destination's endOffset).
-    // it would show distance-to-A during the flight and snap at arrival.
     // Camera orientation is controlled separately via camera.lookAt during
     // updateWarp, so the reorient phase can still keep A centered visually.
     this.controls.target.copy(B);
@@ -702,6 +914,7 @@ export class Starfield {
       pStart,
       pEnd,
       endOffset,
+      destKind,
       destIdx,
     };
     for (const h of this.onWarpHandlers) h(true);
@@ -718,7 +931,17 @@ export class Starfield {
   private finishWarp() {
     const state = this.warpState;
     if (!state) return;
-    const B = this.starLocalPosition(state.destIdx);
+    const B = state.destKind === 'star'
+      ? this.starLocalPosition(state.destIdx)
+      : this.cloudLocalPosition(state.destIdx);
+    if (!B) {
+      // Cloud was detached mid-warp (shouldn't happen in practice); bail
+      // gracefully to a clean state rather than NaN-ing the camera.
+      this.warpState = null;
+      this.controls.enabled = true;
+      for (const h of this.onWarpHandlers) h(false);
+      return;
+    }
     // Park at the configured end offset so orbit radius matches the arrival
     // we animated to — no visible snap between the last fly frame and the
     // parked state.
@@ -728,9 +951,22 @@ export class Starfield {
     this.warpState = null;
     this.controls.enabled = true;
     this.controls.update();
+    // Clear both vector slots — vector destination has been reached, so
+    // the measurement line should retire either way.
     this.setVectorTo(null);
-    this.setFocus(state.destIdx);
+    this.setVectorToCloud(null);
+    if (state.destKind === 'star') this.setFocus(state.destIdx);
+    else this.setFocusedCloud(state.destIdx);
     for (const h of this.onWarpHandlers) h(false);
+  }
+
+  /** Local-frame position of a cloud's centroid. Returns null if the
+   *  cloud layer hasn't been attached yet. */
+  cloudLocalPosition(cloudIdx: number): THREE.Vector3 | null {
+    if (!this.clouds) return null;
+    const c = this.clouds.clouds[cloudIdx];
+    if (!c) return null;
+    return c.centerAbs.clone().sub(this.worldOffset);
   }
 
   // Swing the camera to face the selected constellation while keeping the
@@ -1002,33 +1238,68 @@ export class Starfield {
     const dy = e.clientY - down.y;
     if (dx * dx + dy * dy > 25) return;
     if (performance.now() - down.t > 500) return;
-    const idx = this.pickStar(e.clientX, e.clientY);
-    if (idx < 0) return;
 
-    // Interaction state machine:
-    //  - no focus            → focus on clicked star
-    //  - click focused, no vector → unfocus (clicking again deselects)
-    //  - click focused, vector drawn → clear vector (keep focus)
-    //  - click vector tip    → travel there, clear vector
-    //  - click other star    → draw/replace vector from focus to clicked
-    if (this.focusedStar === null) {
-      this.setOrbitTarget(idx);
+    // Pick a star first — they're the primary interaction target. Fall
+    // back to clouds when no star is hit.
+    const starIdx = this.pickStar(e.clientX, e.clientY);
+    const cloudIdx = starIdx >= 0 ? null : this.pickCloud(e.clientX, e.clientY);
+    if (starIdx < 0 && cloudIdx === null) return;
+
+    // Unified click-state machine — clouds participate the same way as
+    // stars (orbit-target on first pick, vector destination on second
+    // pick from a focus, click-tip-to-travel on third pick). The two
+    // special cases the user called out are: (a) focus ring stays a
+    // star-only overlay (skipped naturally — no focus ring code touches
+    // focusedCloud), and (b) viewing distance for clouds is
+    // cloudViewingDistancePc rather than minDistForStar.
+    const focusedThing =
+      this.focusedStar !== null
+        ? { kind: 'star' as const, idx: this.focusedStar }
+        : this.focusedCloud !== null
+          ? { kind: 'cloud' as const, idx: this.focusedCloud }
+          : null;
+    const clickedThing =
+      starIdx >= 0
+        ? { kind: 'star' as const, idx: starIdx }
+        : { kind: 'cloud' as const, idx: cloudIdx as number };
+    const vectorThing =
+      this.vectorTo !== null
+        ? { kind: 'star' as const, idx: this.vectorTo }
+        : this.vectorToCloud !== null
+          ? { kind: 'cloud' as const, idx: this.vectorToCloud }
+          : null;
+
+    // No focus → click sets the focus (orbit pivot). Camera stays put.
+    if (!focusedThing) {
+      if (clickedThing.kind === 'star') this.setOrbitTarget(clickedThing.idx);
+      else this.setOrbitTargetCloud(clickedThing.idx);
       return;
     }
-    if (idx === this.focusedStar) {
-      if (this.vectorTo !== null) this.setVectorTo(null);
-      else this.unfocus();
+
+    // Click on the focused thing → clear vector if present, else unfocus.
+    if (sameTarget(clickedThing, focusedThing)) {
+      if (vectorThing) {
+        this.setVectorTo(null);
+        this.setVectorToCloud(null);
+      } else {
+        this.unfocus();
+      }
       return;
     }
-    if (idx === this.vectorTo) {
-      // Use focusStar (the same path as search-select) for click-tip travel
-      // so both "jumps" land the camera at the consistent 2 pc viewing
-      // distance. This also teleports the camera (not just the orbit
-      // target), so the old focused star doesn't linger as a full disc.
-      this.focusStar(idx);
+
+    // Click on the current vector destination → travel to it.
+    // For stars, focusStar matches the search-select teleport (2 pc
+    // viewing distance). For clouds, flyToCloud is the search-select
+    // analogue (cloudViewingDistancePc).
+    if (vectorThing && sameTarget(clickedThing, vectorThing)) {
+      if (clickedThing.kind === 'star') this.focusStar(clickedThing.idx);
+      else this.flyToCloud(clickedThing.idx);
       return;
     }
-    this.setVectorTo(idx);
+
+    // Otherwise, click sets the vector destination.
+    if (clickedThing.kind === 'star') this.setVectorTo(clickedThing.idx);
+    else this.setVectorToCloud(clickedThing.idx);
   };
 
   private onTouchStart = (e: TouchEvent) => {
@@ -1103,14 +1374,16 @@ export class Starfield {
   };
 
   // Drive the disc fade, grid attachment, and arrow projection each frame.
-  // All three layers are hidden during a warp — the camera is in motion and
-  // their reference function is exactly the kind of context warp deliberately
-  // suppresses.
+  // All three galactic layers are hidden during a warp — the camera is in
+  // motion and their reference function is exactly the kind of context warp
+  // deliberately suppresses. Molecular clouds stay visible during warp by
+  // design — flying past Taurus or Orion is a feature, not a distraction.
   private updateGalacticLayers() {
     if (this.warpState) {
       this.galacticDisc.group.visible = false;
       this.galacticGrid.group.visible = false;
       this.galacticArrows.setVisible(false);
+      this.clouds?.update(this.worldOffset, this.filter.showMolecularClouds);
       return;
     }
 
@@ -1150,6 +1423,8 @@ export class Starfield {
       isSolFocus,
       this.filter.showGalacticOverlays,
     );
+
+    this.clouds?.update(this.worldOffset, this.filter.showMolecularClouds);
   }
 
   private updateWarp() {
@@ -1183,8 +1458,10 @@ export class Starfield {
     const t = Math.min(flyElapsed / state.durationMs, 1);
     const f = t < 0.5 ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t);
     this.camera.position.lerpVectors(state.pStart, state.pEnd, f);
-    const B = this.starLocalPosition(state.destIdx);
-    this.camera.lookAt(B);
+    const B = state.destKind === 'star'
+      ? this.starLocalPosition(state.destIdx)
+      : this.cloudLocalPosition(state.destIdx);
+    if (B) this.camera.lookAt(B);
     if (t >= 1) this.finishWarp();
   }
 

@@ -39,13 +39,21 @@ export function createDistanceVectorOverlay(
   };
 
   starfield.onVectorChange(() => {
-    if (starfield.getVectorTo() === null) hide();
+    if (starfield.getVectorTo() === null && starfield.getVectorToCloud() === null) hide();
+  });
+  starfield.onVectorCloudChange(() => {
+    if (starfield.getVectorTo() === null && starfield.getVectorToCloud() === null) hide();
   });
 
   starfield.onFrame(() => {
-    const fromIdx = starfield.getFocusedStar();
-    const toIdx = starfield.getVectorTo();
-    if (fromIdx === null || toIdx === null) { hide(); return; }
+    // Source: whichever is focused. Star wins when both are set (which
+    // shouldn't happen — they're mutually exclusive — but be defensive).
+    const fromStar = starfield.getFocusedStar();
+    const fromCloud = starfield.getFocusedCloud();
+    const toStar = starfield.getVectorTo();
+    const toCloud = starfield.getVectorToCloud();
+    if ((fromStar === null && fromCloud === null) ||
+        (toStar === null && toCloud === null)) { hide(); return; }
 
     const camera = starfield.camera;
     // Local-frame positions — the camera and projection math operate in
@@ -54,8 +62,24 @@ export function createDistanceVectorOverlay(
     const w = window.innerWidth;
     const h = window.innerHeight;
 
-    tmpA.set(positions[fromIdx * 3], positions[fromIdx * 3 + 1], positions[fromIdx * 3 + 2]);
-    tmpB.set(positions[toIdx * 3], positions[toIdx * 3 + 1], positions[toIdx * 3 + 2]);
+    if (fromStar !== null) {
+      tmpA.set(positions[fromStar * 3], positions[fromStar * 3 + 1], positions[fromStar * 3 + 2]);
+    } else if (fromCloud !== null) {
+      const p = starfield.cloudLocalPosition(fromCloud);
+      if (!p) { hide(); return; }
+      tmpA.copy(p);
+    }
+    let destLabel = '';
+    if (toStar !== null) {
+      tmpB.set(positions[toStar * 3], positions[toStar * 3 + 1], positions[toStar * 3 + 2]);
+      destLabel = starLabels.get(toStar) ?? `Unnamed #${toStar}`;
+    } else if (toCloud !== null) {
+      const p = starfield.cloudLocalPosition(toCloud);
+      if (!p) { hide(); return; }
+      tmpB.copy(p);
+      const cat = starfield.getCloudCatalog();
+      destLabel = cat ? cat.clouds[toCloud].name : 'Cloud';
+    }
 
     const projected = projectWithNearClip(tmpA, tmpB, camera, w, h);
     if (!projected) { hide(); return; }
@@ -96,8 +120,7 @@ export function createDistanceVectorOverlay(
     distUi.style.display = '';
     label.setAttribute('x', mx.toFixed(1));
     label.setAttribute('y', my.toFixed(1));
-    const destName = starLabels.get(toIdx) ?? `Unnamed #${toIdx}`;
-    label.textContent = `${destName} · ${fmtDist(distPc)}`;
+    label.textContent = `${destLabel} · ${fmtDist(distPc)}`;
 
     // Position the warp affordance to the right of the distance label. The
     // label is now anchor-start (matching Sol/GC arrows), so its right edge

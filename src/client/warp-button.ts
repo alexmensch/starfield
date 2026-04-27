@@ -24,10 +24,19 @@ export function bindWarpButton(starfield: Starfield) {
     btn.blur();
   });
 
+  // Trigger the appropriate warp variant based on which vector slot is
+  // active — at most one of (vectorTo, vectorToCloud) is set, so the
+  // dispatch is unambiguous.
+  const triggerWarp = () => {
+    const star = starfield.getVectorTo();
+    if (star !== null) { starfield.warpTo(star); return; }
+    const cloud = starfield.getVectorToCloud();
+    if (cloud !== null) starfield.warpToCloud(cloud);
+  };
+
   distUi.addEventListener('click', () => {
     if (starfield.getWarpActive()) return;
-    const dest = starfield.getVectorTo();
-    if (dest !== null) starfield.warpTo(dest);
+    triggerWarp();
   });
 
   window.addEventListener('keydown', (e) => {
@@ -40,10 +49,9 @@ export function bindWarpButton(starfield: Starfield) {
         starfield.skipWarp();
       }
     } else if (e.key === 'w' || e.key === 'W') {
-      const dest = starfield.getVectorTo();
-      if (dest !== null) {
+      if (starfield.getVectorTo() !== null || starfield.getVectorToCloud() !== null) {
         e.preventDefault();
-        starfield.warpTo(dest);
+        triggerWarp();
       }
     }
   });

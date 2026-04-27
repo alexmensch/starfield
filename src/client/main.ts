@@ -1,5 +1,6 @@
 import { loadCatalog } from './catalog-loader';
 import { DustField, loadDustManifest, loadDustParticles } from './dust-loader';
+import { loadClouds } from './cloud-loader';
 import { Starfield } from './starfield';
 import { bindControls } from './controls';
 import { bindSearch, buildStarLabels, buildSpectralMap, type SearchIndexEntry } from './search';
@@ -29,7 +30,7 @@ async function main() {
   const tooltip = document.getElementById('tooltip')!;
 
   try {
-    const [catalog, searchIndex] = await Promise.all([
+    const [catalog, searchIndex, cloudCatalog] = await Promise.all([
       loadCatalog(
         `${import.meta.env.BASE_URL}catalog.bin`,
         `${import.meta.env.BASE_URL}constellations.json`,
@@ -46,6 +47,10 @@ async function main() {
       fetch(`${import.meta.env.BASE_URL}search-index.json`).then(
         (r) => r.json() as Promise<SearchIndexEntry[]>,
       ),
+      // Molecular clouds (Phase 3a). Fetched in parallel with the catalog —
+      // a few hundred KB; null if the artifact is missing (fresh checkout
+      // without `npm run build:clouds`).
+      loadClouds(`${import.meta.env.BASE_URL}clouds.json`),
     ]);
 
     loadingStatus.textContent = `Parsed ${catalog.count.toLocaleString()} stars`;
@@ -59,6 +64,7 @@ async function main() {
     // dust debugging and not worth gating behind an env check on a solo
     // project.
     (window as unknown as { starfield: Starfield }).starfield = starfield;
+    if (cloudCatalog) starfield.attachClouds(cloudCatalog);
 
     // Interstellar dust loads in the background — never blocks first paint.
     // Extinction fades in as each voxel chunk lands on the GPU. If the
@@ -91,7 +97,7 @@ async function main() {
     bindUnitToggle();
     bindThemeToggle(starfield);
     bindControls(starfield);
-    bindSearch(starfield, catalog, searchIndex, starLabels);
+    bindSearch(starfield, catalog, searchIndex, starLabels, cloudCatalog);
     createDiscMask(starfield);
     createConstellationOverlay(starfield);
     createDistanceVectorOverlay(starfield, starLabels);
@@ -105,33 +111,40 @@ async function main() {
     startUrlSync(starfield);
 
     const countLabel = `${catalog.count.toLocaleString()} stars`;
-    let lastSelected: number | null = starfield.getFocusedStar();
     const renderMeta = () => {
-      // Two-line layout: focused name + constellation on top, total count
+      // Two-line layout: focused name + classifier on top, total count
       // beneath. Distance from Sol used to live here but is now in the Sol
       // locator arrow's label, so it'd be redundant — skip it.
-      if (lastSelected === null) {
+      // Star and cloud focus are mutually exclusive in Starfield, so at
+      // most one of these is non-null.
+      const starIdx = starfield.getFocusedStar();
+      const cloudIdx = starfield.getFocusedCloud();
+      let focusLine = '';
+      if (starIdx !== null) {
+        const name = starLabels.get(starIdx) ?? `Unnamed #${starIdx}`;
+        const conIdx = catalog.constellation[starIdx];
+        const con = conIdx !== 255 ? catalog.constellations[conIdx].name : '';
+        focusLine = con
+          ? `${escapeHtml(name)} · ${escapeHtml(con)}`
+          : escapeHtml(name);
+      } else if (cloudIdx !== null && cloudCatalog) {
+        const c = cloudCatalog.clouds[cloudIdx];
+        focusLine = `${escapeHtml(c.name)} · Molecular cloud`;
+      }
+      if (!focusLine) {
         meta.innerHTML = `<div class="meta-count">${escapeHtml(countLabel)}</div>`;
         return;
       }
-      const name = starLabels.get(lastSelected) ?? `Unnamed #${lastSelected}`;
-      const conIdx = catalog.constellation[lastSelected];
-      const con = conIdx !== 255 ? catalog.constellations[conIdx].name : '';
-      const focusLine = con
-        ? `${escapeHtml(name)} · ${escapeHtml(con)}`
-        : escapeHtml(name);
       meta.innerHTML =
         `<div class="meta-focus">${focusLine}</div>` +
         `<div class="meta-count">${escapeHtml(countLabel)}</div>`;
     };
     renderMeta();
-    starfield.onFocusChange((idx) => {
-      lastSelected = idx;
-      renderMeta();
-    });
+    starfield.onFocusChange(renderMeta);
+    starfield.onCloudFocusChange(renderMeta);
     onUnitChange(renderMeta);
 
-    bindHoverTooltip(canvas, tooltip, starfield, describeStarDetailed);
+    bindHoverTooltip(canvas, tooltip, starfield, describeStarDetailed, describeCloud);
 
     await new Promise((r) => requestAnimationFrame(r));
     loading.style.transition = 'opacity 0.4s ease';
@@ -144,6 +157,28 @@ async function main() {
       bindPanelLayout();
       maybeShowInfoModal(catalog.count);
     }, 400);
+
+    // Cloud hover description — shares the same {name, lines} shape as the
+    // star tooltip so bindHoverTooltip can render either through one path.
+    function describeCloud(idx: number): { name: string; lines: string[] } | null {
+      const cat = starfield.getCloudCatalog();
+      if (!cat) return null;
+      const c = cat.clouds[idx];
+      if (!c) return null;
+      const lines: string[] = ['Molecular cloud'];
+      lines.push(`Distance · ${fmtDist(c.distanceFromSol)}`);
+      // For Z2021 ellipsoid clouds the three axes carry useful shape info;
+      // for Z2020 spheres axes[0..2] are equal so we collapse to a single
+      // radius.
+      const [ax, ay, az] = c.axes;
+      const axEq = Math.abs(ax - ay) < 0.05 && Math.abs(ay - az) < 0.05;
+      lines.push(
+        axEq
+          ? `Radius · ${ax.toFixed(0)} pc`
+          : `Axes · ${ax.toFixed(0)} × ${ay.toFixed(0)} × ${az.toFixed(0)} pc`,
+      );
+      return { name: c.name, lines };
+    }
 
     // Detailed, multi-line form for the hover tooltip. Line 1 is the star
     // name; subsequent lines progressively disclose: constellation +
@@ -182,7 +217,8 @@ function bindHoverTooltip(
   canvas: HTMLCanvasElement,
   tooltip: HTMLElement,
   starfield: Starfield,
-  detailed: (i: number) => { name: string; lines: string[] },
+  detailedStar: (i: number) => { name: string; lines: string[] },
+  detailedCloud: (i: number) => { name: string; lines: string[] } | null,
 ) {
   let timer: number | undefined;
   let dragging = false;
@@ -207,9 +243,19 @@ function bindHoverTooltip(
     lastY = e.clientY;
     hide();
     timer = window.setTimeout(() => {
-      const idx = starfield.pickStar(lastX, lastY, 14);
-      if (idx < 0) return;
-      const { name, lines } = detailed(idx);
+      // Stars take priority — they're the primary interaction target. If
+      // no star is under the cursor, fall back to a cloud hit so users
+      // can identify Taurus / Orion / etc. by hovering.
+      const starIdx = starfield.pickStar(lastX, lastY, 14);
+      let payload: { name: string; lines: string[] } | null = null;
+      if (starIdx >= 0) {
+        payload = detailedStar(starIdx);
+      } else {
+        const cloudIdx = starfield.pickCloud(lastX, lastY);
+        if (cloudIdx !== null) payload = detailedCloud(cloudIdx);
+      }
+      if (!payload) return;
+      const { name, lines } = payload;
       const subLines = lines
         .map((l) => `<div class="tt-sub">${escapeHtml(l)}</div>`)
         .join('');
