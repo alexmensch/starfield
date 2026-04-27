@@ -8,6 +8,7 @@ dist/
 public/catalog.bin
 public/constellations.json
 public/search-index.json
+public/clouds.json
 
 # Mirror of data/dust/ — the canonical LFS-tracked copy lives in data/dust/;
 # scripts/build-dust.py copies chunks here so Vite's publicDir serves them.

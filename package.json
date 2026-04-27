@@ -7,10 +7,11 @@
   "author": "Alex Marshall",
   "scripts": {
     "build:catalog": "tsx scripts/build-catalog.ts",
+    "build:clouds": "python3 scripts/build-clouds.py",
     "build:dust-sync": "tsx scripts/sync-dust.ts",
     "build:client": "vite build",
-    "build": "npm run build:catalog && npm run build:dust-sync && npm run build:client",
-    "dev": "npm run build:catalog && npm run build:dust-sync && vite",
+    "build": "npm run build:catalog && npm run build:clouds && npm run build:dust-sync && npm run build:client",
+    "dev": "npm run build:catalog && npm run build:clouds && npm run build:dust-sync && vite",
     "deploy": "npm run build && wrangler deploy",
     "typecheck": "tsc --noEmit"
   },
