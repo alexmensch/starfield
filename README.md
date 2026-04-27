@@ -49,6 +49,19 @@ Stack: TypeScript, Three.js (WebGL2), Vite, Cloudflare Workers.
   deforms in true 3D as the viewpoint moves away from Sol, leaves a
   gap around every figure-star, and is masked behind a close-range
   resolved disc so lines appear to pass behind the star rather than on top.
+- **Per-star interstellar dust extinction.** Edenhofer 2023's 3D dust map
+  resampled onto a 512³ ICRS voxel grid (~1.25 kpc cube), served as 64
+  chunks via Git LFS and progressively uploaded to a `Data3DTexture` on
+  the client. The vertex shader raymarches camera-to-star at run time
+  and dims + reddens stars by line-of-sight A_V — so stars behind dense
+  dust look fainter and redder, exactly as you'd see them.
+- **Molecular cloud overlay.** ~96 named local star-forming clouds
+  (Taurus, Ophiuchus, Orion A/B/λ, Perseus, Cepheus, Aquila Rift,
+  Coalsack, etc.) rendered as soft warm ellipsoids with view-direction-
+  based density falloff. The 12 in Zucker 2021 use real 3D bounding
+  boxes for shape; the rest are spheres sized by sightline spread.
+  Search by name, hover for details, click to focus, click again to
+  measure, click the vector tip or press `W` to warp.
 - **Galactic reference layers** to anchor the local catalog against the
   Milky Way's geometry: an always-on translucent disc outline (15 kpc
   midplane + bulge wireframe) that fades in as the camera pulls away
@@ -86,8 +99,10 @@ cd starfield
 npm install
 ```
 
-All catalogue source files (AT-HYG, GCVS, Stellarium) are included in
-the repo — no manual downloads needed.
+All catalogue source files (AT-HYG, GCVS, Stellarium, Zucker, Edenhofer
+dust) are included in the repo — no manual downloads needed. The dust
+voxel chunks (~120 MiB total) and stellar catalogue ride on Git LFS, so
+make sure that's installed before cloning.
 
 ## Running
 
@@ -100,12 +115,14 @@ CSV has changed) and starts Vite on <http://localhost:5173>.
 
 ### Other commands
 
-| Command                 | What it does                                     |
-| ----------------------- | ------------------------------------------------ |
-| `npm run build:catalog` | Regenerate `public/catalog.bin` from the CSV     |
-| `npm run build`         | Full production build into `dist/`               |
-| `npm run typecheck`     | `tsc --noEmit` over everything                   |
-| `npm run deploy`        | `wrangler deploy` (requires Cloudflare auth)     |
+| Command                  | What it does                                          |
+| ------------------------ | ----------------------------------------------------- |
+| `npm run build:catalog`  | Regenerate `public/catalog.bin` from the CSV          |
+| `npm run build:clouds`   | Regenerate `public/clouds.json` from the Zucker tables |
+| `npm run build:dust-sync`| Mirror `data/dust/` voxel chunks to `public/dust/`    |
+| `npm run build`          | Full production build into `dist/`                    |
+| `npm run typecheck`      | `tsc --noEmit` over everything                        |
+| `npm run deploy`         | `wrangler deploy` (requires Cloudflare auth)          |
 
 ## Deploying to Cloudflare Workers
 
@@ -130,9 +147,14 @@ is moderate even on mobile networks.
 | `data/gcvs5.txt` | Variable-star periods + amplitudes | [GCVS 5.1 · Sternberg Astronomical Institute](http://www.sai.msu.su/gcvs/gcvs/index.htm) | ~14 MB, LFS |
 | `data/crossid.txt` | GCVS ↔ Hip/HD cross-references | same as above | ~12 MB, LFS |
 | `data/stellarium-modern-skyculture.json` | Classical constellation stick figures | [Stellarium modern sky culture](https://github.com/Stellarium/stellarium/tree/master/skycultures/modern) | ~200 KB |
+| `data/dust/chunk_*.bin` + `manifest.json` + `particles.bin` | Resampled 3D interstellar-dust grid for per-star extinction | [Edenhofer et al. 2023](https://doi.org/10.5281/zenodo.8187943) (Zenodo) — fetched via the `dustmaps` Python package and resampled by `scripts/build-dust.py` | ~120 MiB total, LFS |
+| `data/molecular-clouds/zucker2020-tablea1.tsv` | Cloud distances (326 sightlines, ~96 named clouds) | [Zucker et al. 2020](https://doi.org/10.1051/0004-6361/201936145) — VizieR `J/A+A/633/A51` | ~88 KB |
+| `data/molecular-clouds/zucker2021-table[1-3].dat` | 3D bounding boxes, radial-profile fits, masses for 12 famous local SF clouds | [Zucker et al. 2021](https://doi.org/10.3847/1538-4357/ac1f96) — Harvard Dataverse | ~5 KB total |
 
 The larger catalogue files are tracked via Git LFS so they don't balloon
-the git pack. Small files (Stellarium JSON) stay as regular blobs.
+the git pack. Small files (Stellarium JSON, Zucker tables) stay as
+regular blobs. Builds are fully self-contained — refresh from upstream
+is a manual, infrequent step, not a build dependency.
 
 The AT-HYG **classic-IDs** subset selects stars that have at least one
 classical designation (IAU proper name, Bayer, Flamsteed, HIP, HD, HR, or
@@ -251,3 +273,13 @@ The classical **constellation stick-figure** lines are taken from
 [Stellarium's modern sky culture](https://github.com/Stellarium/stellarium/tree/master/skycultures/modern).
 The line data is MIT-licensed (illustrations, which this project does not
 use, are separately under the Free Art License).
+
+The **Edenhofer et al. 2023 3D dust map** is published on Zenodo under
+CC-BY-4.0 (DOI [10.5281/zenodo.8187943](https://doi.org/10.5281/zenodo.8187943)).
+The resampled voxel grid in `data/dust/` is a derivative work and
+carries the same licence; see the dataset page for citation details.
+
+The **Zucker et al. 2020** cloud distance compendium and **Zucker et al.
+2021** 3D structure tables are published under CC-BY-4.0 via VizieR and
+Harvard Dataverse respectively. See the per-paper DOIs in the data
+sources table for citation details.
