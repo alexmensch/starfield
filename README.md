@@ -263,7 +263,7 @@ pan) works the same everywhere.
 
 ## Licence
 
-The code in this repository is MIT licensed. See [`LICENSE`](./LICENSE).
+The code in this repository is licensed under AGPL-3.0-only. See [`LICENSE`](./LICENSE).
 
 The **AT-HYG v3.3** catalog data used by this project is made available
 by David Nash under a CC-BY-SA-4.0 license. The generated `catalog.bin`
