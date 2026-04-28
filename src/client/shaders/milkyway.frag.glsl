@@ -216,26 +216,30 @@ void main() {
     tauAccum += dTauRGB;
   }
 
-  // --- Tone mapping ---------------------------------------------------
-  // Beer-Lambert-style: bright integrated columns saturate toward 1,
-  // dim ones stay close to linear.
-  vec3 scaled = colorAccum * uBrightnessScale;
-  vec3 result = vec3(1.0) - exp(-scaled);
-
-  // --- Magnitude gate -------------------------------------------------
-  // Convert integrated raw colour magnitude (pre-tone-map) to an
-  // effective apparent magnitude and gate through the same
-  // brightnessClamp curve `star.vert.glsl` uses, so the user's
-  // max-mag slider attenuates stars + glow + (future) nebulae together.
-  // Multiplier applied AFTER the tone map; folding it into the exponent
-  // saturates for bright sightlines and the slider has no effect.
+  // --- Magnitude gate + tone mapping ----------------------------------
+  // Convert integrated raw intensity to an effective apparent magnitude
+  // and turn it into a slider-driven gain (`gate`) using the same
+  // brightnessClamp shape `star.vert.glsl` uses, so the max-mag slider
+  // attenuates stars + glow + (future) nebulae together.
+  //
+  // Gate is lower-bounded at 0 but NOT upper-clamped at 1: folded into
+  // the tone-map exponent below, this means raising the slider keeps
+  // lifting bright sightlines (toward saturation) instead of plateauing
+  // once a sightline first reaches "fully visible". The user's mental
+  // model — "stars and diffuse glow are the same thing" — needs the
+  // glow to keep brightening with depth, the way more stars become
+  // visible at higher max-mag.
+  //
+  // Tone map is Beer-Lambert: `result = 1 - exp(-x)`. Bright integrated
+  // columns saturate toward 1 (clipped to white in the framebuffer);
+  // dim ones stay close to linear. Multiplying gate into the exponent
+  // (rather than the post-mapped result) is what makes the slider
+  // continue affecting already-bright sightlines.
   float intensity = max(colorAccum.r + colorAccum.g + colorAccum.b, 1e-12);
   float appMag = uGlowMagOffset - 2.5 * log(intensity) / LOG10;
-  float brightnessClamp = clamp(
-    (uMaxAppMag - appMag) / max(uSizeSpan, 0.001),
-    0.0, 1.0
-  );
-  result *= brightnessClamp;
+  float gate = max((uMaxAppMag - appMag) / max(uSizeSpan, 0.001), 0.0);
+  vec3 scaled = colorAccum * uBrightnessScale * gate;
+  vec3 result = vec3(1.0) - exp(-scaled);
 
   fragColor = vec4(result, 1.0);
 }
