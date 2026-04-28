@@ -84,6 +84,59 @@ Implementation: `scripts/build-catalog.ts`, see
 `docs/build-and-data.md` §Physical radius and spectral parsing for the
 spectral-string parser and the surrounding pipeline.
 
+## Stellar perception model
+
+Distant stars (the brightness-driven `appSize` term) are rendered with
+a Gaussian-PSF detection-threshold model rather than a literal angular
+mapping. A real star is geometrically a point; what an observer
+perceives as the star's "disc" is its PSF on the retina out to where
+the intensity drops below the detection threshold. For a Gaussian PSF
+of width σ this gives:
+
+```
+r_perceived(Δm) = σ × √(2 ln(10) / 2.5 × Δm) ≈ σ × √(1.84 × Δm)
+```
+
+where Δm = m_lim − m is the magnitudes by which a star sits above the
+detection threshold.
+
+**σ value.** We use σ = 30″ for the unaided eye (set by ocular
+aberrations + diffraction at a 7 mm dark-adapted pupil). No atmospheric
+seeing, no spike-rendering — the camera is in space and we model a
+clean PSF.
+
+**Magnitude limits per preset.** `naked-eye` = 6.5 (Bortle-1 dark sky);
+`binoculars` = 10.5 (typical 7×50 dark sky, derived from
+m_lim_eye + 5·log₁₀(50/7) ≈ +4.3 mag aperture gain); `all` = 15
+(matches the catalog/UI slider ceiling, no physical motivation).
+
+**Exaggeration K.** Literal physics at 50° vertical FOV / 1080 px
+puts the threshold disc at ~0.25 px and Sirius (Δm = 8) at ~1 px —
+both invisible. `starExaggerationK` (default 16) scales σ up so the
+threshold disc lands at a readable 1–2 px. Critically, the √Δm shape
+is preserved between stars, so *ratios* against the volumetric Milky
+Way bulge (rendered at its real angular size) stay correct.
+
+**Soft taper.** Real stars near the detection threshold fade across
+~0.5 mag rather than popping at the limit. The shader extends
+visibility to `m_lim + 0.5` and fades glow intensity via a smoothstep
+across that band; the disc pass keeps the hard limit since resolved
+discs at threshold would render as a sub-pixel speck.
+
+**Viewport calibration.** Sizes are stored in arcsec internally and
+converted to pixels per-frame via
+`arcsec_per_px = (FOV × 3600) / max(viewport_w, viewport_h)`. Using
+the larger viewport dimension as the reference gives consistent
+absolute pixel sizes across portrait/landscape orientations, at the
+cost of strict angular fidelity in the secondary axis. Three.js's
+`camera.fov` is the *vertical* FOV; horizontal arcsec/px would be
+identical only for square viewports.
+
+Implementation: `src/client/shaders/star.{vert,frag}.glsl` (`sqrt`
+brightness curve + smoothstep taper) and `src/client/starfield.ts`
+(`MAG_PRESETS`, `applyMagnitudePreset`, `computePresetPxSizes`).
+Live tuning via `debug.panel()` in the browser console.
+
 ## Variable-star modelling
 
 GCVS provides a period and a magnitude amplitude per matched star.

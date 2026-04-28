@@ -12,6 +12,51 @@ and chip states. **Setting `.value` programmatically does NOT dispatch
 `input`**, so there's no feedback loop. If you add a filter field, remember
 to handle it in `syncFromFilter`.
 
+The FOV control reads `starfield.getCameraFov()` directly inside
+`syncFromFilter` rather than going through `FilterState` — FOV lives on
+the camera, not the filter — but otherwise behaves the same. `setCameraFov`
+fires the filter-change handlers so the slider re-syncs after a debug-panel
+or URL-restore change.
+
+## Magnitude presets and override flags
+
+Three magnitude presets live in `MAG_PRESETS` (`starfield.ts`): `naked-eye`,
+`binoculars`, `all`. Buttons in the panel dispatch on `data-preset` →
+`starfield.applyMagnitudePreset(name)`. The preset is the canonical source
+of `maxAppMag` and `sizeSpan`, plus angular sizeMin/Max which are converted
+to pixels per current viewport.
+
+Per-field override flags (`sizeMinOverridden`, `sizeMaxOverridden`,
+`sizeSpanOverridden` on `FilterState`) decide whether a preset switch
+or viewport resize gets to write into that field. Slider input sets the
+flag; the per-section reset buttons (`size-reset`, `span-reset`) call
+`clearSizeOverrides([...])` which clears the flag(s) and writes the
+active preset's value back. `maxAppMag` has no override flag — clicking
+a preset always sets it; the magnitude slider can still tweak it (and
+the value survives viewport resizes since `recomputePresetPxSizes` only
+touches sizeMin/Max).
+
+URL state carries `preset=` when not on the default (`naked-eye`); `mag=`
+only when diverged from the active preset's value; `smin/smax/span` only
+when their override flag is true. Receiver applies the preset first, then
+layers the explicit overrides on top.
+
+## Field of view
+
+User-facing slider in the panel (`#fov`, 10°–120° / 1° step) plus a reset
+button that snaps to `DEFAULT_FOV` = 50°. `setCameraFov` updates
+`camera.fov`, calls `updateProjectionMatrix()`, and triggers
+`recomputePresetPxSizes` since arcsec/px depends on FOV.
+
+## Debug panel
+
+`window.debug.panel()` toggles a free-floating tuning panel hosting two
+sections: Starfield (FOV + star exaggeration K sliders) and Milky Way
+(brightness, density, palette, dust). Generic chrome lives in
+`debug-panel.ts`; section builders are in `*-tuning.ts` files. Add a new
+tool by writing a `build*Section` and appending it inside `togglePanel`
+in `debug.ts`. `window.debug.milkyway()` is kept as a legacy alias.
+
 ## Camera near plane vs controls minDistance
 
 `camera.near = 0.001`, `controls.minDistance = 0.005` (via

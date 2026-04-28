@@ -65,6 +65,10 @@ src/
     info-modal.ts         first-visit welcome modal (localStorage opt-out)
     panel-layout.ts       collapse-toggle for the display-settings panel
     warp-button.ts        warp trigger (on distance label) + skip pill
+    debug.ts              window.debug.* registration; hosts the tuning panel
+    debug-panel.ts        generic chrome (slider/colour/section helpers)
+    starfield-tuning.ts   debug section: camera FOV + star exaggeration K
+    milkyway-tuning.ts    debug section: Milky Way layer tuning
     shaders/
       star.vert.glsl, star.frag.glsl              GLSL3/WebGL2
       dust-particle.vert.glsl, dust-particle.frag.glsl   shelved dust splats

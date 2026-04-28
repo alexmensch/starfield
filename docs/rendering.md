@@ -50,15 +50,68 @@ for an ink-on-paper look against the light canvas.
 Each star's final pixel size is `max(appSize, physSize) × pixelRatio`
 in the vertex shader:
 
-- `appSize` is the brightness-based term: `mix(uSizeMin, uSizeMax,
-  brightnessClamp(appMag))`. Dominates for distant stars. User-tunable
-  via the right-panel star-size sliders.
+- `appSize` is the brightness-based term:
+  `mix(uSizeMin, uSizeMax, sqrt(brightness))` where
+  `brightness = clamp((uMaxAppMag - appMag) / uSizeSpan, 0, 1)`. Dominates
+  for distant stars. The √Δm shape comes from a Gaussian-PSF model: a
+  star's "perceived disc" is where the PSF intensity exceeds the
+  detection threshold, which grows as the square root of magnitudes
+  above threshold (see `SCIENCE.md` §Stellar perception model). The
+  endpoints `uSizeMin/Max` are derived per-frame from the active
+  magnitude preset's angular targets converted to pixels (see
+  §Magnitude presets and angular-size calibration below).
 - `physSize = sizeAtRef × (uRefDistPc / dPc)` where `sizeAtRef` linearly
   maps `log10(physicalRadius)` between catalog min and max into
   `[uPhysMinPx, uPhysMaxPx]`. At the reference distance
   (`uRefDistPc = controls.minDistance = 0.005 pc`), the biggest star in
   the catalog renders at `uPhysMaxPx` pixels; smallest at `uPhysMinPx`.
   Dominates at close range, falls off as `1/d`.
+
+A **soft taper** runs in the fragment shader's glow pass: stars within
++0.5 mag of `uMaxAppMag` survive vertex culling and fade in glow
+intensity via `1 - smoothstep(uMaxAppMag, uMaxAppMag + 0.5, vAppMag)`
+so the limit doesn't pop in/out as the slider moves. The disc pass
+hard-clips at `uMaxAppMag` (resolved discs in the fade region would
+render as a sub-pixel speck and read as a hard cutoff anyway).
+
+## Magnitude presets and angular-size calibration
+
+Three presets live in `MAG_PRESETS` in `starfield.ts`: `naked-eye`
+(m_lim = 6.5, span = 8 mag), `binoculars` (10.5, 12), and `all`
+(15, 17). Each carries `sizeMinArcsec` / `sizeMaxArcsec` — the *angular*
+size of the threshold disc and the saturation disc on the sky, derived
+from the eye's PSF width (σ = `STAR_PSF_ARCSEC` = 30″) scaled by the
+exaggeration constant `starExaggerationK` (default 16). The literal
+PSF puts threshold stars at sub-pixel size on a 60° viewport; the
+exaggeration scales σ up to a readable pixel range while preserving
+the √Δm ratios between stars. The constant is module-level mutable
+so the debug panel can sweep it visually — `setStarExaggerationK(k)`
+recomputes `MAG_PRESETS` and re-applies the active preset's pixel
+sizes to non-overridden fields.
+
+`computePresetPxSizes(name)` converts arcsec → pixels via
+`arcsecPerPx = (camera.fov × 3600) / max(window.innerWidth, innerHeight)`.
+Using `max(w, h)` instead of just height gives consistent absolute
+star sizes across portrait/landscape orientations and ultrawide
+monitors. `applyMagnitudePreset(name)` (preset-button click) writes
+activePreset + maxAppMag + sizeSpan + sizeMin/Max, respecting per-field
+override flags. `recomputePresetPxSizes()` (viewport resize / FOV
+change / K change) only updates non-overridden sizeMin/Max — manual
+maxAppMag and sizeSpan tweaks survive resizes.
+
+**Override flags** (`sizeMinOverridden`, `sizeMaxOverridden`,
+`sizeSpanOverridden` on `FilterState`) are set by slider input and
+cleared by the per-section reset buttons (`size-reset` clears
+sizeMin+sizeMax, `span-reset` clears sizeSpan). Once cleared, the
+field snaps back to the active preset's value. This is what lets
+manual tweaks survive preset switches and viewport resizes.
+
+**Camera FOV** defaults to `DEFAULT_FOV` = 50° vertical and is
+user-tunable via the FOV slider in the panel (`#fov`, range 10°–120°).
+`setCameraFov(fov)` updates `camera.fov`, calls
+`updateProjectionMatrix()`, and triggers `recomputePresetPxSizes()`
+so non-overridden star sizes scale appropriately. URL `fov=` carries
+the value when diverged from default.
 
 `uPhysMaxPx = 0.5 × min(viewportW, viewportH)` in CSS pixels — the
 biggest catalog star at min orbit distance therefore fills 50% of the

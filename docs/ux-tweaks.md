@@ -14,10 +14,21 @@ for the surrounding context.
 - **Focus ring size** — `RADIUS_PX` in `focus-ring-overlay.ts`.
 - **Constellation polygon prominence** — `#con-polygon` stroke/fill in
   `styles.css` (currently deliberately subtle).
-- **Star size defaults** — `FilterState` defaults in `starfield.ts` and
-  matching slider `value`s in `index.html`.
-- **Max apparent magnitude presets** — `data-mag` attributes on
-  `.mag-preset` buttons in `index.html`.
+- **Star size defaults** — `MAG_PRESETS` table in `starfield.ts`. Each
+  entry is `(maxAppMag, sizeSpan)`; sizeMin/Max are derived from
+  `STAR_PSF_ARCSEC × starExaggerationK` (with the √Δm factor for max).
+- **Star exaggeration constant** — `starExaggerationK` (default 16) in
+  `starfield.ts`. Higher = bolder, more cartoonish stars; lower = more
+  literal physics. Live-tunable via the debug panel.
+- **Default camera FOV** — `DEFAULT_FOV` (50°) in `starfield.ts`. Reset
+  button on the FOV slider snaps back here.
+- **Max apparent magnitude presets** — `data-preset` attributes on
+  `.mag-preset` buttons in `index.html` map to `MAG_PRESETS` keys
+  (`naked-eye`, `binoculars`, `all`).
+- **Soft-taper width** — the `+0.5` offset in `magOk`
+  (`star.vert.glsl`) and the matching `smoothstep(uMaxAppMag, uMaxAppMag
+  + 0.5, vAppMag)` in the fragment shader's glow pass. Wider = softer
+  fade-in across the magnitude limit; 0 = hard cutoff.
 - **Star-gap radius around constellation lines** — `STAR_GAP_PX` in
   `constellation-overlay.ts`.
 - **Warp duration curve** — `WARP_T_MIN_MS`, `WARP_T_MAX_MS`,

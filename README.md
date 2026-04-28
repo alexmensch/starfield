@@ -31,7 +31,17 @@ Stack: TypeScript, Three.js (WebGL2), Vite, Cloudflare Workers.
   binary member, `minDistance` bumps so both components stay in the
   viewport.
 - Filter by distance from Sol, maximum apparent magnitude (with `naked eye` /
-  `binoculars` / `all` presets), spectral class, and constellation.
+  `binoculars` / `all` presets), spectral class, and constellation. The
+  presets carry physically calibrated angular star sizes (Gaussian-PSF
+  detection-threshold model with √Δm scaling) plus magnitude limits — m ≤
+  6.5 for naked eye, 10.5 for 7×50 binoculars, 15 for the catalog
+  ceiling. Manual size/dynamic-range tweaks survive preset switches and
+  viewport resizes; per-section reset buttons snap each field back to
+  the active preset.
+- User-tunable camera FOV (default 50° vertical, slider 10°–120°). Star
+  sizes recompute against the new arcsec-per-pixel ratio so they stay
+  proportional to the volumetric Milky Way bulge regardless of FOV or
+  screen size.
 - Click a star to focus; click another to draw a measured distance vector
   (chevron-marked, clipped when the destination goes off-screen); click the
   far tip to travel there instantly, or hover the distance label and click
@@ -86,8 +96,8 @@ Stack: TypeScript, Three.js (WebGL2), Vite, Cloudflare Workers.
   (persisted to `localStorage`).
 - Mobile-friendly responsive layout (pure CSS flex, no breakpoints) with a
   collapsible display-settings panel whose state is remembered across visits.
-- Targeted reset buttons next to constellation selection, star size, and
-  dynamic-range controls.
+- Targeted reset buttons next to constellation selection, star size,
+  dynamic range, and field of view controls.
 - Two-finger rotate gesture to roll the view around the center of the
   screen. See [Gesture support](#gesture-support) for platform notes.
 
