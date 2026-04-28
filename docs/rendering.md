@@ -253,7 +253,7 @@ not 3D meshes. Geometry is computed entirely in screen space:
 2. Project an auxiliary point a small step along the 3D direction
    (toward Sol or GC) to derive the projected arrow direction in 2D.
 3. Build `shaftStart = originScreen + 28 × screenDir` and `tip =
-   shaftStart + 110 × screenDir`, both in pixels. The shared
+   shaftStart + shaftLengthPx × screenDir`, both in pixels. The shared
    `buildArrowSvgPath` helper emits the chevron arrowhead perpendicular
    to the projected shaft, so the wings always face the camera by
    construction (no 3D billboard math required).
@@ -268,6 +268,18 @@ projecting (the obvious-but-wrong approach) collapses the gap to
 sub-pixel when `dir` is parallel to the view axis, and the shaft ends
 up rendering inside the focus ring.
 
+`shaftLengthPx` is nominally `ARROW_PIXEL_LENGTH = 110` but cinches
+inward when the projected target sits inside the nominal shaft: the
+target's local-frame position is projected and its screen offset along
+`screenDir` gives `projAlong`. If `projAlong < 110 + 28 + 2 × sizeMax`,
+the shaft shortens so the chevron tip sits exactly `2 × sizeMax` px short
+of the target — keeps the arrow from crowding (or overlapping) the
+target's rendered disc when zoomed in close. `sizeMax` is the
+camera-panel "Max" pixel size. Below 8 px of remaining shaft we hide
+rather than draw a stub. Targets behind the camera are unprojectable;
+the arrow falls through to its full nominal length pointing in the
+projected 3D direction.
+
 Arrow hidden when the projected direction is < 1 px long (camera is
 looking exactly along the arrow's 3D direction); rare and there's no
 useful 2D direction to draw. Sol arrow also hidden when focused on Sol —
@@ -275,7 +287,13 @@ pointing at yourself adds nothing.
 
 SVG distance labels (`#sol-arrow-label`, `#gc-arrow-label`) sit at
 `tip + (LABEL_OFFSET_PX + ARROW_HEAD_DEPTH_PX, -LABEL_OFFSET_PX)` —
-same exact offsets as the distance vector's label.
+same exact offsets as the distance vector's label. Labels are
+**clickable** (`pointer-events: auto` + cursor:pointer) — clicking
+either invokes `Starfield.aimAt(localPoint)` which slerps the camera
+around `controls.target` to centre the named object in view. Duration
+scales with rotation angle, capped at 2 s and floored at 250 ms;
+TrackballControls is disabled for the duration so its damping doesn't
+fight the slerp. In-flight aim is superseded if a warp starts.
 
 **Shared arrow path** (`arrow-path.ts`) — the `buildArrowSvgPath(shaftStartX,
 shaftStartY, tipX, tipY)` helper builds shaft + chevron arrowhead given

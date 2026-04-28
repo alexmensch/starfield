@@ -9,6 +9,7 @@ import dustParticleFrag from './shaders/dust-particle.frag.glsl?raw';
 import { GalacticDisc } from './galactic-disc';
 import { GalacticGrid } from './galactic-grid';
 import { GalacticArrows } from './galactic-arrows';
+import { GALACTIC_CENTRE_PC } from './galactic-coords';
 import { MolecularClouds, cloudViewingDistancePc } from './molecular-clouds';
 import type { CloudCatalog } from './cloud-loader';
 import { MilkyWay } from './milkyway';
@@ -145,7 +146,22 @@ export const WARP_REORIENT_MS = 2000;
 // shortest-arc interpolation on the sphere.
 const WARP_BASE_DIR = new THREE.Vector3(0, 0, 1);
 
+// Aim animation: rotate the camera around `controls.target` so a chosen
+// world point lands at the centre of the view. Capped at 2 s so even a
+// 180° swing stays snappy; floored at 250 ms so trivial nudges still ease.
+export const AIM_T_MAX_MS = 2000;
+export const AIM_T_MIN_MS = 250;
+
 export { DEFAULT_MIN_DIST_PC };
+
+interface AimState {
+  startTimeMs: number;
+  durationMs: number;
+  q0: THREE.Quaternion;       // rotates WARP_BASE_DIR to the start radial dir
+  q1: THREE.Quaternion;       // rotates WARP_BASE_DIR to the end radial dir
+  radius: number;             // |camera - target| at click; held constant
+  pivot: THREE.Vector3;       // controls.target snapshot, in local frame
+}
 
 interface WarpState {
   startTimeMs: number;
@@ -249,6 +265,11 @@ export class Starfield {
   private vectorToCloud: number | null = null;
   private monochrome = false;
   private warpState: WarpState | null = null;
+  private aimState: AimState | null = null;
+  // Scratch quaternion + direction reused by updateAim each frame so the
+  // animation never allocates.
+  private aimQ = new THREE.Quaternion();
+  private aimTmpDir = new THREE.Vector3();
 
   // Galactic reference layers (Phase 4c). Disc fades in by camera-distance
   // from Sol and is always-on; grid + arrows are gated by
@@ -485,6 +506,18 @@ export class Starfield {
     const solLabel = document.getElementById('sol-arrow-label') as unknown as SVGTextElement;
     const gcLabel = document.getElementById('gc-arrow-label') as unknown as SVGTextElement;
     this.galacticArrows = new GalacticArrows(solPath, solBg, gcPath, gcBg, solLabel, gcLabel);
+
+    // Clicking either label aims the camera at the named object. Sol's
+    // local-frame position is just `-worldOffset` (Sol is the catalog
+    // origin); GC sits at GALACTIC_CENTRE_PC in absolute space.
+    solLabel.addEventListener('click', () => {
+      this.aimAt(this.tmpVec3b.copy(this.worldOffset).negate());
+    });
+    gcLabel.addEventListener('click', () => {
+      this.aimAt(
+        this.tmpVec3b.copy(GALACTIC_CENTRE_PC).sub(this.worldOffset),
+      );
+    });
 
     // Milky Way volumetric disc. A flattened ellipsoid mesh anchored at
     // the galactic centre; the fragment shader does a bounded raymarch
@@ -1098,6 +1131,9 @@ export class Starfield {
     endOffset: number,
   ) {
     if (this.warpState) return;
+    // An in-flight aim animation is superseded by warp — drop the state so
+    // updateAim doesn't run after warp completes against now-stale pivot.
+    this.aimState = null;
     const AB = new THREE.Vector3().subVectors(B, A);
     const distPc = AB.length();
     if (distPc < 1e-6) return;
@@ -1248,6 +1284,81 @@ export class Starfield {
     // points toward the centroid.
     this.camera.position.copy(t).addScaledVector(dir, -r);
     this.controls.update();
+  }
+
+  /**
+   * Smoothly rotate the camera around `controls.target` so that
+   * `pointLocal` (a world point in the renderer's local frame) ends up at
+   * the centre of the view. Orbit radius is preserved; orbit pivot
+   * doesn't move. Called by the Sol / GC label click handlers.
+   *
+   * No-ops during warp, mid-aim, or when the camera is already aimed at
+   * the point. Disables TrackballControls for the duration so its damping
+   * doesn't fight the slerp.
+   */
+  aimAt(pointLocal: THREE.Vector3) {
+    if (this.warpState || this.aimState) return;
+
+    const pivot = this.controls.target;
+    const offsetX = this.camera.position.x - pivot.x;
+    const offsetY = this.camera.position.y - pivot.y;
+    const offsetZ = this.camera.position.z - pivot.z;
+    const r = Math.sqrt(offsetX * offsetX + offsetY * offsetY + offsetZ * offsetZ);
+    if (r < 1e-6) return; // camera coincident with pivot — no orbit to rotate
+
+    const aimX = pointLocal.x - pivot.x;
+    const aimY = pointLocal.y - pivot.y;
+    const aimZ = pointLocal.z - pivot.z;
+    const aimLen = Math.sqrt(aimX * aimX + aimY * aimY + aimZ * aimZ);
+    if (aimLen < 1e-6) return; // target coincides with pivot
+
+    // Start radial direction = camera - pivot, normalised.
+    const dir0 = new THREE.Vector3(offsetX / r, offsetY / r, offsetZ / r);
+    // End radial direction = -(point - pivot) normalised. Putting the
+    // camera on the opposite side of pivot from the target makes the
+    // forward vector (pivot - camera) point toward the target.
+    const dir1 = new THREE.Vector3(-aimX / aimLen, -aimY / aimLen, -aimZ / aimLen);
+
+    const dot = Math.max(-1, Math.min(1, dir0.dot(dir1)));
+    if (dot > 0.99999) return; // already aimed
+
+    const angle = Math.acos(dot);
+    const durationMs = Math.max(
+      AIM_T_MIN_MS,
+      Math.min(AIM_T_MAX_MS, (angle / Math.PI) * AIM_T_MAX_MS),
+    );
+
+    const q0 = new THREE.Quaternion().setFromUnitVectors(WARP_BASE_DIR, dir0);
+    const q1 = new THREE.Quaternion().setFromUnitVectors(WARP_BASE_DIR, dir1);
+
+    this.controls.enabled = false;
+    this.aimState = {
+      startTimeMs: performance.now(),
+      durationMs,
+      q0,
+      q1,
+      radius: r,
+      pivot: pivot.clone(),
+    };
+  }
+
+  private updateAim() {
+    const state = this.aimState;
+    if (!state) return;
+    const elapsed = performance.now() - state.startTimeMs;
+    const u = Math.min(1, elapsed / state.durationMs);
+    const f = u * u * (3 - 2 * u);
+    this.aimQ.copy(state.q0).slerp(state.q1, f);
+    this.aimTmpDir.copy(WARP_BASE_DIR).applyQuaternion(this.aimQ);
+    this.camera.position
+      .copy(state.pivot)
+      .addScaledVector(this.aimTmpDir, state.radius);
+    this.camera.lookAt(state.pivot);
+    if (u >= 1) {
+      this.aimState = null;
+      this.controls.enabled = true;
+      this.controls.update();
+    }
   }
 
   // Star position in the renderer's local frame — i.e. in the same space
@@ -1471,7 +1582,7 @@ export class Starfield {
     const down = this.pointerDownAt;
     this.pointerDownAt = null;
     if (!down) return;
-    if (this.warpState) return;
+    if (this.warpState || this.aimState) return;
     const dx = e.clientX - down.x;
     const dy = e.clientY - down.y;
     if (dx * dx + dy * dy > 25) return;
@@ -1598,6 +1709,8 @@ export class Starfield {
     if (this.disposed) return;
     if (this.warpState) {
       this.updateWarp();
+    } else if (this.aimState) {
+      this.updateAim();
     } else {
       this.controls.update();
     }
@@ -1665,6 +1778,7 @@ export class Starfield {
       focusedLocal,
       isSolFocus,
       this.filter.showGalacticOverlays,
+      this.filter.sizeMax,
     );
 
     this.clouds?.update(this.worldOffset, this.filter.showMolecularClouds);

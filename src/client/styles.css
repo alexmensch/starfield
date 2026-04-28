@@ -684,7 +684,10 @@ body.monochrome .gal-arrow.gc {
   stroke: rgba(7, 9, 18, 0.9);
   stroke-width: 3px;
   stroke-linejoin: round;
-  pointer-events: none;
+  /* Click target — aimAt() in starfield.ts swings the camera so the
+     named object lands at view centre. */
+  pointer-events: auto;
+  cursor: pointer;
 }
 .gal-arrow-label.sol { fill: rgba(253, 230, 138, 1); }
 .gal-arrow-label.gc { fill: rgba(154, 215, 224, 1); }

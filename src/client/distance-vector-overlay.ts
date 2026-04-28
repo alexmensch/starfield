@@ -8,9 +8,10 @@ import {
   ARROW_LABEL_PADDING_PX,
 } from './arrow-path';
 
-// Symmetric end offsets — the shaft starts and stops the same distance from
-// each star so the line reads as anchored to neither star specifically.
-const SHAFT_OFFSET_PX = 28;
+// Source-end offset — shaft starts past the focus ring (radius 24 px) so it
+// doesn't crowd the focused star's disc. Matches the Sol/GC arrow start
+// offset for visual consistency across all reference arrows.
+const SOURCE_OFFSET_PX = 28;
 // Cap how far past the viewport the clipped "off-screen" endpoint can extend,
 // so the generated SVG path doesn't contain absurd coordinates.
 const MAX_OFFSCREEN_FACTOR = 1.5;
@@ -85,18 +86,20 @@ export function createDistanceVectorOverlay(
     if (!projected) { hide(); return; }
     const { pA, pB } = projected;
 
-    // Symmetric shaft endpoints inset SHAFT_OFFSET_PX from each projected
-    // star — handed to the shared arrow-path builder.
+    // Source inset stays at the focus-ring offset; destination inset is
+    // 2 × the user's max-app-size so the tip never crowds the destination
+    // star's rendered disc when zoomed in.
+    const destOffsetPx = 2 * Math.max(starfield.getFilter().sizeMax, 0);
     const dxPx = pB[0] - pA[0];
     const dyPx = pB[1] - pA[1];
     const lenPx = Math.hypot(dxPx, dyPx);
-    if (lenPx <= SHAFT_OFFSET_PX * 2 + 4) { hide(); return; }
+    if (lenPx <= SOURCE_OFFSET_PX + destOffsetPx + 4) { hide(); return; }
     const uxPx = dxPx / lenPx;
     const uyPx = dyPx / lenPx;
-    const shaftStartX = pA[0] + uxPx * SHAFT_OFFSET_PX;
-    const shaftStartY = pA[1] + uyPx * SHAFT_OFFSET_PX;
-    const tipX = pB[0] - uxPx * SHAFT_OFFSET_PX;
-    const tipY = pB[1] - uyPx * SHAFT_OFFSET_PX;
+    const shaftStartX = pA[0] + uxPx * SOURCE_OFFSET_PX;
+    const shaftStartY = pA[1] + uyPx * SOURCE_OFFSET_PX;
+    const tipX = pB[0] - uxPx * destOffsetPx;
+    const tipY = pB[1] - uyPx * destOffsetPx;
 
     const d = buildArrowSvgPath(shaftStartX, shaftStartY, tipX, tipY);
     if (!d) { hide(); return; }

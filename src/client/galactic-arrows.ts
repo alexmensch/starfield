@@ -8,14 +8,19 @@ import {
   ARROW_LABEL_PADDING_PX,
 } from './arrow-path';
 
-// Fixed apparent length of each arrow on screen, in CSS pixels. The shaft
+// Nominal apparent length of each arrow on screen, in CSS pixels. The shaft
 // is built directly in screen space so this length is exact regardless of
-// how the arrow's 3D direction projects.
+// how the arrow's 3D direction projects. The actual length is capped per
+// frame so the tip never crowds the projected target — see `updateOne`.
 const ARROW_PIXEL_LENGTH = 110;
 // Pixel offset between the focus point and the arrow shaft's near end —
 // matches the distance-vector start offset (and the focus ring radius) so
 // all three reference arrows clear the focus ring identically.
 const SHAFT_START_OFFSET_PX = 28;
+// Minimum shaft length below which the shrunken arrow reads as a stub. We
+// hide instead of drawing it. 8 px keeps the chevron + a sliver of shaft
+// visible when on the edge.
+const MIN_SHAFT_PIXEL_LENGTH = 8;
 
 /**
  * Two locator arrows pointing from the focused star (or `controls.target`
@@ -54,6 +59,8 @@ export class GalacticArrows {
   private tmpDir = new THREE.Vector3();
   private tmpOrigin = new THREE.Vector3();
   private tmpAux = new THREE.Vector3();
+  private tmpSolLocal = new THREE.Vector3();
+  private tmpGcLocal = new THREE.Vector3();
 
   constructor(
     solPath: SVGPathElement,
@@ -81,6 +88,10 @@ export class GalacticArrows {
    * @param focusedLocal   focused star's local-frame position, or null when unfocused
    * @param hideSolArrow   true when the focused star is Sol
    * @param enabled        the user-facing `showGalacticOverlays` toggle
+   * @param sizeMaxPx      current max-app-size from the Camera panel; the
+   *                       arrow tip stays 2× this away from the projected
+   *                       target so it doesn't crowd the star's disc when
+   *                       the target is close.
    */
   update(
     camera: THREE.PerspectiveCamera,
@@ -89,6 +100,7 @@ export class GalacticArrows {
     focusedLocal: THREE.Vector3 | null,
     hideSolArrow: boolean,
     enabled: boolean,
+    sizeMaxPx: number,
   ) {
     if (!enabled) {
       this.hideAll();
@@ -115,29 +127,38 @@ export class GalacticArrows {
     const focalPx = window.innerHeight / (2 * Math.tan((camera.fov * Math.PI) / 360));
     const auxStepW = (ARROW_PIXEL_LENGTH * distToOrigin) / Math.max(focalPx, 1);
 
+    const targetMarginPx = 2 * Math.max(sizeMaxPx, 0);
+
+    // Sol's local-frame position is just `-worldOffset` (Sol is the catalog
+    // origin). Compute it once into a scratch vector so the per-arrow call
+    // can project it for shaft-shortening.
+    this.tmpSolLocal.set(-worldOffset.x, -worldOffset.y, -worldOffset.z);
+    const solDist = this.tmpSolLocal.distanceTo(origin);
+
     this.updateOne(
       this.solPath,
       this.solBg,
       this.solLabel,
       origin,
       originScreen,
-      this.tmpDir.set(
-        -worldOffset.x - origin.x,
-        -worldOffset.y - origin.y,
-        -worldOffset.z - origin.z,
-      ),
-      magnitude(
-        origin.x + worldOffset.x,
-        origin.y + worldOffset.y,
-        origin.z + worldOffset.z,
-      ),
+      this.tmpDir.copy(this.tmpSolLocal).sub(origin),
+      solDist,
+      this.tmpSolLocal,
       auxStepW,
       camera,
       w,
       h,
       hideSolArrow,
+      targetMarginPx,
       'Sol',
     );
+
+    this.tmpGcLocal.set(
+      GALACTIC_CENTRE_PC.x - worldOffset.x,
+      GALACTIC_CENTRE_PC.y - worldOffset.y,
+      GALACTIC_CENTRE_PC.z - worldOffset.z,
+    );
+    const gcDist = this.tmpGcLocal.distanceTo(origin);
 
     this.updateOne(
       this.gcPath,
@@ -145,21 +166,15 @@ export class GalacticArrows {
       this.gcLabel,
       origin,
       originScreen,
-      this.tmpDir.set(
-        GALACTIC_CENTRE_PC.x - worldOffset.x - origin.x,
-        GALACTIC_CENTRE_PC.y - worldOffset.y - origin.y,
-        GALACTIC_CENTRE_PC.z - worldOffset.z - origin.z,
-      ),
-      magnitude(
-        GALACTIC_CENTRE_PC.x - worldOffset.x - origin.x,
-        GALACTIC_CENTRE_PC.y - worldOffset.y - origin.y,
-        GALACTIC_CENTRE_PC.z - worldOffset.z - origin.z,
-      ),
+      this.tmpDir.copy(this.tmpGcLocal).sub(origin),
+      gcDist,
+      this.tmpGcLocal,
       auxStepW,
       camera,
       w,
       h,
       false,
+      targetMarginPx,
       'Galactic centre',
     );
   }
@@ -172,11 +187,13 @@ export class GalacticArrows {
     originScreen: [number, number],
     dir: THREE.Vector3,
     distancePc: number,
+    targetLocal: THREE.Vector3,
     auxStepW: number,
     camera: THREE.PerspectiveCamera,
     w: number,
     h: number,
     hide: boolean,
+    targetMarginPx: number,
     labelPrefix: string,
   ) {
     const dirLenSq = dir.lengthSq();
@@ -207,11 +224,37 @@ export class GalacticArrows {
     const sux = sdx / slen;
     const suy = sdy / slen;
 
-    // Shaft endpoints + chevron tip, all in screen pixels.
+    // Shaft endpoints + chevron tip, all in screen pixels. Default length
+    // is ARROW_PIXEL_LENGTH; shrunk so the tip stays `targetMarginPx` short
+    // of the projected target when the target falls inside the nominal
+    // shaft. We project the target separately because the auxiliary point
+    // above lies along `dir` only up to a small step — at that step it
+    // gives us screen direction reliably even when the target sits behind
+    // the camera, which we still want to support (the arrow then keeps
+    // its full length pointing in the projected direction).
+    const targetScreen = projectToScreen(targetLocal, camera, w, h);
+    let shaftLengthPx = ARROW_PIXEL_LENGTH;
+    if (targetScreen) {
+      const tdx = targetScreen[0] - originScreen[0];
+      const tdy = targetScreen[1] - originScreen[1];
+      // Project the target offset onto the screen-space arrow direction
+      // (sux, suy). Negative or near-zero values mean the target is
+      // "behind" the arrow on screen — leave the full nominal length.
+      const projAlong = tdx * sux + tdy * suy;
+      if (projAlong > 0) {
+        const allowed = projAlong - SHAFT_START_OFFSET_PX - targetMarginPx;
+        if (allowed < shaftLengthPx) shaftLengthPx = allowed;
+      }
+    }
+    if (shaftLengthPx < MIN_SHAFT_PIXEL_LENGTH) {
+      this.hideArrow(path, bg, label);
+      return;
+    }
+
     const shaftStartX = originScreen[0] + sux * SHAFT_START_OFFSET_PX;
     const shaftStartY = originScreen[1] + suy * SHAFT_START_OFFSET_PX;
-    const tipX = shaftStartX + sux * ARROW_PIXEL_LENGTH;
-    const tipY = shaftStartY + suy * ARROW_PIXEL_LENGTH;
+    const tipX = shaftStartX + sux * shaftLengthPx;
+    const tipY = shaftStartY + suy * shaftLengthPx;
 
     const d = buildArrowSvgPath(shaftStartX, shaftStartY, tipX, tipY);
     if (!d) {
@@ -256,10 +299,6 @@ export class GalacticArrows {
 
 function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
-}
-
-function magnitude(x: number, y: number, z: number): number {
-  return Math.sqrt(x * x + y * y + z * z);
 }
 
 function projectToScreen(
