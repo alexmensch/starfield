@@ -43,10 +43,13 @@ Stack: TypeScript, Three.js (WebGL2), Vite, Cloudflare Workers.
   proportional to the volumetric Milky Way bulge regardless of FOV or
   screen size.
 - User-tunable star-size exaggeration (slider, 1=Realistic to 20=Extreme).
-  Drives the global scale on the eye PSF used to compute angular star
-  sizes. At low values the sky reads close to literal physics (most stars
-  go sub-pixel and are floored to 1 px); at high values the brightest
-  stars dominate the frame.
+  Drives the scale on the eye PSF used to compute angular star sizes,
+  per magnitude preset (defaults: naked-eye = 12, binoculars = 9,
+  all = 5 — wider catalogs use a smaller K so the denser star population
+  doesn't wash out the field). The slider drives whichever preset is
+  currently active. At low values the sky reads close to literal physics
+  (most stars go sub-pixel and are floored to 1 px); at high values the
+  brightest stars dominate the frame.
 - Click a star to focus; click another to draw a measured distance vector
   (chevron-marked, clipped when the destination goes off-screen); click the
   far tip to travel there instantly, or hover the distance label and click

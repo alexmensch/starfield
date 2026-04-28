@@ -67,12 +67,27 @@ const ALL_SPECT_MASK = 0b111111111;
 // land in a readable pixel range while preserving the √Δm curve between
 // stars (so ratios stay correct against the Milky Way disc).
 //
+// K is per-preset because the visible star population shifts with the
+// magnitude limit: naked-eye reveals only the brightest few thousand
+// (needs more exaggeration to feel populated), while "all" shows ~313k
+// stars and benefits from a smaller K to avoid the field becoming a
+// solid wash.
+//
 // Tunable at runtime via Starfield.setStarExaggerationK so the debug
-// panel can sweep it visually. Higher = bolder, more cartoonish stars;
-// lower = more austere, nearer the literal physics.
+// panel can sweep the active preset's K visually. Higher = bolder, more
+// cartoonish stars; lower = more austere, nearer the literal physics.
 const STAR_PSF_ARCSEC = 30;
 const STAR_PHYSICS_FACTOR = 1.84;
-let starExaggerationK = 16;
+// Per-preset exaggeration. Each magnitude preset (naked-eye, binoculars,
+// all) has its own K so the disc sizing can be tuned independently for the
+// star population each preset reveals. Switching presets snaps the debug
+// slider to that preset's K.
+const STAR_EXAGGERATION_K_DEFAULTS: Record<MagPresetName, number> = {
+  'naked-eye':  12,
+  'binoculars': 9,
+  'all':        5,
+};
+let starExaggerationK: Record<MagPresetName, number> = { ...STAR_EXAGGERATION_K_DEFAULTS };
 
 // Star-disc rendering knobs. Defaults shipped to production; debug panel
 // can sweep each one independently for visual calibration. See
@@ -116,10 +131,10 @@ const PRESET_BASE: Record<MagPresetName, { maxAppMag: number; sizeSpan: number }
 };
 
 function computeMagPresets(): Record<MagPresetName, MagPreset> {
-  const sizeMinArcsec = STAR_PSF_ARCSEC * starExaggerationK;
   const result = {} as Record<MagPresetName, MagPreset>;
   for (const name of Object.keys(PRESET_BASE) as MagPresetName[]) {
     const base = PRESET_BASE[name];
+    const sizeMinArcsec = STAR_PSF_ARCSEC * starExaggerationK[name];
     result[name] = {
       ...base,
       sizeMinArcsec,
@@ -1039,15 +1054,26 @@ export class Starfield {
   }
   getCameraFov(): number { return this.camera.fov; }
 
-  // Star exaggeration K setter for the debug panel. Recomputes MAG_PRESETS
-  // (their size targets scale with K) and writes new pixel sizes into any
+  // Star exaggeration K setter for the debug panel. Patches the K for one
+  // preset (defaulting to the active preset), recomputes MAG_PRESETS (their
+  // size targets scale with K) and writes new pixel sizes into any
   // non-overridden fields so the change shows live.
-  setStarExaggerationK(k: number) {
-    starExaggerationK = k;
+  setStarExaggerationK(k: number, preset?: MagPresetName) {
+    const name = preset ?? this.filter.activePreset;
+    starExaggerationK[name] = k;
     MAG_PRESETS = computeMagPresets();
     this.recomputePresetPxSizes();
+    // Fire even when recompute patched nothing (e.g. sizes overridden) so
+    // the debug readout reflects the new K.
+    for (const h of this.onFilterHandlers) h(this.filter);
+    this.fireStateChange();
   }
-  getStarExaggerationK(): number { return starExaggerationK; }
+  getStarExaggerationK(preset?: MagPresetName): number {
+    return starExaggerationK[preset ?? this.filter.activePreset];
+  }
+  getStarExaggerationKDefault(preset?: MagPresetName): number {
+    return STAR_EXAGGERATION_K_DEFAULTS[preset ?? this.filter.activePreset];
+  }
 
   // Star-disc rendering knobs (debug panel). Patch any subset; uVisibleK
   // is recomputed whenever uVisibleThreshold changes. Both materials share

@@ -16,10 +16,14 @@ for the surrounding context.
   `styles.css` (currently deliberately subtle).
 - **Star size defaults** — `MAG_PRESETS` table in `starfield.ts`. Each
   entry is `(maxAppMag, sizeSpan)`; sizeMin/Max are derived from
-  `STAR_PSF_ARCSEC × starExaggerationK` (with the √Δm factor for max).
-- **Star exaggeration constant** — `starExaggerationK` (default 16) in
-  `starfield.ts`. Higher = bolder, more cartoonish stars; lower = more
-  literal physics. Live-tunable via the debug panel.
+  `STAR_PSF_ARCSEC × starExaggerationK[preset]` (with the √Δm factor
+  for max).
+- **Star exaggeration constants** — `STAR_EXAGGERATION_K_DEFAULTS` in
+  `starfield.ts`, keyed per magnitude preset (naked-eye = 12,
+  binoculars = 9, all = 5). Higher = bolder, more cartoonish stars;
+  lower = more literal physics. Per-preset because wider catalogs need
+  smaller K to avoid washing out. Live-tunable via the debug panel —
+  the slider drives whichever preset is currently active.
 - **Default camera FOV** — `DEFAULT_FOV` (50°) in `starfield.ts`. Reset
   button on the FOV slider snaps back here.
 - **Max apparent magnitude presets** — `data-preset` attributes on

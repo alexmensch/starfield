@@ -112,10 +112,14 @@ m_lim_eye + 5·log₁₀(50/7) ≈ +4.3 mag aperture gain); `all` = 15
 
 **Exaggeration K.** Literal physics at 50° vertical FOV / 1080 px
 puts the threshold disc at ~0.25 px and Sirius (Δm = 8) at ~1 px —
-both invisible. `starExaggerationK` (default 16) scales σ up so the
-threshold disc lands at a readable 1–2 px. Critically, the √Δm shape
-is preserved between stars, so *ratios* against the volumetric Milky
-Way bulge (rendered at its real angular size) stay correct.
+both invisible. `starExaggerationK` scales σ up so the threshold disc
+lands at a readable 1–2 px. K is per-preset because the population
+mix changes with the magnitude limit: defaults are `naked-eye` 12,
+`binoculars` 9, `all` 5 — wider catalogs use a smaller K so the dense
+star population doesn't wash the field out. Critically, the √Δm shape
+is preserved between stars within a preset, so *ratios* against the
+volumetric Milky Way bulge (rendered at its real angular size) stay
+correct.
 
 **Soft taper.** Real stars near the detection threshold fade across
 ~0.5 mag rather than popping at the limit. The shader extends

@@ -90,14 +90,18 @@ Three presets live in `MAG_PRESETS` in `starfield.ts`: `naked-eye`
 (m_lim = 6.5, span = 8 mag), `binoculars` (10.5, 12), and `all`
 (15, 17). Each carries `sizeMinArcsec` / `sizeMaxArcsec` — the *angular*
 size of the threshold disc and the saturation disc on the sky, derived
-from the eye's PSF width (σ = `STAR_PSF_ARCSEC` = 30″) scaled by the
-exaggeration constant `starExaggerationK` (default 16). The literal
-PSF puts threshold stars at sub-pixel size on a 60° viewport; the
-exaggeration scales σ up to a readable pixel range while preserving
-the √Δm ratios between stars. The constant is module-level mutable
-so the debug panel can sweep it visually — `setStarExaggerationK(k)`
-recomputes `MAG_PRESETS` and re-applies the active preset's pixel
-sizes to non-overridden fields.
+from the eye's PSF width (σ = `STAR_PSF_ARCSEC` = 30″) scaled by a
+per-preset exaggeration constant in `STAR_EXAGGERATION_K_DEFAULTS`
+(naked-eye = 12, binoculars = 9, all = 5). The literal PSF puts
+threshold stars at sub-pixel size on a 60° viewport; the exaggeration
+scales σ up to a readable pixel range while preserving the √Δm ratios
+between stars. K is per-preset because the population mix changes with
+the magnitude limit — wider catalogs use a smaller K so the denser star
+population doesn't wash out into a solid field. The K table is
+module-level mutable so the debug panel can sweep the active preset's
+K visually — `setStarExaggerationK(k)` patches the active preset (or a
+named one), recomputes `MAG_PRESETS`, and re-applies the active
+preset's pixel sizes to non-overridden fields.
 
 `computePresetPxSizes(name)` converts arcsec → pixels via
 `arcsecPerPx = (camera.fov × 3600) / max(window.innerWidth, innerHeight)`.

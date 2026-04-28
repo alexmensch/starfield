@@ -100,18 +100,23 @@ and appending it inside `togglePanel` in `debug.ts`.
 ## Star size exaggeration
 
 `#exag` slider in the Camera group — range 1 (Realistic) to 20
-(Extreme), default 16, step 0.5. Drives `setStarExaggerationK`, which
-multiplies the eye PSF (`STAR_PSF_ARCSEC = 30″`) before
-`computeMagPresets` derives angular size targets. The default sits
-near the upper end because pure physical sizing leaves most stars
-sub-pixel at typical viewports — at 50° / 1080-tall, K=1 puts the
-threshold-disc star at ~0.18 px and floors it to 1 px. The 1-px
-floor in `computePresetPxSizes` is applied symmetrically to sizeMin
-and sizeMax so the saturation disc never inverts below the threshold
-disc at low K. `recomputePresetPxSizes` additionally enforces
-`max >= min` post-patch to handle the case where the user has manually
-overridden one of the two and the other gets recomputed to a value
-that would invert.
+(Extreme), step 0.5. Drives `setStarExaggerationK`, which patches the
+*active* preset's K (one of `STAR_EXAGGERATION_K_DEFAULTS`: naked-eye
+= 12, binoculars = 9, all = 5) and runs `computeMagPresets` to derive
+new angular size targets. The slider snaps to the active preset's K
+on every preset change, and the reset button restores that preset's
+default. Defaults are calibrated per preset because the visible star
+population shifts dramatically with the magnitude limit — naked-eye
+needs more exaggeration to feel populated, while "all" with ~313k
+stars needs a smaller K to avoid the field becoming a solid wash.
+Pure physical sizing leaves most stars sub-pixel at typical viewports
+— at 50° / 1080-tall, K=1 puts the threshold-disc star at ~0.18 px
+and floors it to 1 px. The 1-px floor in `computePresetPxSizes` is
+applied symmetrically to sizeMin and sizeMax so the saturation disc
+never inverts below the threshold disc at low K.
+`recomputePresetPxSizes` additionally enforces `max >= min` post-patch
+to handle the case where the user has manually overridden one of the
+two and the other gets recomputed to a value that would invert.
 
 ## Theme
 

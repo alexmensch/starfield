@@ -2,12 +2,6 @@ import { Starfield, ALL_SPECT_MASK, DEFAULT_FOV, type MagPresetName } from './st
 import { fmtDist, onUnitChange, getUnit } from './distance-util';
 import { bindConstellationTypeahead } from './constellation-typeahead';
 
-// Matches the runtime initial value in starfield.ts (`starExaggerationK = 16`).
-// The slider's display range is 1=Realistic … 20=Extreme; the default sits
-// near the upper end because pure physical sizing leaves most stars
-// sub-pixel.
-const DEFAULT_EXAG_K = 16;
-
 const SPECT_LABELS: { key: string; label: string; bit: number }[] = [
   { key: 'O', label: 'O', bit: 0 },
   { key: 'B', label: 'B', bit: 1 },
@@ -174,7 +168,7 @@ export function bindControls(starfield: Starfield) {
     starfield.setStarExaggerationK(Number(exag.value));
   });
   document.getElementById('exag-reset')!.addEventListener('click', () => {
-    starfield.setStarExaggerationK(DEFAULT_EXAG_K);
+    starfield.setStarExaggerationK(starfield.getStarExaggerationKDefault());
   });
 
   // Reverse sync: any filter change (user input, URL restore, presets) updates
