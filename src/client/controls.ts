@@ -202,7 +202,7 @@ export function bindControls(starfield: Starfield) {
     if (sizeMin.value !== sMinStr) sizeMin.value = sMinStr;
     if (sizeMax.value !== sMaxStr) sizeMax.value = sMaxStr;
     if (sizeSpan.value !== spanStr) sizeSpan.value = spanStr;
-    sizeReadout.textContent = `${f.sizeMin.toFixed(1)} – ${f.sizeMax.toFixed(1)} px · span ${f.sizeSpan.toFixed(0)} mag`;
+    sizeReadout.textContent = `${f.sizeMin.toFixed(1)} – ${f.sizeMax.toFixed(1)}px · span ${f.sizeSpan.toFixed(0)}mag`;
 
     if (galOverlays.checked !== f.showGalacticOverlays) {
       galOverlays.checked = f.showGalacticOverlays;

@@ -19,11 +19,11 @@ export function fmtDist(pc: number): string {
   const v = currentUnit === 'ly' ? pc * LY_PER_PC : pc;
   const unit = currentUnit === 'ly' ? 'ly' : 'pc';
   const kunit = currentUnit === 'ly' ? 'kly' : 'kpc';
-  if (v < 0.01) return v.toFixed(4) + ' ' + unit;
-  if (v < 1) return v.toFixed(3) + ' ' + unit;
-  if (v < 100) return v.toFixed(1) + ' ' + unit;
-  if (v < 10_000) return Math.round(v).toString() + ' ' + unit;
-  return (v / 1000).toFixed(1) + ' ' + kunit;
+  if (v < 0.01) return v.toFixed(4) + unit;
+  if (v < 1) return v.toFixed(3) + unit;
+  if (v < 100) return v.toFixed(1) + unit;
+  if (v < 10_000) return Math.round(v).toString() + unit;
+  return (v / 1000).toFixed(1) + kunit;
 }
 
 // Round a positive value up to the nearest 1, 2, or 5 × 10^N.

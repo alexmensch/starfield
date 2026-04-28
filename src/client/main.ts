@@ -180,8 +180,8 @@ async function main() {
       const axEq = Math.abs(ax - ay) < 0.05 && Math.abs(ay - az) < 0.05;
       lines.push(
         axEq
-          ? `Radius · ${ax.toFixed(0)} pc`
-          : `Axes · ${ax.toFixed(0)} × ${ay.toFixed(0)} × ${az.toFixed(0)} pc`,
+          ? `Radius · ${ax.toFixed(0)}pc`
+          : `Axes · ${ax.toFixed(0)} × ${ay.toFixed(0)} × ${az.toFixed(0)}pc`,
       );
       return { name: c.name, lines };
     }
