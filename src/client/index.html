@@ -159,11 +159,11 @@
           <div class="row-split">
             <div class="readout" id="app-mag-readout">≤ 6.5</div>
             <div class="row-actions">
-              <button class="link-btn mag-preset" data-mag="6.5" type="button">naked eye</button>
+              <button class="link-btn mag-preset" data-preset="naked-eye" type="button">naked eye</button>
               <span class="sep">·</span>
-              <button class="link-btn mag-preset" data-mag="9.5" type="button">binoculars</button>
+              <button class="link-btn mag-preset" data-preset="binoculars" type="button">binoculars</button>
               <span class="sep">·</span>
-              <button class="link-btn mag-preset" data-mag="15" type="button">all</button>
+              <button class="link-btn mag-preset" data-preset="all" type="button">all</button>
             </div>
           </div>
         </section>
@@ -219,14 +219,25 @@
           <input id="size-min" type="range" min="0.5" max="6" step="0.1" value="2.0" />
           <label class="sub-label">Max</label>
           <input id="size-max" type="range" min="2" max="32" step="0.5" value="24" />
-          <label class="sub-label sub-label-row">
-            <span>Dynamic range <span class="unit">mag</span></span>
+          <div class="sub-label-row">
+            <label class="sub-label">Dynamic range <span class="unit">mag</span></label>
             <span class="row-actions">
               <button id="span-reset" class="link-btn" type="button">reset</button>
             </span>
-          </label>
+          </div>
           <input id="size-span" type="range" min="2" max="20" step="0.5" value="6" />
           <div class="readout" id="size-readout">2.0 – 24.0 px · span 6 mag</div>
+        </section>
+
+        <section class="group">
+          <h3>
+            Field of view <span class="unit">°</span>
+            <span class="row-actions">
+              <button id="fov-reset" class="link-btn" type="button">reset</button>
+            </span>
+          </h3>
+          <input id="fov" type="range" min="10" max="120" step="1" value="50" />
+          <div class="readout" id="fov-readout">50°</div>
         </section>
 
         </div>

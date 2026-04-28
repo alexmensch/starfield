@@ -1,4 +1,4 @@
-import type { Starfield } from './starfield';
+import { type Starfield, type MagPresetName, MAG_PRESETS, DEFAULT_FOV } from './starfield';
 import { sliderToDist, distToSlider, SLIDER_STEPS } from './controls';
 import { applyTheme, getTheme } from './theme-toggle';
 import { applyUnit } from './unit-toggle';
@@ -11,12 +11,13 @@ const ALL_SPECT_MASK = 0b111111111;
 const DEFAULTS = {
   dmin: 0,
   dmax: SLIDER_STEPS,
-  mag: 6.5,
+  // Active magnitude preset. URL omits when matching default. mag/smin/smax/
+  // span are only serialised when explicitly overridden — otherwise they
+  // come from the active preset + receiver's viewport, so a shared URL
+  // adapts star sizes to the receiver's screen.
+  preset: 'naked-eye' as MagPresetName,
   spect: ALL_SPECT_MASK,
   con: -1,
-  smin: 2.0,
-  smax: 24.0,
-  span: 6.0,
   gov: 0,
   // Molecular cloud overlay defaults to ON, so the URL param appears only
   // when the user explicitly turns it off.
@@ -49,6 +50,14 @@ export function applyFromUrl(starfield: Starfield) {
   const u = params.get('u');
   if (u === 'ly' || u === 'pc') applyUnit(u);
 
+  // Apply the magnitude preset first so its defaults populate
+  // sizeMin/Max/Span at the receiver's viewport. Subsequent setFilter
+  // calls layer URL-explicit overrides on top.
+  const presetParam = params.get('preset');
+  if (presetParam === 'naked-eye' || presetParam === 'binoculars' || presetParam === 'all') {
+    starfield.applyMagnitudePreset(presetParam);
+  }
+
   // Filter
   const patch: Record<string, number | boolean> = {};
   if (params.has('dmin') || params.has('dmax')) {
@@ -60,13 +69,29 @@ export function applyFromUrl(starfield: Starfield) {
   if (params.has('mag')) patch.maxAppMag = Number(params.get('mag'));
   if (params.has('spect')) patch.spectMask = Number(params.get('spect'));
   if (params.has('con')) patch.highlightCon = Number(params.get('con'));
-  if (params.has('smin')) patch.sizeMin = Number(params.get('smin'));
-  if (params.has('smax')) patch.sizeMax = Number(params.get('smax'));
-  if (params.has('span')) patch.sizeSpan = Number(params.get('span'));
+  // Size overrides: presence of the param implies override flag, so the
+  // value sticks across viewport resizes after the URL restore.
+  if (params.has('smin')) {
+    patch.sizeMin = Number(params.get('smin'));
+    patch.sizeMinOverridden = true;
+  }
+  if (params.has('smax')) {
+    patch.sizeMax = Number(params.get('smax'));
+    patch.sizeMaxOverridden = true;
+  }
+  if (params.has('span')) {
+    patch.sizeSpan = Number(params.get('span'));
+    patch.sizeSpanOverridden = true;
+  }
   if (params.has('gov')) patch.showGalacticOverlays = params.get('gov') === '1';
   if (params.has('mc')) patch.showMolecularClouds = params.get('mc') === '1';
   if (params.has('mw')) patch.showMilkyway = params.get('mw') === '1';
   if (Object.keys(patch).length) starfield.setFilter(patch);
+
+  if (params.has('fov')) {
+    const v = Number(params.get('fov'));
+    if (Number.isFinite(v) && v > 0) starfield.setCameraFov(v);
+  }
 
   // Detect camera params up-front so focus handling can decide whether to
   // teleport the camera (manually-typed URL) or just set the orbit target
@@ -146,15 +171,25 @@ export function startUrlSync(starfield: Starfield) {
     const sMax = distToSlider(f.maxDistSol, false);
     if (sMin !== DEFAULTS.dmin) p.set('dmin', String(sMin));
     if (sMax !== DEFAULTS.dmax) p.set('dmax', String(sMax));
-    if (!approx(f.maxAppMag, DEFAULTS.mag)) p.set('mag', fmt(f.maxAppMag));
+    if (f.activePreset !== DEFAULTS.preset) p.set('preset', f.activePreset);
+    // Magnitude is serialised only when it diverges from the active
+    // preset's defining value (user moved the slider).
+    if (!approx(f.maxAppMag, MAG_PRESETS[f.activePreset].maxAppMag)) {
+      p.set('mag', fmt(f.maxAppMag));
+    }
     if (f.spectMask !== DEFAULTS.spect) p.set('spect', String(f.spectMask));
     if (f.highlightCon !== DEFAULTS.con) p.set('con', String(f.highlightCon));
-    if (!approx(f.sizeMin, DEFAULTS.smin)) p.set('smin', fmt(f.sizeMin));
-    if (!approx(f.sizeMax, DEFAULTS.smax)) p.set('smax', fmt(f.sizeMax));
-    if (!approx(f.sizeSpan, DEFAULTS.span)) p.set('span', fmt(f.sizeSpan));
+    // Size fields serialise only when overridden — otherwise the receiver
+    // recomputes them from preset + their own viewport.
+    if (f.sizeMinOverridden) p.set('smin', fmt(f.sizeMin));
+    if (f.sizeMaxOverridden) p.set('smax', fmt(f.sizeMax));
+    if (f.sizeSpanOverridden) p.set('span', fmt(f.sizeSpan));
     if (f.showGalacticOverlays) p.set('gov', '1');
     if (!f.showMolecularClouds) p.set('mc', '0');
     if (!f.showMilkyway) p.set('mw', '0');
+
+    const fov = starfield.getCameraFov();
+    if (!approx(fov, DEFAULT_FOV)) p.set('fov', fmt(fov));
 
     if (getUnit() !== 'pc') p.set('u', getUnit());
     if (getTheme() !== 'dark') p.set('t', getTheme());

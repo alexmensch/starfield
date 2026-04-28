@@ -195,7 +195,10 @@ void main() {
 
     bool spectOk = (uSpectMask & (1u << uint(iSpectClass))) != 0u;
     bool distOk = iDistSol >= uMinDistSol && iDistSol <= uMaxDistSol;
-    bool magOk = appMag <= uMaxAppMag;
+    // Soft taper: stars within +0.5 mag of the limit still pass through and
+    // render in the glow pass at fading intensity (frag shader handles the
+    // smoothstep), so the limit doesn't pop in/out as the slider moves.
+    bool magOk = appMag <= uMaxAppMag + 0.5;
     bool visible = spectOk && distOk && magOk;
 
     // Luminosity-class softness: linear from white dwarf (0) → hypergiant
@@ -220,9 +223,14 @@ void main() {
     vUv = aCorner;
     vSoftness = softness;
 
-    // Apparent-magnitude size term (CSS pixels).
+    // Apparent-magnitude size term (CSS pixels). The √Δm curve comes from
+    // a Gaussian PSF model: perceived radius ∝ √(magnitudes above threshold)
+    // because the visible footprint of a star is "where intensity > detection
+    // threshold" and that grows as the square root of brightness above
+    // threshold. Linear-in-mag would compress bright stars too far; √Δm
+    // keeps Sirius distinctively larger than the field.
     float brightness = clamp((uMaxAppMag - appMag) / max(uSizeSpan, 0.001), 0.0, 1.0);
-    float appSize = mix(uSizeMin, uSizeMax, brightness);
+    float appSize = mix(uSizeMin, uSizeMax, sqrt(brightness));
 
     // Physical-size term. Log-map the star's radius into the size range,
     // then scale by ref/distance so the curve falls off with distance.

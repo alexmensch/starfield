@@ -1,4 +1,4 @@
-import { Starfield, ALL_SPECT_MASK, DEFAULT_FILTER } from './starfield';
+import { Starfield, ALL_SPECT_MASK, DEFAULT_FOV, type MagPresetName } from './starfield';
 import { fmtDist, onUnitChange, getUnit } from './distance-util';
 
 const SPECT_LABELS: { key: string; label: string; bit: number }[] = [
@@ -51,6 +51,8 @@ export function bindControls(starfield: Starfield) {
   const galOverlays = document.getElementById('gal-overlays') as HTMLInputElement;
   const showClouds = document.getElementById('show-clouds') as HTMLInputElement;
   const showMilkyway = document.getElementById('show-milkyway') as HTMLInputElement;
+  const fov = document.getElementById('fov') as HTMLInputElement;
+  const fovReadout = document.getElementById('fov-readout')!;
 
   distMin.max = String(SLIDER_STEPS);
   distMax.max = String(SLIDER_STEPS);
@@ -115,7 +117,10 @@ export function bindControls(starfield: Starfield) {
   });
   for (const btn of Array.from(magPresets)) {
     btn.addEventListener('click', () => {
-      starfield.setFilter({ maxAppMag: Number(btn.dataset.mag) });
+      const preset = btn.dataset.preset as MagPresetName | undefined;
+      if (preset === 'naked-eye' || preset === 'binoculars' || preset === 'all') {
+        starfield.applyMagnitudePreset(preset);
+      }
     });
   }
   conSelect.addEventListener('change', () => {
@@ -123,20 +128,32 @@ export function bindControls(starfield: Starfield) {
     starfield.setFilter({ highlightCon: idx });
     if (idx >= 0) starfield.aimAtConstellation(idx);
   });
+  // Size sliders set their override flag so the value sticks across
+  // preset changes and viewport resizes until the reset button clears it.
+  // Min/Max are coupled — dragging one past the other pushes the other
+  // along and marks both overridden.
   sizeMin.addEventListener('input', () => {
     let vMin = Number(sizeMin.value);
     let vMax = Number(sizeMax.value);
-    if (vMin > vMax) { vMax = vMin; sizeMax.value = String(vMax); }
-    starfield.setFilter({ sizeMin: vMin, sizeMax: vMax });
+    const pushedMax = vMin > vMax;
+    if (pushedMax) { vMax = vMin; sizeMax.value = String(vMax); }
+    starfield.setFilter({
+      sizeMin: vMin, sizeMinOverridden: true,
+      ...(pushedMax ? { sizeMax: vMax, sizeMaxOverridden: true } : {}),
+    });
   });
   sizeMax.addEventListener('input', () => {
     let vMin = Number(sizeMin.value);
     let vMax = Number(sizeMax.value);
-    if (vMax < vMin) { vMin = vMax; sizeMin.value = String(vMin); }
-    starfield.setFilter({ sizeMin: vMin, sizeMax: vMax });
+    const pushedMin = vMax < vMin;
+    if (pushedMin) { vMin = vMax; sizeMin.value = String(vMin); }
+    starfield.setFilter({
+      sizeMax: vMax, sizeMaxOverridden: true,
+      ...(pushedMin ? { sizeMin: vMin, sizeMinOverridden: true } : {}),
+    });
   });
   sizeSpan.addEventListener('input', () => {
-    starfield.setFilter({ sizeSpan: Number(sizeSpan.value) });
+    starfield.setFilter({ sizeSpan: Number(sizeSpan.value), sizeSpanOverridden: true });
   });
   galOverlays.addEventListener('change', () => {
     starfield.setFilter({ showGalacticOverlays: galOverlays.checked });
@@ -152,13 +169,16 @@ export function bindControls(starfield: Starfield) {
     starfield.setFilter({ highlightCon: -1 });
   });
   document.getElementById('size-reset')!.addEventListener('click', () => {
-    starfield.setFilter({
-      sizeMin: DEFAULT_FILTER.sizeMin,
-      sizeMax: DEFAULT_FILTER.sizeMax,
-    });
+    starfield.clearSizeOverrides(['sizeMin', 'sizeMax']);
   });
   document.getElementById('span-reset')!.addEventListener('click', () => {
-    starfield.setFilter({ sizeSpan: DEFAULT_FILTER.sizeSpan });
+    starfield.clearSizeOverrides(['sizeSpan']);
+  });
+  fov.addEventListener('input', () => {
+    starfield.setCameraFov(Number(fov.value));
+  });
+  document.getElementById('fov-reset')!.addEventListener('click', () => {
+    starfield.setCameraFov(DEFAULT_FOV);
   });
 
   // Reverse sync: any filter change (user input, URL restore, presets) updates
@@ -201,6 +221,10 @@ export function bindControls(starfield: Starfield) {
     if (showMilkyway.checked !== f.showMilkyway) {
       showMilkyway.checked = f.showMilkyway;
     }
+    const fovVal = starfield.getCameraFov();
+    const fovStr = String(Math.round(fovVal));
+    if (fov.value !== fovStr) fov.value = fovStr;
+    fovReadout.textContent = `${Math.round(fovVal)}°`;
   };
 
   starfield.onFilterChange(syncFromFilter);

@@ -13,15 +13,29 @@ import { MolecularClouds, cloudViewingDistancePc } from './molecular-clouds';
 import type { CloudCatalog } from './cloud-loader';
 import { MilkyWay } from './milkyway';
 
+export type MagPresetName = 'naked-eye' | 'binoculars' | 'all';
+
 export interface FilterState {
   minDistSol: number;
   maxDistSol: number;
   maxAppMag: number;
   spectMask: number;
   highlightCon: number; // -1 = none; consumed by overlay, not shader
-  sizeMin: number;
-  sizeMax: number;
+  sizeMin: number;      // CSS pixels — set from the active preset's angular
+  sizeMax: number;      // size at the current viewport, or by manual slider.
   sizeSpan: number;
+  // Active magnitude preset. Drives preset-defaults behaviour when the
+  // viewport resizes — non-overridden size fields recompute against this
+  // preset's angular targets so stars stay proportional to the scene
+  // (especially the Milky Way disc) regardless of screen size.
+  activePreset: MagPresetName;
+  // Manual-override flags for the size sliders. Set by slider input,
+  // cleared by the corresponding reset button (which also re-applies the
+  // active preset's value). When false, the preset writes its computed
+  // pixel value into the field on each preset switch and viewport resize.
+  sizeMinOverridden: boolean;
+  sizeMaxOverridden: boolean;
+  sizeSpanOverridden: boolean;
   // Galactic coordinate sphere + Sol/GC arrows toggle. Disc is always-on
   // (fades by zoom) so it isn't gated here.
   showGalacticOverlays: boolean;
@@ -41,9 +55,67 @@ export interface StarfieldOptions {
 
 const ALL_SPECT_MASK = 0b111111111;
 
+// Star size physics. The unaided eye's stellar PSF has a Gaussian-ish
+// width σ ≈ 30″ set by ocular aberrations + diffraction; "perceived disc"
+// is where intensity exceeds detection threshold, which from the Gaussian
+// PSF model gives radius = σ × √(STAR_PHYSICS_FACTOR × Δm) for Δm
+// magnitudes above threshold. STAR_PHYSICS_FACTOR = 2 ln(10) / 2.5 ≈ 1.84.
+//
+// Literal physics at 60° / 1080 px puts threshold disc at ~0.15 px and
+// Sirius at ~0.6 px — both invisible. starExaggerationK scales σ up to
+// land in a readable pixel range while preserving the √Δm curve between
+// stars (so ratios stay correct against the Milky Way disc).
+//
+// Tunable at runtime via Starfield.setStarExaggerationK so the debug
+// panel can sweep it visually. Higher = bolder, more cartoonish stars;
+// lower = more austere, nearer the literal physics.
+const STAR_PSF_ARCSEC = 30;
+const STAR_PHYSICS_FACTOR = 1.84;
+let starExaggerationK = 16;
+
+interface MagPreset {
+  maxAppMag: number;
+  sizeSpan: number;
+  sizeMinArcsec: number;
+  sizeMaxArcsec: number;
+}
+
+// Static portion of each preset — the magnitude limit and dynamic range
+// don't depend on the exaggeration constant. sizeMinArcsec / sizeMaxArcsec
+// are recomputed from the current K via computeMagPresets().
+const PRESET_BASE: Record<MagPresetName, { maxAppMag: number; sizeSpan: number }> = {
+  // Magnitudes: naked eye 6.5 (Bortle-1 dark sky); binoculars 10.5 (typical
+  // 7×50 dark sky); all 15 (matches the catalog/UI slider ceiling).
+  'naked-eye':  { maxAppMag: 6.5,  sizeSpan: 8 },
+  'binoculars': { maxAppMag: 10.5, sizeSpan: 12 },
+  'all':        { maxAppMag: 15,   sizeSpan: 17 },
+};
+
+function computeMagPresets(): Record<MagPresetName, MagPreset> {
+  const sizeMinArcsec = STAR_PSF_ARCSEC * starExaggerationK;
+  const result = {} as Record<MagPresetName, MagPreset>;
+  for (const name of Object.keys(PRESET_BASE) as MagPresetName[]) {
+    const base = PRESET_BASE[name];
+    result[name] = {
+      ...base,
+      sizeMinArcsec,
+      sizeMaxArcsec: sizeMinArcsec * Math.sqrt(STAR_PHYSICS_FACTOR * base.sizeSpan),
+    };
+  }
+  return result;
+}
+
+// Live binding — re-bound by setStarExaggerationK so consumers reading
+// MAG_PRESETS see the latest values after a K tweak.
+export let MAG_PRESETS: Record<MagPresetName, MagPreset> = computeMagPresets();
+
 // Default minimum orbit distance from a focused star. Per-focus code below
 // may bump this for binary systems so both components stay in the viewport.
 const DEFAULT_MIN_DIST_PC = 0.005;
+
+// Default vertical FOV (degrees). User-tunable via the FOV slider; the
+// reset button snaps back to this value.
+export const DEFAULT_FOV = 50;
 
 // When a focused star has a binary companion, minDistance is set so the
 // companion subtends at most this half-angle from the camera axis — gives
@@ -99,12 +171,19 @@ function sameTarget(a: Target | null, b: Target | null): boolean {
 export const DEFAULT_FILTER: FilterState = {
   minDistSol: 0,
   maxDistSol: 50_000,
-  maxAppMag: 6.5,
+  maxAppMag: MAG_PRESETS['naked-eye'].maxAppMag,
   spectMask: ALL_SPECT_MASK,
   highlightCon: -1,
-  sizeMin: 2.0,
-  sizeMax: 24.0,
-  sizeSpan: 6.0,
+  // sizeMin/Max placeholders — applyMagnitudePreset is called from the
+  // constructor with the actual viewport to fill in real values, and again
+  // on every viewport resize.
+  sizeMin: 1.8,
+  sizeMax: 7.0,
+  sizeSpan: MAG_PRESETS['naked-eye'].sizeSpan,
+  activePreset: 'naked-eye',
+  sizeMinOverridden: false,
+  sizeMaxOverridden: false,
+  sizeSpanOverridden: false,
   showGalacticOverlays: false,
   showMolecularClouds: true,
   showMilkyway: true,
@@ -210,7 +289,7 @@ export class Starfield {
     // otherwise a maximally-zoomed-in star lands on the clip plane and
     // disappears at the closest zoom.
     this.camera = new THREE.PerspectiveCamera(
-      60,
+      DEFAULT_FOV,
       window.innerWidth / window.innerHeight,
       0.001,
       200_000,
@@ -421,6 +500,11 @@ export class Starfield {
 
     // Seed focus on Sol if it exists so measurement works from the start.
     if (catalog.solIndex >= 0) this.focusedStar = catalog.solIndex;
+
+    // Compute initial pixel sizes for the active preset against the real
+    // viewport. DEFAULT_FILTER carries placeholder pixel values; this call
+    // replaces them with the right numbers before the first frame.
+    this.recomputePresetPxSizes();
 
     this.attachEvents();
     this.animate();
@@ -788,6 +872,100 @@ export class Starfield {
   }
 
   getFilter(): Readonly<FilterState> { return this.filter; }
+
+  // Apply a magnitude preset (preset-button click). Always sets
+  // activePreset + maxAppMag + sizeSpan; sizeMin/Max only if their override
+  // flags are false. Use this for explicit user-driven preset changes.
+  applyMagnitudePreset(name: MagPresetName) {
+    const p = MAG_PRESETS[name];
+    const patch: Partial<FilterState> = {
+      activePreset: name,
+      maxAppMag: p.maxAppMag,
+    };
+    if (!this.filter.sizeSpanOverridden) patch.sizeSpan = p.sizeSpan;
+    const sizes = this.computePresetPxSizes(name);
+    if (!this.filter.sizeMinOverridden) patch.sizeMin = sizes.sizeMinPx;
+    if (!this.filter.sizeMaxOverridden) patch.sizeMax = sizes.sizeMaxPx;
+    this.setFilter(patch);
+  }
+
+  // Recompute non-overridden pixel sizes from the active preset's angular
+  // targets. Called on viewport resize and from the constructor — only
+  // touches sizeMin/Max (the viewport-dependent fields), not maxAppMag or
+  // sizeSpan, so a user's manual magnitude-slider value is preserved
+  // through resize.
+  private recomputePresetPxSizes() {
+    const sizes = this.computePresetPxSizes(this.filter.activePreset);
+    const patch: Partial<FilterState> = {};
+    if (!this.filter.sizeMinOverridden) patch.sizeMin = sizes.sizeMinPx;
+    if (!this.filter.sizeMaxOverridden) patch.sizeMax = sizes.sizeMaxPx;
+    if (Object.keys(patch).length > 0) this.setFilter(patch);
+  }
+
+  // Convert a preset's angular size targets to CSS pixels for the current
+  // camera FOV + viewport. We use the *larger* viewport dimension as the
+  // calibration reference — Three.js's camera.fov is the vertical FOV, but
+  // tying calibration to height alone makes stars vanish on landscape
+  // mobile (height = 390 px) while feeling right on desktops (height =
+  // 1080 px). Scaling by max(w, h) gives a consistent absolute pixel size
+  // regardless of orientation, at the cost of strict angular fidelity in
+  // the secondary axis. 1-px floor on sizeMin since a sub-pixel disc
+  // renders as nothing.
+  private computePresetPxSizes(name: MagPresetName) {
+    const p = MAG_PRESETS[name];
+    const refDim = Math.max(window.innerWidth, window.innerHeight);
+    const arcsecPerPx = (this.camera.fov * 3600) / refDim;
+    return {
+      sizeMinPx: Math.max(1.0, p.sizeMinArcsec / arcsecPerPx),
+      sizeMaxPx: p.sizeMaxArcsec / arcsecPerPx,
+    };
+  }
+
+  // Camera FOV setter. Updates the projection matrix, rebases
+  // non-overridden pixel sizes (arcsec/px depends on FOV), and fires a
+  // state change so URL sync picks up the new value.
+  setCameraFov(fov: number) {
+    if (this.camera.fov === fov) return;
+    this.camera.fov = fov;
+    this.camera.updateProjectionMatrix();
+    this.recomputePresetPxSizes();
+    for (const h of this.onFilterHandlers) h(this.filter);
+    this.fireStateChange();
+  }
+  getCameraFov(): number { return this.camera.fov; }
+
+  // Star exaggeration K setter for the debug panel. Recomputes MAG_PRESETS
+  // (their size targets scale with K) and writes new pixel sizes into any
+  // non-overridden fields so the change shows live.
+  setStarExaggerationK(k: number) {
+    starExaggerationK = k;
+    MAG_PRESETS = computeMagPresets();
+    this.recomputePresetPxSizes();
+  }
+  getStarExaggerationK(): number { return starExaggerationK; }
+
+  // Clear override flags for the named fields and write the active
+  // preset's value into them. Used by the size and span reset buttons.
+  // Only touches the named fields — a manual maxAppMag-slider tweak
+  // survives intact.
+  clearSizeOverrides(fields: Array<'sizeMin' | 'sizeMax' | 'sizeSpan'>) {
+    const p = MAG_PRESETS[this.filter.activePreset];
+    const sizes = this.computePresetPxSizes(this.filter.activePreset);
+    const patch: Partial<FilterState> = {};
+    for (const f of fields) {
+      if (f === 'sizeMin') {
+        patch.sizeMinOverridden = false;
+        patch.sizeMin = sizes.sizeMinPx;
+      } else if (f === 'sizeMax') {
+        patch.sizeMaxOverridden = false;
+        patch.sizeMax = sizes.sizeMaxPx;
+      } else if (f === 'sizeSpan') {
+        patch.sizeSpanOverridden = false;
+        patch.sizeSpan = p.sizeSpan;
+      }
+    }
+    this.setFilter(patch);
+  }
 
   setMonochrome(on: boolean) {
     if (this.monochrome === on) return;
@@ -1173,6 +1351,12 @@ export class Starfield {
     this.galacticGrid.setResolution(w, h);
     // The Milky Way layer renders at native resolution via the main scene
     // pass, so no per-resize bookkeeping is needed here.
+    // Recompute pixel sizes from the active preset so non-overridden
+    // fields stay proportional to the bulge across screen sizes and
+    // orientation changes. maxAppMag/sizeSpan don't depend on viewport
+    // and are deliberately untouched here so a user's manual magnitude
+    // slider value survives a window resize.
+    this.recomputePresetPxSizes();
   };
 
   // The physical-size ceiling: the biggest star in the catalog renders at
@@ -1237,11 +1421,14 @@ export class Starfield {
     }
 
     const f = this.filter;
+    // √Δm curve — must match star.vert.glsl line "appSize = mix(...sqrt(brightness))"
+    // exactly, otherwise the SVG focus ring + disc mask drift from the
+    // rendered star edges.
     const brightness = Math.max(
       0,
       Math.min(1, (f.maxAppMag - appMag) / Math.max(f.sizeSpan, 0.001)),
     );
-    const appSize = f.sizeMin + brightness * (f.sizeMax - f.sizeMin);
+    const appSize = f.sizeMin + Math.sqrt(brightness) * (f.sizeMax - f.sizeMin);
 
     const physSize = baseSize * radiusFactor;
 
