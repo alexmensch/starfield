@@ -68,6 +68,14 @@ Stack: TypeScript, Three.js (WebGL2), Vite, Cloudflare Workers.
   from Sol, plus a toggleable galactic coordinate sphere (equator + lat
   circles every 10° + meridians every 10°) and a pair of locator arrows
   pointing toward Sol and the Galactic Centre with live distance labels.
+- **Milky Way volumetric background.** A bounded raymarch through two
+  galactic-scale proxy meshes (a flattened disc + an oblate bulge,
+  both anchored at the galactic centre) produces an integrated
+  surface-brightness band that responds correctly to camera position
+  from anywhere in the galaxy — fly past the GC and the band reorients
+  with proper parallax, not as a painted backdrop. Includes analytical
+  mid-plane dust with wavelength-dependent reddening so the dark dust
+  lane reads correctly.
 - Scale bar in the bottom-left adapts to the current zoom in round pc or ly
   units.
 - Two themes: dark (glowing stars on a deep-blue field) and chart (dark stars
