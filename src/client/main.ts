@@ -16,6 +16,7 @@ import { bindWarpButton } from './warp-button';
 import { maybeShowInfoModal } from './info-modal';
 import { applyFromUrl, startUrlSync } from './url-state';
 import { fmtDist, onUnitChange } from './distance-util';
+import { attachMilkywayTuning } from './milkyway-tuning';
 
 const HOVER_DELAY_MS = 280;
 
@@ -65,6 +66,7 @@ async function main() {
     // project.
     (window as unknown as { starfield: Starfield }).starfield = starfield;
     if (cloudCatalog) starfield.attachClouds(cloudCatalog);
+    attachMilkywayTuning(starfield.milkywayLayer);
 
     // Interstellar dust loads in the background — never blocks first paint.
     // Extinction fades in as each voxel chunk lands on the GPU. If the

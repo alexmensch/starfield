@@ -11,6 +11,7 @@ import { GalacticGrid } from './galactic-grid';
 import { GalacticArrows } from './galactic-arrows';
 import { MolecularClouds, cloudViewingDistancePc } from './molecular-clouds';
 import type { CloudCatalog } from './cloud-loader';
+import { MilkyWay } from './milkyway';
 
 export interface FilterState {
   minDistSol: number;
@@ -27,6 +28,10 @@ export interface FilterState {
   // Molecular cloud overlay (Phase 3a). Default-on; toggle suppresses both
   // 3D rendering and hover/pick.
   showMolecularClouds: boolean;
+  // Milky Way analytic background (Phase 5). Default-on; suppressed in
+  // chart mode regardless. May be force-flipped off by the FPS probe on
+  // the first few frames if the device can't sustain ≥30 fps with it on.
+  showMilkyway: boolean;
 }
 
 export interface StarfieldOptions {
@@ -102,6 +107,7 @@ export const DEFAULT_FILTER: FilterState = {
   sizeSpan: 6.0,
   showGalacticOverlays: false,
   showMolecularClouds: true,
+  showMilkyway: true,
 };
 
 export class Starfield {
@@ -177,6 +183,13 @@ export class Starfield {
   // the layer loads asynchronously after the catalog and search index so
   // first paint isn't gated on it.
   private clouds: MolecularClouds | null = null;
+
+  // Milky Way analytic background (Phase 5). Constructed eagerly so the
+  // band is on during first paint. Dust is wired in once the volumetric
+  // texture attaches. The composite mesh lives in `this.scene` at
+  // renderOrder = -2 so it draws behind everything; the analytic raymarch
+  // pass renders into a private half-res RT each frame.
+  private milkyway: MilkyWay;
 
   constructor({ canvas, catalog }: StarfieldOptions) {
     this.catalog = catalog;
@@ -394,6 +407,18 @@ export class Starfield {
     const gcLabel = document.getElementById('gc-arrow-label') as unknown as SVGTextElement;
     this.galacticArrows = new GalacticArrows(solPath, solBg, gcPath, gcBg, solLabel, gcLabel);
 
+    // Milky Way volumetric disc. A flattened ellipsoid mesh anchored at
+    // the galactic centre; the fragment shader does a bounded raymarch
+    // through its volume. renderOrder = -3 keeps it behind every other
+    // layer. The shared uniforms map carries `uMaxAppMag` and `uSizeSpan`
+    // from the star pipeline so the magnitude filter applies identically
+    // to discrete stars and the diffuse glow.
+    this.milkyway = new MilkyWay({
+      uMaxAppMag: sharedUniforms.uMaxAppMag,
+      uSizeSpan: sharedUniforms.uSizeSpan,
+    });
+    this.scene.add(this.milkyway.group);
+
     // Seed focus on Sol if it exists so measurement works from the start.
     if (catalog.solIndex >= 0) this.focusedStar = catalog.solIndex;
 
@@ -522,6 +547,7 @@ export class Starfield {
     if (dust === null) {
       u.uDustTexture.value = null;
       u.uDustEnabled.value = 0;
+      this.milkyway.attachDust(null);
       return;
     }
     u.uDustTexture.value = dust.texture;
@@ -530,15 +556,25 @@ export class Starfield {
     u.uDustLogRatio.value = dust.params.logRatio;
     u.uDustAvPerDensityPc.value = dust.params.avPerDensityPerPc;
     u.uDustEnabled.value = 1;
+    // Share the same DustField with the Milky Way pass so the band's dust
+    // attenuation shows the actual Edenhofer voxel structure (Great Rift,
+    // Coalsack, etc.) rather than only the analytic slab.
+    this.milkyway.attachDust(dust);
   }
 
   /** User-facing extinction multiplier. 0 disables; 1 = physical realism;
    *  values above 1 amplify dust visually (useful for making weak features
    *  obvious). Independent of attachDust — if no dust is loaded, this has
-   *  no effect. */
+   *  no effect. Also drives the Milky Way background so the dust-darkened
+   *  regions of the band track the same knob. */
   setExtinctionStrength(x: number) {
     this.material.uniforms.uExtinctionStrength.value = Math.max(0, x);
+    this.milkyway.setExtinctionStrength(x);
   }
+
+  /** Direct access to the Milky Way layer for dev-console tuning
+   *  (e.g. `starfield.milkywayLayer.setBrightness(0.4)`). */
+  get milkywayLayer(): MilkyWay { return this.milkyway; }
 
   /** Wire the loaded molecular cloud catalog into the scene. Idempotent —
    *  calling again replaces the layer. Pass null to detach. */
@@ -746,6 +782,7 @@ export class Starfield {
     u.uSizeMin.value = this.filter.sizeMin;
     u.uSizeMax.value = this.filter.sizeMax;
     u.uSizeSpan.value = this.filter.sizeSpan;
+    this.milkyway.setEnabled(this.filter.showMilkyway);
     for (const h of this.onFilterHandlers) h(this.filter);
     this.fireStateChange();
   }
@@ -783,6 +820,7 @@ export class Starfield {
     this.galacticGrid.setMonochrome(on);
     this.galacticArrows.setMonochrome(on);
     this.clouds?.setMonochrome(on);
+    this.milkyway.setMonochrome(on);
     this.fireStateChange();
   }
 
@@ -1133,6 +1171,8 @@ export class Starfield {
     this.material.uniforms.uViewport.value.set(w, h);
     // Line2 needs the canvas resolution for its screen-space line width.
     this.galacticGrid.setResolution(w, h);
+    // The Milky Way layer renders at native resolution via the main scene
+    // pass, so no per-resize bookkeeping is needed here.
   };
 
   // The physical-size ceiling: the biggest star in the catalog renders at
@@ -1368,6 +1408,11 @@ export class Starfield {
     // material via sharedUniforms so both passes see the same time.
     this.material.uniforms.uTime.value = (performance.now() - this.animateStartMs) / 1000;
     this.updateGalacticLayers();
+    // Milky Way analytic background. The skybox mesh is already in the
+    // main scene at renderOrder = -3; this call re-anchors it to
+    // camera.position and refreshes the absolute-camera-position uniform
+    // for the shader's raymarch.
+    this.milkyway.update(this.camera, this.worldOffset);
     this.renderer.render(this.scene, this.camera);
     for (const h of this.onFrameHandlers) h();
     requestAnimationFrame(this.animate);
@@ -1485,6 +1530,7 @@ export class Starfield {
     this.geometry.dispose();
     this.material.dispose();
     this.glowMaterial.dispose();
+    this.milkyway.dispose();
     this.renderer.dispose();
   }
 }

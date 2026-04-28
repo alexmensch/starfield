@@ -21,6 +21,11 @@ const DEFAULTS = {
   // Molecular cloud overlay defaults to ON, so the URL param appears only
   // when the user explicitly turns it off.
   mc: 1,
+  // Milky Way analytic background also defaults to ON. Same omit-when-default
+  // convention. Note the FPS probe may force this off post-load on slow
+  // hardware; if so, the synthetic state-change fires through the writer
+  // and `mw=0` lands in the URL.
+  mw: 1,
   camX: 0,
   camY: 0,
   camZ: 30,
@@ -60,6 +65,7 @@ export function applyFromUrl(starfield: Starfield) {
   if (params.has('span')) patch.sizeSpan = Number(params.get('span'));
   if (params.has('gov')) patch.showGalacticOverlays = params.get('gov') === '1';
   if (params.has('mc')) patch.showMolecularClouds = params.get('mc') === '1';
+  if (params.has('mw')) patch.showMilkyway = params.get('mw') === '1';
   if (Object.keys(patch).length) starfield.setFilter(patch);
 
   // Detect camera params up-front so focus handling can decide whether to
@@ -148,6 +154,7 @@ export function startUrlSync(starfield: Starfield) {
     if (!approx(f.sizeSpan, DEFAULTS.span)) p.set('span', fmt(f.sizeSpan));
     if (f.showGalacticOverlays) p.set('gov', '1');
     if (!f.showMolecularClouds) p.set('mc', '0');
+    if (!f.showMilkyway) p.set('mw', '0');
 
     if (getUnit() !== 'pc') p.set('u', getUnit());
     if (getTheme() !== 'dark') p.set('t', getTheme());

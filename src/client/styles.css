@@ -17,9 +17,12 @@ html, body {
   padding: 0;
   height: 100%;
   overflow: hidden;
-  background:
-    radial-gradient(ellipse at center, #0a1029 0%, #050710 70%) fixed,
-    var(--bg);
+  /* Pure black behind the canvas — the canvas's WebGL clear is already
+     transparent black, so this becomes the visible "no light reaches us"
+     background. The earlier blue radial gradient was a stylistic vignette
+     that fights the Phase 5 Milky Way: the analytic glow is supposed to
+     supply all the off-band sky luminance. */
+  background: #000;
   color: var(--fg);
   font-family: var(--font-mono);
   font-size: 12px;

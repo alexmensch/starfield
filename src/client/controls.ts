@@ -50,6 +50,7 @@ export function bindControls(starfield: Starfield) {
   const distUnitLabel = document.getElementById('dist-unit-label');
   const galOverlays = document.getElementById('gal-overlays') as HTMLInputElement;
   const showClouds = document.getElementById('show-clouds') as HTMLInputElement;
+  const showMilkyway = document.getElementById('show-milkyway') as HTMLInputElement;
 
   distMin.max = String(SLIDER_STEPS);
   distMax.max = String(SLIDER_STEPS);
@@ -143,6 +144,9 @@ export function bindControls(starfield: Starfield) {
   showClouds.addEventListener('change', () => {
     starfield.setFilter({ showMolecularClouds: showClouds.checked });
   });
+  showMilkyway.addEventListener('change', () => {
+    starfield.setFilter({ showMilkyway: showMilkyway.checked });
+  });
 
   document.getElementById('con-reset')!.addEventListener('click', () => {
     starfield.setFilter({ highlightCon: -1 });
@@ -193,6 +197,9 @@ export function bindControls(starfield: Starfield) {
     }
     if (showClouds.checked !== f.showMolecularClouds) {
       showClouds.checked = f.showMolecularClouds;
+    }
+    if (showMilkyway.checked !== f.showMilkyway) {
+      showMilkyway.checked = f.showMilkyway;
     }
   };
 

@@ -31,6 +31,15 @@ Done:
   with live distance labels. Distance vector unified onto the same
   shared chevron+label silhouette. See `CLAUDE.md` "Galactic reference
   system" section.
+- **Phase 5: Milky Way analytic background** — physically-grounded band
+  visible from any 3D position. Per-fragment raymarch over Jurić 2008
+  thin/thick disks + oblate halo plus a McMillan 2017 triaxial bulge,
+  attenuated by the existing Edenhofer dust voxels (with an analytic
+  exp(-|z|/h) slab for sightlines past the voxel AABB). Half-res RT,
+  composited at renderOrder = -2 behind every other layer. Default-on
+  with a startup FPS probe that disables on devices that can't sustain
+  ≥30 fps. URL `mw=0` forces off; chart mode hides. See `CLAUDE.md`
+  "Milky Way analytic background" section.
 
 Shelved (dark code):
 - **Phase 2: dust visualisation layer** — particles loaded but rendered
@@ -39,7 +48,6 @@ Shelved (dark code):
 Not started:
 - Phase 4a: Local Bubble shell mesh
 - Phase 4b: Radcliffe Wave spine
-- Phase 5: Milky Way analytic background
 - Phase 6: Realism indicator + per-star dust slab fallback
 - Phase 7: ATHYG `reduced_m12` catalog upgrade
 - Phase 8: Star chart mode

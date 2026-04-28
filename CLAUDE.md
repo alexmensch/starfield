@@ -1082,6 +1082,147 @@ exclusive with `to=N`), and `mc=0` to hide the layer (default omitted).
   use this first when "I can't see anything" to confirm the layer is
   rendering at all.
 
+### Milky Way volumetric disc (Phase 5)
+
+`milkyway.ts` + `shaders/milkyway.{vert,frag}.glsl` render the integrated
+surface brightness of unresolved Galactic stars by raymarching through a
+*real 3D mesh* of the disc — a flattened ellipsoid (~18 × 18 × 1.5 kpc)
+centred on the galactic centre, rotated so its short axis aligns with
+NGP. The fragment shader does a bounded volumetric raymarch through this
+volume and accumulates emission from the analytic Jurić + McMillan
+densities, attenuated by the existing Edenhofer dust voxels (with a
+Drimmel-style slab fallback outside the voxel AABB). Default-on; URL
+`mw=0` disables. Hidden in chart mode.
+
+**Why a volumetric mesh, not a skybox.** An earlier version (rev 1) put
+the integration in a 50 kpc camera-anchored skybox sphere and marched
+camera→back-surface. Mathematically defensible, but visually it was a
+"theatre backdrop": the geometry doing the work was a 2D sphere
+enclosing the camera, so flying past the bulge produced no parallax —
+the band reoriented in odd ways and the disc never read as an actual 3D
+shape from outside. The volumetric-mesh approach replaces the enclosing
+sphere with the *actual disc shape*, so standard 3D rasterisation
+handles parallax by construction. From outside, you see a flattened
+glowing lens; from inside, the path length through the volume varies
+naturally with view direction (long along the plane, short toward NGP)
+producing the right band geometry. The earlier rev's notes about
+inverse(P×V) precision issues are no longer relevant — there's no
+matrix inversion in this path.
+
+**Density components** (constants baked into the shader; no runtime data
+loads):
+- **Jurić et al. 2008** thin disk: `exp(-(R-R₀)/2150) · exp(-|Z|/245)`
+- Jurić 2008 thick disk: `0.12 × exp(-(R-R₀)/3261) · exp(-|Z|/743)`
+- Jurić 2008 oblate halo: `0.0051 × (r_halo/R₀)^(-2.77)`, q=0.64
+- **McMillan 2017** triaxial bulge:
+  `f_bulge × (1+r'/75)^(-1.8) · exp(-(r'/2100)²)` with q=0.5
+
+Each component is multiplied by a population colour (thin = warm white,
+thick = yellower, halo + bulge = orange-yellow, K-giant-dominated) and
+summed before integration so the band's hue varies by line of sight.
+The bulge normalisation `F_BULGE` is a visual-balance lever, not a
+physical mass-ratio — McMillan's actual mass density would dominate the
+integral catastrophically. Tune in `milkyway.frag.glsl` if the bulge is
+too prominent or too dim.
+
+**Magnitude consistency with stars.** Each fragment's integrated glow is
+converted to an effective apparent magnitude:
+  `appMag = uGlowMagOffset - 2.5 × log10(integratedIntensity)`
+and gated through the same `brightnessClamp((uMaxAppMag - appMag) /
+uSizeSpan)` curve `star.vert.glsl` uses. Result: the magnitude slider
+controls *one knob* for stars + diffuse glow + (eventually) nebulae.
+At "naked eye" only the bulge and the densest disc patches contribute;
+at "all stars" the full halo skirt reads through. `uMaxAppMag` and
+`uSizeSpan` references are passed by reference from the star pipeline's
+shared uniforms map, so any setFilter change propagates without
+duplicate bookkeeping.
+
+`uGlowMagOffset` is a calibration constant (`MilkyWay.setGlowMagOffset`)
+that maps Jurić-normalised "density × pc" units into the star magnitude
+scale. Default is 9.0, tuned so the GC sightline lands near naked-eye
+visibility and NGP drops below it. Tune ±2 mag if the band reads too
+dim or too bright at the realism-default magnitude filter.
+
+**Coordinate handling.** The mesh's local frame (unit sphere) has +X/+Y
+aligned with the galactic disc plane, +Z toward NGP. Mesh.scale converts
+unit coords to galactocentric pc. Mesh.quaternion (= GAL_TO_ICRS as a
+quaternion) rotates galactic axes into ICRS world axes. So in the
+fragment shader, the mesh-local frame is a galactocentric scaled
+representation: any unit-sphere point `pLocal` corresponds to
+galactocentric pc `pLocal × meshScale`, and the back-face fragment
+position `vLocalPos` is the natural ray exit point.
+
+The shader takes `cameraPosition` (renderer-local), adds `uWorldOffset`
+to get absolute ICRS, subtracts `uGalCentreIcrs` to galactocentric ICRS,
+rotates by `uIcrsToGal` to galactocentric galactic, and divides by
+`uMeshScalePc` to land in mesh-local — that's `camLocal`. Ray-sphere
+intersection in this frame gives entry t (clamped ≥ 0 if the camera is
+inside) and exit t = 1 (since the back-face fragment IS on the unit
+sphere). The integration runs from tEnter to 1 with even-spacing 32
+steps, converting back to world parsec step size via
+`|vWorldPos - cameraPosition|` so dust optical-depth maths is in physical
+units.
+
+**Dust integration.** Inside the Edenhofer voxel AABB the shader samples
+`uDustTexture` (the same `Data3DTexture` the star shader uses — the
+`Starfield.attachDust` path forwards the field to `MilkyWay.attachDust`,
+no duplicate upload). Outside the AABB, an analytic slab applies
+*everywhere along the disc midplane*, not just past the AABB edge:
+- vertically: `exp(-|Z_galcentric|/125 pc)`
+- radially: `exp(-(R - R₀)/3.5 kpc)`
+The radial cutoff prevents far-side disc sightlines from being
+over-attenuated by an infinite slab. Both voxels and slab convert to
+per-pc optical depth via `A_V/1.0857` and apply Beer-Lambert running
+attenuation. The slab is what makes the dark mid-plane lane stay
+continuous at all zoom levels — Edenhofer covers the local 1.25 kpc
+cube; beyond that the slab keeps the disc-shadow structure right.
+
+**Render path.** Single mesh, `THREE.BackSide`, additive blending,
+`depthTest = true` so opaque foreground stars/clouds correctly occlude,
+`depthWrite = false` so the glow itself never blocks anything behind it.
+`frustumCulled = false` because the local bounding sphere is at origin
+but world position is GALACTIC_CENTRE_PC offset by worldOffset.
+`renderOrder = -3` keeps it behind every other layer:
+- `-3` Milky Way volumetric disc (this layer)
+- `-2` Molecular clouds (Phase 3a)
+- `-1` Galactic disc + grid reference rings
+- `0` Star disc pass
+- `1` Star glow pass
+
+The mesh is NOT camera-anchored — it sits at the galactic centre.
+`update()` rebases `mesh.position = GALACTIC_CENTRE_PC - worldOffset`
+each frame so under the floating-origin recentering the disc still
+projects correctly into renderer-local frame. The `vWorldPos -
+cameraPosition` subtraction is float-stable for the same reason the
+star pipeline is: both operands are renderer-local, magnitudes are
+small.
+
+**Brightness mapping.** Beer-Lambert tone map:
+`final = 1 - exp(-integrated × scale × brightnessClamp)`
+where `brightnessClamp` is the magnitude-gate multiplier described
+above. `DEFAULT_BRIGHTNESS = 2e-5` — same baseline that read well in
+rev 1; revisit if the visual feel is off after the geometry change.
+
+**Chart mode.** `setMonochrome(true)` hides the mesh entirely. A smooth
+diffuse glow doesn't fit the paper-chart aesthetic; the discrete cloud
+layer + reference rings carry the orientation role there.
+
+**Warp.** Layer stays visible during warp — the band reorienting as the
+camera flies past the GC is the realism payoff this phase exists for.
+Different policy from the disc/grid/arrow reference layers, which all
+hide during warp because they're discrete geometry, not background sky.
+
+**No FPS gate.** Performance optimisation deferred to a later phase.
+Toggle via the panel checkbox or `mw=0` in the URL.
+
+**Dev-console levers** under `starfield.milkywayLayer.*`:
+- `setBrightness(x)` — global gain in the Beer-Lambert mapping
+- `setExtinctionStrength(x)` — independent of the per-star layer;
+  normally driven by the shared `Starfield.setExtinctionStrength` knob
+- `setGlowMagOffset(x)` — magnitude calibration; raise to make the band
+  read brighter at low max-mag thresholds, lower to push it into faint-
+  sky territory
+
 ## Things deliberately kept out
 
 Noted here so we don't re-debate scope:
@@ -1093,6 +1234,11 @@ Noted here so we don't re-debate scope:
 - Desktop two-finger roll on Chrome / Firefox (no rotate gesture exists in
   those browsers; Safari-only on desktop by design).
 - Time-series proper motion (positions are snapshot-only, no T animation).
+- Spiral-arm overdensities in the Milky Way analytic background. The Reid
+  et al. masers offer a maser-anchored spiral model that could ride atop
+  Jurić's smooth disk, but the smooth band reads convincingly enough that
+  re-introducing higher spatial frequency (and the aliasing risk it
+  carries through 32-step raymarching) isn't worth the complexity.
 - Irregular / supernova variables (GCVS entries without a period are
   skipped — can't animate without one).
 - Temperature-swing component of variable-star brightness change. We use
