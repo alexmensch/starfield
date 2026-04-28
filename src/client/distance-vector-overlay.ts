@@ -87,9 +87,10 @@ export function createDistanceVectorOverlay(
     const { pA, pB } = projected;
 
     // Source inset stays at the focus-ring offset; destination inset is
-    // 2 × the user's max-app-size so the tip never crowds the destination
-    // star's rendered disc when zoomed in.
-    const destOffsetPx = 2 * Math.max(starfield.getFilter().sizeMax, 0);
+    // the user's max-app-size (≈ disc radius, since sizeMax is a diameter)
+    // so the tip clears the destination star's rendered disc without
+    // overshooting.
+    const destOffsetPx = Math.max(starfield.getFilter().sizeMax, 0);
     const dxPx = pB[0] - pA[0];
     const dyPx = pB[1] - pA[1];
     const lenPx = Math.hypot(dxPx, dyPx);

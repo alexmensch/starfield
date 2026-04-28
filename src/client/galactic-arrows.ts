@@ -89,9 +89,9 @@ export class GalacticArrows {
    * @param hideSolArrow   true when the focused star is Sol
    * @param enabled        the user-facing `showGalacticOverlays` toggle
    * @param sizeMaxPx      current max-app-size from the Camera panel; the
-   *                       arrow tip stays 2× this away from the projected
-   *                       target so it doesn't crowd the star's disc when
-   *                       the target is close.
+   *                       arrow tip stays this far away from the projected
+   *                       target (≈ disc radius, since sizeMaxPx is a
+   *                       diameter) so it doesn't crowd the star's disc.
    */
   update(
     camera: THREE.PerspectiveCamera,
@@ -127,7 +127,7 @@ export class GalacticArrows {
     const focalPx = window.innerHeight / (2 * Math.tan((camera.fov * Math.PI) / 360));
     const auxStepW = (ARROW_PIXEL_LENGTH * distToOrigin) / Math.max(focalPx, 1);
 
-    const targetMarginPx = 2 * Math.max(sizeMaxPx, 0);
+    const targetMarginPx = Math.max(sizeMaxPx, 0);
 
     // Sol's local-frame position is just `-worldOffset` (Sol is the catalog
     // origin). Compute it once into a scratch vector so the per-arrow call
