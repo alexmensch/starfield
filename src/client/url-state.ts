@@ -1,6 +1,5 @@
 import { type Starfield, type MagPresetName, MAG_PRESETS, DEFAULT_FOV } from './starfield';
 import { sliderToDist, distToSlider, SLIDER_STEPS } from './controls';
-import { applyTheme, getTheme } from './theme-toggle';
 import { applyUnit } from './unit-toggle';
 import { getUnit, onUnitChange } from './distance-util';
 
@@ -44,9 +43,7 @@ export function applyFromUrl(starfield: Starfield) {
   const params = new URLSearchParams(location.search);
   if (params.toString() === '') return;
 
-  // Theme + unit first so any later DOM syncs render in the chosen theme.
-  const t = params.get('t');
-  if (t === 'mono' || t === 'dark') applyTheme(t);
+  // Apply unit before any later DOM syncs read it.
   const u = params.get('u');
   if (u === 'ly' || u === 'pc') applyUnit(u);
 
@@ -192,7 +189,6 @@ export function startUrlSync(starfield: Starfield) {
     if (!approx(fov, DEFAULT_FOV)) p.set('fov', fmt(fov));
 
     if (getUnit() !== 'pc') p.set('u', getUnit());
-    if (getTheme() !== 'dark') p.set('t', getTheme());
 
     const focus = starfield.getFocusedStar();
     const focusCloud = starfield.getFocusedCloud();

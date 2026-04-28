@@ -80,8 +80,8 @@ html, body {
  * without this the HTML `hidden` attribute silently does nothing. */
 [hidden] { display: none !important; }
 
-/* Top-right stack — brand + search, then panel, share one flex column.
- * Browser handles wrapping/shrinking; no JS layout. */
+/* Top-right stack — Navigate (search) + Settings panel share one flex
+ * column. Browser handles wrapping/shrinking; no JS layout. */
 .ui-top {
   position: fixed;
   top: 10px;
@@ -96,6 +96,47 @@ html, body {
   pointer-events: none;
 }
 .ui-top > * { pointer-events: auto; }
+
+/* Top-left brand box — independent of `.ui-top` so the right-side stack's
+ * width/wrap behaviour is unaffected. Same blurred-card aesthetic as the
+ * topbar/panel. */
+.ui-top-left {
+  position: fixed;
+  top: 10px;
+  left: 14px;
+  z-index: 10;
+  pointer-events: none;
+}
+.ui-top-left > * { pointer-events: auto; }
+.brand-box {
+  padding: 8px 12px 6px;
+  background: rgba(7, 9, 18, 0.85);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(6px);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.brand-title {
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  font-size: 11px;
+  color: var(--fg);
+}
+.brand-links {
+  font-size: 10px;
+  color: var(--fg-dim);
+  display: flex;
+  align-items: baseline;
+  gap: 0;
+}
+.brand-links .link-btn {
+  font-size: 10px;
+}
+.brand-links .sep {
+  opacity: 0.4;
+  margin: 0 6px;
+}
 
 .ui-bottom {
   position: fixed;
@@ -129,11 +170,11 @@ html, body {
    * below. Panel's own backdrop-filter otherwise wins on DOM-order ties. */
   z-index: 1;
 }
-.brand {
+.topbar-heading {
   letter-spacing: 0.3em;
   text-transform: uppercase;
   font-size: 11px;
-  color: var(--fg-dim);
+  color: var(--fg);
   padding: 2px 2px 6px;
   border-bottom: 1px solid var(--border);
 }
@@ -257,10 +298,10 @@ html, body {
   border-bottom: 1px solid var(--border);
   cursor: pointer;
   user-select: none;
-  font-size: 10px;
-  letter-spacing: 0.2em;
+  font-size: 11px;
+  letter-spacing: 0.3em;
   text-transform: uppercase;
-  color: var(--fg-dim);
+  color: var(--fg);
   flex: 0 0 auto;
 }
 .panel-toggle {
@@ -288,23 +329,51 @@ html, body {
 }
 
 .group {
-  padding: 10px 0;
+  padding: 4px 0;
   border-bottom: 1px solid var(--border);
 }
 .group:last-child { border-bottom: none; }
-.group h3 {
-  margin: 0 0 8px;
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.2em;
-  color: var(--fg-dim);
-  font-weight: normal;
+/* Per-group header: clickable row that toggles `.group.collapsed`. The
+ * chevron button is the visible affordance but the whole row responds.
+ * Buttons inside `.row-actions` (reset/all/none) call stopPropagation so
+ * those clicks don't double as collapse-toggles. */
+.group-header {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
+  padding: 6px 0;
+  cursor: pointer;
+  user-select: none;
 }
-.group h3 .unit {
+.group-header h3 {
+  margin: 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.3em;
+  color: var(--fg);
+  font-weight: normal;
+}
+.group-toggle {
+  background: transparent;
+  border: none;
+  color: var(--fg-dim);
+  width: 18px;
+  height: 18px;
+  line-height: 1;
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+  flex: 0 0 auto;
+}
+.group-toggle:hover { color: var(--fg); }
+.group-body {
+  padding: 4px 0 8px;
+}
+.group.collapsed .group-body { display: none; }
+.group.collapsed { padding-bottom: 0; }
+.group .sub-label .unit {
   color: var(--fg-dim);
   opacity: 0.6;
   text-transform: none;
@@ -333,44 +402,19 @@ html, body {
   gap: 12px;
 }
 
+/* Block-level so each row stacks vertically — `inline-flex` was causing
+ * neighbouring rows to flow on the same line when the labels were short
+ * enough to fit. Modal-dismiss kept inline-flex because it sits next to
+ * a single line of label text. Label text styled to match `.toggle-btn`
+ * (var(--fg-dim), 11px) for visual parity with parsecs/lightyears etc. */
 .checkbox-row {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--fg);
-  font-size: 12px;
+  color: var(--fg-dim);
+  font-size: 11px;
   cursor: pointer;
   user-select: none;
-}
-.checkbox-row input[type="checkbox"] {
-  appearance: none;
-  -webkit-appearance: none;
-  width: 14px;
-  height: 14px;
-  flex: 0 0 auto;
-  border: 1px solid var(--border-strong);
-  background: transparent;
-  cursor: pointer;
-  margin: 0;
-  position: relative;
-  display: inline-block;
-  vertical-align: middle;
-}
-.checkbox-row input[type="checkbox"]:hover { border-color: var(--fg-dim); }
-.checkbox-row input[type="checkbox"]:checked {
-  background: var(--accent);
-  border-color: var(--accent);
-}
-.checkbox-row input[type="checkbox"]:checked::after {
-  content: '';
-  position: absolute;
-  left: 3px;
-  top: 0;
-  width: 4px;
-  height: 8px;
-  border: solid var(--bg);
-  border-width: 0 1.5px 1.5px 0;
-  transform: rotate(45deg);
 }
 
 input[type="range"] {
@@ -444,14 +488,45 @@ input[type="range"]::-moz-range-thumb {
 .chip[data-class="C"] { border-left: 2px solid #ff7a6a; }
 .chip[data-class="?"] { border-left: 2px solid var(--fg-dim); }
 
-select {
+/* Constellation typeahead — same input styling as `.search-row` so it
+ * feels like a member of the same family, but lives inside the settings
+ * panel rather than the topbar. The dropdown is positioned absolutely
+ * within the typeahead container so it floats above neighbouring groups. */
+.con-typeahead {
+  position: relative;
+  margin-top: 4px;
+}
+.con-typeahead input {
   width: 100%;
   background: rgba(11, 16, 32, 0.7);
   color: var(--fg);
   border: 1px solid var(--border);
-  padding: 6px 8px;
+  padding: 7px 10px;
   font-family: inherit;
   font-size: 12px;
+  outline: none;
+  min-width: 0;
+}
+.con-typeahead input:focus { border-color: var(--border-strong); }
+@media (pointer: coarse) {
+  .con-typeahead input { font-size: 16px; }
+}
+.con-typeahead input[type="search"]::-webkit-search-cancel-button,
+.con-typeahead input[type="search"]::-webkit-search-decoration {
+  -webkit-appearance: none;
+  appearance: none;
+  display: none;
+}
+
+/* Exaggeration end-labels — sit beneath the slider, left/right justified. */
+.exag-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--fg-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-top: 2px;
 }
 
 .toggle {
@@ -829,7 +904,7 @@ body.monochrome .warp-btn:hover {
 .modal-credits {
   margin-top: 18px;
   margin-bottom: 10px;
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--fg-dim);
   line-height: 1.6;
 }
@@ -839,6 +914,17 @@ body.monochrome .warp-btn:hover {
   text-underline-offset: 2px;
 }
 .modal-credits a:hover { color: var(--fg); }
+.credit-entry {
+  margin-bottom: 10px;
+}
+.credit-entry:last-child { margin-bottom: 0; }
+.credit-label {
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  font-size: 10px;
+  color: var(--fg);
+  margin-bottom: 2px;
+}
 
 .modal-dismiss {
   display: inline-flex;
@@ -850,6 +936,9 @@ body.monochrome .warp-btn:hover {
   cursor: pointer;
   user-select: none;
 }
+/* Shared checkbox-square styling for the panel and the welcome-modal
+ * dismiss. Single rule so they can never drift visually. */
+.checkbox-row input[type="checkbox"],
 .modal-dismiss input[type="checkbox"] {
   appearance: none;
   -webkit-appearance: none;
@@ -864,11 +953,14 @@ body.monochrome .warp-btn:hover {
   display: inline-block;
   vertical-align: middle;
 }
+.checkbox-row input[type="checkbox"]:hover,
 .modal-dismiss input[type="checkbox"]:hover { border-color: var(--fg-dim); }
+.checkbox-row input[type="checkbox"]:checked,
 .modal-dismiss input[type="checkbox"]:checked {
   background: var(--accent);
   border-color: var(--accent);
 }
+.checkbox-row input[type="checkbox"]:checked::after,
 .modal-dismiss input[type="checkbox"]:checked::after {
   content: '';
   position: absolute;

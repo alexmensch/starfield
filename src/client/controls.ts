@@ -1,5 +1,12 @@
 import { Starfield, ALL_SPECT_MASK, DEFAULT_FOV, type MagPresetName } from './starfield';
 import { fmtDist, onUnitChange, getUnit } from './distance-util';
+import { bindConstellationTypeahead } from './constellation-typeahead';
+
+// Matches the runtime initial value in starfield.ts (`starExaggerationK = 16`).
+// The slider's display range is 1=Realistic … 20=Extreme; the default sits
+// near the upper end because pure physical sizing leaves most stars
+// sub-pixel.
+const DEFAULT_EXAG_K = 16;
 
 const SPECT_LABELS: { key: string; label: string; bit: number }[] = [
   { key: 'O', label: 'O', bit: 0 },
@@ -42,7 +49,6 @@ export function bindControls(starfield: Starfield) {
   const chipsHost = document.getElementById('spect-chips')!;
   const spectAllBtn = document.getElementById('spect-all')!;
   const spectNoneBtn = document.getElementById('spect-none')!;
-  const conSelect = document.querySelector<HTMLSelectElement>('#con-select')!;
   const sizeMin = document.getElementById('size-min') as HTMLInputElement;
   const sizeMax = document.getElementById('size-max') as HTMLInputElement;
   const sizeSpan = document.getElementById('size-span') as HTMLInputElement;
@@ -53,20 +59,12 @@ export function bindControls(starfield: Starfield) {
   const showMilkyway = document.getElementById('show-milkyway') as HTMLInputElement;
   const fov = document.getElementById('fov') as HTMLInputElement;
   const fovReadout = document.getElementById('fov-readout')!;
+  const exag = document.getElementById('exag') as HTMLInputElement;
 
   distMin.max = String(SLIDER_STEPS);
   distMax.max = String(SLIDER_STEPS);
 
-  // Constellation dropdown population (static).
-  const conEntries = starfield.catalog.constellations
-    .map((c, idx) => ({ idx, ...c }))
-    .sort((a, b) => a.name.localeCompare(b.name));
-  for (const entry of conEntries) {
-    const opt = document.createElement('option');
-    opt.value = String(entry.idx);
-    opt.textContent = `${entry.name} (${entry.code})`;
-    conSelect.appendChild(opt);
-  }
+  bindConstellationTypeahead(starfield);
 
   // Spectral chips (static).
   const chipEls: HTMLButtonElement[] = [];
@@ -123,11 +121,6 @@ export function bindControls(starfield: Starfield) {
       }
     });
   }
-  conSelect.addEventListener('change', () => {
-    const idx = Number(conSelect.value);
-    starfield.setFilter({ highlightCon: idx });
-    if (idx >= 0) starfield.aimAtConstellation(idx);
-  });
   // Size sliders set their override flag so the value sticks across
   // preset changes and viewport resizes until the reset button clears it.
   // Min/Max are coupled — dragging one past the other pushes the other
@@ -165,9 +158,6 @@ export function bindControls(starfield: Starfield) {
     starfield.setFilter({ showMilkyway: showMilkyway.checked });
   });
 
-  document.getElementById('con-reset')!.addEventListener('click', () => {
-    starfield.setFilter({ highlightCon: -1 });
-  });
   document.getElementById('size-reset')!.addEventListener('click', () => {
     starfield.clearSizeOverrides(['sizeMin', 'sizeMax']);
   });
@@ -179,6 +169,12 @@ export function bindControls(starfield: Starfield) {
   });
   document.getElementById('fov-reset')!.addEventListener('click', () => {
     starfield.setCameraFov(DEFAULT_FOV);
+  });
+  exag.addEventListener('input', () => {
+    starfield.setStarExaggerationK(Number(exag.value));
+  });
+  document.getElementById('exag-reset')!.addEventListener('click', () => {
+    starfield.setStarExaggerationK(DEFAULT_EXAG_K);
   });
 
   // Reverse sync: any filter change (user input, URL restore, presets) updates
@@ -198,10 +194,6 @@ export function bindControls(starfield: Starfield) {
     for (const el of chipEls) {
       const bit = Number(el.dataset.bit);
       el.classList.toggle('on', (f.spectMask & (1 << bit)) !== 0);
-    }
-
-    if (conSelect.value !== String(f.highlightCon)) {
-      conSelect.value = String(f.highlightCon);
     }
 
     const sMinStr = f.sizeMin.toString();
@@ -225,6 +217,9 @@ export function bindControls(starfield: Starfield) {
     const fovStr = String(Math.round(fovVal));
     if (fov.value !== fovStr) fov.value = fovStr;
     fovReadout.textContent = `${Math.round(fovVal)}°`;
+
+    const kStr = starfield.getStarExaggerationK().toString();
+    if (exag.value !== kStr) exag.value = kStr;
   };
 
   starfield.onFilterChange(syncFromFilter);

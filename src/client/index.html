@@ -65,25 +65,85 @@
           travel there. Search for &ldquo;Sol&rdquo; to return home to our
           sun. Enjoy!
         </p>
-        <div class="modal-credits">
-          <div>
-            Stars —
-            <a href="https://codeberg.org/astronexus/athyg" target="_blank" rel="noopener noreferrer">AT-HYG v3.3</a>
-            by David Nash
-          </div>
-          <div>
-            Variables —
-            <a href="http://www.sai.msu.su/gcvs/gcvs/" target="_blank" rel="noopener noreferrer">GCVS 5.1</a>,
-            Samus et al. (Sternberg Astronomical Institute)
-          </div>
-          <div>
-            Constellations —
-            <a href="https://github.com/Stellarium/stellarium/tree/master/skycultures/modern" target="_blank" rel="noopener noreferrer">Stellarium</a>
-          </div>
-        </div>
         <label class="modal-dismiss">
           <input type="checkbox" id="info-dontshow" /> Don't show this again
         </label>
+      </div>
+    </div>
+
+    <div id="about-modal" class="modal" hidden>
+      <div class="modal-backdrop" data-modal-dismiss></div>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="about-title">
+        <button class="modal-close" type="button" data-modal-dismiss aria-label="Close">×</button>
+        <h2 id="about-title">About Starfield</h2>
+        <p>
+          Starfield is a navigable 3D model of stars and nebulae mostly within
+          ~1250 parsecs of the Sun. Each star is rendered at the colour and
+          apparent brightness you would actually see from any given point in
+          space, including the effects of light extinction through dust in
+          the interstellar medium. Known variable stars are shown to pulsate
+          at their catalogue period.
+        </p>
+        <p>
+          The catalogue is based entirely on scientific measurement: ~313,000
+          stars from AT-HYG v3.3, cross-matched with the GCVS variable-star
+          catalogue. Constellation stick-figures, molecular cloud structure,
+          and the Milky Way's volumetric backdrop are all drawn from
+          published astronomy data. See Credits for the full list and more
+          details.
+        </p>
+        <p>
+          Created by <strong>Alex Marshall</strong> and released under
+          AGPL-3.0.
+        </p>
+        <p>
+          <a href="https://github.com/alexmensch/starfield" target="_blank" rel="noopener noreferrer">View source on GitHub →</a>
+        </p>
+      </div>
+    </div>
+
+    <div id="credits-modal" class="modal" hidden>
+      <div class="modal-backdrop" data-modal-dismiss></div>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="credits-title">
+        <button class="modal-close" type="button" data-modal-dismiss aria-label="Close">×</button>
+        <h2 id="credits-title">Credits</h2>
+        <p>
+          Starfield is built on a stack of open astronomy data. Every
+          catalogue and dataset used to render the scene is listed below.
+        </p>
+        <div class="modal-credits">
+          <div class="credit-entry">
+            <div class="credit-label">Stars</div>
+            <a href="https://codeberg.org/astronexus/athyg" target="_blank" rel="noopener noreferrer">AT-HYG v3.3</a>
+            — David Nash. Combined Tycho-2 / Hipparcos / Gaia DR3 catalogue.
+          </div>
+          <div class="credit-entry">
+            <div class="credit-label">Variable stars</div>
+            <a href="http://www.sai.msu.su/gcvs/gcvs/" target="_blank" rel="noopener noreferrer">GCVS 5.1</a>
+            — Samus et al., Sternberg Astronomical Institute.
+          </div>
+          <div class="credit-entry">
+            <div class="credit-label">Constellation lines</div>
+            <a href="https://github.com/Stellarium/stellarium" target="_blank" rel="noopener noreferrer">Stellarium</a>.
+          </div>
+          <div class="credit-entry">
+            <div class="credit-label">Molecular clouds</div>
+            <a href="https://doi.org/10.1051/0004-6361/201936145" target="_blank" rel="noopener noreferrer">Zucker et al. 2020</a>
+            (cloud distance compendium) and
+            <a href="https://doi.org/10.3847/1538-4357/ac1f96" target="_blank" rel="noopener noreferrer">Zucker et al. 2021</a>
+            (3D structure of local clouds).
+          </div>
+          <div class="credit-entry">
+            <div class="credit-label">Interstellar dust</div>
+            <a href="https://doi.org/10.5281/zenodo.8187943" target="_blank" rel="noopener noreferrer">Edenhofer &amp; Green 2024</a>
+            — 3D dust extinction map of the local Milky Way.
+          </div>
+        </div>
+        <p style="margin-top: 16px;">
+          Full citations and modelling notes live in
+          <a href="https://github.com/alexmensch/starfield/blob/main/SCIENCE.md" target="_blank" rel="noopener noreferrer">SCIENCE.md</a>
+          in the source repository.
+        </p>
       </div>
     </div>
 
@@ -95,9 +155,20 @@
       </div>
     </div>
 
+    <div class="ui-top-left" id="ui-top-left" hidden>
+      <div class="brand-box">
+        <div class="brand-title">Starfield</div>
+        <div class="brand-links">
+          <button class="link-btn" id="brand-about" type="button">about</button>
+          <span class="sep">·</span>
+          <button class="link-btn" id="brand-credits" type="button">credits</button>
+        </div>
+      </div>
+    </div>
+
     <div class="ui-top" id="ui-top">
       <header class="topbar" hidden id="topbar">
-        <div class="brand">Starfield</div>
+        <div class="topbar-heading">Navigate</div>
         <div class="search-wrap">
           <div class="search-row" id="search-focus-row">
             <span class="search-tag">Focus</span>
@@ -127,117 +198,147 @@
 
       <aside class="panel" hidden id="panel">
         <div class="panel-header" id="panel-header">
-          <span>Display settings</span>
+          <span>Settings</span>
           <button class="panel-toggle" id="panel-toggle" type="button" aria-label="Collapse settings" aria-expanded="true">−</button>
         </div>
         <div class="panel-inner" id="panel-inner">
-        <section class="group">
-          <label class="sub-label">Units</label>
-          <div class="toggle-group" id="unit-toggle">
-            <button class="toggle-btn on" data-unit="pc" type="button">parsecs</button>
-            <button class="toggle-btn" data-unit="ly" type="button">lightyears</button>
-          </div>
-          <label class="sub-label">Theme</label>
-          <div class="toggle-group" id="theme-toggle">
-            <button class="toggle-btn on" data-theme="dark" type="button">dark</button>
-            <button class="toggle-btn" data-theme="mono" type="button">chart</button>
+
+        <section class="group" data-group="navigation">
+          <header class="group-header">
+            <h3>Navigation</h3>
+            <button class="group-toggle" type="button" aria-label="Toggle Navigation section" aria-expanded="true">−</button>
+          </header>
+          <div class="group-body">
+            <label class="sub-label">Units</label>
+            <div class="toggle-group" id="unit-toggle">
+              <button class="toggle-btn on" data-unit="pc" type="button">parsecs</button>
+              <button class="toggle-btn" data-unit="ly" type="button">lightyears</button>
+            </div>
+            <label class="checkbox-row" style="margin-top: 10px;">
+              <input id="gal-overlays" type="checkbox" />
+              <span>Galactic sphere &amp; locators</span>
+            </label>
           </div>
         </section>
 
-        <section class="group">
-          <h3>Distance from Sol <span class="unit" id="dist-unit-label">pc</span></h3>
-          <div class="range-row">
-            <input id="dist-min" type="range" min="0" max="1000" value="0" />
-            <input id="dist-max" type="range" min="0" max="1000" value="1000" />
+        <section class="group" data-group="stars">
+          <header class="group-header">
+            <h3>Stars</h3>
+            <button class="group-toggle" type="button" aria-label="Toggle Stars section" aria-expanded="true">−</button>
+          </header>
+          <div class="group-body">
+            <label class="sub-label">Distance from Sol <span class="unit" id="dist-unit-label">pc</span></label>
+            <div class="range-row">
+              <input id="dist-min" type="range" min="0" max="1000" value="0" />
+              <input id="dist-max" type="range" min="0" max="1000" value="1000" />
+            </div>
+            <div class="readout" id="dist-readout">0 – 50000</div>
+
+            <label class="sub-label" style="margin-top: 12px;">Max apparent magnitude</label>
+            <input id="app-mag" type="range" min="-2" max="15" step="0.1" value="6.5" />
+            <div class="row-split">
+              <div class="readout" id="app-mag-readout">≤ 6.5</div>
+              <div class="row-actions">
+                <button class="link-btn mag-preset" data-preset="naked-eye" type="button">naked eye</button>
+                <span class="sep">·</span>
+                <button class="link-btn mag-preset" data-preset="binoculars" type="button">binoculars</button>
+                <span class="sep">·</span>
+                <button class="link-btn mag-preset" data-preset="all" type="button">all</button>
+              </div>
+            </div>
+
+            <div class="sub-label-row" style="margin-top: 12px;">
+              <label class="sub-label">Spectral class</label>
+              <span class="row-actions">
+                <button id="spect-all" class="link-btn" type="button">all</button>
+                <span class="sep">·</span>
+                <button id="spect-none" class="link-btn" type="button">none</button>
+              </span>
+            </div>
+            <div class="chips" id="spect-chips"></div>
           </div>
-          <div class="readout" id="dist-readout">0 – 50000</div>
         </section>
 
-        <section class="group">
-          <h3>Max apparent magnitude</h3>
-          <input id="app-mag" type="range" min="-2" max="15" step="0.1" value="6.5" />
-          <div class="row-split">
-            <div class="readout" id="app-mag-readout">≤ 6.5</div>
-            <div class="row-actions">
-              <button class="link-btn mag-preset" data-preset="naked-eye" type="button">naked eye</button>
-              <span class="sep">·</span>
-              <button class="link-btn mag-preset" data-preset="binoculars" type="button">binoculars</button>
-              <span class="sep">·</span>
-              <button class="link-btn mag-preset" data-preset="all" type="button">all</button>
+        <section class="group" data-group="overlays">
+          <header class="group-header">
+            <h3>Overlays</h3>
+            <button class="group-toggle" type="button" aria-label="Toggle Overlays section" aria-expanded="true">−</button>
+          </header>
+          <div class="group-body">
+            <div class="sub-label-row">
+              <label class="sub-label">Constellation</label>
+              <span class="row-actions">
+                <button id="con-reset" class="link-btn" type="button">reset</button>
+              </span>
+            </div>
+            <div class="con-typeahead" id="con-typeahead">
+              <input
+                id="con-input"
+                type="search"
+                placeholder="Search constellation…"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <ul id="con-results" class="search-results" hidden></ul>
+            </div>
+
+            <label class="checkbox-row" style="margin-top: 12px;">
+              <input id="show-clouds" type="checkbox" checked />
+              <span>Molecular clouds</span>
+            </label>
+            <label class="checkbox-row">
+              <input id="show-milkyway" type="checkbox" checked />
+              <span>Galactic background glow</span>
+            </label>
+          </div>
+        </section>
+
+        <section class="group" data-group="camera">
+          <header class="group-header">
+            <h3>Camera</h3>
+            <button class="group-toggle" type="button" aria-label="Toggle Camera section" aria-expanded="true">−</button>
+          </header>
+          <div class="group-body">
+            <div class="sub-label-row">
+              <label class="sub-label">Star size <span class="unit">px</span></label>
+              <span class="row-actions">
+                <button id="size-reset" class="link-btn" type="button">reset</button>
+              </span>
+            </div>
+            <label class="sub-label">Min</label>
+            <input id="size-min" type="range" min="0.5" max="6" step="0.1" value="2.0" />
+            <label class="sub-label">Max</label>
+            <input id="size-max" type="range" min="2" max="32" step="0.5" value="24" />
+            <div class="sub-label-row">
+              <label class="sub-label">Dynamic range <span class="unit">mag</span></label>
+              <span class="row-actions">
+                <button id="span-reset" class="link-btn" type="button">reset</button>
+              </span>
+            </div>
+            <input id="size-span" type="range" min="2" max="20" step="0.5" value="6" />
+            <div class="readout" id="size-readout">2.0 – 24.0 px · span 6 mag</div>
+
+            <div class="sub-label-row" style="margin-top: 12px;">
+              <label class="sub-label">Field of view <span class="unit">°</span></label>
+              <span class="row-actions">
+                <button id="fov-reset" class="link-btn" type="button">reset</button>
+              </span>
+            </div>
+            <input id="fov" type="range" min="10" max="120" step="1" value="50" />
+            <div class="readout" id="fov-readout">50°</div>
+
+            <div class="sub-label-row" style="margin-top: 12px;">
+              <label class="sub-label">Star size exaggeration</label>
+              <span class="row-actions">
+                <button id="exag-reset" class="link-btn" type="button">reset</button>
+              </span>
+            </div>
+            <input id="exag" type="range" min="1" max="20" step="0.5" value="16" />
+            <div class="exag-labels">
+              <span>Realistic</span>
+              <span>Extreme</span>
             </div>
           </div>
-        </section>
-
-        <section class="group">
-          <h3>
-            Spectral class
-            <span class="row-actions">
-              <button id="spect-all" class="link-btn" type="button">all</button>
-              <span class="sep">·</span>
-              <button id="spect-none" class="link-btn" type="button">none</button>
-            </span>
-          </h3>
-          <div class="chips" id="spect-chips"></div>
-        </section>
-
-        <section class="group">
-          <h3>
-            Constellation
-            <span class="row-actions">
-              <button id="con-reset" class="link-btn" type="button">reset</button>
-            </span>
-          </h3>
-          <select id="con-select">
-            <option value="-1">— None —</option>
-          </select>
-        </section>
-
-        <section class="group">
-          <h3>Galactic overlays</h3>
-          <label class="checkbox-row">
-            <input id="gal-overlays" type="checkbox" />
-            <span>Show galactic sphere &amp; arrows</span>
-          </label>
-          <label class="checkbox-row">
-            <input id="show-clouds" type="checkbox" checked />
-            <span>Show molecular clouds</span>
-          </label>
-          <label class="checkbox-row">
-            <input id="show-milkyway" type="checkbox" checked />
-            <span>Show Milky Way background</span>
-          </label>
-        </section>
-
-        <section class="group">
-          <h3>
-            Star size <span class="unit">px</span>
-            <span class="row-actions">
-              <button id="size-reset" class="link-btn" type="button">reset</button>
-            </span>
-          </h3>
-          <label class="sub-label">Min</label>
-          <input id="size-min" type="range" min="0.5" max="6" step="0.1" value="2.0" />
-          <label class="sub-label">Max</label>
-          <input id="size-max" type="range" min="2" max="32" step="0.5" value="24" />
-          <div class="sub-label-row">
-            <label class="sub-label">Dynamic range <span class="unit">mag</span></label>
-            <span class="row-actions">
-              <button id="span-reset" class="link-btn" type="button">reset</button>
-            </span>
-          </div>
-          <input id="size-span" type="range" min="2" max="20" step="0.5" value="6" />
-          <div class="readout" id="size-readout">2.0 – 24.0 px · span 6 mag</div>
-        </section>
-
-        <section class="group">
-          <h3>
-            Field of view <span class="unit">°</span>
-            <span class="row-actions">
-              <button id="fov-reset" class="link-btn" type="button">reset</button>
-            </span>
-          </h3>
-          <input id="fov" type="range" min="10" max="120" step="1" value="50" />
-          <div class="readout" id="fov-readout">50°</div>
         </section>
 
         </div>

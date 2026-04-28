@@ -10,10 +10,11 @@ import { createDistanceVectorOverlay } from './distance-vector-overlay';
 import { createFocusRingOverlay } from './focus-ring-overlay';
 import { createScaleBar } from './scale-bar';
 import { bindUnitToggle } from './unit-toggle';
-import { bindThemeToggle } from './theme-toggle';
+import { registerThemeStarfield } from './theme-toggle';
 import { bindPanelLayout } from './panel-layout';
 import { bindWarpButton } from './warp-button';
 import { maybeShowInfoModal } from './info-modal';
+import { bindBrandModals } from './brand-modal';
 import { applyFromUrl, startUrlSync } from './url-state';
 import { fmtDist, onUnitChange } from './distance-util';
 import { setupDebug } from './debug';
@@ -27,6 +28,7 @@ async function main() {
   const loadingStatus = document.getElementById('loading-status')!;
   const topbar = document.getElementById('topbar')!;
   const panel = document.getElementById('panel')!;
+  const brandBox = document.getElementById('ui-top-left')!;
   const meta = document.getElementById('meta')!;
   const tooltip = document.getElementById('tooltip')!;
 
@@ -97,7 +99,7 @@ async function main() {
     })();
 
     bindUnitToggle();
-    bindThemeToggle(starfield);
+    registerThemeStarfield(starfield);
     bindControls(starfield);
     bindSearch(starfield, catalog, searchIndex, starLabels, cloudCatalog);
     createDiscMask(starfield);
@@ -155,8 +157,10 @@ async function main() {
       loading.remove();
       topbar.hidden = false;
       panel.hidden = false;
+      brandBox.hidden = false;
       meta.hidden = false;
       bindPanelLayout();
+      bindBrandModals();
       maybeShowInfoModal(catalog.count);
     }, 400);
 
