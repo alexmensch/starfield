@@ -899,6 +899,13 @@ export class Starfield {
     const patch: Partial<FilterState> = {};
     if (!this.filter.sizeMinOverridden) patch.sizeMin = sizes.sizeMinPx;
     if (!this.filter.sizeMaxOverridden) patch.sizeMax = sizes.sizeMaxPx;
+    // Post-patch consistency: the effective max must stay >= effective min.
+    // Both fields can be user-overridden independently; at low exaggeration K
+    // a recomputed max can fall below a user's min override, which would
+    // otherwise leave the filter in an inverted state.
+    const newMin = patch.sizeMin ?? this.filter.sizeMin;
+    const newMax = patch.sizeMax ?? this.filter.sizeMax;
+    if (newMax < newMin) patch.sizeMax = newMin;
     if (Object.keys(patch).length > 0) this.setFilter(patch);
   }
 
@@ -910,14 +917,18 @@ export class Starfield {
   // 1080 px). Scaling by max(w, h) gives a consistent absolute pixel size
   // regardless of orientation, at the cost of strict angular fidelity in
   // the secondary axis. 1-px floor on sizeMin since a sub-pixel disc
-  // renders as nothing.
+  // renders as nothing — and the same floor on sizeMax so it never falls
+  // below sizeMin. (At low exaggeration K both raw values can be
+  // sub-pixel; without the symmetric floor the saturation disc would
+  // invert below the threshold disc.)
   private computePresetPxSizes(name: MagPresetName) {
     const p = MAG_PRESETS[name];
     const refDim = Math.max(window.innerWidth, window.innerHeight);
     const arcsecPerPx = (this.camera.fov * 3600) / refDim;
+    const minPx = Math.max(1.0, p.sizeMinArcsec / arcsecPerPx);
     return {
-      sizeMinPx: Math.max(1.0, p.sizeMinArcsec / arcsecPerPx),
-      sizeMaxPx: p.sizeMaxArcsec / arcsecPerPx,
+      sizeMinPx: minPx,
+      sizeMaxPx: Math.max(minPx, p.sizeMaxArcsec / arcsecPerPx),
     };
   }
 
