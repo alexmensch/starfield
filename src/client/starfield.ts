@@ -74,6 +74,29 @@ const STAR_PSF_ARCSEC = 30;
 const STAR_PHYSICS_FACTOR = 1.84;
 let starExaggerationK = 16;
 
+// Star-disc rendering knobs. Defaults shipped to production; debug panel
+// can sweep each one independently for visual calibration. See
+// star.frag.glsl for the meaning of each value — the doc lives there
+// alongside the math that consumes it.
+export interface StarRenderParams {
+  visibleThreshold: number;
+  coreThreshold: number;
+  discardThreshold: number;
+  distNMin: number;
+  distNMax: number;
+  lumBiasMin: number;
+  lumBiasMax: number;
+}
+export const STAR_RENDER_DEFAULTS: StarRenderParams = {
+  visibleThreshold: 0.2,
+  coreThreshold: 0.4,
+  discardThreshold: 0.02,
+  distNMin: 2.2,
+  distNMax: 10.0,
+  lumBiasMin: 1.0,
+  lumBiasMax: 0.6,
+};
+
 interface MagPreset {
   maxAppMag: number;
   sizeSpan: number;
@@ -214,6 +237,11 @@ export class Starfield {
   private scene: THREE.Scene;
   private discMesh: THREE.Mesh;
   private glowMesh: THREE.Mesh;
+  // Core depth-mask — renders disc-pass cores depth-only before any
+  // background layer so MW / clouds / grid depth-fail behind them.
+  // Visibility gated each frame on (focusedStar || warping) so the draw
+  // call is skipped entirely when no star can be in the disc pass.
+  private coreMaskMesh: THREE.Mesh;
   // Dust particles — null until attachDustParticles() builds the geometry.
   // Rendered as instanced additive billboards over the star scene; off by
   // default (uParticleStrength = 0) for the realism-first opening view.
@@ -224,6 +252,7 @@ export class Starfield {
   // materials but give them the same uniforms map (minus uRenderMode).
   private material: THREE.ShaderMaterial;      // disc pass (opaque)
   private glowMaterial: THREE.ShaderMaterial;  // glow pass (additive)
+  private coreMaskMaterial: THREE.ShaderMaterial; // depth-only core mask
   private geometry: THREE.InstancedBufferGeometry;
 
   // Floating origin to dodge float32 catastrophic cancellation when zoomed
@@ -425,6 +454,18 @@ export class Starfield {
       uSecondsPerDay: { value: 0.2 },
       uMinPeriodSec: { value: 4.0 },
 
+      // Star-disc rendering knobs (debug-panel tunable). See star.frag.glsl
+      // for what each parameter shapes; defaults here are the calibrated
+      // baseline that ships in production.
+      uVisibleThreshold: { value: STAR_RENDER_DEFAULTS.visibleThreshold },
+      uVisibleK: { value: -Math.log(STAR_RENDER_DEFAULTS.visibleThreshold) },
+      uCoreThreshold: { value: STAR_RENDER_DEFAULTS.coreThreshold },
+      uDiscardThreshold: { value: STAR_RENDER_DEFAULTS.discardThreshold },
+      uDistNMin: { value: STAR_RENDER_DEFAULTS.distNMin },
+      uDistNMax: { value: STAR_RENDER_DEFAULTS.distNMax },
+      uLumBiasMin: { value: STAR_RENDER_DEFAULTS.lumBiasMin },
+      uLumBiasMax: { value: STAR_RENDER_DEFAULTS.lumBiasMax },
+
       // Interstellar-dust extinction. Off by default (uDustEnabled = 0) —
       // attachDust() wires in the Data3DTexture progressively as chunks
       // arrive from the network and bumps uDustEnabled to 1 once the
@@ -480,8 +521,28 @@ export class Starfield {
       blending: THREE.AdditiveBlending,
     });
 
-    // renderOrder ensures discs render first (write depth) before glows
-    // (which depth-test against the disc silhouettes).
+    // Core depth-mask: writes near depth at disc-pass star cores before any
+    // background layer renders, so the Milky Way / molecular clouds /
+    // galactic grid depth-fail behind close stars instead of bleeding
+    // through. colorWrite off → cheaper than a colour pass and never paints
+    // anything visible. Visibility gated each frame on focus / warp state
+    // so this draw call is skipped when no star can be in the disc pass.
+    this.coreMaskMaterial = new THREE.ShaderMaterial({
+      glslVersion: THREE.GLSL3,
+      uniforms: { ...sharedUniforms, uRenderMode: { value: 2 } },
+      vertexShader,
+      fragmentShader,
+      depthWrite: true,
+      depthTest: true,
+      colorWrite: false,
+    });
+
+    // renderOrder: core mask (-4) → background layers → discs (0) → glows (1).
+    this.coreMaskMesh = new THREE.Mesh(this.geometry, this.coreMaskMaterial);
+    this.coreMaskMesh.frustumCulled = false;
+    this.coreMaskMesh.renderOrder = -4;
+    this.coreMaskMesh.visible = false;
+    this.scene.add(this.coreMaskMesh);
     this.discMesh = new THREE.Mesh(this.geometry, this.material);
     this.discMesh.frustumCulled = false;
     this.discMesh.renderOrder = 0;
@@ -987,6 +1048,35 @@ export class Starfield {
     this.recomputePresetPxSizes();
   }
   getStarExaggerationK(): number { return starExaggerationK; }
+
+  // Star-disc rendering knobs (debug panel). Patch any subset; uVisibleK
+  // is recomputed whenever uVisibleThreshold changes. Both materials share
+  // the same uniforms object so a single write hits the disc + glow passes.
+  setStarRenderParams(patch: Partial<StarRenderParams>) {
+    const u = this.material.uniforms;
+    if (patch.visibleThreshold !== undefined) {
+      u.uVisibleThreshold.value = patch.visibleThreshold;
+      u.uVisibleK.value = -Math.log(patch.visibleThreshold);
+    }
+    if (patch.coreThreshold !== undefined) u.uCoreThreshold.value = patch.coreThreshold;
+    if (patch.discardThreshold !== undefined) u.uDiscardThreshold.value = patch.discardThreshold;
+    if (patch.distNMin !== undefined) u.uDistNMin.value = patch.distNMin;
+    if (patch.distNMax !== undefined) u.uDistNMax.value = patch.distNMax;
+    if (patch.lumBiasMin !== undefined) u.uLumBiasMin.value = patch.lumBiasMin;
+    if (patch.lumBiasMax !== undefined) u.uLumBiasMax.value = patch.lumBiasMax;
+  }
+  getStarRenderParams(): StarRenderParams {
+    const u = this.material.uniforms;
+    return {
+      visibleThreshold: u.uVisibleThreshold.value,
+      coreThreshold: u.uCoreThreshold.value,
+      discardThreshold: u.uDiscardThreshold.value,
+      distNMin: u.uDistNMin.value,
+      distNMax: u.uDistNMax.value,
+      lumBiasMin: u.uLumBiasMin.value,
+      lumBiasMax: u.uLumBiasMax.value,
+    };
+  }
 
   // Clear override flags for the named fields and write the active
   // preset's value into them. Used by the size and span reset buttons.
@@ -1704,6 +1794,39 @@ export class Starfield {
     this.camera.up.applyAxisAngle(forward, angle).normalize();
   }
 
+  // Pixel size below which a disc-pass core's bleed-through is small enough
+  // that we don't bother enabling the depth mask. Conservative — at this
+  // pivot a max-radius supergiant only takes a handful of pixels on screen.
+  private static readonly CORE_MASK_MIN_PX = 5;
+
+  // Should the core depth-mask render this frame? True iff at least one
+  // star is close enough to the camera that its physSize term could exceed
+  // CORE_MASK_MIN_PX. Derived from the live uniforms, so changing
+  // exaggeration K, FOV, or viewport keeps the gate honest.
+  //
+  // Tight Float32 loop with early-exit on the first hit; the worst case
+  // (no star within range) is ~313k float ops per frame, ~sub-millisecond.
+  private shouldEnableCoreMask(): boolean {
+    const u = this.material.uniforms;
+    const physMaxPx = u.uPhysMaxPx.value as number;
+    const refDistPc = u.uRefDistPc.value as number;
+    const dThresh = (physMaxPx * refDistPc) / Starfield.CORE_MASK_MIN_PX;
+    const dThreshSq = dThresh * dThresh;
+
+    const positions = this._localPositions;
+    const cx = this.camera.position.x;
+    const cy = this.camera.position.y;
+    const cz = this.camera.position.z;
+    const count = this.catalog.count;
+    for (let i = 0; i < count; i++) {
+      const dx = positions[i * 3] - cx;
+      const dy = positions[i * 3 + 1] - cy;
+      const dz = positions[i * 3 + 2] - cz;
+      if (dx * dx + dy * dy + dz * dz < dThreshSq) return true;
+    }
+    return false;
+  }
+
   private animateStartMs = performance.now();
   private animate = () => {
     if (this.disposed) return;
@@ -1718,6 +1841,7 @@ export class Starfield {
     // Advance variability clock (seconds since start). Shared with glow
     // material via sharedUniforms so both passes see the same time.
     this.material.uniforms.uTime.value = (performance.now() - this.animateStartMs) / 1000;
+    this.coreMaskMesh.visible = this.shouldEnableCoreMask();
     this.updateGalacticLayers();
     // Milky Way analytic background. The skybox mesh is already in the
     // main scene at renderOrder = -3; this call re-anchors it to

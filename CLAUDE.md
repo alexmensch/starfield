@@ -8,10 +8,12 @@ Read this before editing.
 A browser-based interactive 3D star catalog viewer. Loads the ~313k-star
 AT-HYG v3.3 catalog (classic-IDs subset), cross-matches it with the GCVS
 variable-star catalogue, and renders stars on the GPU. Stars are
-rendered as instanced quads with two-pass shading — close-range stars
-are resolved as opaque discs whose physical radius scales with the
-catalog absmag + spectral class, and distant stars are additive
-point-glows. Variables pulsate both in disc radius and point glow.
+rendered as instanced quads with three-pass shading — a depth-only core
+mask, an opaque disc pass for close-range stars (physical radius scaled
+by catalog absmag + spectral class), and an additive point-glow pass for
+distant stars. All three share a unified super-Gaussian intensity
+profile whose plateau-vs-Gaussian shape morphs with distance and
+luminosity class. Variables pulsate both in disc radius and point glow.
 Ships as a Cloudflare Workers static-assets site.
 
 ## Repo layout
@@ -70,6 +72,7 @@ src/
     warp-button.ts        warp trigger (on distance label) + skip pill
     debug.ts              window.debug.* registration; hosts the tuning panel
     debug-panel.ts        generic chrome (slider/colour/section helpers)
+    star-tuning.ts        debug section: star-disc profile knobs
     milkyway-tuning.ts    debug section: Milky Way layer tuning
     shaders/
       star.vert.glsl, star.frag.glsl              GLSL3/WebGL2
@@ -107,8 +110,9 @@ Claude Code should read on demand when working on the relevant area.
   constellation aim, URL state, floating origin. The cross-cutting
   patterns the rest of the codebase assumes. Read when changing state
   flow, focus/vector behaviour, or anything that reads star positions.
-- **`docs/rendering.md`** — star pipeline (instanced quads, two passes,
-  physical-size, luminosity softness, variability), Milky Way
+- **`docs/rendering.md`** — star pipeline (instanced quads, three
+  passes including the core depth-mask, super-Gaussian intensity
+  profile, physical-size, luminosity softness, variability), Milky Way
   volumetric disc, molecular clouds, galactic reference layer (disc +
   grid + Sol/GC arrows), dust extinction. Read when touching anything
   visual on the WebGL side.

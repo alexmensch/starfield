@@ -253,12 +253,11 @@ export class MilkyWay {
       // (would require a separate pass to produce entry positions; we
       // compute entry analytically in the fragment shader).
       side: THREE.BackSide,
-      // depthTest off so opaque foreground stars (renderOrder 0) drawn
-      // after this layer don't depth-fail against an empty buffer; the
-      // milky way renders first under renderOrder = -3, then everything
-      // else paints over additively. depthWrite off so the mesh never
-      // occludes anything later.
-      depthTest: false,
+      // depthTest on so the star core depth-mask (renderOrder = -4) can
+      // occlude this layer behind close-range disc stars — without the
+      // test, the additive Milky Way bleeds through bright disc cores.
+      // depthWrite off so the mesh never occludes anything itself.
+      depthTest: true,
       depthWrite: false,
       transparent: true,
       blending: THREE.AdditiveBlending,

@@ -1,6 +1,7 @@
 import type { Starfield } from './starfield';
 import { makeDebugPanel } from './debug-panel';
 import { buildMilkywaySection } from './milkyway-tuning';
+import { buildStarSection } from './star-tuning';
 
 // Optional dev tooling exposed via `window.debug`. The panel hosts every
 // section side-by-side — there's no per-section toggling because the
@@ -29,6 +30,7 @@ export function setupDebug(starfield: Starfield): DebugTools {
       return;
     }
     panel = makeDebugPanel();
+    panel.appendChild(buildStarSection(starfield));
     panel.appendChild(buildMilkywaySection(starfield.milkywayLayer));
     document.body.appendChild(panel);
   };

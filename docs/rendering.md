@@ -18,25 +18,35 @@ the star centre, then offsetting each corner in clip space by
 perspective-correct so stars stay a fixed pixel size regardless of
 depth).
 
-Rendering is **two passes over the same instanced geometry**:
+Rendering is **three passes over the same instanced geometry**:
 
+- **Core depth-mask** (`renderOrder = -4`). Depth-only pass over disc-pass
+  cores (`glow ≥ uCoreThreshold`). `colorWrite = false`, `depthWrite =
+  true` — emits no colour but stamps near-z into the depth buffer before
+  any background layer renders. Causes the Milky Way, molecular clouds,
+  galactic disc, and galactic grid (all `depthTest: true`) to depth-fail
+  behind close-range disc cores rather than bleeding through. Mesh
+  `visible` is gated CPU-side: each frame, a tight `Float32Array` loop
+  over `_localPositions` returns `true` on the first star within
+  `dThresh = uPhysMaxPx × uRefDistPc / CORE_MASK_MIN_PX` (≈ 0.5 pc with
+  default settings). When no star is that close, the entire draw call is
+  skipped.
 - **Disc pass** (`renderOrder = 0`). Stars where `vPhysRatio ≥ 0.5` —
   i.e. the physical-size term dominates the final `max(appSize,
-  physSize)`. Premultiplied-alpha blend + `depthTest` + `depthWrite`, so
-  close-range opaque discs occlude anything behind them.
+  physSize)`. Premultiplied-alpha blend + `depthTest` + `depthWrite`.
+  Halo fragments (`glow < uCoreThreshold`) push `gl_FragDepth = 1.0` so
+  they paint dim haze without occluding the later glow pass — distant
+  stars peek through the halo additively.
 - **Glow pass** (`renderOrder = 1`). Stars where `vPhysRatio < 0.5`.
   Additive blending + depthTest but no depthWrite, so overlapping
   distant-field stars accumulate brightness (Milky Way density stays
-  alive) and glows correctly depth-fail against any disc drawn in pass 1.
+  alive) and glows correctly depth-fail against any disc drawn in pass 2.
 
-Both passes share a single `InstancedBufferGeometry` and a shared
-`uniforms` map (the only divergent uniform is `uRenderMode` bound to its
-material). The disc pass discards fragments with `vPhysRatio < 0.5`; the
-glow pass discards `vPhysRatio ≥ 0.5`. To avoid a visible "pop" at the
-threshold as a star transitions from glow to disc during zoom-in, the
-glow pass morphs its profile from "tight point-glow" to "flat disc" as
-`vPhysRatio` approaches 0.5 via a `max(pointGlow, flatDisc × flatness)`
-blend — so the disc pass takes over with matching geometry.
+All three materials share a single `InstancedBufferGeometry` and the
+same `uniforms` map (the only divergent uniform is `uRenderMode` bound
+to its material). The disc pass discards fragments with `vPhysRatio <
+0.5`; the glow pass discards `vPhysRatio ≥ 0.5`; the core mask discards
+both `vPhysRatio < 0.5` and `glow < uCoreThreshold`.
 
 `ShaderMaterial({ glslVersion: THREE.GLSL3 })`. Vertex shader uses `uint`
 uniforms and bitwise ops for the spectral-class mask. Do **not** downgrade to
@@ -123,22 +133,60 @@ A varying `vPhysRatio = physSize / max(pxSize, 0.001)` is passed to the
 fragment shader to drive the pass split (above) and the luminosity-class
 softness blending (below).
 
-## Luminosity-class softness
+## Star intensity profile
 
-Per-instance `iLumClass` (0=WD, 2=V, 4=III, 6–9=supergiant classes,
-255=unknown) feeds a `vSoftness = clamp(iLumClass / 9, 0, 1)` varying
-(unknown defaults to V). In the fragment shader:
+Both the disc and glow passes share a single **super-Gaussian** falloff
+shape, parameterised so the perceived bright disc fills the calibrated
+quad to its edge:
 
-- Glow pass exponent: `pow(core, mix(3.0, 1.8, vSoftness))`. White
-  dwarfs get a tight core (exp 3.0); hypergiants get a wider halo (1.8).
-- Disc pass edge: `smoothstep(mix(0.48, 0.38, vSoftness), 0.5, r)`. WDs
-  get a ~2% AA band (crisp); supergiants get ~12% (fuzzy), suggesting
-  extended atmospheres.
+```
+raw  = exp(-K · (2r)^n)            with K = -ln(uVisibleThreshold)
+glow = max(0, (raw − uVisibleThreshold) / (1 − uVisibleThreshold))
+```
 
-Physical radius (above) already makes supergiants render much larger
-than dwarfs. Softness adds visual *character* at similar pixel sizes —
-a same-size Sirius-B-like WD and a Betelgeuse-like supergiant look
-materially different even when rendered at identical diameters.
+The threshold subtraction makes `glow = 0` exactly at `r = 0.5`, so the
+visible region matches the calibrated `sizeMaxArcsec` instead of fading
+into a long sub-perceptual tail. `uVisibleThreshold` controls fullness:
+higher → wider visible disc, sharper transition; lower → softer, longer
+tail. Default 0.2.
+
+`n` is driven by two inputs:
+
+- **Distance** via `vPhysRatio`: low values (distant unresolved point)
+  produce a soft Gaussian-like falloff (n ≈ 2–3); high values (close-range
+  resolving disc) produce a wide plateau with a sharp edge (n ≈ 5–10).
+  This replicates the "atmospheric blur" feel without a separate blur
+  pass — distant stars naturally read as fuzzy, close stars read as
+  resolved discs. Implementation: `distN = mix(uDistNMin, uDistNMax,
+  smoothstep(0, 0.5, vPhysRatio))`.
+- **Luminosity** via `vSoftness = clamp(iLumClass / 9, 0, 1)` from
+  per-instance `iLumClass` (0=WD, 2=V, 4=III, 6–9=supergiant classes,
+  255=unknown → V). Hypergiants stay fuzzier than dwarfs at equivalent
+  distance via a multiplicative bias: `n = distN × mix(uLumBiasMin,
+  uLumBiasMax, vSoftness)`. Default range `1.0 → 0.6`.
+
+Physical radius already makes supergiants render much larger than dwarfs.
+The softness bias adds visual *character* at similar pixel sizes — a
+same-size WD and a Betelgeuse-like supergiant look materially different
+even at identical diameters.
+
+The disc pass adds two depth-handling rules on top of the shared profile:
+
+- **Halo transparency.** When `glow < uCoreThreshold`, the fragment
+  paints its dim alpha-blended colour but writes `gl_FragDepth = 1.0`
+  (far plane). The later glow pass's distant stars then pass the depth
+  test and accumulate additively on top — the haze stays visible while
+  background stars peek through. The core mask handles the inverse
+  problem (preventing MW/grid from bleeding through the bright core).
+- **Discard fringe.** `glow < uDiscardThreshold` (default 0.02) drops
+  the fragment entirely so the imperceptible outer pixels don't cost
+  a depth write or no-op blend.
+
+All seven knobs are live-tunable from the debug panel (`debug.panel()`)
+under "Star disc": `visibleThreshold`, `coreThreshold`, `discardThreshold`,
+`distN min/max`, `lumBias dwarf/hypergiant`. See `STAR_RENDER_DEFAULTS`
+in `starfield.ts` for shipping values; `setStarRenderParams(patch)` is
+the programmatic setter.
 
 ## Variable star rendering
 
@@ -546,12 +594,12 @@ extinction (`star.vert.glsl`); molecular cloud ellipsoids
 the band.
 
 **Render path.** Two meshes, both `THREE.BackSide`, additive blending,
-`depthTest = false` (the milky way is the first thing drawn under
-`renderOrder = -3` and depth-tests against an empty buffer would
-be wrong), `depthWrite = false` (the glow never occludes anything
-later), `frustumCulled = false` (the local bounding sphere is at
-origin but world position is GALACTIC_CENTRE_PC - worldOffset). Render
-order:
+`depthTest = true` (so the star core depth-mask at `renderOrder = -4`
+can occlude this layer behind close-range disc cores), `depthWrite =
+false` (the glow never occludes anything later), `frustumCulled =
+false` (the local bounding sphere is at origin but world position is
+GALACTIC_CENTRE_PC - worldOffset). Render order:
+- `-4` Star core depth-mask (depth-only, gated on close-star presence)
 - `-3` Milky Way disc + bulge (this layer)
 - `-2` Molecular clouds (Phase 3a)
 - `-1` Galactic disc + grid reference rings (Phase 4c)
@@ -581,13 +629,21 @@ reorienting as the camera flies past the GC is the realism payoff.
 **No FPS gate.** Performance optimisation deferred. Toggle via the
 panel checkbox or `mw=0` URL.
 
-**Dev tooling.** `debug.milkyway()` in the browser console attaches
-the milky way tuning panel — log-scale slider for brightness +
-linear sliders for glowMagOffset / discDensity / bulgeDensity /
-extinctionStrength + colour pickers for disc + bulge palette + three
-sliders for the reddening RGB multipliers (linear since CCM channels
-exceed 1.0). Call again to detach. The `DebugTools` interface in
-`debug.ts` is the registration point if you add more dev tools later.
+**Dev tooling.** `debug.panel()` in the browser console attaches the
+shared dev panel, which today hosts two sections:
+- **Star disc** (`star-tuning.ts`): seven sliders for the super-Gaussian
+  profile knobs — visibleThreshold, coreThreshold, discardThreshold,
+  distN min/max, lumBias dwarf/hypergiant. See §Star intensity profile
+  above for what each one shapes.
+- **Milky Way** (`milkyway-tuning.ts`): log-scale slider for brightness
+  + linear sliders for glowMagOffset / discDensity / bulgeDensity /
+  extinctionStrength + colour pickers for disc + bulge palette + three
+  sliders for the reddening RGB multipliers (linear since CCM channels
+  exceed 1.0).
+
+Call again to detach. `debug.milkyway()` is a kept alias for muscle
+memory. The `DebugTools` interface in `debug.ts` is the registration
+point if you add more dev tools later.
 
 The same setters are also available individually under
 `starfield.milkywayLayer.*`:
