@@ -59,15 +59,17 @@ src/
     cloud-loader.ts       fetch + parse public/clouds.json
     molecular-clouds.ts   3D ellipsoid render layer + raycast pick + fly-to
     scale-bar.ts          bottom-left distance scale
-    unit-toggle.ts, theme-toggle.ts  display-mode toggles
+    unit-toggle.ts        pc/ly toggle in the panel
+    theme-toggle.ts       programmatic theme API (no live UI; default dark)
     distance-util.ts      fmtDist, unit state + broadcast, niceRound
     url-state.ts          URL ↔ state sync (debounced)
     info-modal.ts         first-visit welcome modal (localStorage opt-out)
-    panel-layout.ts       collapse-toggle for the display-settings panel
+    brand-modal.ts        about / credits modals from the top-left brand box
+    constellation-typeahead.ts  filter-by-name+code picker for #con-input
+    panel-layout.ts       top-level + per-group collapse for the settings panel
     warp-button.ts        warp trigger (on distance label) + skip pill
     debug.ts              window.debug.* registration; hosts the tuning panel
     debug-panel.ts        generic chrome (slider/colour/section helpers)
-    starfield-tuning.ts   debug section: camera FOV + star exaggeration K
     milkyway-tuning.ts    debug section: Milky Way layer tuning
     shaders/
       star.vert.glsl, star.frag.glsl              GLSL3/WebGL2

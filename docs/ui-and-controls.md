@@ -1,8 +1,46 @@
 # UI and controls
 
-The right-side display-settings panel, TrackballControls tuning, the
-warp animation, gestures, layout containers, and a few CSS gotchas
-that bit hard enough to be worth documenting.
+The right-side settings panel, top-left brand surface,
+TrackballControls tuning, the warp animation, gestures, layout
+containers, and a few CSS gotchas that bit hard enough to be worth
+documenting.
+
+## Brand box and About / Credits modals
+
+`.ui-top-left` is a fixed top-left container holding the "Starfield"
+title plus a small `about · credits` link row (always visible — no
+hover affordance, since touch devices have no hover state). Both
+links open `<div class="modal">` cards that reuse the welcome-modal
+styling. ESC, the close button, or the backdrop dismisses; there's
+no "don't show again" opt-out because the modals are user-initiated.
+
+`brand-modal.ts` wires both modals via `data-modal-dismiss`
+attributes on the close button and backdrop. The `.ui-top-left`
+container sits independently of `.ui-top` so changes to the
+right-side stack's width / wrap behaviour don't affect the brand.
+
+## Per-group collapse in the settings panel
+
+Two layers of collapse: the panel as a whole (top-level, key
+`starfield.panel-collapsed`) and each `<section class="group"
+data-group="...">` independently (key
+`starfield.group-collapsed.<name>`). Both default to expanded;
+both persist to `localStorage`. Wired in `panel-layout.ts`. The
+group header is the click target — `<header class="group-header">`
+with an `<h3>` title and a chevron `<button class="group-toggle">`.
+`.row-actions` (reset / all / none) live inside `.group-body`, not
+the header, so their clicks don't bubble into the toggle.
+
+## Constellation typeahead
+
+`constellation-typeahead.ts` replaces the old `<select id="con-select">`
+with an `<input id="con-input">` + dropdown. Substring filter against
+constellation name plus 3-letter IAU code; full alphabetised list shows
+when the input is empty and focused. Single-select — picking fires
+both `setFilter({ highlightCon })` and `aimAtConstellation`, matching
+the prior `<select>` behaviour. Reverse-sync from `onFilterChange`
+keeps the input in step with URL restores. Reset button (`#con-reset`)
+clears the highlight.
 
 ## Reverse-sync in `controls.ts`
 
@@ -50,12 +88,38 @@ button that snaps to `DEFAULT_FOV` = 50°. `setCameraFov` updates
 
 ## Debug panel
 
-`window.debug.panel()` toggles a free-floating tuning panel hosting two
-sections: Starfield (FOV + star exaggeration K sliders) and Milky Way
-(brightness, density, palette, dust). Generic chrome lives in
-`debug-panel.ts`; section builders are in `*-tuning.ts` files. Add a new
-tool by writing a `build*Section` and appending it inside `togglePanel`
-in `debug.ts`. `window.debug.milkyway()` is kept as a legacy alias.
+`window.debug.panel()` toggles a free-floating tuning panel. As of the
+brand-rework it hosts a single section: Milky Way (brightness, density,
+palette, dust). The earlier Starfield section (FOV + exaggeration K)
+was retired once both controls became user-facing in the settings
+panel. Generic chrome lives in `debug-panel.ts`; section builders are
+in `*-tuning.ts` files. Add a new tool by writing a `build*Section`
+and appending it inside `togglePanel` in `debug.ts`.
+`window.debug.milkyway()` is kept as a legacy alias.
+
+## Star size exaggeration
+
+`#exag` slider in the Camera group — range 1 (Realistic) to 20
+(Extreme), default 16, step 0.5. Drives `setStarExaggerationK`, which
+multiplies the eye PSF (`STAR_PSF_ARCSEC = 30″`) before
+`computeMagPresets` derives angular size targets. The default sits
+near the upper end because pure physical sizing leaves most stars
+sub-pixel at typical viewports — at 50° / 1080-tall, K=1 puts the
+threshold-disc star at ~0.18 px and floors it to 1 px. The 1-px
+floor in `computePresetPxSizes` is applied symmetrically to sizeMin
+and sizeMax so the saturation disc never inverts below the threshold
+disc at low K. `recomputePresetPxSizes` additionally enforces
+`max >= min` post-patch to handle the case where the user has manually
+overridden one of the two and the other gets recomputed to a value
+that would invert.
+
+## Theme
+
+Locked to dark in the live UI. The `setMonochrome` plumbing on
+`Starfield` and the `body.monochrome` palette in CSS are intentionally
+retained — `applyTheme('mono')` from the console flips the chart-mode
+palette for future repurposing. There's no longer a UI toggle and no
+URL `t=` param.
 
 ## Camera near plane vs controls minDistance
 
@@ -169,17 +233,20 @@ rotates `camera.up` CCW when viewed from behind the forward vector
 (standard right-hand rule), and rotating `up` CCW in world space makes
 world content appear CW in the camera's view.
 
-## Layout containers: `.ui-top` and `.ui-bottom`
+## Layout containers: `.ui-top-left`, `.ui-top`, `.ui-bottom`
 
-The whole overlay UI is two pure-CSS flex containers — **no breakpoints, no
-JS measurements**. An earlier attempt used `ResizeObserver` to drive
+The whole overlay UI is three pure-CSS fixed containers — **no breakpoints,
+no JS measurements**. An earlier attempt used `ResizeObserver` to drive
 `panel.style.top` / `maxHeight`; the user explicitly rejected that ("use
 native html/css... we shouldn't dictate layout"). Do not reintroduce it.
 
+- `.ui-top-left` — fixed top-left, holds the brand box. Independent of
+  `.ui-top` so the right-side stack's width / wrap behaviour stays
+  untouched.
 - `.ui-top` — fixed top-right, `flex-direction: column`, bottom-bounded.
-  Children in DOM order: topbar (brand + search), then panel (display
-  settings). Because panel is a flex child below the topbar, it can never
-  overlap it — no measurement needed.
+  Children in DOM order: topbar ("Navigate" heading + Focus/To search),
+  then panel (Settings). Because panel is a flex child below the topbar,
+  it can never overlap it — no measurement needed.
 - `.ui-bottom` — fixed full-width along the bottom, `flex-wrap: wrap`,
   `align-items: flex-end`. Children: scale-bar (left), meta (right, with
   `margin-left: auto` for pull-apart). When the row doesn't fit, wrap puts

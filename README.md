@@ -42,6 +42,11 @@ Stack: TypeScript, Three.js (WebGL2), Vite, Cloudflare Workers.
   sizes recompute against the new arcsec-per-pixel ratio so they stay
   proportional to the volumetric Milky Way bulge regardless of FOV or
   screen size.
+- User-tunable star-size exaggeration (slider, 1=Realistic to 20=Extreme).
+  Drives the global scale on the eye PSF used to compute angular star
+  sizes. At low values the sky reads close to literal physics (most stars
+  go sub-pixel and are floored to 1 px); at high values the brightest
+  stars dominate the frame.
 - Click a star to focus; click another to draw a measured distance vector
   (chevron-marked, clipped when the destination goes off-screen); click the
   far tip to travel there instantly, or hover the distance label and click
@@ -88,16 +93,21 @@ Stack: TypeScript, Three.js (WebGL2), Vite, Cloudflare Workers.
   lane reads correctly.
 - Scale bar in the bottom-left adapts to the current zoom in round pc or ly
   units.
-- Two themes: dark (glowing stars on a deep-blue field) and chart (dark stars
-  "inked" onto an off-white background via multiply blending).
 - URL state sync: all settings plus camera pose are serialised to query
   params, so any view is bookmarkable and shareable.
+- Top-left brand surface with always-visible **About** and **Credits**
+  modals (data sources, citations, licence) — both reuse the welcome-modal
+  styling.
 - First-visit welcome modal with a "Don't show this again" opt-out
   (persisted to `localStorage`).
-- Mobile-friendly responsive layout (pure CSS flex, no breakpoints) with a
-  collapsible display-settings panel whose state is remembered across visits.
-- Targeted reset buttons next to constellation selection, star size,
-  dynamic range, and field of view controls.
+- Mobile-friendly responsive layout (pure CSS flex, no breakpoints). The
+  settings panel collapses as a whole and each section (Navigation /
+  Stars / Overlays / Camera) collapses independently; both states persist
+  per-group across visits.
+- Constellation picker is a typeahead — type the name or 3-letter IAU
+  code, or focus the empty field to browse the full alphabetised list.
+- Targeted reset buttons next to constellation, star size, dynamic
+  range, field of view, and exaggeration controls.
 - Two-finger rotate gesture to roll the view around the center of the
   screen. See [Gesture support](#gesture-support) for platform notes.
 
