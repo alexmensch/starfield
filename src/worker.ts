@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Alex Marshall
+// SPDX-License-Identifier: AGPL-3.0-only
+
 interface Fetcher {
   fetch(request: Request): Promise<Response>;
 }
