@@ -1,37 +1,45 @@
 import type { Starfield } from './starfield';
-import { attachMilkywayTuning } from './milkyway-tuning';
+import { makeDebugPanel } from './debug-panel';
+import { buildMilkywaySection } from './milkyway-tuning';
+import { buildStarfieldSection } from './starfield-tuning';
 
-// Optional dev tooling exposed via `window.debug`. Each entry is a
-// toggle: first call attaches the tool, second call detaches. Tools
-// stay out of the DOM entirely until opened, so production users never
-// see them — but they're a single console keystroke away when needed
-// for visual calibration or behaviour debugging.
+// Optional dev tooling exposed via `window.debug`. The panel hosts every
+// section side-by-side (Milky Way, Starfield, future tools) — there's no
+// per-section toggling because the panel is already lightweight enough
+// that opening the whole thing at once is the fast path during
+// calibration.
 //
-// Add new tools here when they earn their keep.
+// Add a new section: build it in its own *-tuning.ts module and append
+// it inside `togglePanel` below.
 
 export interface DebugTools {
-  /** Toggle the Milky Way volumetric layer tuning panel — sliders for
-   *  brightness / glow magnitude offset / disc + bulge density / dust
-   *  extinction strength, plus colour pickers for disc + bulge palette
-   *  and reddening RGB. */
+  /** Toggle the dev tuning panel (Milky Way + Starfield sections). */
+  panel(): void;
+  /** Legacy alias for panel(). Kept so old console muscle memory still works. */
   milkyway(): void;
 }
 
 export function setupDebug(starfield: Starfield): DebugTools {
-  let mwPanel: HTMLDivElement | null = null;
+  let panel: HTMLDivElement | null = null;
+
+  const togglePanel = () => {
+    if (panel) {
+      panel.remove();
+      panel = null;
+      return;
+    }
+    panel = makeDebugPanel();
+    panel.appendChild(buildStarfieldSection(starfield));
+    panel.appendChild(buildMilkywaySection(starfield.milkywayLayer));
+    document.body.appendChild(panel);
+  };
 
   const tools: DebugTools = {
-    milkyway() {
-      if (mwPanel) {
-        mwPanel.remove();
-        mwPanel = null;
-      } else {
-        mwPanel = attachMilkywayTuning(starfield.milkywayLayer);
-      }
-    },
+    panel: togglePanel,
+    milkyway: togglePanel,
   };
 
   (window as unknown as { debug: DebugTools }).debug = tools;
-  console.info('Debug tools: debug.milkyway()');
+  console.info('Debug tools: debug.panel()');
   return tools;
 }
