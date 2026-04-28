@@ -31,15 +31,20 @@ Done:
   with live distance labels. Distance vector unified onto the same
   shared chevron+label silhouette. See `CLAUDE.md` "Galactic reference
   system" section.
-- **Phase 5: Milky Way analytic background** — physically-grounded band
-  visible from any 3D position. Per-fragment raymarch over Jurić 2008
-  thin/thick disks + oblate halo plus a McMillan 2017 triaxial bulge,
-  attenuated by the existing Edenhofer dust voxels (with an analytic
-  exp(-|z|/h) slab for sightlines past the voxel AABB). Half-res RT,
-  composited at renderOrder = -2 behind every other layer. Default-on
-  with a startup FPS probe that disables on devices that can't sustain
-  ≥30 fps. URL `mw=0` forces off; chart mode hides. See `CLAUDE.md`
-  "Milky Way analytic background" section.
+- **Phase 5: Milky Way volumetric background** — physically-grounded
+  band visible from any 3D position. Bounded volumetric raymarch through
+  two proxy meshes (a flattened disc + an oblate bulge) anchored at the
+  galactic centre. Each fragment ray-sphere-intersects the mesh in mesh-
+  local frame, then marches 32 log-distributed steps from entry to back-
+  face exit, evaluating component density (disc double-exponential,
+  bulge `exp(-r'/r_b)` with q=0.6) and an analytical dust profile with
+  CCM reddening, accumulating with Beer-Lambert. Output gated through
+  the same magnitude-clamp curve as the star pipeline (folded into the
+  tone-map exponent so the slider lifts continuously, no plateau). A
+  console-triggered tuning panel (`debug.milkyway()`) exposes sliders
+  and colour pickers for further calibration. Default-on; URL `mw=0`
+  to disable; chart mode hides. See `CLAUDE.md` "Milky Way volumetric
+  disc (Phase 5)" section.
 
 Shelved (dark code):
 - **Phase 2: dust visualisation layer** — particles loaded but rendered
@@ -244,89 +249,6 @@ striking, very small data.
 
 ---
 
-## Phase 5: Milky Way analytic background
-
-**Goal:** physically-grounded Milky Way band visible from any 3D
-position. Adds an analytic stellar-density model evaluated per-fragment
-in a fullscreen raymarch, integrated with the existing dust voxels.
-Makes "see the sky from anywhere" a meaningful feature instead of a
-sparse-points view.
-
-**Why analytic, not panoramic:** painted sky maps (Gaia/2MASS/WISE) are
-Earth-frame and can't reproject from arbitrary positions. Analytic
-density evaluates from anywhere by construction.
-
-**Model:**
-- **Jurić et al. 2008** (ApJ 673, 864) — thin disk + thick disk +
-  oblate power-law halo as closed-form ρ(R, Z). Constants baked into
-  the shader; no dataset to load.
-- **McMillan 2017** triaxial bulge term — adds the Sagittarius core
-  peak that Jurić omits. Without it the band looks weirdly uniform.
-- **Drimmel & Spergel-style analytic dust slab** — exp(−|z|/h) with
-  h ≈ 125 pc in the Galactic frame, used everywhere beyond the
-  Edenhofer voxel AABB so Sagittarius-direction extinction looks right.
-- **Existing Edenhofer voxels** dominate inside their AABB; smoothly
-  hand off to the slab at the boundary.
-
-**Coordinate transform (per ray, in shader):**
-ICRS Cartesian → Galactic Cartesian via fixed `mat3 R_ICRS_to_GAL`
-constant → galactocentric cylindrical with R₀ = 8.122 kpc, z₀ = 20.8 pc
-baked.
-
-**Population colours:** density × luminosity-weighted colour per
-component, summed:
-- Thin disk: warm yellow-white
-- Thick disk: redder (old, metal-poor)
-- Halo: orange-yellow (K-giant dominated)
-- Bulge: similar to halo
-Tune by eye against the real Milky Way during shader iteration.
-
-**Render pipeline:**
-- Fullscreen pass at `renderOrder = -1`, no depthTest/Write, before
-  both star passes.
-- Renders into a half-res `WebGLRenderTarget`, bilinear upscale, then
-  star passes blend over at full res.
-- ~32 log-distributed raymarch steps. Inside dust AABB, sample the 3D
-  texture per step; outside, evaluate the slab.
-- **Startup FPS probe**: time two full frames; if under ~30 fps,
-  default the toggle off but keep it user-enableable.
-
-**Floating origin:** compose `worldOffset + camera.position` in JS
-float64, pass as a `vec3` uniform per frame. Float32 has sub-metre
-precision at kpc scale — fine for density evaluation.
-
-**UI / state:**
-- Panel checkbox "Show Milky Way background" (default on, perf-probe
-  override).
-- URL-state field (omit when default-on).
-- **Chart mode disables this pass** (see Phase 8) — chart shows
-  discrete named objects, not background glow.
-
-**Files:**
-- New: `src/client/shaders/milkyway.{vert,frag}.glsl`.
-- Touch: `starfield.ts` (pass, render target, perf probe, uniforms),
-  `controls.ts` (checkbox), `url-state.ts` (toggle field).
-
-**Watch out for:**
-- `memory/feedback_raymarch_for_nebulae.md` does **not** apply: that
-  warned about banding from voxel sampling at far zoom. Jurić density
-  is smooth analytic; voxel sampling stays bounded inside the
-  well-resolved AABB. Document this in the shader comment so a future
-  reader doesn't read the memory and abandon the work.
-- Dust voxels are geocentred on Sol in absolute world coords. From far
-  away, they correctly represent Sol-local dust but not dust near the
-  camera. The slab fallback partially fixes this — see Phase 6.
-- Spiral-arm overdensities (Reid et al. masers) are out of scope. Add
-  later only if the smooth band looks too uniform.
-
-**Enables:** Phase 9 (Local-sky camera mode) becomes UX-only once this
-phase + Phase 8 land.
-
-**Estimate:** 1–2 days, most of it shader iteration on colour balance
-and slab/voxel handoff.
-
----
-
 ## Phase 6: Realism indicator + per-star dust slab fallback
 
 **Goal:** be honest about where the high-fidelity dust data ends
@@ -338,13 +260,15 @@ Two parts:
 **Part 1 — slab fallback for per-star extinction.** Today
 `star.vert.glsl` raymarches camera→star through the Edenhofer voxel
 volume only. Lines of sight that exit the AABB get zero attenuation
-beyond — wrong direction at the edge. Add the same analytic dust slab
-Phase 5 introduces (exp(−|z|/h), h ≈ 125 pc, Galactic frame) and
+beyond — wrong direction at the edge. Borrow the analytical dust
+profile already shipped in `milkyway.frag.glsl` (`analyticalDustDensity`,
+`exp(-(R-R₀)/L) × exp(-|z|/H)` with h ≈ 125 pc, Galactic frame) and
 integrate it for the segment outside the voxel AABB. Per-star
 extinction then has a sensible value everywhere.
 
-If Phase 5 lands first, the slab term is already shared shader code;
-this phase just calls it from the per-star shader too.
+The function lives in the milky way shader today; lift it into a
+shared shader include or duplicate the constants when porting it into
+`star.vert.glsl`.
 
 **Part 2 — high-fidelity-volume status indicator.** A small chip on
 the bottom row of the UI (next to the scale bar, in `.ui-bottom`) that
