@@ -13,6 +13,7 @@ import { GALACTIC_CENTRE_PC } from './galactic-coords';
 import { MolecularClouds, cloudViewingDistancePc } from './molecular-clouds';
 import type { CloudCatalog } from './cloud-loader';
 import { MilkyWay } from './milkyway';
+import { ObserveControls } from './observe-controls';
 
 export type MagPresetName = 'naked-eye' | 'binoculars' | 'all';
 
@@ -148,9 +149,20 @@ function computeMagPresets(): Record<MagPresetName, MagPreset> {
 // MAG_PRESETS see the latest values after a K tweak.
 export let MAG_PRESETS: Record<MagPresetName, MagPreset> = computeMagPresets();
 
-// Default minimum orbit distance from a focused star. Per-focus code below
-// may bump this for binary systems so both components stay in the viewport.
+// Fallback near-star distance, used when no focus exists yet (controls'
+// minDistance before a star is ever focused). Per-star approach distance is
+// otherwise computed by `minDistForStar` from the star's rendered disc size,
+// so the camera lands on a uniform on-screen size regardless of stellar
+// luminosity class — see TARGET_APPROACH_DISC_PX.
 const DEFAULT_MIN_DIST_PC = 0.005;
+
+// Target rendered disc diameter, in CSS pixels, when the camera parks at
+// `minDistForStar`. Same on-screen size for any star → distance scales with
+// the star's physical radius. Tune here to make every "land near a star"
+// transition (observe-exit, warp source departure, warp arrival, orbit
+// minDistance clamp) place the camera closer (larger value) or further
+// (smaller value).
+const TARGET_APPROACH_DISC_PX = 10;
 
 // Default vertical FOV (degrees). User-tunable via the FOV slider; the
 // reset button snaps back to this value.
@@ -190,6 +202,32 @@ const WARP_BASE_DIR = new THREE.Vector3(0, 0, 1);
 export const AIM_T_MAX_MS = 2000;
 export const AIM_T_MIN_MS = 250;
 
+// OBSERVE-mode entry/exit translate animation. Travel distance is always
+// minDistForStar (sub-parsec) so a fixed duration reads as a brief glide
+// rather than a warp.
+export const OBSERVE_TRANSITION_MS = 1200;
+
+export type CameraMode = 'navigate' | 'observe';
+
+interface ObserveTransitionState {
+  startTimeMs: number;
+  durationMs: number;
+  fromPos: THREE.Vector3;
+  toPos: THREE.Vector3;
+  // 'enter' parks the camera at the focused star (toPos = origin under the
+  // floating-origin frame). 'exit' translates to the star's effective
+  // minDistance along the camera's current backward direction; on
+  // completion controls.target snaps to the focal star and TrackballControls
+  // re-enables.
+  kind: 'enter' | 'exit';
+  // Only meaningful for 'exit' transitions. When true, finishObserveTransition
+  // calls setFocus(null) right after the camera lands at minDistance — used by
+  // the X button on the location search so the user gets the same zoom-out
+  // animation whether they're returning to navigate-with-focus or fully
+  // unfocusing.
+  clearFocusOnExit?: boolean;
+}
+
 export { DEFAULT_MIN_DIST_PC };
 
 interface AimState {
@@ -201,10 +239,21 @@ interface AimState {
   pivot: THREE.Vector3;       // controls.target snapshot, in local frame
 }
 
+// OBSERVE-mode aim. Camera position is fixed; only the camera's orientation
+// changes. Slerping the live camera quaternion from `q0` to `q1` rotates
+// the view in place to face `pointLocal`.
+interface ObserveAimState {
+  startTimeMs: number;
+  durationMs: number;
+  q0: THREE.Quaternion;
+  q1: THREE.Quaternion;
+}
+
 interface WarpState {
   startTimeMs: number;
   reorientMs: number;
   durationMs: number;
+  postArrivalMs: number;   // duration of the post-arrival reorient phase
   A: THREE.Vector3;        // source world position (focused star or cloud centroid)
   dir0: THREE.Vector3;     // unit vector from A toward camera at warp start
   mag0: number;            // |camera - A| at warp start
@@ -214,6 +263,22 @@ interface WarpState {
   endOffset: number;       // arrival viewing distance for the destination
   destKind: 'star' | 'cloud';
   destIdx: number;
+  // Warp originated from OBSERVE mode. finishWarp re-enters observe at the
+  // destination star; uHideFocusIdx stays pinned to the source star for the
+  // entire warp so the camera doesn't briefly render "from inside the star"
+  // during the early reorient frames.
+  returnToObserve: boolean;
+  // Camera quaternion at warp start, in the local frame. The post-arrival
+  // phase slerps from "looking at destination" (set by the fly phase) back
+  // to this orientation, so the user sees the same celestial direction
+  // they were looking at when they picked the destination — but from the
+  // new vantage. Parallax-shifted background; nothing fancier than a
+  // Shoemake-style spherical interpolation between two unit quaternions.
+  startQuaternion: THREE.Quaternion;
+  // Captured lazily on the first frame of the post-arrival phase so the
+  // slerp starts from whatever lookAt(B) produced at fly-end without us
+  // having to predict it analytically.
+  flyEndQuaternion?: THREE.Quaternion;
 }
 
 type Target = { kind: 'star'; idx: number } | { kind: 'cloud'; idx: number };
@@ -295,6 +360,11 @@ export class Starfield {
   private onVectorCloudHandlers: Array<(toCloudIdx: number | null) => void> = [];
   private onStateHandlers: Array<() => void> = [];
   private onWarpHandlers: Array<(active: boolean) => void> = [];
+  private onCameraModeHandlers: Array<(mode: CameraMode) => void> = [];
+
+  private cameraMode: CameraMode = 'navigate';
+  private observeTransition: ObserveTransitionState | null = null;
+  private observeControls!: ObserveControls;
 
   private focusedStar: number | null = null;
   // "Soft" focus on a molecular cloud — mutually exclusive with focusedStar.
@@ -314,6 +384,8 @@ export class Starfield {
   // animation never allocates.
   private aimQ = new THREE.Quaternion();
   private aimTmpDir = new THREE.Vector3();
+  private observeAimState: ObserveAimState | null = null;
+  private observeAimQ = new THREE.Quaternion();
 
   // Galactic reference layers (Phase 4c). Disc fades in by camera-distance
   // from Sol and is always-on; grid + arrows are gated by
@@ -374,6 +446,16 @@ export class Starfield {
     this.controls.minDistance = DEFAULT_MIN_DIST_PC;
     this.controls.maxDistance = 100_000;
     this.controls.target.set(0, 0, 0);
+
+    // OBSERVE-mode look-around controller. Starts disabled; enable() runs
+    // when the camera mode flips, with TrackballControls.enabled toggled
+    // off in the same step so the two schemes never compete for input.
+    this.observeControls = new ObserveControls(
+      canvas,
+      this.camera,
+      (fov) => this.setCameraFov(fov),
+      () => this.camera.fov,
+    );
 
     // Precompute log10(physicalRadius) per star for the shader, and the
     // catalog-wide min/max for uniform bounds. Done once at load so the
@@ -502,6 +584,11 @@ export class Starfield {
       uDustEnabled: { value: 0.0 },
       uExtinctionStrength: { value: 1.0 },
       uWorldOffset: { value: new THREE.Vector3() },
+      // OBSERVE-mode focal-star suppression. Set to the focused-star catalog
+      // index when the camera is parked on it; -1 disables the gate. All
+      // three star passes (disc, glow, core mask) share these uniforms so
+      // the suppression fires uniformly.
+      uHideFocusIdx: { value: -1 },
     };
 
     // Disc pass: opaque-over (premultiplied alpha) so close stars fully
@@ -635,6 +722,110 @@ export class Starfield {
   getMonochrome(): boolean { return this.monochrome; }
   getWarpActive(): boolean { return this.warpState !== null; }
 
+  getCameraMode(): CameraMode { return this.cameraMode; }
+  isObserveTransitionActive(): boolean { return this.observeTransition !== null; }
+
+  onCameraModeChange(handler: (mode: CameraMode) => void) {
+    this.onCameraModeHandlers.push(handler);
+  }
+
+  /**
+   * Switch between the two camera modes. OBSERVE parks the camera at the
+   * focused star and swaps TrackballControls for an in-place look-around
+   * controller. NAVIGATE is the default orbit-camera flow.
+   *
+   * Defensive against:
+   *   - re-entry while a transition is in flight (no-op)
+   *   - request matching the current mode (no-op)
+   *   - OBSERVE without a focused star (no-op — the UI gates the toggle but
+   *     URL state could carry mode=observe without a focus)
+   *   - OBSERVE during warp / aim (no-op — those animations own the camera)
+   *
+   * `animate=false` skips the transition; used by URL restore so a shared
+   * link with mode=observe lands instantly at the parked pose.
+   */
+  setCameraMode(mode: CameraMode, opts: { animate?: boolean } = {}) {
+    if (mode === this.cameraMode) return;
+    if (this.warpState) return;
+    if (this.observeTransition) return;
+    if (mode === 'observe') {
+      if (this.focusedStar === null) return;
+      if (this.warpState || this.aimState) return;
+      // Drop any drawn vector — measurement endpoints don't survive a
+      // perspective change to "I'm standing on the source."
+      this.setVectorTo(null);
+      this.setVectorToCloud(null);
+      this.cameraMode = 'observe';
+      this.material.uniforms.uHideFocusIdx.value = this.focusedStar;
+      this.controls.enabled = false;
+      if (opts.animate === false) {
+        // Snap. Camera quaternion is preserved; only its position moves to
+        // the focal star's local origin.
+        this.camera.position.set(0, 0, 0);
+        this.observeControls.enable();
+      } else {
+        this.observeTransition = {
+          startTimeMs: performance.now(),
+          durationMs: OBSERVE_TRANSITION_MS,
+          fromPos: this.camera.position.clone(),
+          toPos: new THREE.Vector3(0, 0, 0),
+          kind: 'enter',
+        };
+      }
+      for (const h of this.onCameraModeHandlers) h(this.cameraMode);
+      this.fireStateChange();
+      return;
+    }
+
+    // mode === 'navigate'
+    this.startObserveExit({
+      animate: opts.animate !== false,
+      clearFocusOnExit: false,
+    });
+  }
+
+  // Shared exit path from OBSERVE → navigate. Used by both the navigate-mode
+  // toggle (focus retained) and the location-search X button
+  // (clearFocusOnExit=true; setFocus(null) runs on landing). Always emits the
+  // mode-change + state-change events so listeners settle once per exit
+  // regardless of which path triggered it.
+  private startObserveExit(opts: { animate: boolean; clearFocusOnExit: boolean }) {
+    if (this.cameraMode !== 'observe') return;
+    this.cameraMode = 'navigate';
+    this.material.uniforms.uHideFocusIdx.value = -1;
+    this.observeControls.disable();
+    // Cancel any in-flight observe aim — its post-flight re-enable would
+    // fight the upcoming exit transition / TrackballControls handover.
+    this.observeAimState = null;
+
+    if (!opts.animate || this.focusedStar === null) {
+      // Hard switch. controls.target snaps back to the focal star's local
+      // origin (or world origin when unfocused) and TrackballControls
+      // re-enables.
+      this.controls.target.set(0, 0, 0);
+      this.controls.update();
+      this.controls.enabled = true;
+      if (opts.clearFocusOnExit) this.setFocus(null);
+    } else {
+      // Pull back along the camera's current view direction so whatever the
+      // user was just looking at stays roughly forward after exit. Distance
+      // = the focal star's effective minDistance, so orbit picks up exactly
+      // where it would on a fresh focus.
+      const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
+      const minDist = this.minDistForStar(this.focusedStar);
+      this.observeTransition = {
+        startTimeMs: performance.now(),
+        durationMs: OBSERVE_TRANSITION_MS,
+        fromPos: this.camera.position.clone(),
+        toPos: forward.multiplyScalar(-minDist),
+        kind: 'exit',
+        clearFocusOnExit: opts.clearFocusOnExit,
+      };
+    }
+    for (const h of this.onCameraModeHandlers) h(this.cameraMode);
+    this.fireStateChange();
+  }
+
   private setFocus(idx: number | null) {
     // Star and cloud focus are mutually exclusive — selecting either one
     // clears the other. Both setters end up here for the cloud-clear leg
@@ -648,6 +839,19 @@ export class Starfield {
     if (this.focusedStar === idx) {
       if (cloudCleared) this.fireStateChange();
       return;
+    }
+    // OBSERVE depends on a focused star anchor. Any change to the anchor
+    // (unfocus or switch to another star) bails out of observe immediately.
+    // Snap rather than animate because a transition needs the original
+    // anchor to mean anything.
+    if (this.cameraMode === 'observe') {
+      this.observeTransition = null;
+      this.observeAimState = null;
+      this.cameraMode = 'navigate';
+      this.material.uniforms.uHideFocusIdx.value = -1;
+      this.observeControls.disable();
+      this.controls.enabled = true;
+      for (const h of this.onCameraModeHandlers) h(this.cameraMode);
     }
     this.focusedStar = idx;
     // Recenter the floating origin on every focus change. Focused: origin
@@ -925,6 +1129,10 @@ export class Starfield {
   get localPositions(): Float32Array { return this._localPositions; }
 
   setVectorTo(idx: number | null) {
+    // OBSERVE doesn't draw vectors. Defensive: search "To" or URL state
+    // could try to write one — drop the value rather than fight an invalid
+    // overlay state.
+    if (idx !== null && (this.cameraMode === 'observe' || this.observeTransition)) return;
     // Mutually exclusive with vectorToCloud; setting a star vector clears
     // any cloud destination.
     if (idx !== null && this.vectorToCloud !== null) {
@@ -938,6 +1146,7 @@ export class Starfield {
   }
 
   setVectorToCloud(idx: number | null) {
+    if (idx !== null && (this.cameraMode === 'observe' || this.observeTransition)) return;
     // Mutually exclusive with vectorTo; setting a cloud vector clears
     // any star destination.
     if (idx !== null && this.vectorTo !== null) {
@@ -951,12 +1160,54 @@ export class Starfield {
   }
 
   unfocus() {
+    if (this.warpState) return;
     if (
       this.focusedStar === null && this.focusedCloud === null &&
       this.vectorTo === null && this.vectorToCloud === null
     ) return;
     this.setVectorTo(null);
     this.setVectorToCloud(null);
+    // X-out from OBSERVE: clear focus FIRST so the search box empties as
+    // soon as the user clicks (via onFocusChange → syncFocusUI), then
+    // animate the same zoom-out the navigate-mode toggle uses. The
+    // animation runs in the post-recenter (Sol-centric) frame because
+    // setFocus(null) recentres the floating origin.
+    if (this.cameraMode === 'observe' && this.focusedStar !== null) {
+      const focalIdx = this.focusedStar;
+      const minDist = this.minDistForStar(focalIdx);
+      // Quaternion → forward is frame-invariant, so capture before the
+      // recenter rebases coordinates.
+      const forward = new THREE.Vector3(0, 0, -1)
+        .applyQuaternion(this.camera.quaternion);
+
+      // Exit observe internals.
+      this.cameraMode = 'navigate';
+      this.material.uniforms.uHideFocusIdx.value = -1;
+      this.observeControls.disable();
+      this.observeAimState = null;
+
+      // setFocus(null) recentres origin → camera.position translates;
+      // search box clears via the onFocusChange handler. cameraMode is
+      // already 'navigate' so the observe-cleanup branch inside setFocus
+      // is skipped.
+      this.setFocus(null);
+
+      const fromPos = this.camera.position.clone();
+      const toPos = fromPos.clone().addScaledVector(forward, -minDist);
+      this.observeTransition = {
+        startTimeMs: performance.now(),
+        durationMs: OBSERVE_TRANSITION_MS,
+        fromPos,
+        toPos,
+        kind: 'exit',
+        // Focus has already been cleared above — nothing for
+        // finishObserveTransition to clean up.
+        clearFocusOnExit: false,
+      };
+      for (const h of this.onCameraModeHandlers) h(this.cameraMode);
+      this.fireStateChange();
+      return;
+    }
     this.setFocus(null);
     this.setFocusedCloud(null);
   }
@@ -1163,6 +1414,7 @@ export class Starfield {
   }
 
   focusStar(starIndex: number, distancePc = 2) {
+    if (this.warpState) return;
     const target = this.starLocalPosition(starIndex);
     const offset = new THREE.Vector3()
       .subVectors(this.camera.position, this.controls.target)
@@ -1247,6 +1499,21 @@ export class Starfield {
     endOffset: number,
   ) {
     if (this.warpState) return;
+    if (this.observeTransition) return;
+    // Warp launched from OBSERVE: leave cameraMode='observe' for the
+    // duration so the search-row label, mode toggle, and any other
+    // mode-bound UI don't flicker through navigate while the warp runs.
+    // The animate loop branches off warpState first, so the cosmetic
+    // mode value never reaches observeUpdateTarget. uHideFocusIdx stays
+    // pinned to the source star — the reorient begins with the camera at
+    // A, and unhiding it would briefly render the source disc from the
+    // camera's interior.
+    let returnToObserve = false;
+    if (this.cameraMode === 'observe') {
+      this.observeAimState = null;
+      this.observeControls.disable();
+      returnToObserve = destKind === 'star';
+    }
     // An in-flight aim animation is superseded by warp — drop the state so
     // updateAim doesn't run after warp completes against now-stale pivot.
     this.aimState = null;
@@ -1286,6 +1553,15 @@ export class Starfield {
       startTimeMs: performance.now(),
       reorientMs: WARP_REORIENT_MS,
       durationMs,
+      // Post-arrival slerp only runs when we're returning to OBSERVE.
+      // Navigate-mode arrival re-engages TrackballControls, whose update()
+      // calls camera.lookAt(target=B) every frame — applying a 1.2 s
+      // parallax slerp there would just be overwritten one frame later
+      // when controls re-asserts itself, leaving the user with a
+      // jarring snap-back. Skipping the slerp on navigate keeps the
+      // landing visually consistent with how navigate-mode focuses
+      // already work.
+      postArrivalMs: returnToObserve ? OBSERVE_TRANSITION_MS : 0,
       A,
       dir0,
       mag0,
@@ -1295,6 +1571,8 @@ export class Starfield {
       endOffset,
       destKind,
       destIdx,
+      returnToObserve,
+      startQuaternion: this.camera.quaternion.clone(),
     };
     for (const h of this.onWarpHandlers) h(true);
     this.fireStateChange();
@@ -1323,20 +1601,63 @@ export class Starfield {
     }
     // Park at the configured end offset so orbit radius matches the arrival
     // we animated to — no visible snap between the last fly frame and the
-    // parked state.
+    // parked state. Final orientation depends on the destination mode:
+    //   observe: startQuaternion (post-arrival slerp end state — same
+    //            celestial direction the user was looking at warp start;
+    //            survives because observe disables TrackballControls).
+    //   navigate: lookAt(B) (matches the orbit-around-target invariant
+    //            TrackballControls.update() will enforce next frame).
     const forward = new THREE.Vector3().subVectors(B, state.pStart).normalize();
     this.camera.position.copy(B).addScaledVector(forward, -state.endOffset);
+    if (state.returnToObserve) {
+      this.camera.quaternion.copy(state.startQuaternion).normalize();
+    } else {
+      this.camera.lookAt(B);
+    }
     this.controls.target.copy(B);
     this.warpState = null;
-    this.controls.enabled = true;
-    this.controls.update();
     // Clear both vector slots — vector destination has been reached, so
     // the measurement line should retire either way.
     this.setVectorTo(null);
     this.setVectorToCloud(null);
-    if (state.destKind === 'star') this.setFocus(state.destIdx);
-    else this.setFocusedCloud(state.destIdx);
+    if (state.destKind === 'star' && state.returnToObserve) {
+      // observe→observe arrival. swapObserveAnchor updates focus, recentres
+      // the floating origin, and sets uHideFocusIdx to the destination,
+      // all without flipping cameraMode through navigate (which is what
+      // setFocus would do, triggering an onCameraModeChange flicker).
+      this.swapObserveAnchor(state.destIdx);
+      this.observeControls.enable();
+      // controls.enabled stays false — observe owns the camera now.
+    } else {
+      // navigate-mode arrival. Source-star hide expires with the warp; the
+      // destination star (if any) renders normally.
+      this.material.uniforms.uHideFocusIdx.value = -1;
+      if (state.destKind === 'star') this.setFocus(state.destIdx);
+      else this.setFocusedCloud(state.destIdx);
+      this.controls.enabled = true;
+      this.controls.update();
+    }
     for (const h of this.onWarpHandlers) h(false);
+  }
+
+  // Swap the OBSERVE anchor to a new star without going through setFocus's
+  // observe-cleanup branch (which would flip cameraMode to navigate and
+  // emit an onCameraModeChange event, briefly flickering UI bound to the
+  // mode value). Used by finishWarp on observe→observe arrival.
+  private swapObserveAnchor(newIdx: number) {
+    const p = this.catalog.positions;
+    this.recenterOrigin(this.tmpRecenter.set(
+      p[newIdx * 3], p[newIdx * 3 + 1], p[newIdx * 3 + 2],
+    ));
+    this.focusedStar = newIdx;
+    this.material.uniforms.uHideFocusIdx.value = newIdx;
+    this.controls.minDistance = this.minDistForStar(newIdx);
+    // Park at the new anchor's local origin — observe invariant is
+    // camera at (0,0,0) under the floating origin. Quaternion preserved
+    // from the post-arrival slerp end state.
+    this.camera.position.set(0, 0, 0);
+    for (const h of this.onFocusHandlers) h(newIdx);
+    this.fireStateChange();
   }
 
   /** Local-frame position of a cloud's centroid. Returns null if the
@@ -1356,6 +1677,7 @@ export class Starfield {
   // dominate from the user's current vantage, even when the user has
   // travelled deep into 3D space.
   aimAtConstellation(conIndex: number) {
+    if (this.observeTransition) return;
     const cons = this.catalog.constellations;
     const lines = conIndex >= 0 && conIndex < cons.length ? cons[conIndex].lines : undefined;
     if (!lines || lines.length === 0) return;
@@ -1390,6 +1712,14 @@ export class Starfield {
     }
     c.divideScalar(top.length);
 
+    if (this.cameraMode === 'observe') {
+      // Camera is parked at the focal star — just rotate the view to face
+      // the centroid through the shared observe-mode aim slerp. Distance
+      // doesn't matter; only the direction from camera to `c` is used.
+      this.aimAt(c);
+      return;
+    }
+
     const dir = new THREE.Vector3().subVectors(c, t);
     if (dir.lengthSq() < 1e-6) return; // aim point coincides with target
     dir.normalize();
@@ -1414,6 +1744,44 @@ export class Starfield {
    */
   aimAt(pointLocal: THREE.Vector3) {
     if (this.warpState || this.aimState) return;
+    if (this.observeTransition) return;
+    if (this.cameraMode === 'observe') {
+      if (this.observeAimState) return;
+      // Camera is fixed at the focal star; orientation changes only. Build
+      // the target quaternion from a lookAt towards `pointLocal` and slerp
+      // the live camera quaternion across the transition. controls.target
+      // is regenerated from the quaternion each frame by observeUpdateTarget,
+      // so we only animate the rotation.
+      const aimDx = pointLocal.x - this.camera.position.x;
+      const aimDy = pointLocal.y - this.camera.position.y;
+      const aimDz = pointLocal.z - this.camera.position.z;
+      if (aimDx * aimDx + aimDy * aimDy + aimDz * aimDz < 1e-6) return;
+
+      const lookMat = new THREE.Matrix4().lookAt(
+        this.camera.position,
+        pointLocal,
+        this.camera.up,
+      );
+      const q1 = new THREE.Quaternion().setFromRotationMatrix(lookMat);
+      const q0 = this.camera.quaternion.clone();
+      const dot = Math.min(1, Math.abs(q0.dot(q1)));
+      if (dot > 0.99999) return;
+      // Geodesic angle between two unit quaternions is 2·acos(|q0·q1|).
+      const angle = 2 * Math.acos(dot);
+      const durationMs = Math.max(
+        AIM_T_MIN_MS,
+        Math.min(AIM_T_MAX_MS, (angle / Math.PI) * AIM_T_MAX_MS),
+      );
+
+      this.observeControls.disable();
+      this.observeAimState = {
+        startTimeMs: performance.now(),
+        durationMs,
+        q0,
+        q1,
+      };
+      return;
+    }
 
     const pivot = this.controls.target;
     const offsetX = this.camera.position.x - pivot.x;
@@ -1474,6 +1842,23 @@ export class Starfield {
       this.aimState = null;
       this.controls.enabled = true;
       this.controls.update();
+    }
+  }
+
+  // OBSERVE-mode aim. Slerps the camera's quaternion from start to target
+  // orientation while leaving its position alone, then re-enables the
+  // observe input controller on completion.
+  private updateObserveAim() {
+    const state = this.observeAimState;
+    if (!state) return;
+    const elapsed = performance.now() - state.startTimeMs;
+    const u = Math.min(1, elapsed / state.durationMs);
+    const f = u * u * (3 - 2 * u);
+    this.observeAimQ.copy(state.q0).slerp(state.q1, f);
+    this.camera.quaternion.copy(this.observeAimQ);
+    if (u >= 1) {
+      this.observeAimState = null;
+      this.observeControls.enable();
     }
   }
 
@@ -1673,19 +2058,39 @@ export class Starfield {
     return Math.max(appSize, physSize);
   }
 
-  // Effective minimum orbit distance from a star. For stars with a binary
-  // companion, bumps the distance so the companion still fits within the
-  // viewport half-angle (keeps the whole system in view at max zoom). For
-  // solo stars, returns the default.
+  // Single source of truth for "near-star" approach distance — used by
+  // controls.minDistance (orbit clamp), observe-exit landing, warp source
+  // departure, and warp arrival.
+  //
+  // Distance is chosen so the star renders at TARGET_APPROACH_DISC_PX in
+  // CSS pixels: this gives every star the same on-screen disc size at
+  // approach, with the physical distance scaling with the star's physical
+  // radius (supergiants land further out than dwarfs). Mirrors the disc
+  // term of `renderedSizePx` (physSize = sizeAtRef × refDistPc / dist).
+  //
+  // For binary stars the result is bumped so the companion still fits
+  // within the viewport half-angle, keeping the whole system in frame.
   minDistForStar(idx: number): number {
+    const u = this.material.uniforms;
+    const physMinPx = u.uPhysMinPx.value as number;
+    const physMaxPx = u.uPhysMaxPx.value as number;
+    const refDistPc = u.uRefDistPc.value as number;
+    const logRMin = u.uLogRMin.value as number;
+    const logRMax = u.uLogRMax.value as number;
+    const logSpan = Math.max(logRMax - logRMin, 0.001);
+    const logR = Math.log10(Math.max(this.catalog.physicalRadius[idx], 1e-6));
+    const logRatio = Math.max(0, Math.min(1, (logR - logRMin) / logSpan));
+    const sizeAtRef = physMinPx + logRatio * (physMaxPx - physMinPx);
+    const discDist = (sizeAtRef * refDistPc) / TARGET_APPROACH_DISC_PX;
+
     const comp = this.catalog.companion[idx];
-    if (comp < 0) return DEFAULT_MIN_DIST_PC;
+    if (comp < 0) return discDist;
     const p = this.catalog.positions;
     const dx = p[comp * 3] - p[idx * 3];
     const dy = p[comp * 3 + 1] - p[idx * 3 + 1];
     const dz = p[comp * 3 + 2] - p[idx * 3 + 2];
     const sep = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    return Math.max(DEFAULT_MIN_DIST_PC, sep * BINARY_MIN_DIST_FACTOR);
+    return Math.max(discDist, sep * BINARY_MIN_DIST_FACTOR);
   }
 
   private onPointerDown = (e: PointerEvent) => {
@@ -1699,6 +2104,10 @@ export class Starfield {
     this.pointerDownAt = null;
     if (!down) return;
     if (this.warpState || this.aimState) return;
+    // OBSERVE swallows canvas clicks — the focal star is the camera anchor,
+    // so star/cloud picking has no useful interaction. The mode toggle in
+    // the topbar is the only way out.
+    if (this.cameraMode === 'observe' || this.observeTransition) return;
     const dx = e.clientX - down.x;
     const dy = e.clientY - down.y;
     if (dx * dx + dy * dy > 25) return;
@@ -1812,12 +2221,19 @@ export class Starfield {
   // Rotate the camera's up vector around the view direction. TrackballControls
   // reads camera.up on every update() so the new orientation persists through
   // subsequent orbit/zoom without needing to touch the controls' internals.
+  // OBSERVE mode drives orientation through `camera.quaternion` directly
+  // (TrackballControls is disabled), so updating only camera.up has no
+  // visible effect — apply the same axis-angle to the quaternion as well.
   private rollCamera(angle: number) {
     const forward = new THREE.Vector3()
       .subVectors(this.controls.target, this.camera.position);
     if (forward.lengthSq() === 0) return;
     forward.normalize();
     this.camera.up.applyAxisAngle(forward, angle).normalize();
+    if (this.cameraMode === 'observe') {
+      const q = new THREE.Quaternion().setFromAxisAngle(forward, angle);
+      this.camera.quaternion.premultiply(q).normalize();
+    }
   }
 
   // Pixel size below which a disc-pass core's bleed-through is small enough
@@ -1860,6 +2276,21 @@ export class Starfield {
       this.updateWarp();
     } else if (this.aimState) {
       this.updateAim();
+    } else if (this.observeAimState) {
+      this.updateObserveAim();
+      // Observe-mode aim slerps the camera quaternion in place. The
+      // controls.target still needs the per-frame re-pin so URL state stays
+      // truthful mid-flight.
+      this.observeUpdateTarget();
+    } else if (this.observeTransition) {
+      this.updateObserveTransition();
+    } else if (this.cameraMode === 'observe') {
+      // Look-around input (yaw/pitch/roll/FOV) mutates the camera directly
+      // via observeControls + the existing two-finger handlers. Per-frame
+      // we just re-pin controls.target one parsec ahead of the camera so
+      // URL state writers (which serialise camera.position + target) still
+      // round-trip the look direction correctly.
+      this.observeUpdateTarget();
     } else {
       this.controls.update();
     }
@@ -1929,6 +2360,7 @@ export class Starfield {
       isSolFocus,
       this.filter.showGalacticOverlays,
       this.filter.sizeMax,
+      this.cameraMode === 'observe',
     );
 
     this.clouds?.update(this.worldOffset, this.filter.showMolecularClouds);
@@ -1962,19 +2394,87 @@ export class Starfield {
 
     // Fly phase: symmetric accelerate/decelerate along the A→B line.
     const flyElapsed = elapsed - state.reorientMs;
-    const t = Math.min(flyElapsed / state.durationMs, 1);
-    const f = t < 0.5 ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t);
-    this.camera.position.lerpVectors(state.pStart, state.pEnd, f);
-    const B = state.destKind === 'star'
-      ? this.starLocalPosition(state.destIdx)
-      : this.cloudLocalPosition(state.destIdx);
-    if (B) this.camera.lookAt(B);
-    if (t >= 1) this.finishWarp();
+    if (flyElapsed < state.durationMs) {
+      const t = flyElapsed / state.durationMs;
+      const f = t < 0.5 ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t);
+      this.camera.position.lerpVectors(state.pStart, state.pEnd, f);
+      const B = state.destKind === 'star'
+        ? this.starLocalPosition(state.destIdx)
+        : this.cloudLocalPosition(state.destIdx);
+      if (B) this.camera.lookAt(B);
+      return;
+    }
+
+    // Post-arrival phase: camera parked at pEnd; slerp the quaternion from
+    // the fly-end "looking at destination" orientation back to the warp's
+    // captured starting orientation. The user sees the same celestial
+    // direction they had at warp start, now from the new vantage —
+    // foreground stars shift due to parallax, distant Milky Way stays
+    // roughly fixed.
+    const postElapsed = flyElapsed - state.durationMs;
+    if (postElapsed < state.postArrivalMs) {
+      if (!state.flyEndQuaternion) {
+        // Pin the camera to the canonical fly-end pose before snapshot
+        // so the slerp doesn't inherit a half-stepped frame.
+        this.camera.position.copy(state.pEnd);
+        const B = state.destKind === 'star'
+          ? this.starLocalPosition(state.destIdx)
+          : this.cloudLocalPosition(state.destIdx);
+        if (B) this.camera.lookAt(B);
+        state.flyEndQuaternion = this.camera.quaternion.clone();
+      }
+      const u = postElapsed / state.postArrivalMs;
+      const f = u * u * (3 - 2 * u);
+      this.warpQ0.copy(state.flyEndQuaternion).slerp(state.startQuaternion, f);
+      this.camera.quaternion.copy(this.warpQ0).normalize();
+      return;
+    }
+
+    this.finishWarp();
   }
 
   private warpTmp = new THREE.Vector3();
   private warpQ0 = new THREE.Quaternion();
   private warpQ1 = new THREE.Quaternion();
+
+  // Symmetric ease translate from `fromPos` to `toPos`, no quaternion change.
+  // Camera look direction is preserved by holding the quaternion fixed; we
+  // skip controls.update() during the run so the target doesn't tug it.
+  private updateObserveTransition() {
+    const state = this.observeTransition;
+    if (!state) return;
+    const t = Math.min(1, (performance.now() - state.startTimeMs) / state.durationMs);
+    const f = t < 0.5 ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t);
+    this.camera.position.lerpVectors(state.fromPos, state.toPos, f);
+    if (t >= 1) this.finishObserveTransition();
+  }
+
+  private finishObserveTransition() {
+    const state = this.observeTransition;
+    if (!state) return;
+    this.observeTransition = null;
+    if (state.kind === 'enter') {
+      this.camera.position.copy(state.toPos);
+      this.observeControls.enable();
+    } else {
+      this.camera.position.copy(state.toPos);
+      this.controls.target.set(0, 0, 0);
+      this.controls.update();
+      this.controls.enabled = true;
+      if (state.clearFocusOnExit) this.setFocus(null);
+    }
+    this.fireStateChange();
+  }
+
+  private observeTmpFwd = new THREE.Vector3();
+  private observeUpdateTarget() {
+    // 1 pc ahead of the camera in its current look direction. Choice of 1 pc
+    // is arbitrary — controls.target is serialised but never used as an
+    // orbit pivot while OBSERVE is active. Any non-zero distance yields a
+    // valid forward direction on round-trip.
+    this.observeTmpFwd.set(0, 0, -1).applyQuaternion(this.camera.quaternion);
+    this.controls.target.copy(this.camera.position).add(this.observeTmpFwd);
+  }
 
   dispose() {
     this.disposed = true;

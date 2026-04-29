@@ -20,6 +20,13 @@ export function createFocusRingOverlay(starfield: Starfield) {
   starfield.onFrame(() => {
     const idx = starfield.getFocusedStar();
     if (idx === null) return;
+    // OBSERVE parks the camera on the focal star, so the ring would either
+    // tile screen-centre or fight the disc-mask cutout. Hide either way —
+    // the HUD arrows take over the "you are here" cue.
+    if (starfield.getCameraMode() === 'observe' || starfield.isObserveTransitionActive()) {
+      hide();
+      return;
+    }
     const positions = starfield.localPositions;
     const camera = starfield.camera;
     v.set(positions[idx * 3], positions[idx * 3 + 1], positions[idx * 3 + 2]);

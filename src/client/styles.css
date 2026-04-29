@@ -592,6 +592,27 @@ input[type="range"]::-moz-range-thumb {
   background: rgba(125, 211, 252, 0.12);
   color: var(--accent);
 }
+.toggle-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.toggle-btn:disabled:hover { color: var(--fg-dim); }
+
+/* Top-right mode pill — replaces the static "Navigate" heading. Spans the
+ * topbar width with the two halves splitting evenly, matching the heading's
+ * uppercase / wide-tracked styling so the swap reads as the same UI region
+ * gaining a switch rather than a new control appearing. */
+.topbar-mode {
+  align-self: stretch;
+  margin: 0 0 4px;
+}
+.topbar-mode .toggle-btn {
+  flex: 1 1 0;
+  text-align: center;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  padding: 4px 10px 6px;
+}
 
 .overlay {
   position: fixed;

@@ -422,6 +422,7 @@ export function bindSearch(
   const resultsEl = document.getElementById('search-results') as HTMLUListElement;
   const focusInput = document.getElementById('search-focus') as HTMLInputElement;
   const focusClear = document.getElementById('search-focus-clear') as HTMLButtonElement;
+  const focusTag = document.getElementById('search-focus-tag')!;
   const toInput = document.getElementById('search-to') as HTMLInputElement;
   const toClear = document.getElementById('search-to-clear') as HTMLButtonElement;
   const toRow = document.getElementById('search-to-row')!;
@@ -430,14 +431,34 @@ export function bindSearch(
     return starLabels.get(idx) ?? `Unnamed #${idx}`;
   };
 
+  // OBSERVE mode is star-only — clouds aren't valid observation anchors,
+  // so they shouldn't appear in the location picker. Wrap the shared query
+  // to drop them when observing; the To box still uses the unfiltered
+  // runner because the distance vector accepts cloud destinations.
+  const focusRunQuery = (q: string): FuzzyEntry[] => {
+    const all = runQuery(q);
+    if (starfield.getCameraMode() === 'observe') {
+      return all.filter((e) => e.kind === 'star');
+    }
+    return all;
+  };
+
   const focusBox = new SearchBox(
     focusInput,
     focusClear,
     resultsEl,
-    runQuery,
+    focusRunQuery,
     (entry) => {
-      if (entry.kind === 'cloud') starfield.flyToCloud(entry.index);
-      else starfield.focusStar(entry.index);
+      if (entry.kind === 'cloud') {
+        starfield.flyToCloud(entry.index);
+      } else if (starfield.getCameraMode() === 'observe') {
+        // Re-route through warp so the camera flies from the current
+        // observation anchor to the new one and re-enters observe on
+        // arrival, instead of teleporting via focusStar.
+        starfield.warpTo(entry.index);
+      } else {
+        starfield.focusStar(entry.index);
+      }
     },
     () => starfield.unfocus(),
   );
@@ -465,16 +486,24 @@ export function bindSearch(
   // exclusive (setting either clears the other in Starfield), so the
   // focus search box renders whichever one is set. The To (distance
   // vector) row is shown whenever a focus is held — clouds participate
-  // in the same measurement / warp flow as stars now.
+  // in the same measurement / warp flow as stars now. OBSERVE mode hides
+  // the To row entirely: distance-vector measurement is meaningless from
+  // a camera parked on its own anchor, and the underlying setters no-op
+  // in that mode anyway.
   const syncFocusUI = () => {
     const starIdx = starfield.getFocusedStar();
     const cloudIdx = starfield.getFocusedCloud();
+    const observe = starfield.getCameraMode() === 'observe';
+    // OBSERVE makes the focus row read as "where you are observing from"
+    // rather than "what you have selected", which is what FOCUS implies in
+    // navigate mode. Same field, different mental model.
+    focusTag.textContent = observe ? 'Location' : 'Focus';
     if (starIdx !== null) {
       focusBox.setName(describe(starIdx));
-      toRow.hidden = false;
+      toRow.hidden = observe;
     } else if (cloudIdx !== null && clouds) {
       focusBox.setName(clouds.clouds[cloudIdx].name);
-      toRow.hidden = false;
+      toRow.hidden = observe;
     } else {
       focusBox.setName('');
       toRow.hidden = true;
@@ -491,6 +520,7 @@ export function bindSearch(
 
   starfield.onFocusChange(syncFocusUI);
   starfield.onCloudFocusChange(syncFocusUI);
+  starfield.onCameraModeChange(syncFocusUI);
   starfield.onVectorChange(syncVectorUI);
   starfield.onVectorCloudChange(syncVectorUI);
 

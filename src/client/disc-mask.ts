@@ -63,7 +63,13 @@ export function createDiscMask(starfield: Starfield) {
   starfield.onFrame(() => {
     const candidates: number[] = [];
     const focus = starfield.getFocusedStar();
-    if (focus !== null) {
+    // In OBSERVE mode the focal star (and its companion if any) are hidden
+    // by the vertex shader, so a mask cutout for them would just be a black
+    // hole carved out of overlays for nothing. Skip the focal-system masks
+    // entirely; any other rendered disc isn't a candidate today.
+    const observe =
+      starfield.getCameraMode() === 'observe' || starfield.isObserveTransitionActive();
+    if (focus !== null && !observe) {
       candidates.push(focus);
       const comp = starfield.catalog.companion[focus];
       if (comp >= 0) candidates.push(comp);

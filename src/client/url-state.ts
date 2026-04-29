@@ -154,6 +154,15 @@ export function applyFromUrl(starfield: Starfield) {
     );
   }
   if (hasCam || hasTgt || hasUp) starfield.controls.update();
+
+  // Camera mode last — applied after camera/target/up are in place so the
+  // observe snap can read the camera's quaternion (set by controls.update
+  // above from position+target+up) and just collapse the position to the
+  // focal star's local origin without disturbing the look direction.
+  const modeParam = params.get('mode');
+  if (modeParam === 'observe' && starfield.getFocusedStar() !== null) {
+    starfield.setCameraMode('observe', { animate: false });
+  }
 }
 
 export function startUrlSync(starfield: Starfield) {
@@ -207,6 +216,8 @@ export function startUrlSync(starfield: Starfield) {
     if (to !== null) p.set('to', String(to));
     else if (toCloud !== null) p.set('toc', String(toCloud));
 
+    if (starfield.getCameraMode() !== 'navigate') p.set('mode', starfield.getCameraMode());
+
     const c = starfield.camera.position;
     const tgt = starfield.controls.target;
     const camDefault =
@@ -252,6 +263,9 @@ export function startUrlSync(starfield: Starfield) {
     // finishWarp() path fires a state change and a focus change that will
     // flush the final URL on arrival.
     if (starfield.getWarpActive()) return;
+    // Same reasoning for the observe enter/exit translate: position changes
+    // every frame, but only the endpoint is meaningful.
+    if (starfield.isObserveTransitionActive()) return;
     const c = starfield.camera.position;
     const t = starfield.controls.target;
     const u = starfield.camera.up;

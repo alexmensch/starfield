@@ -13,6 +13,7 @@ import { bindUnitToggle } from './unit-toggle';
 import { registerThemeStarfield } from './theme-toggle';
 import { bindPanelLayout } from './panel-layout';
 import { bindWarpButton } from './warp-button';
+import { bindModeToggle } from './mode-toggle';
 import { maybeShowInfoModal } from './info-modal';
 import { bindBrandModals } from './brand-modal';
 import { applyFromUrl, startUrlSync } from './url-state';
@@ -108,6 +109,7 @@ async function main() {
     createFocusRingOverlay(starfield);
     createScaleBar(starfield);
     bindWarpButton(starfield);
+    bindModeToggle(starfield);
 
     // Apply any URL state before starting the URL writer so we don't echo
     // the same params back into history on load.

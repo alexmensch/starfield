@@ -7,6 +7,7 @@ import {
   ARROW_LABEL_OFFSET_PX,
   ARROW_LABEL_PADDING_PX,
 } from './arrow-path';
+import { STAR_GAP_PX } from './constellation-overlay';
 
 // Nominal apparent length of each arrow on screen, in CSS pixels. The shaft
 // is built directly in screen space so this length is exact regardless of
@@ -17,6 +18,10 @@ const ARROW_PIXEL_LENGTH = 110;
 // matches the distance-vector start offset (and the focus ring radius) so
 // all three reference arrows clear the focus ring identically.
 const SHAFT_START_OFFSET_PX = 28;
+// OBSERVE-mode origin gap. The camera sits at the focal star, so there's
+// no focus ring to clear — instead match the asterism-line gap so the HUD
+// arrows feel like other in-scene reference annotations.
+const HUD_SHAFT_START_OFFSET_PX = STAR_GAP_PX;
 // Minimum shaft length below which the shrunken arrow reads as a stub. We
 // hide instead of drawing it. 8 px keeps the chevron + a sliver of shaft
 // visible when on the edge.
@@ -92,6 +97,11 @@ export class GalacticArrows {
    *                       arrow tip stays this far away from the projected
    *                       target (≈ disc radius, since sizeMaxPx is a
    *                       diameter) so it doesn't crowd the star's disc.
+   * @param observeHud     true when the camera is in OBSERVE mode. The
+   *                       arrow's near end then anchors a small gap from
+   *                       screen centre (HUD-style) instead of projecting
+   *                       a 3D anchor — the camera sits at the focal star
+   *                       and a 3D-anchored projection would be degenerate.
    */
   update(
     camera: THREE.PerspectiveCamera,
@@ -101,16 +111,50 @@ export class GalacticArrows {
     hideSolArrow: boolean,
     enabled: boolean,
     sizeMaxPx: number,
+    observeHud: boolean,
   ) {
     if (!enabled) {
       this.hideAll();
       return;
     }
 
-    const origin = this.tmpOrigin.copy(focusedLocal ?? target);
     const w = window.innerWidth;
     const h = window.innerHeight;
 
+    // Sol's local-frame position is just `-worldOffset` (Sol is the catalog
+    // origin); GC is the absolute GC vector minus the same offset. Both used
+    // for projection + label distance below regardless of mode.
+    this.tmpSolLocal.set(-worldOffset.x, -worldOffset.y, -worldOffset.z);
+    this.tmpGcLocal.set(
+      GALACTIC_CENTRE_PC.x - worldOffset.x,
+      GALACTIC_CENTRE_PC.y - worldOffset.y,
+      GALACTIC_CENTRE_PC.z - worldOffset.z,
+    );
+    const targetMarginPx = Math.max(sizeMaxPx, 0);
+
+    if (observeHud) {
+      // HUD path — arrows anchor a small gap from screen centre and point
+      // toward where Sol/GC project. Distance labels measure from the
+      // camera (which is also the focal star in this mode).
+      const centreX = w * 0.5;
+      const centreY = h * 0.5;
+      const camPos = camera.position;
+      const solDist = this.tmpSolLocal.distanceTo(camPos);
+      const gcDist = this.tmpGcLocal.distanceTo(camPos);
+      this.updateHud(
+        this.solPath, this.solBg, this.solLabel,
+        this.tmpSolLocal, solDist, camera, centreX, centreY, w, h,
+        hideSolArrow, targetMarginPx, 'Sol',
+      );
+      this.updateHud(
+        this.gcPath, this.gcBg, this.gcLabel,
+        this.tmpGcLocal, gcDist, camera, centreX, centreY, w, h,
+        false, targetMarginPx, 'Galactic centre',
+      );
+      return;
+    }
+
+    const origin = this.tmpOrigin.copy(focusedLocal ?? target);
     const originScreen = projectToScreen(origin, camera, w, h);
     if (!originScreen) {
       this.hideAll();
@@ -127,14 +171,7 @@ export class GalacticArrows {
     const focalPx = window.innerHeight / (2 * Math.tan((camera.fov * Math.PI) / 360));
     const auxStepW = (ARROW_PIXEL_LENGTH * distToOrigin) / Math.max(focalPx, 1);
 
-    const targetMarginPx = Math.max(sizeMaxPx, 0);
-
-    // Sol's local-frame position is just `-worldOffset` (Sol is the catalog
-    // origin). Compute it once into a scratch vector so the per-arrow call
-    // can project it for shaft-shortening.
-    this.tmpSolLocal.set(-worldOffset.x, -worldOffset.y, -worldOffset.z);
     const solDist = this.tmpSolLocal.distanceTo(origin);
-
     this.updateOne(
       this.solPath,
       this.solBg,
@@ -153,13 +190,7 @@ export class GalacticArrows {
       'Sol',
     );
 
-    this.tmpGcLocal.set(
-      GALACTIC_CENTRE_PC.x - worldOffset.x,
-      GALACTIC_CENTRE_PC.y - worldOffset.y,
-      GALACTIC_CENTRE_PC.z - worldOffset.z,
-    );
     const gcDist = this.tmpGcLocal.distanceTo(origin);
-
     this.updateOne(
       this.gcPath,
       this.gcBg,
@@ -177,6 +208,77 @@ export class GalacticArrows {
       targetMarginPx,
       'Galactic centre',
     );
+  }
+
+  // OBSERVE-mode HUD arrow. Origin is screen-centre; direction comes from
+  // projecting the target (Sol/GC) directly. When the target is behind the
+  // camera (no valid projection) the arrow is hidden — the user sees it
+  // appear naturally as they sweep that part of the sky.
+  private updateHud(
+    path: SVGPathElement,
+    bg: SVGPathElement,
+    label: SVGTextElement,
+    targetLocal: THREE.Vector3,
+    distancePc: number,
+    camera: THREE.PerspectiveCamera,
+    centreX: number,
+    centreY: number,
+    w: number,
+    h: number,
+    hide: boolean,
+    targetMarginPx: number,
+    labelPrefix: string,
+  ) {
+    if (hide) {
+      this.hideArrow(path, bg, label);
+      return;
+    }
+    const targetScreen = projectToScreen(targetLocal, camera, w, h);
+    if (!targetScreen) {
+      this.hideArrow(path, bg, label);
+      return;
+    }
+    const tdx = targetScreen[0] - centreX;
+    const tdy = targetScreen[1] - centreY;
+    const tlen = Math.hypot(tdx, tdy);
+    if (tlen < 1) {
+      // Target projects on top of the camera centre — direction is
+      // undefined. The user is looking right at it; no arrow is needed.
+      this.hideArrow(path, bg, label);
+      return;
+    }
+    const sux = tdx / tlen;
+    const suy = tdy / tlen;
+
+    let shaftLengthPx = ARROW_PIXEL_LENGTH;
+    const allowed = tlen - HUD_SHAFT_START_OFFSET_PX - targetMarginPx;
+    if (allowed < shaftLengthPx) shaftLengthPx = allowed;
+    if (shaftLengthPx < MIN_SHAFT_PIXEL_LENGTH) {
+      this.hideArrow(path, bg, label);
+      return;
+    }
+
+    const shaftStartX = centreX + sux * HUD_SHAFT_START_OFFSET_PX;
+    const shaftStartY = centreY + suy * HUD_SHAFT_START_OFFSET_PX;
+    const tipX = shaftStartX + sux * shaftLengthPx;
+    const tipY = shaftStartY + suy * shaftLengthPx;
+
+    const d = buildArrowSvgPath(shaftStartX, shaftStartY, tipX, tipY);
+    if (!d) {
+      this.hideArrow(path, bg, label);
+      return;
+    }
+    path.setAttribute('d', d);
+    bg.setAttribute('d', d);
+
+    const labelAnchorX = tipX + ARROW_LABEL_OFFSET_PX + ARROW_HEAD_DEPTH_PX;
+    const labelAnchorY = tipY - ARROW_LABEL_OFFSET_PX;
+    const sx = clamp(labelAnchorX, ARROW_LABEL_PADDING_PX, w - ARROW_LABEL_PADDING_PX);
+    const sy = clamp(labelAnchorY, ARROW_LABEL_PADDING_PX, h - ARROW_LABEL_PADDING_PX);
+    label.style.display = '';
+    label.setAttribute('x', sx.toFixed(1));
+    label.setAttribute('y', sy.toFixed(1));
+    label.textContent = `${labelPrefix} · ${fmtDist(distancePc)}`;
   }
 
   private updateOne(

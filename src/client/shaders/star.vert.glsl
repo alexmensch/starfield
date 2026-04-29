@@ -5,6 +5,12 @@ uniform float uMaxAppMag;
 uniform float uMinDistSol;
 uniform float uMaxDistSol;
 uniform uint uSpectMask;
+// Index of a star to suppress entirely (all three passes — disc, glow, core
+// mask — share this vertex shader). Set to the focused-star index in
+// OBSERVE mode so the star the camera is parked on doesn't render. -1 in
+// every other mode disables the suppression by construction (gl_InstanceID
+// is non-negative).
+uniform int uHideFocusIdx;
 uniform float uPixelRatio;
 uniform float uSizeMin;
 uniform float uSizeMax;
@@ -139,6 +145,16 @@ float dustExtinctionAV(vec3 absStar, vec3 absCamera) {
 }
 
 void main() {
+    if (gl_InstanceID == uHideFocusIdx) {
+        gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+        vAppMag = 0.0;
+        vColor = vec3(0.0);
+        vUv = aCorner;
+        vPhysRatio = 0.0;
+        vSoftness = 0.0;
+        return;
+    }
+
     vec3 worldPos = iPosition;
     float distCam = distance(worldPos, uCameraPos);
 

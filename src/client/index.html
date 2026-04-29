@@ -168,10 +168,13 @@
 
     <div class="ui-top" id="ui-top">
       <header class="topbar" hidden id="topbar">
-        <div class="topbar-heading">Navigate</div>
+        <div class="toggle-group topbar-mode" id="mode-toggle">
+          <button class="toggle-btn on" data-mode="navigate" type="button">navigate</button>
+          <button class="toggle-btn" data-mode="observe" type="button" disabled title="Focus a star to observe from it">observe</button>
+        </div>
         <div class="search-wrap">
           <div class="search-row" id="search-focus-row">
-            <span class="search-tag">Focus</span>
+            <span class="search-tag" id="search-focus-tag">Focus</span>
             <input
               id="search-focus"
               type="search"

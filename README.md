@@ -55,6 +55,23 @@ Stack: TypeScript, Three.js (WebGL2), Vite, Cloudflare Workers.
   far tip to travel there instantly, or hover the distance label and click
   the "→ Warp" affordance (or press `W`) for an animated flight between the
   two stars.
+- Two camera modes via the navigate / observe pill in the top-right card.
+  **Navigate** is the default orbit camera. **Observe** parks the camera
+  at the focused star (the star's disc itself is hidden; you're standing
+  on it) and switches to a custom look-around controller — drag to yaw +
+  pitch (clamped at the poles, FPS-style), wheel adjusts FOV, two-finger
+  roll still tilts the horizon, the Sol / Galactic-Centre arrows become
+  HUD locators centred on the screen. Picking a new "Location" while in
+  observe re-uses the warp animation to fly to the new anchor; on
+  arrival, the camera slerps back to the same celestial direction it was
+  facing at warp start, so the user sees the same patch of sky from a
+  different vantage with all the parallax that implies.
+- Per-star "approach distance" — the camera's near-star landing distance
+  (warp arrival, observe-exit, orbit-min clamp) is computed per-star so
+  the disc renders at a uniform on-screen size regardless of stellar
+  radius. Supergiants land much further away than dwarfs but read the
+  same visual size at parking. Single tunable in `starfield.ts`
+  (`TARGET_APPROACH_DISC_PX`).
 - Dual search inputs: one for focusing, one for measurement destination.
   Matches proper names (fuzzy), Bayer designations (`α Cen` / `Alpha Cen` /
   `Alf Cen` all work), Flamsteed numbers (`58 Ori`), and numeric catalog
