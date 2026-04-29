@@ -192,16 +192,29 @@ distance, camera teleports along with the orbit target).
 Two- or three-phase animation in `starfield.ts updateWarp`, depending
 on whether the warp re-enters OBSERVE on arrival:
 
-1. **Reorient** (`WARP_REORIENT_MS` = 2000). Camera keeps
-   `camera.lookAt(A)` locked the whole time; its position spherically
-   slerps around A from wherever the user was to `A + dirBack ×
-   endOffset` (on the travel line, offset behind A from B's
+1. **Reorient** (`WARP_REORIENT_MS` = 2000). Camera position
+   spherically slerps around A from wherever the user was to `A +
+   dirBack × endOffset` (on the travel line, offset behind A from B's
    perspective). Simultaneously the orbit distance eases linearly from
    `mag0` down to `endOffset`. End state: A is centered and B is
    straight ahead, beyond A. Quaternion slerp is used for the angular
    interp (robust against antipodal starting positions). `endOffset`
    is `minDistForStar(destIdx)` — see §Camera near plane vs controls
    minDistance for the disc-size formula plus binary bump.
+
+   Camera orientation during the reorient depends on launch mode:
+   - **Navigate launch:** `camera.lookAt(A)` is called every frame.
+     With `mag0 > 0` this keeps A perfectly centered as the camera
+     swings around it.
+   - **Observe launch** (`returnToObserve`, `mag0 ≈ 0`): the
+     lookAt-per-frame approach degenerates — the camera starts on top
+     of A, so `lookAt(A)` snaps to "facing forward" the instant the
+     position moves off A. Instead we slerp the camera quaternion from
+     `startQuaternion` (the user's observe view direction) to a
+     `reorientEndQuaternion` captured at warp start (= the orientation
+     `lookAt(A)` would produce from `pStart`). This animates the user's
+     view smoothly turning from wherever they were looking to "facing
+     the destination" before the fly phase begins.
 
 2. **Fly** (log-scaled duration, `WARP_T_MIN_MS` to `WARP_T_MAX_MS`).
    Straight-line lerp from `pStart` (= A + dirBack × endOffset) to
@@ -210,19 +223,32 @@ on whether the warp re-enters OBSERVE on arrival:
    `1 − 2(1−t)²`. `camera.lookAt(B)` throughout.
 
 3. **Post-arrival reorient** (only when `returnToObserve`, duration =
-   `OBSERVE_TRANSITION_MS` = 1200 ms). Camera position pinned to
-   `pEnd`; its quaternion slerps from the fly-end "looking at B"
-   orientation back to the `startQuaternion` snapshot taken at warp
-   start. The user sees the same celestial direction they were facing
-   when they picked the destination, now from the new vantage —
-   foreground stars shift via parallax, distant Milky Way stays
-   roughly fixed. Skipped on navigate-mode arrivals because
-   `TrackballControls.update()` calls `camera.lookAt(target=B)` every
-   frame and would overwrite the slerped quaternion one frame after
-   `finishWarp`, leaving the user with a hard snap-back. Observe
-   arrivals preserve the slerp because controls are disabled and
-   `observeUpdateTarget` reads `controls.target` from the camera
-   quaternion, not the other way around.
+   `OBSERVE_TRANSITION_MS` = 1200 ms). Quaternion slerps from the
+   fly-end "looking at B" orientation back to the `startQuaternion`
+   snapshot taken at warp start. The user sees the same celestial
+   direction they were facing when they picked the destination, now
+   from the new vantage — foreground stars shift via parallax, distant
+   Milky Way stays roughly fixed.
+
+   Camera position **also lerps from `pEnd` to `B`** across this
+   phase, so the parallax view ends with the camera exactly at the
+   destination star. Without this, `swapObserveAnchor` would absorb
+   an `endOffset`-sized hidden teleport at `finishWarp` (its
+   `set(0,0,0)` snap), leaving the user with the impression that the
+   slerp happened from the wrong vantage. The destination disc stays
+   visible across the entire post-arrival window — `swapObserveAnchor`
+   pins `uHideFocusIdx` to the destination only at `finishWarp`, so
+   the user sees the star they're arriving at right up until the
+   camera parks inside it. Hiding it earlier would feel like the star
+   pops out before the camera arrives.
+
+   Skipped on navigate-mode arrivals because `TrackballControls.update()`
+   calls `camera.lookAt(target=B)` every frame and would overwrite the
+   slerped quaternion one frame after `finishWarp`, leaving the user
+   with a hard snap-back. Observe arrivals preserve the slerp because
+   controls are disabled and `observeUpdateTarget` reads
+   `controls.target` from the camera quaternion, not the other way
+   around.
 
 Scale bar smoothness: `controls.target` is pointed at **B** from the
 moment the warp begins (not just at arrival). Camera orientation is
@@ -266,10 +292,14 @@ an anchor, but disabling the button advertises the affordance up-front.
 
 **Camera state on enter:** position lerps to `(0, 0, 0)` local (the
 focused star's position under the floating origin) over
-`OBSERVE_TRANSITION_MS = 1200 ms`. The focal star is hidden via the
-vertex-shader uniform `uHideFocusIdx` (set to `focusedStar`) so the
-camera doesn't render "from inside" the disc. `controls.enabled =
-false`; `observeControls.enable()` after the transition completes.
+`OBSERVE_TRANSITION_MS = 1200 ms`. The focal star stays visible across
+the glide and is hidden via `uHideFocusIdx = focusedStar` only at
+`finishObserveTransition`'s `enter` branch — once the camera is parked
+on top of it. Hiding it at transition start would feel like the star
+vanishes before the camera arrives. `controls.enabled = false`;
+`observeControls.enable()` after the transition completes. The
+`animate=false` URL-restore path skips the transition and sets
+`uHideFocusIdx` immediately, since there's no glide to defer to.
 
 **Look-around controller (`observe-controls.ts`):**
 - Drag rotates the camera in place: yaw around `camera.up`, pitch
@@ -325,6 +355,22 @@ along its current view direction over `OBSERVE_TRANSITION_MS`. Capturing
 invariant) keeps the animation aimed correctly even though
 `setFocus(null)` translates camera position into Sol-centric coords
 mid-call.
+
+`finishObserveTransition` then sets `controls.target` to the
+transition's `fromPos` (the observed star's location, in whichever
+frame is current). Two reasons:
+- The exit translates the camera backward along its forward direction
+  by `minDist`, so `fromPos` lies exactly along forward at that
+  distance — `TrackballControls.update()`'s built-in `lookAt(target)`
+  is therefore a no-op for orientation, and the user keeps facing
+  whatever they were observing.
+- Setting `target = (0,0,0)` instead would point at Sol once
+  `setFocus(null)` recentred the origin, and the lookAt would whip
+  the camera around to face Sol. Using `fromPos` works for both the
+  unfocus path (`fromPos` = star's Sol-centric position) and the
+  focus-retained path (`fromPos` = `(0,0,0)` = the focused star
+  before the recenter that wasn't called), since both paths capture
+  `fromPos` from the camera position right before the lerp begins.
 
 **URL state:** `mode=observe` round-trips the mode flag, applied after
 camera params + `controls.update()` so the saved pose lands first. The

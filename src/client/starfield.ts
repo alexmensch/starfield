@@ -279,6 +279,16 @@ interface WarpState {
   // slerp starts from whatever lookAt(B) produced at fly-end without us
   // having to predict it analytically.
   flyEndQuaternion?: THREE.Quaternion;
+  // Reorient-phase end orientation. Set only when the warp launches from
+  // OBSERVE (mag0 ≈ 0): the existing radial-direction slerp + lookAt(A)
+  // collapses to a snap because the camera starts on top of A. We slerp
+  // from startQuaternion to this canonical "look at A from pStart"
+  // quaternion across the reorient phase instead, so the user sees the
+  // camera smoothly turn from their observe view to the fly orientation
+  // before the fly phase begins. Undefined for navigate-mode warps —
+  // those use lookAt(A) per frame, which keeps A perfectly centered as
+  // the camera swings around it.
+  reorientEndQuaternion?: THREE.Quaternion;
 }
 
 type Target = { kind: 'star'; idx: number } | { kind: 'cloud'; idx: number };
@@ -756,14 +766,19 @@ export class Starfield {
       this.setVectorTo(null);
       this.setVectorToCloud(null);
       this.cameraMode = 'observe';
-      this.material.uniforms.uHideFocusIdx.value = this.focusedStar;
       this.controls.enabled = false;
       if (opts.animate === false) {
         // Snap. Camera quaternion is preserved; only its position moves to
-        // the focal star's local origin.
+        // the focal star's local origin. Hide the focal star here since
+        // there's no transition to defer to.
         this.camera.position.set(0, 0, 0);
+        this.material.uniforms.uHideFocusIdx.value = this.focusedStar;
         this.observeControls.enable();
       } else {
+        // Animated entry: keep the focal star visible during the glide.
+        // finishObserveTransition (kind='enter') sets uHideFocusIdx once
+        // the camera is parked at the star, so the star doesn't pop out
+        // before the camera reaches it.
         this.observeTransition = {
           startTimeMs: performance.now(),
           durationMs: OBSERVE_TRANSITION_MS,
@@ -1549,6 +1564,17 @@ export class Starfield {
     // Camera orientation is controlled separately via camera.lookAt during
     // updateWarp, so the reorient phase can still keep A centered visually.
     this.controls.target.copy(B);
+    // Observe-mode warp starts with the camera AT A (mag0 ≈ 0) and a
+    // user-chosen look direction. lookAt(A) per frame collapses to "snap to
+    // facing forward" the moment the camera moves off A, so we slerp the
+    // quaternion across the reorient phase instead. Endpoint = the
+    // orientation lookAt(A) would produce from pStart, captured here so the
+    // reorient interpolates from observe view → fly orientation smoothly.
+    let reorientEndQuaternion: THREE.Quaternion | undefined;
+    if (returnToObserve) {
+      const m = new THREE.Matrix4().lookAt(pStart, A, this.camera.up);
+      reorientEndQuaternion = new THREE.Quaternion().setFromRotationMatrix(m);
+    }
     this.warpState = {
       startTimeMs: performance.now(),
       reorientMs: WARP_REORIENT_MS,
@@ -1573,6 +1599,7 @@ export class Starfield {
       destIdx,
       returnToObserve,
       startQuaternion: this.camera.quaternion.clone(),
+      reorientEndQuaternion,
     };
     for (const h of this.onWarpHandlers) h(true);
     this.fireStateChange();
@@ -1599,19 +1626,25 @@ export class Starfield {
       for (const h of this.onWarpHandlers) h(false);
       return;
     }
-    // Park at the configured end offset so orbit radius matches the arrival
-    // we animated to — no visible snap between the last fly frame and the
-    // parked state. Final orientation depends on the destination mode:
-    //   observe: startQuaternion (post-arrival slerp end state — same
-    //            celestial direction the user was looking at warp start;
-    //            survives because observe disables TrackballControls).
-    //   navigate: lookAt(B) (matches the orbit-around-target invariant
-    //            TrackballControls.update() will enforce next frame).
-    const forward = new THREE.Vector3().subVectors(B, state.pStart).normalize();
-    this.camera.position.copy(B).addScaledVector(forward, -state.endOffset);
+    // Final parked pose. Differs by destination mode:
+    //   observe: camera at B, quaternion = startQuaternion (post-arrival
+    //            slerp end state — same celestial direction the user was
+    //            looking at warp start, now from the new vantage). The
+    //            post-arrival phase already lerped position pEnd → B, so
+    //            this is a no-op match against the last animation frame.
+    //            swapObserveAnchor below recentres the origin onto B and
+    //            its set(0,0,0) becomes a redundant snap to the same
+    //            point — no hidden teleport.
+    //   navigate: camera at B − endOffset · forward (orbit radius matches
+    //            the arrival we animated to), lookAt(B) so the orbit
+    //            invariant TrackballControls.update() will enforce next
+    //            frame matches the parked pose.
     if (state.returnToObserve) {
+      this.camera.position.copy(B);
       this.camera.quaternion.copy(state.startQuaternion).normalize();
     } else {
+      const forward = new THREE.Vector3().subVectors(B, state.pStart).normalize();
+      this.camera.position.copy(B).addScaledVector(forward, -state.endOffset);
       this.camera.lookAt(B);
     }
     this.controls.target.copy(B);
@@ -2388,7 +2421,16 @@ export class Starfield {
 
       const mag = state.mag0 * (1 - f) + state.endOffset * f;
       this.camera.position.copy(state.A).addScaledVector(this.warpTmp, mag);
-      this.camera.lookAt(state.A);
+      if (state.reorientEndQuaternion) {
+        // Observe-mode launch: slerp the camera quaternion from the user's
+        // view direction to the fly-start orientation. Replaces lookAt(A),
+        // which would snap to "facing forward" the instant the camera
+        // leaves A.
+        this.warpQ0.copy(state.startQuaternion).slerp(state.reorientEndQuaternion, f);
+        this.camera.quaternion.copy(this.warpQ0).normalize();
+      } else {
+        this.camera.lookAt(state.A);
+      }
       return;
     }
 
@@ -2405,28 +2447,40 @@ export class Starfield {
       return;
     }
 
-    // Post-arrival phase: camera parked at pEnd; slerp the quaternion from
-    // the fly-end "looking at destination" orientation back to the warp's
-    // captured starting orientation. The user sees the same celestial
-    // direction they had at warp start, now from the new vantage —
-    // foreground stars shift due to parallax, distant Milky Way stays
-    // roughly fixed.
+    // Post-arrival phase: slerp the quaternion from the fly-end "looking at
+    // destination" orientation back to the warp's captured starting
+    // orientation, AND for observe→observe arrivals lerp position from pEnd
+    // → B so the parallax view ends with the camera exactly at the
+    // destination star (rather than offset by endOffset, which would leave
+    // a hidden teleport for swapObserveAnchor to absorb at finishWarp).
+    // The user sees the same celestial direction they had at warp start,
+    // now from the new vantage — foreground stars shift due to parallax,
+    // distant Milky Way stays roughly fixed.
     const postElapsed = flyElapsed - state.durationMs;
     if (postElapsed < state.postArrivalMs) {
+      const B = state.destKind === 'star'
+        ? this.starLocalPosition(state.destIdx)
+        : this.cloudLocalPosition(state.destIdx);
       if (!state.flyEndQuaternion) {
         // Pin the camera to the canonical fly-end pose before snapshot
         // so the slerp doesn't inherit a half-stepped frame.
         this.camera.position.copy(state.pEnd);
-        const B = state.destKind === 'star'
-          ? this.starLocalPosition(state.destIdx)
-          : this.cloudLocalPosition(state.destIdx);
         if (B) this.camera.lookAt(B);
         state.flyEndQuaternion = this.camera.quaternion.clone();
       }
+      // Destination star stays visible across post-arrival so the user sees
+      // it throughout the parallax slerp; swapObserveAnchor at finishWarp
+      // hides it on landing. uHideFocusIdx still points at the source for
+      // this whole window (set at warp start, by setCameraMode('observe')'s
+      // entry-end hide or a prior swapObserveAnchor) — source is far away
+      // by post-arrival so its hidden state is invisible.
       const u = postElapsed / state.postArrivalMs;
       const f = u * u * (3 - 2 * u);
       this.warpQ0.copy(state.flyEndQuaternion).slerp(state.startQuaternion, f);
       this.camera.quaternion.copy(this.warpQ0).normalize();
+      if (state.returnToObserve && B) {
+        this.camera.position.lerpVectors(state.pEnd, B, f);
+      }
       return;
     }
 
@@ -2455,10 +2509,35 @@ export class Starfield {
     this.observeTransition = null;
     if (state.kind === 'enter') {
       this.camera.position.copy(state.toPos);
+      // Hide the focal star now that the camera is parked at it. Deferred
+      // from setCameraMode so the user sees the star throughout the glide
+      // — popping it out at transition start would read as "star vanishes,
+      // then camera moves into its location" rather than a continuous
+      // arrival.
+      if (this.focusedStar !== null) {
+        this.material.uniforms.uHideFocusIdx.value = this.focusedStar;
+      }
       this.observeControls.enable();
     } else {
       this.camera.position.copy(state.toPos);
-      this.controls.target.set(0, 0, 0);
+      // Target = the camera's pre-exit position (= the observed star's
+      // location, in whichever frame is current). The exit translates
+      // backward along the camera's forward direction by minDist, so
+      // fromPos lies exactly along forward at that distance, which makes
+      // TrackballControls.update()'s lookAt(target) a no-op for orientation
+      // and gives the user a sensible orbit pivot (the star they just left)
+      // for any subsequent drag.
+      //
+      // Origin frame at this point depends on the caller:
+      //   - setCameraMode → startObserveExit (focus retained): origin still
+      //     on the focused star, fromPos = (0,0,0) = the focused star.
+      //   - unfocus (focus cleared via setFocus(null) before the lerp):
+      //     origin recentered to Sol, fromPos = the star's Sol-centric
+      //     absolute position.
+      // Setting target = (0,0,0) here was correct only for the first case;
+      // in the unfocus path it pointed at Sol and TrackballControls.update()'s
+      // lookAt(target) would whip the camera around to face Sol.
+      this.controls.target.copy(state.fromPos);
       this.controls.update();
       this.controls.enabled = true;
       if (state.clearFocusOnExit) this.setFocus(null);
