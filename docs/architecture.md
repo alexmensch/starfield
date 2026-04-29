@@ -10,6 +10,9 @@ mutation paths, or adding any code that reads star positions.
 - `onFocusChange(idx | null)` — focused star changed (from any source).
 - `onVectorChange(toIdx | null)` — distance-vector destination changed.
 - `onFilterChange(filter)` — any filter patch applied.
+- `onCameraModeChange(mode)` — camera mode flipped between `'navigate'` and
+  `'observe'`. Used by the mode toggle, search-row label swap, and
+  scale-bar (which switches to angular degrees in observe).
 - `onFrame()` — called after each render, used by all SVG overlays.
 - `onStateChange()` — fires on any discrete state mutation. This is what the
   URL-sync module listens to. Don't fire it from `onFrame` for camera changes —
@@ -31,6 +34,39 @@ Clouds are full participants in this state machine alongside stars — see
 `docs/rendering.md` §Molecular cloud overlay for how cloud picks dispatch
 through `onPointerUp`.
 
+In OBSERVE mode the click-state machine no-ops on the canvas — `onPointerUp`
+short-circuits while `cameraMode === 'observe'`. Clicks land on the
+custom look-around controller (yaw + pitch + wheel-FOV) instead. The
+SVG-layer Sol/GC arrow labels remain clickable; they route through
+`aimAt(localPoint)`, which has its own observe-mode branch that slerps
+the camera quaternion in place.
+
+## OBSERVE mode and the warp state machine
+
+OBSERVE parks the camera at the focused star's local origin and hides
+the focal disc via `uHideFocusIdx`. Two gotchas worth noting up front:
+
+1. **`cameraMode` stays `'observe'` throughout an observe→observe warp.**
+   `startWarp` from observe disables `observeControls` and sets a
+   per-warp `returnToObserve` flag, but does not flip `cameraMode` or
+   fire `onCameraModeChange`. The animate loop branches on `warpState`
+   first, so the value is purely cosmetic during the flight — but every
+   listener bound to `onCameraModeChange` (mode toggle, search-row
+   label, etc.) stays settled. Without this, observe→observe arrival
+   visibly flickers through navigate mid-warp.
+2. **`finishWarp` re-anchors via `swapObserveAnchor`**, not `setFocus`,
+   when `returnToObserve` is true. `setFocus` would see
+   `cameraMode === 'observe'` and run its observe-cleanup branch
+   (`uHideFocusIdx = -1`, fire `onCameraModeChange`), recreating the
+   flicker. `swapObserveAnchor` recentres the floating origin, updates
+   `focusedStar`, repoints `uHideFocusIdx` to the new anchor, and snaps
+   the camera to `(0, 0, 0)` local without touching `cameraMode`.
+
+Source-star hide (`uHideFocusIdx = focusedStar`) stays pinned across the
+entire warp duration when launched from observe — the reorient phase
+starts with the camera *at* the source star, and unhiding it would
+briefly render the disc from inside.
+
 ## Picking a constellation aims the camera
 
 `Starfield.aimAtConstellation(conIndex)` swings the camera so the chosen
@@ -47,6 +83,11 @@ Called **only from the constellation dropdown change handler** in
 sets `highlightCon` via `setFilter` deliberately do **not** trigger the
 aim — a shareable URL's camera pose is authoritative, and the "reset"
 button means "clear the selection", not "jump somewhere".
+
+In OBSERVE mode the orbit-pivot rotation is degenerate (camera ≈
+target), so `aimAtConstellation` instead routes the centroid through
+`aimAt(c)`, which slerps the camera quaternion in place — same code
+path Sol/GC label clicks use.
 
 ## URL state
 
@@ -67,6 +108,14 @@ button means "clear the selection", not "jump somewhere".
   `up` differs from `(0, 1, 0)` and applied **before** `focusStar` /
   `setOrbitTarget` in `applyFromUrl` because those call `controls.update()`
   which reads `camera.up` to derive orientation.
+- `mode=observe` round-trips OBSERVE-mode entry. Applied **after** camera
+  params + `controls.update()` so the saved pose lands first; the
+  receiver then `setCameraMode('observe', { animate: false })` if the
+  param is set and a focused star exists. Default-omitted (navigate).
+- The URL writer skips frame-hash updates while
+  `isObserveTransitionActive()` is true, mirroring the warp guard — the
+  observe enter/exit translate animates camera position and would
+  otherwise flood history with intermediate poses.
 
 Cloud-related URL params (`cloud=N`, `toc=N`, `mc=0`) are documented in
 `docs/rendering.md` §Molecular cloud overlay.

@@ -128,16 +128,40 @@ URL `t=` param.
 
 ## Camera near plane vs controls minDistance
 
-`camera.near = 0.001`, `controls.minDistance = 0.005` (via
-`DEFAULT_MIN_DIST_PC`). The near plane must stay **strictly less** than
-the closest orbit distance, otherwise a centered star lands on the clip
-plane at max zoom and gets culled. If adjusting, keep that invariant.
-Per-focus `minDistance` is bumped by `minDistForStar(idx)` when the
-focused star has a binary companion, so both components stay in the
-vertical viewport half-angle (~25°) at max zoom. Warp end-offset uses
-the same per-star value so animated arrivals park at the right distance.
-Earlier attempts to zoom closer than 0.005 pc hit float32 precision
-jitter when the destination star is far from the world origin.
+`camera.near = 0.001`, `controls.minDistance` (when no star is focused)
+= `DEFAULT_MIN_DIST_PC = 0.005` pc. The near plane must stay **strictly
+less** than the closest orbit distance, otherwise a centered star lands
+on the clip plane at max zoom and gets culled. If adjusting, keep that
+invariant. Earlier attempts to zoom closer than 0.005 pc hit float32
+precision jitter when the destination star is far from the world origin.
+
+When a star is focused, `controls.minDistance = minDistForStar(idx)` —
+**not** the 0.005 pc default. `minDistForStar` is the single source of
+truth for the camera's "near-star" landing distance, used by:
+
+- `controls.minDistance` (orbit-zoom clamp).
+- Observe-exit landing position (camera pulls back to `minDistForStar`
+  along its current view direction when leaving observe).
+- Warp source departure (`pStart = A + dirBack × minDistForStar(destIdx)`).
+- Warp arrival (`pEnd = B − forward × minDistForStar(destIdx)`).
+
+It's computed from a per-star disc-size formula:
+
+```
+sizeAtRef = mix(uPhysMinPx, uPhysMaxPx, logRatio(physicalRadius))
+discDist  = sizeAtRef × uRefDistPc / TARGET_APPROACH_DISC_PX
+```
+
+Same on-screen disc size at parking for any star — supergiants land
+much further out than dwarfs. The single tunable is
+`TARGET_APPROACH_DISC_PX` at the top of `starfield.ts` (currently 10
+px). Binary companions still get a `Math.max(discDist, sep × BINARY_MIN_DIST_FACTOR)`
+bump on top so both components stay inside the viewport half-angle
+(~25°) at max zoom — the binary requirement is additive, not a
+replacement.
+
+Mirrors the disc term of `renderedSizePx` exactly. Keep the two in sync
+if the shader's physical-size math changes.
 
 ## TrackballControls tuning
 
@@ -165,7 +189,8 @@ muted ghost pill at top-center (shown only while warping), or `Esc` /
 `focusStar(idx)` for consistency with search-select (2 pc viewing
 distance, camera teleports along with the orbit target).
 
-Two-phase animation in `starfield.ts updateWarp`:
+Two- or three-phase animation in `starfield.ts updateWarp`, depending
+on whether the warp re-enters OBSERVE on arrival:
 
 1. **Reorient** (`WARP_REORIENT_MS` = 2000). Camera keeps
    `camera.lookAt(A)` locked the whole time; its position spherically
@@ -175,14 +200,29 @@ Two-phase animation in `starfield.ts updateWarp`:
    `mag0` down to `endOffset`. End state: A is centered and B is
    straight ahead, beyond A. Quaternion slerp is used for the angular
    interp (robust against antipodal starting positions). `endOffset`
-   is `minDistForStar(destIdx)` — i.e. per-star, larger for binaries
-   so the arrival parks at a distance where both system members fit.
+   is `minDistForStar(destIdx)` — see §Camera near plane vs controls
+   minDistance for the disc-size formula plus binary bump.
 
 2. **Fly** (log-scaled duration, `WARP_T_MIN_MS` to `WARP_T_MAX_MS`).
    Straight-line lerp from `pStart` (= A + dirBack × endOffset) to
    `pEnd` (= B − forward × endOffset) with a symmetric
    accelerate/decelerate profile: `f(t) = 2t²` for `t < 0.5`, else
    `1 − 2(1−t)²`. `camera.lookAt(B)` throughout.
+
+3. **Post-arrival reorient** (only when `returnToObserve`, duration =
+   `OBSERVE_TRANSITION_MS` = 1200 ms). Camera position pinned to
+   `pEnd`; its quaternion slerps from the fly-end "looking at B"
+   orientation back to the `startQuaternion` snapshot taken at warp
+   start. The user sees the same celestial direction they were facing
+   when they picked the destination, now from the new vantage —
+   foreground stars shift via parallax, distant Milky Way stays
+   roughly fixed. Skipped on navigate-mode arrivals because
+   `TrackballControls.update()` calls `camera.lookAt(target=B)` every
+   frame and would overwrite the slerped quaternion one frame after
+   `finishWarp`, leaving the user with a hard snap-back. Observe
+   arrivals preserve the slerp because controls are disabled and
+   `observeUpdateTarget` reads `controls.target` from the camera
+   quaternion, not the other way around.
 
 Scale bar smoothness: `controls.target` is pointed at **B** from the
 moment the warp begins (not just at arrival). Camera orientation is
@@ -198,6 +238,14 @@ poses), and `body.warping` toggles a CSS class that hides the entire
 SVG overlay (distance vector, figure, focus ring) since their per-frame
 reprojection looks chaotic under fast travel.
 
+Warp launched from OBSERVE leaves `cameraMode` as `'observe'` for the
+duration (the animate loop branches on `warpState` first, so the value
+is purely cosmetic) and keeps `uHideFocusIdx` pinned to the source star
+across all three phases — the reorient starts with the camera at A, and
+unhiding it would briefly render the focal disc from inside. See
+`docs/architecture.md` §OBSERVE mode and the warp state machine for the
+finishWarp anchor-swap that avoids a mid-warp UI flicker.
+
 Distance-label-as-warp-trigger UI:
 `index.html` wraps the distance label and a static `→ Warp` sibling
 `<text>` in a `<g id="dist-ui">`. The group has `pointer-events: auto`
@@ -206,6 +254,82 @@ label itself is still `text-anchor="middle"` and positioned dead-center
 on the measurement vector; the warp suffix is computed each frame as
 `mx + label.getComputedTextLength()/2 + WARP_GAP_PX` so the distance
 stays visually anchored while the suffix extends to the right.
+
+## OBSERVE camera mode
+
+A second camera mode that parks the camera at the focused star and
+swaps `TrackballControls` for a custom look-around controller. Toggled
+via the navigate / observe pill in the top-right card (`#mode-toggle`,
+wired in `mode-toggle.ts`). The OBSERVE button is disabled until a star
+is focused — the underlying `setCameraMode('observe')` no-ops without
+an anchor, but disabling the button advertises the affordance up-front.
+
+**Camera state on enter:** position lerps to `(0, 0, 0)` local (the
+focused star's position under the floating origin) over
+`OBSERVE_TRANSITION_MS = 1200 ms`. The focal star is hidden via the
+vertex-shader uniform `uHideFocusIdx` (set to `focusedStar`) so the
+camera doesn't render "from inside" the disc. `controls.enabled =
+false`; `observeControls.enable()` after the transition completes.
+
+**Look-around controller (`observe-controls.ts`):**
+- Drag rotates the camera in place: yaw around `camera.up`, pitch
+  around the screen-right axis derived from the live quaternion.
+- **Pitch is FPS-style clamped** (`PITCH_LIMIT = π/2 − 0.01`). Yaw is
+  rotation around the world-up axis (`camera.up`); without the clamp,
+  pitching past the pole flips the screen-right axis and the next yaw
+  input feels like left/right are swapped — the classic FPS pole
+  singularity. Shoemake-style 6-DOF (yaw around camera-local up) is
+  the only alternative and was rejected because it loses the stable
+  horizon.
+- Wheel adjusts `camera.fov` (1.5° per notch, clamped 10–120°) instead
+  of camera distance. Distance has no meaning when the camera is
+  parked.
+- Two-finger roll still works — `rollCamera` mutates `camera.up` for
+  navigate-mode persistence and additionally rotates `camera.quaternion`
+  around the forward axis when `cameraMode === 'observe'` (the orbit
+  controls' camera-up read-back path doesn't run in observe, so a
+  bare `camera.up` change wouldn't be visible).
+
+**HUD locators:** Sol and Galactic-Centre arrows skip their normal 3D
+projection (degenerate when camera ≈ focal star) and anchor at screen
+centre with a `STAR_GAP_PX` (9 px) offset, pointing toward the
+projected target. See `docs/rendering.md` §Galactic reference system
+for the HUD-path branch.
+
+**Aim from observe:** `aimAt(localPoint)` (Sol/GC labels +
+constellation typeahead) has an observe-mode branch that builds a
+target quaternion via `Matrix4.lookAt(camera.position, point,
+camera.up)` and slerps the live quaternion to it, capped at
+`AIM_T_MAX_MS = 2000`. `observeControls.disable()` for the duration so
+drag input doesn't fight the slerp; re-enabled at completion. The
+`aimAtConstellation` path also routes here in observe — orbit-pivot
+math is degenerate at observe range.
+
+**Search row labels:** the search-tag swaps "Focus" → "Location" via
+`syncFocusUI` reading `getCameraMode()` on every focus / mode change.
+Cloud entries are filtered out of the location picker (`focusRunQuery`
+in `search.ts` drops `kind === 'cloud'` when in observe) — observe is
+star-only by design.
+
+**Picking a new location** routes through `warpTo(idx)` instead of
+`focusStar(idx)`. The warp animation flies between anchors and the
+post-arrival slerp leaves the camera pointing in the original celestial
+direction from the new vantage — see §Warp animation phase 3.
+
+**X button (clear focus from observe):** `unfocus()` detects observe +
+focused-star and immediately clears focus *before* starting the
+zoom-out animation. The search box empties via `onFocusChange` on the
+click, then the camera pulls back to `minDistForStar(formerFocal)`
+along its current view direction over `OBSERVE_TRANSITION_MS`. Capturing
+`forward` from the camera quaternion before the recenter (frame-
+invariant) keeps the animation aimed correctly even though
+`setFocus(null)` translates camera position into Sol-centric coords
+mid-call.
+
+**URL state:** `mode=observe` round-trips the mode flag, applied after
+camera params + `controls.update()` so the saved pose lands first. The
+URL writer's debounced frame hook skips writes during
+`isObserveTransitionActive()` (mirrors the warp guard).
 
 ## Two-finger roll gesture (platform-split)
 

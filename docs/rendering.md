@@ -48,6 +48,16 @@ to its material). The disc pass discards fragments with `vPhysRatio <
 0.5`; the glow pass discards `vPhysRatio ≥ 0.5`; the core mask discards
 both `vPhysRatio < 0.5` and `glow < uCoreThreshold`.
 
+`uHideFocusIdx` (int) suppresses a single star across all three passes
+by collapsing its vertex to a clip-space sentinel (`gl_Position =
+vec4(2, 2, 2, 1)`) when `gl_InstanceID == uHideFocusIdx`. Defaults to
+`-1` (no suppression). Used by OBSERVE mode (camera parked at the focal
+star — disc would render from inside) and held pinned to the source
+star throughout an observe-launched warp so the reorient phase doesn't
+flash the focal disc as the camera pulls away. Cleared back to `-1` by
+`finishWarp` for navigate-mode arrivals; reset to the new anchor by
+`swapObserveAnchor` for observe→observe arrivals.
+
 `ShaderMaterial({ glslVersion: THREE.GLSL3 })`. Vertex shader uses `uint`
 uniforms and bitwise ops for the spectral-class mask. Do **not** downgrade to
 GLSL1 — the mask logic would need to be rewritten as per-class bools.
@@ -336,6 +346,16 @@ Arrow hidden when the projected direction is < 1 px long (camera is
 looking exactly along the arrow's 3D direction); rare and there's no
 useful 2D direction to draw. Sol arrow also hidden when focused on Sol —
 pointing at yourself adds nothing.
+
+**OBSERVE-mode HUD path.** When `cameraMode === 'observe'`,
+`GalacticArrows.update` skips the 3D origin projection (the camera
+sits at the focal star's local origin, so the projected origin is
+camera-position-degenerate) and anchors at screen centre with a
+`STAR_GAP_PX` (9 px) offset — same gap the constellation asterism
+lines use. The arrow direction comes from projecting Sol/GC's local
+position directly; targets behind the camera are hidden until the
+user sweeps to face them. Distance label measures from
+`camera.position`, since camera = focal star in observe.
 
 SVG distance labels (`#sol-arrow-label`, `#gc-arrow-label`) sit at
 `tip + (LABEL_OFFSET_PX + ARROW_HEAD_DEPTH_PX, -LABEL_OFFSET_PX)` —

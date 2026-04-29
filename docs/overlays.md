@@ -55,6 +55,26 @@ Betelgeuse goes behind the camera when the camera is within ~20 pc of Sol),
 
 If you see a disappearing vector, check this logic first.
 
+## OBSERVE-mode hides
+
+Three SVG layers conditionally hide while `cameraMode === 'observe'`:
+
+- **Focus ring** (`focus-ring-overlay.ts`) — early-returns when in
+  observe or mid-observe-transition. The ring is meaningless when the
+  camera sits *at* the focal star.
+- **Disc mask cutouts** (`disc-mask.ts`) — the focal star and its
+  binary-companion candidates are skipped when in observe, so the
+  constellation overlay paints unmasked through that region (and the
+  focal disc isn't rendered anyway, so there'd be nothing to mask).
+- **Distance vector + To-row** — distance-vector measurement is
+  meaningless from a camera parked on its own anchor; the search
+  box's To-row hides via `syncFocusUI` and the underlying
+  `setVectorTo` / `setVectorToCloud` setters guard against
+  observe-mode calls defensively.
+
+The Sol/GC arrows do **not** hide — they switch to a HUD path instead
+(see `docs/rendering.md` §Galactic reference system).
+
 ## SVG hide semantics
 
 Missing coordinate attributes on SVG elements default to **0**, not "don't

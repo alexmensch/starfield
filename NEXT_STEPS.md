@@ -45,6 +45,19 @@ Done:
   and colour pickers for further calibration. Default-on; URL `mw=0`
   to disable; chart mode hides. See `CLAUDE.md` "Milky Way volumetric
   disc (Phase 5)" section.
+- **Phase 9: OBSERVE camera mode** — second camera mode parked at the
+  focal star with a custom look-around controller (drag yaw + pitch
+  with FPS-style pole clamp, wheel adjusts FOV). Focal disc hidden via
+  `uHideFocusIdx` shader uniform; Sol/GC arrows become HUD locators;
+  picking a new "Location" routes through the warp animation and the
+  post-arrival quaternion slerp leaves the camera pointing in the
+  same celestial direction from the new vantage (parallax view). Star-
+  only — clouds aren't valid observation anchors. Includes a unified
+  near-star approach distance (`minDistForStar` from disc-size formula,
+  tuned via `TARGET_APPROACH_DISC_PX`) used by warp arrival, observe
+  exit, and the orbit minDistance clamp. URL `mode=observe`. See
+  `docs/ui-and-controls.md` §OBSERVE camera mode and
+  `docs/architecture.md` §OBSERVE mode and the warp state machine.
 
 Shelved (dark code):
 - **Phase 2: dust visualisation layer** — particles loaded but rendered
@@ -56,7 +69,6 @@ Not started:
 - Phase 6: Realism indicator + per-star dust slab fallback
 - Phase 7: ATHYG `reduced_m12` catalog upgrade
 - Phase 8: Star chart mode
-- Phase 9: Local-sky camera mode (depends on 5 + 8)
 - Phase 10: Wander mode (autonomous gravity-field camera)
 - Phase 11: Exoplanets around host stars
 - Phase 12a: Solar-system layer (time scrubber + planets + heliopause + scale rings)
@@ -411,63 +423,6 @@ views.
   outside the current view-frustum are skipped.
 
 **Estimate:** 1 day, label collision tuning is most of it.
-
----
-
-## Phase 9: Local-sky camera mode
-
-**Status:** UX-only, depends on Phase 5 (Milky Way background) +
-Phase 8 (chart mode) shipping first. This was the "Planetarium / sky
-from here" item in the future feature backlog; promoting it because
-Phase 5 makes it newly meaningful.
-
-**Goal:** "what does the sky look like from this star?" Park the
-camera at a focal star with a wide FOV and free look-around (no orbit).
-Phase 5 draws a physically-correct Milky Way from the new viewpoint
-automatically since the analytic glow evaluates from any 3D position.
-
-**Behaviour:**
-- Triggered by a button in the panel ("Local sky") or a keyboard
-  shortcut.
-- Camera position: at the focal star's coordinates. The focal star
-  itself is hidden — you're standing on/near it, not looking at it.
-- Camera FOV widened to ~110° from the default ~50° — approximates a
-  planetarium feel.
-- Controls switch from `TrackballControls` orbit to a custom
-  look-around mode (mouse drag rotates the camera in place, no
-  translation). Pinch/scroll adjusts FOV instead of distance.
-- Exit returns to orbit mode at a sensible distance from the star.
-
-**What naturally falls out of being in this mode:**
-- The Milky Way band looks correct from this viewpoint by Phase 5
-  construction. From the LMC you'd see the disk on one side; from
-  inside the Galactic plane far from Sol you'd still see a band but
-  centred differently.
-- All catalog stars render in their correct apparent positions and
-  brightnesses from the new origin.
-- Per-star extinction (Phase 1 + Phase 6 slab) gives correct
-  reddening/dimming for the new line-of-sight.
-- Constellations from Earth still look like constellations only when
-  near Sol; from far stars they reshape correctly because the lines
-  are 3D.
-
-**Files:**
-- New: `src/client/local-sky-controls.ts` — custom look-around
-  controls.
-- Touch: `starfield.ts` (mode switch, camera FOV, focal-star hide),
-  `controls.ts` (toggle button), `url-state.ts` (mode flag).
-
-**Watch out for:**
-- Switching controls implementations cleanly. TrackballControls
-  manages `camera.up` and matrix updates; the new controls need to
-  preserve `camera.up` semantics for two-finger roll to keep working.
-- The focal star occupying the camera position means hiding it needs
-  care — simplest: filter it out of both star passes when in this
-  mode.
-- Optional: a faint cardinal-direction overlay (Galactic l/b ticks).
-  Defer to a future tune-up — the Milky Way band itself orients you.
-
-**Estimate:** 4–6 hours after Phases 5 and 8 land.
 
 ---
 
