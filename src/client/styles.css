@@ -696,9 +696,15 @@ input[type="range"]::-moz-range-thumb {
    solid lines, no dashes. Hue stays distinct (warm Sol, cool GC). */
 .gal-arrow.sol { stroke: rgba(253, 230, 138, 0.4); }
 .gal-arrow.gc { stroke: rgba(102, 136, 170, 0.4); }
+/* Chart-mode HUD palette — deep saturated blue (the existing `--accent`
+   token used by chart-mode toggles and the loading bar). Distinct from
+   pure-black chart ink so the HUD reads as a separate navigational
+   layer; ~7:1 contrast against the beige paper background, comfortably
+   WCAG-AA for graphics. Sol's warm yellow is dropped in chart mode so
+   the whole HUD reads as one colour-coded layer. */
 body.monochrome .gal-arrow.sol,
 body.monochrome .gal-arrow.gc {
-  stroke: rgba(31, 35, 48, 0.85);
+  stroke: rgba(30, 64, 175, 0.85);
 }
 
 /* Arrow labels — reuse the distance-label paint-order halo so the text
@@ -719,7 +725,7 @@ body.monochrome .gal-arrow.gc {
 .gal-arrow-label.sol { fill: rgba(253, 230, 138, 0.7); }
 .gal-arrow-label.gc { fill: rgba(102, 136, 170, 0.85); }
 body.monochrome .gal-arrow-label {
-  fill: rgba(31, 35, 48, 0.9);
+  fill: rgba(30, 64, 175, 0.95);
   stroke: rgba(255, 255, 255, 0.9);
 }
 
@@ -734,7 +740,7 @@ body.monochrome .gal-arrow-label {
   pointer-events: none;
 }
 body.monochrome .hud-ring {
-  stroke: rgba(31, 35, 48, 0.55);
+  stroke: rgba(30, 64, 175, 0.85);
 }
 
 /* Point-of-interest layer (single-click in OBSERVE pins a star). Colour is
@@ -764,7 +770,10 @@ body.monochrome .hud-ring {
   stroke: rgba(7, 9, 18, 0.9);
   stroke-width: 3px;
   stroke-linejoin: round;
-  pointer-events: none;
+  /* Click target — clicking the off-screen POI label slerps the camera
+     so the POI lands at view centre (poi-overlay.ts wires aimAt). */
+  pointer-events: auto;
+  cursor: pointer;
 }
 /* On-screen label (shown when the POI star is in view). Bigger than the
    arrow label so it reads as the primary anchor; the arrow takes over
@@ -779,18 +788,35 @@ body.monochrome .hud-ring {
   stroke: rgba(7, 9, 18, 0.9);
   stroke-width: 3px;
   stroke-linejoin: round;
+  /* Click target — clicking the on-screen POI label deselects the POI
+     (in addition to clicking the star itself). */
+  pointer-events: auto;
+  cursor: pointer;
+}
+/* Ring around each pinned POI star — same styling as the HUD ring so
+   the POI assembly reads as a member of the same HUD widget family.
+   Sized in poi-overlay.ts (fixed 24 px in screen pixels, matching the
+   focus ring) so the ring + on-screen label sit at a constant pixel
+   distance from the star regardless of camera FOV. */
+.poi-ring {
+  fill: none;
+  stroke: rgba(102, 136, 170, 0.4);
+  stroke-width: 1.4;
   pointer-events: none;
+}
+body.monochrome .poi-ring {
+  stroke: rgba(30, 64, 175, 0.85);
 }
 /* Chart-mode (body.monochrome) — translucent strokes vanish against the
    high-contrast paper aesthetic, so flip to heavy black ink with a thin
    white halo on labels (matching the existing Sol/GC chart-mode flip and
    the chart-labels engine's outlines). */
 body.monochrome .poi-arrow {
-  stroke: rgba(31, 35, 48, 0.85);
+  stroke: rgba(30, 64, 175, 0.85);
 }
 body.monochrome .poi-arrow-label,
 body.monochrome .poi-label {
-  fill: rgba(31, 35, 48, 0.95);
+  fill: rgba(30, 64, 175, 0.95);
   stroke: rgba(255, 255, 255, 0.9);
 }
 

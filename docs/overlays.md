@@ -111,7 +111,7 @@ centroid math.
 ## Points of interest (OBSERVE-only)
 
 `poi-overlay.ts` renders user-pinned stars (single-click on a star in
-OBSERVE — see `docs/camera-modes.md` for the click dispatcher). Two
+OBSERVE — see `docs/camera-modes.md` for the click dispatcher). Three
 SVG groups under `#overlay`:
 
 - `<g id="poi-arrows">` — pooled `<path>` + `<text>` per POI for
@@ -119,17 +119,35 @@ SVG groups under `#overlay`:
   `buildArrowSvgPath()` (shared with Sol/GC arrows in `hud-overlay.ts`).
   Shaft start radius reuses `ringRadiusPx()` so POI arrows attach to
   the same ring as Sol/GC. Label text is the POI's best name only.
+- `<g id="poi-rings">` — pooled `<circle class="poi-ring">` per POI,
+  shown when the POI projects on-screen. Fixed 24 px radius (matches
+  `focus-ring-overlay.ts`) so the ring + label sit at a constant pixel
+  distance from the star regardless of camera FOV — important because
+  the rendered disc grows/shrinks with FOV, but the ring doesn't.
 - `<g id="poi-labels">` — pooled `<text>` per POI for on-screen labels
-  that follow the projected star. Format:
+  anchored just outside the ring rim along a 45° diagonal. Format:
   `name · constellation-code · distance-from-observer`.
+
+Click affordances (both label classes set `pointer-events: auto`):
+- **On-screen label** → `Starfield.togglePoi(idx)` deselects the POI.
+  The star itself stays clickable via `observeSingleClick` for the
+  same effect; the label is a second, larger click target.
+- **Off-screen arrow label** → `Starfield.aimAt(localPositions[idx])`
+  slerps the camera so the POI lands at view centre. Mirrors the
+  Sol/GC label affordance in `hud-overlay.ts`.
+- **Ring** stays `pointer-events: none` so the star underneath remains
+  the primary click target for `togglePoi`.
 
 Visibility is gated as a single HUD layer: the whole stack hides when
 `cameraMode !== 'observe'`, when `filter.showHud` is off, during warp
 (via `body.warping #overlay` CSS), and during the navigate↔observe
-transition. Chart-mode (`body.monochrome`) styling flips strokes to
-heavy black ink with a thin white halo so POIs stay readable on the
-high-contrast paper aesthetic — see `.poi-arrow`, `.poi-label`, and
-`.poi-arrow-label` in `styles.css`.
+transition. Chart-mode (`body.monochrome`) styling flips every HUD
+stroke (gal-arrows, HUD ring, POI ring + arrow + labels) to a deep
+saturated blue (`rgba(30, 64, 175, 0.85)`, the existing `--accent`
+token) with a thin white halo on labels — distinct from pure-black
+chart ink so the HUD reads as a separate navigational layer, ~7:1
+contrast against the beige paper background. See `.poi-arrow`,
+`.poi-label`, `.poi-arrow-label`, and `.poi-ring` in `styles.css`.
 
 POIs survive page reloads via the `?v=` blob (HIP-only encoding,
 observe-only emission — see `docs/build-and-data.md`-adjacent notes

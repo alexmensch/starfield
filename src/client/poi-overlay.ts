@@ -12,10 +12,17 @@ import { ringRadiusPx } from './hud-overlay';
 // Point-of-interest overlay. Single-click on a star in OBSERVE pins it
 // (Starfield.togglePoi). The pin renders two ways:
 //   - **On screen** (POI projects inside the viewport, with a small
-//     pull-in margin so labels don't clip at the edge): a text label
-//     `name · ConCode · distance` follows the star.
+//     pull-in margin so labels don't clip at the edge): a thin ring
+//     around the star + a text label `name · ConCode · distance`
+//     anchored at a fixed pixel offset from the ring rim. The fixed-px
+//     anchor keeps the label-to-star distance constant as FOV changes.
+//     Clicking either the ring's label or the star itself toggles the
+//     POI off (Starfield.togglePoi).
 //   - **Off screen**: a chevron arrow on the HUD ring rim points toward
 //     the POI direction, with a name-only label by the chevron tip.
+//     Clicking that label slerps the camera so the POI lands at view
+//     centre (Starfield.aimAt) — same affordance the Sol/GC labels
+//     give in the HUD.
 // Visibility is gated as a HUD widget — hidden when cameraMode !=
 // observe, when the HUD checkbox is off, during warp (CSS rule), and
 // during the navigate↔observe transition.
@@ -27,14 +34,20 @@ const MIN_SHAFT_PIXEL_LENGTH = 8;
 // as on-screen so its label survives small look-around drifts without
 // flipping to arrow mode every couple of frames.
 const ON_SCREEN_PULL_IN_PX = 40;
-// Offset from the star's projected centre to the label's text anchor.
-// Diagonal so the label sits clear of the disc + binary companion area.
-const LABEL_OFFSET_X_PX = 10;
-const LABEL_OFFSET_Y_PX = 10;
+// Per-POI ring around the pinned star. Same radius as the focus ring so
+// the two read as the same kind of indicator. The on-screen label rides
+// just outside this rim along a 45° diagonal, which is what makes the
+// label-to-star distance FOV-invariant: ring radius is fixed in screen
+// pixels regardless of how FOV scales the rendered disc.
+const POI_RING_RADIUS_PX = 24;
+const LABEL_RIM_GAP_PX = 6;
+const LABEL_DIAG = (POI_RING_RADIUS_PX + LABEL_RIM_GAP_PX) / Math.SQRT2;
 
 interface Entry {
+  idx: number;
   arrowPath: SVGPathElement;
   arrowLabel: SVGTextElement;
+  ring: SVGCircleElement;
   onScreenLabel: SVGTextElement;
 }
 
@@ -43,8 +56,9 @@ export function createPoiOverlay(
   starLabels: Map<number, string>,
 ): void {
   const arrowsGroup = document.getElementById('poi-arrows') as unknown as SVGGElement | null;
+  const ringsGroup = document.getElementById('poi-rings') as unknown as SVGGElement | null;
   const labelsGroup = document.getElementById('poi-labels') as unknown as SVGGElement | null;
-  if (!arrowsGroup || !labelsGroup) return;
+  if (!arrowsGroup || !ringsGroup || !labelsGroup) return;
 
   const catalog = starfield.catalog;
   const pool = new Map<number, Entry>();
@@ -52,8 +66,9 @@ export function createPoiOverlay(
   const tmpStarLocal = new THREE.Vector3();
   const tmpDir = new THREE.Vector3();
   const tmpAux = new THREE.Vector3();
+  const tmpAim = new THREE.Vector3();
 
-  function createEntry(): Entry {
+  function createEntry(idx: number): Entry {
     const NS = 'http://www.w3.org/2000/svg';
     const arrowPath = document.createElementNS(NS, 'path') as SVGPathElement;
     arrowPath.setAttribute('class', 'poi-arrow');
@@ -65,18 +80,40 @@ export function createPoiOverlay(
     arrowLabel.setAttribute('dominant-baseline', 'central');
     arrowsGroup!.appendChild(arrowLabel);
 
+    const ring = document.createElementNS(NS, 'circle') as SVGCircleElement;
+    ring.setAttribute('class', 'poi-ring');
+    ring.setAttribute('r', POI_RING_RADIUS_PX.toFixed(1));
+    ringsGroup!.appendChild(ring);
+
     const onScreenLabel = document.createElementNS(NS, 'text') as SVGTextElement;
     onScreenLabel.setAttribute('class', 'poi-label');
     onScreenLabel.setAttribute('text-anchor', 'start');
     onScreenLabel.setAttribute('dominant-baseline', 'central');
     labelsGroup!.appendChild(onScreenLabel);
 
-    return { arrowPath, arrowLabel, onScreenLabel };
+    // Click affordances. On-screen label deselects the POI (the ring is
+    // visible so "remove this pin" is the natural action). Off-screen
+    // arrow label slerps the camera toward the POI (it isn't visible so
+    // "show me where it is" is the natural action). The ring itself
+    // stays click-through — the star underneath is already a click
+    // target for togglePoi via Starfield.observeSingleClick, and putting
+    // pointer-events on the ring would shadow that.
+    onScreenLabel.addEventListener('click', () => {
+      starfield.togglePoi(idx);
+    });
+    arrowLabel.addEventListener('click', () => {
+      const lp = starfield.localPositions;
+      tmpAim.set(lp[idx * 3], lp[idx * 3 + 1], lp[idx * 3 + 2]);
+      starfield.aimAt(tmpAim);
+    });
+
+    return { idx, arrowPath, arrowLabel, ring, onScreenLabel };
   }
 
   function destroyEntry(e: Entry) {
     e.arrowPath.remove();
     e.arrowLabel.remove();
+    e.ring.remove();
     e.onScreenLabel.remove();
   }
 
@@ -90,23 +127,26 @@ export function createPoiOverlay(
       }
     }
     for (const idx of pois) {
-      if (!pool.has(idx)) pool.set(idx, createEntry());
+      if (!pool.has(idx)) pool.set(idx, createEntry(idx));
     }
   }
 
   function hideEntry(e: Entry) {
     e.arrowPath.setAttribute('d', '');
     e.arrowLabel.style.display = 'none';
+    e.ring.style.display = 'none';
     e.onScreenLabel.style.display = 'none';
   }
 
   function hideAll() {
     arrowsGroup!.style.display = 'none';
+    ringsGroup!.style.display = 'none';
     labelsGroup!.style.display = 'none';
   }
 
   function showAll() {
     arrowsGroup!.style.display = '';
+    ringsGroup!.style.display = '';
     labelsGroup!.style.display = '';
   }
 
@@ -198,7 +238,15 @@ export function createPoiOverlay(
         e.arrowPath.setAttribute('d', '');
         e.arrowLabel.style.display = 'none';
 
-        // Show on-screen label with full info.
+        // Ring at the projected star.
+        e.ring.style.display = '';
+        e.ring.setAttribute('cx', projected[0].toFixed(1));
+        e.ring.setAttribute('cy', projected[1].toFixed(1));
+
+        // On-screen label anchored just outside the ring rim along a 45°
+        // diagonal. Fixed-pixel offset → label-to-star distance is
+        // FOV-invariant; the rendered disc may grow or shrink with FOV
+        // but the label stays clear of the ring at all zoom levels.
         const fullText = conCode
           ? `${name} · ${conCode} · ${fmtDist(distPc)}`
           : `${name} · ${fmtDist(distPc)}`;
@@ -206,11 +254,11 @@ export function createPoiOverlay(
         e.onScreenLabel.textContent = fullText;
         e.onScreenLabel.setAttribute(
           'x',
-          (projected[0] + LABEL_OFFSET_X_PX).toFixed(1),
+          (projected[0] + LABEL_DIAG).toFixed(1),
         );
         e.onScreenLabel.setAttribute(
           'y',
-          (projected[1] + LABEL_OFFSET_Y_PX).toFixed(1),
+          (projected[1] + LABEL_DIAG).toFixed(1),
         );
         continue;
       }
@@ -218,6 +266,7 @@ export function createPoiOverlay(
       // Off screen — draw arrow on the HUD ring rim. Same screen-direction
       // derivation as hud-overlay.ts: try aux-step first, then fall back
       // to direct target projection (reliable in observe steady state).
+      e.ring.style.display = 'none';
       e.onScreenLabel.style.display = 'none';
 
       tmpDir.set(

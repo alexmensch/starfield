@@ -204,11 +204,16 @@ catalog itself was missing, and is hidden in chart mode anyway.
 - Sphere + grid swap stroke colour to dark grey (`#3a3530`), no
   transparency, no blending. The equator/line opacity split is dropped
   in chart mode (paper-chart aesthetic doesn't fade).
-- Distance vector + Sol/GC arrows + HUD ring all collapse to the same
-  dark-grey-on-white-halo palette via CSS rules on `.gal-arrow*`,
-  `#dist-line*`, and `.hud-ring` — no per-frame palette logic;
-  `setMonochrome(on)` on `HudOverlay` is intentionally empty since the
-  SVG class routing handles it.
+- Sol/GC arrows + HUD ring + POI ring/arrow/labels all flip to a deep
+  saturated blue palette (`rgba(30, 64, 175, 0.85)`, the existing
+  `--accent` token) with white halos on labels — distinct from
+  pure-black chart ink so the HUD reads as a separate navigational
+  layer. Strong contrast against the beige paper background (~7:1).
+  Distance vector keeps a separate dark slate stroke since it's a
+  measurement, not part of the HUD. All routed via CSS on
+  `.gal-arrow*`, `.hud-ring`, `.poi-*`, and `#dist-line*` — no
+  per-frame palette logic; `setMonochrome(on)` on `HudOverlay` is
+  intentionally empty since the SVG class routing handles it.
 
 **Warp visibility:** `updateGalacticLayers` hides the 3D disc + grid
 groups while `warpState !== null`; SVG arrow paths and labels are

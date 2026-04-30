@@ -59,6 +59,7 @@ src/
     disc-mask.ts          SVG mask tracking the focused star + companion discs
     distance-vector-overlay.ts chevron-based measurement line
     focus-ring-overlay.ts      dashed circle around focused star
+    poi-overlay.ts        observe-mode pinned-star labels + arrows + rings
     cloud-loader.ts       fetch + parse public/clouds.json
     molecular-clouds.ts   3D ellipsoid render layer + raycast pick + fly-to
     scale-bar.ts          bottom-left distance scale
