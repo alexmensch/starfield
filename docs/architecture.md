@@ -91,34 +91,63 @@ path Sol/GC label clicks use.
 
 ## URL state
 
+All URL state lives in a single opaque param: `?v=<base64url>`. The blob
+is a binary, versioned envelope — version byte, 32-bit presence
+bitmask, then only the fields that diverge from canonical defaults. So
+a fully-default state has no `?v=` at all, a typical share lands at
+~30–50 chars, and worst-case (every field overridden) tops out around
+110 chars. See `src/client/url-state.ts` for the format and `FIELDS`
+table.
+
 - `url-state.ts applyFromUrl` runs **before** `startUrlSync` subscribes, so
   applying the URL on load doesn't echo back into history.
-- Default-compression: fields are omitted when they match defaults. Empty
-  URL = first-run state.
-- `focus=-1` is the sentinel for "explicitly unfocused" (so the default (Sol)
-  isn't ambiguous with "param missing").
-- If the URL has `focus` without camera params (a hand-typed share), we call
-  `focusStar` which teleports the camera. If it has camera params too, we use
-  `setOrbitTarget` so the explicit camera wins.
-- Camera changes are tracked via `onFrame` with a stringified-coord hash and
-  a 300 ms debounced writer. The hash covers position, target, **and**
-  `camera.up` — so two-finger roll (which only mutates `up`) still triggers
-  a URL update.
-- `camera.up` round-trips via `ux/uy/uz` params. They're written only when
-  `up` differs from `(0, 1, 0)` and applied **before** `focusStar` /
-  `setOrbitTarget` in `applyFromUrl` because those call `controls.update()`
-  which reads `camera.up` to derive orientation.
-- `mode=observe` round-trips OBSERVE-mode entry. Applied **after** camera
-  params + `controls.update()` so the saved pose lands first; the
-  receiver then `setCameraMode('observe', { animate: false })` if the
-  param is set and a focused star exists. Default-omitted (navigate).
+- Default-compression: a field is encoded only when its value differs
+  from the canonical default. Encoder pre-computes the presence mask
+  in one walk, then writes only the bytes for set bits. Default state
+  produces no `?v=` at all (clean URL).
+- Star focus is encoded with a tag bit — high bit set ⇒ HIP number,
+  clear ⇒ row index. HIPs survive future catalog reorderings; index
+  fallback exists for the ~63% of catalog stars without a HIP. Sol is
+  the canonical default focus and is encoded by *omitting* the field;
+  "explicitly unfocused" uses a separate zero-byte presence bit so the
+  three states (default Sol / specific star / cleared) stay
+  unambiguous.
+- If `?v=` carries a focus without camera params (a hand-typed share),
+  `applyDecodedView` calls `focusStar` which teleports the camera. If
+  camera params are also present, it uses `setOrbitTarget` so the
+  explicit camera wins.
+- Camera changes are tracked via `onFrame` with a stringified-coord hash
+  and a 300 ms debounced writer. The hash covers position, target,
+  **and** `camera.up` — so two-finger roll (which only mutates `up`)
+  still triggers a URL update.
+- `camera.up` round-trips when it differs from `(0, 1, 0)` and is
+  applied **before** focus/orbit dispatch because `focusStar` /
+  `setOrbitTarget` call `controls.update()` which reads `camera.up` to
+  derive orientation.
+- `mode=observe` is applied **after** camera params + `controls.update()`
+  so the saved pose lands first; the receiver then
+  `setCameraMode('observe', { animate: false })` if the bit is set and
+  a focused star exists. Default-omitted (navigate).
 - The URL writer skips frame-hash updates while
   `isObserveTransitionActive()` is true, mirroring the warp guard — the
   observe enter/exit translate animates camera position and would
   otherwise flood history with intermediate poses.
 
-Cloud-related URL params (`cloud=N`, `toc=N`, `mc=0`) are documented in
-`docs/rendering.md` §Molecular cloud overlay.
+Cloud-related state (cloud focus, cloud measurement vector, MC overlay
+toggle) lives in the same `?v=` blob — see `docs/rendering.md`
+§Molecular cloud overlay.
+
+**Adding a field.** Claim the next free presence bit in `FIELDS`,
+declare its type and bytes, and add encode/decode logic in
+`currentStateOf` / `applyDecodedView`. Old shared URLs decode fine
+because their bit is 0 in the presence mask. Don't repurpose retired
+bits for ~6 months of deploy overlap. Breaking-shape changes (resizing
+existing fields, semantic shifts) bump `SCHEMA_VERSION`.
+
+**Console helpers.** `window.debug.decodeView('AQAA…')` decodes a blob
+and `console.table`s the fields; `window.debug.encodeView()` returns
+the blob for the current Starfield state. Useful when debugging a
+shared URL that someone reports.
 
 ## Floating origin (large-world precision)
 

@@ -476,8 +476,8 @@ this call the labels lag by one frame during fast camera moves.
 
 `molecular-clouds.ts` renders ~96 named local SF clouds as soft warm
 ellipsoids. Default-on; toggle in the Galactic-overlays panel section,
-URL param `mc=0` to disable. Stays visible during warp by design (flying
-past Taurus is a feature, not noise).
+encoded in the URL `?v=` flags byte when disabled. Stays visible during
+warp by design (flying past Taurus is a feature, not noise).
 
 **Data:** `public/clouds.json` is the merged output of `build-clouds.py`:
 - Z2021 Table 1 → 12 ellipsoid clouds with axis-aligned bounding boxes in
@@ -563,9 +563,11 @@ pattern as `GalacticDisc`. So focusing on a far star (which shifts the
 floating origin to that star's absolute position) doesn't move clouds
 visually — they stay anchored where they should.
 
-**URL state:** `cloud=N` for the focused cloud (mutually exclusive with
-`focus=N`), `toc=N` for a cloud measurement destination (mutually
-exclusive with `to=N`), and `mc=0` to hide the layer (default omitted).
+**URL state:** cloud focus and the cloud measurement vector ride in the
+shared `?v=` blob (mutually exclusive with star focus and the star
+measurement vector respectively). The MC overlay disable flag also
+lives there (flags-byte bit 2, default-omitted since the layer is
+default-on).
 
 **Dev-console levers** under `starfield.cloudLayer.*`:
 - `setOpacity(x)` / `setColor(0xRRGGBB)` — dark mode tuning

@@ -177,10 +177,12 @@ a preset always sets it; the magnitude slider can still tweak it (and
 the value survives viewport resizes since `recomputePresetPxSizes` only
 touches sizeMin/Max).
 
-URL state carries `preset=` when not on the default (`naked-eye`); `mag=`
-only when diverged from the active preset's value; `smin/smax/span` only
-when their override flag is true. Receiver applies the preset first, then
-layers the explicit overrides on top.
+URL state encodes the preset only when not on the default
+(`naked-eye`); `mag` only when diverged from the active preset's
+value; `smin/smax/span` only when their override flag is true.
+Receiver applies the preset first, then layers the explicit overrides
+on top. See `docs/architecture.md` §URL state for the binary `?v=`
+format.
 
 ## Field of view
 
@@ -226,8 +228,8 @@ two and the other gets recomputed to a value that would invert.
 Locked to dark in the live UI. The `setMonochrome` plumbing on
 `Starfield` and the `body.monochrome` palette in CSS are intentionally
 retained — `applyTheme('mono')` from the console flips the chart-mode
-palette for future repurposing. There's no longer a UI toggle and no
-URL `t=` param.
+palette for future repurposing. There's no longer a UI toggle and the
+theme is not part of the URL `?v=` state.
 
 ## Camera near plane vs controls minDistance
 
@@ -490,9 +492,10 @@ frame is current). Two reasons:
   before the recenter that wasn't called), since both paths capture
   `fromPos` from the camera position right before the lerp begins.
 
-**URL state:** `mode=observe` round-trips the mode flag, applied after
-camera params + `controls.update()` so the saved pose lands first. The
-URL writer's debounced frame hook skips writes during
+**URL state:** the OBSERVE-mode flag round-trips through the `?v=`
+blob (flags-byte bit 5), applied after camera params +
+`controls.update()` so the saved pose lands first. The URL writer's
+debounced frame hook skips writes during
 `isObserveTransitionActive()` (mirrors the warp guard).
 
 ## Two-finger roll gesture (platform-split)

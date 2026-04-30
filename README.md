@@ -119,8 +119,10 @@ Stack: TypeScript, Three.js (WebGL2), Vite, Cloudflare Workers.
   lane reads correctly.
 - Scale bar in the bottom-left adapts to the current zoom in round pc or ly
   units.
-- URL state sync: all settings plus camera pose are serialised to query
-  params, so any view is bookmarkable and shareable.
+- URL state sync: all settings plus camera pose are packed into a single
+  opaque `?v=…` query param, so any view is bookmarkable and shareable.
+  Typical share links are 30–50 characters; default state has no `?v=`
+  at all.
 - Top-left brand surface with always-visible **About** and **Credits**
   modals (data sources, citations, licence) — both reuse the welcome-modal
   styling.

@@ -17,7 +17,7 @@ import { bindModeToggle } from './mode-toggle';
 import { maybeShowInfoModal } from './info-modal';
 import { bindBrandModals } from './brand-modal';
 import { bindKeyboardShortcuts } from './keyboard-shortcuts';
-import { applyFromUrl, startUrlSync } from './url-state';
+import { applyFromUrl, startUrlSync, type IdMaps } from './url-state';
 import { fmtDist, onUnitChange } from './distance-util';
 import { setupDebug } from './debug';
 
@@ -70,7 +70,24 @@ async function main() {
     // project.
     (window as unknown as { starfield: Starfield }).starfield = starfield;
     if (cloudCatalog) starfield.attachClouds(cloudCatalog);
-    setupDebug(starfield);
+
+    // HIP → row-index lookup, used by url-state to encode/decode shared
+    // links with stable star IDs that survive a future catalog reorder.
+    // Built once over `catalog.hip` (uint32 per row, 0 = no HIP). First-
+    // seen wins on collision (matches Stellarium-figure HIP resolution).
+    const hipToIndex = new Map<number, number>();
+    for (let i = 0; i < catalog.count; i++) {
+      const h = catalog.hip[i];
+      if (h > 0 && !hipToIndex.has(h)) hipToIndex.set(h, i);
+    }
+    const idMaps: IdMaps = {
+      hipToIndex,
+      indexToHip: catalog.hip,
+      starCount: catalog.count,
+      solIndex: catalog.solIndex,
+    };
+
+    setupDebug(starfield, idMaps);
 
     // Interstellar dust loads in the background — never blocks first paint.
     // Extinction fades in as each voxel chunk lands on the GPU. If the
@@ -114,8 +131,8 @@ async function main() {
 
     // Apply any URL state before starting the URL writer so we don't echo
     // the same params back into history on load.
-    applyFromUrl(starfield);
-    startUrlSync(starfield);
+    applyFromUrl(starfield, idMaps);
+    startUrlSync(starfield, idMaps);
 
     const countLabel = `${catalog.count.toLocaleString()} stars`;
     const renderMeta = () => {

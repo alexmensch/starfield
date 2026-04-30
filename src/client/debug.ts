@@ -2,6 +2,13 @@ import type { Starfield } from './starfield';
 import { makeDebugPanel } from './debug-panel';
 import { buildMilkywaySection } from './milkyway-tuning';
 import { buildStarSection } from './star-tuning';
+import {
+  type DecodedView,
+  type IdMaps,
+  currentStateOf,
+  decodeBlob,
+  encodeBlob,
+} from './url-state';
 
 // Optional dev tooling exposed via `window.debug`. The panel hosts every
 // section side-by-side — there's no per-section toggling because the
@@ -18,9 +25,13 @@ export interface DebugTools {
   panel(): void;
   /** Legacy alias for panel(). Kept so old console muscle memory still works. */
   milkyway(): void;
+  /** Decode a `?v=` blob (with or without the `v=` prefix) into a DecodedView. */
+  decodeView(blob: string): DecodedView;
+  /** Encode the current Starfield state into a `?v=` blob string. */
+  encodeView(): string;
 }
 
-export function setupDebug(starfield: Starfield): DebugTools {
+export function setupDebug(starfield: Starfield, idMaps: IdMaps): DebugTools {
   let panel: HTMLDivElement | null = null;
 
   const togglePanel = () => {
@@ -38,9 +49,17 @@ export function setupDebug(starfield: Starfield): DebugTools {
   const tools: DebugTools = {
     panel: togglePanel,
     milkyway: togglePanel,
+    decodeView: (blob) => {
+      // Tolerate full URLs and `v=...` prefixes for paste-in convenience.
+      const stripped = blob.includes('v=') ? blob.split('v=').pop()! : blob;
+      const view = decodeBlob(stripped);
+      console.table(view);
+      return view;
+    },
+    encodeView: () => encodeBlob(currentStateOf(starfield, idMaps)),
   };
 
   (window as unknown as { debug: DebugTools }).debug = tools;
-  console.info('Debug tools: debug.panel()');
+  console.info('Debug tools: debug.panel(), debug.decodeView(blob), debug.encodeView()');
   return tools;
 }

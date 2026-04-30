@@ -3,247 +3,484 @@ import { sliderToDist, distToSlider, SLIDER_STEPS } from './controls';
 import { applyUnit } from './unit-toggle';
 import { getUnit, onUnitChange } from './distance-util';
 
+// URL state lives in a single opaque param: `?v=<base64url>`. The blob
+// contains a version byte, a 32-bit presence bitmask, and only the fields
+// that diverge from the canonical defaults — so a fully-default state has
+// no `?v=` at all and a typical share lands at ~30–40 chars.
+//
+// Adding a field: claim the next free presence bit, append a FieldSpec to
+// the FIELDS table, and add encoder/decoder logic in `currentStateOf` /
+// `applyDecodedView`. Old shared URLs still decode fine — their bit is 0
+// in the presence mask, so the decoder takes the default. Don't repurpose
+// retired bits for ~6 months of deploy overlap. Breaking-shape changes
+// (resizing existing fields, semantic shifts) bump SCHEMA_VERSION.
+//
+// Buffer order (FIELDS bit-index order) is independent of the dispatch
+// order in applyDecodedView. Both are load-bearing — see the comments
+// at each apply step.
+
 const DEBOUNCE_MS = 300;
 const ALL_SPECT_MASK = 0b111111111;
-
-// Defaults that are omitted from the URL when they match.
-const DEFAULTS = {
-  dmin: 0,
-  dmax: SLIDER_STEPS,
-  // Active magnitude preset. URL omits when matching default. mag/smin/smax/
-  // span are only serialised when explicitly overridden — otherwise they
-  // come from the active preset + receiver's viewport, so a shared URL
-  // adapts star sizes to the receiver's screen.
-  preset: 'naked-eye' as MagPresetName,
-  spect: ALL_SPECT_MASK,
-  con: -1,
-  // Molecular cloud overlay defaults to ON, so the URL param appears only
-  // when the user explicitly turns it off.
-  mc: 1,
-  // Milky Way analytic background also defaults to ON. Same omit-when-default
-  // convention. Note the FPS probe may force this off post-load on slow
-  // hardware; if so, the synthetic state-change fires through the writer
-  // and `mw=0` lands in the URL.
-  mw: 1,
-  camX: 0,
-  camY: 0,
-  camZ: 30,
-  tgtX: 0,
-  tgtY: 0,
-  tgtZ: 0,
-  upX: 0,
-  upY: 1,
-  upZ: 0,
-};
-
+const SCHEMA_VERSION = 1;
+const PARAM_NAME = 'v';
 const EPS = 1e-3;
 
-export function applyFromUrl(starfield: Starfield) {
-  const params = new URLSearchParams(location.search);
-  if (params.toString() === '') return;
+// Default values that the encoder uses to decide whether to omit a field.
+const DEFAULT_CAM: [number, number, number] = [0, 0, 30];
+const DEFAULT_TGT: [number, number, number] = [0, 0, 0];
+const DEFAULT_UP: [number, number, number] = [0, 1, 0];
 
-  // Apply unit before any later DOM syncs read it.
-  const u = params.get('u');
-  if (u === 'ly' || u === 'pc') applyUnit(u);
+// Focus-tag-bit semantics: high bit set = HIP-resolved ID, clear = raw
+// row index. The 0xFFFFFFFF sentinel is reserved (won't naturally appear
+// since "explicitly unfocused" uses a separate presence bit, not a magic
+// id value).
+const FOCUS_HIP_TAG = 0x80000000;
+const FOCUS_ID_MASK = 0x7fffffff;
 
-  // Apply the magnitude preset first so its defaults populate
-  // sizeMin/Max/Span at the receiver's viewport. Subsequent setFilter
-  // calls layer URL-explicit overrides on top.
-  const presetParam = params.get('preset');
-  if (presetParam === 'naked-eye' || presetParam === 'binoculars' || presetParam === 'all') {
-    starfield.applyMagnitudePreset(presetParam);
+const PRESET_TO_INDEX: Record<MagPresetName, number> = {
+  'naked-eye': 0,
+  'binoculars': 1,
+  'all': 2,
+};
+const INDEX_TO_PRESET: MagPresetName[] = ['naked-eye', 'binoculars', 'all'];
+
+// Flags byte — packed booleans + small enums. Each bit is "non-default":
+//   0 = grid on, 1 = HUD on, 2 = MC disabled, 3 = MW disabled,
+//   4 = unit ly, 5 = mode observe.
+const FLAG_GRID         = 1 << 0;
+const FLAG_HUD          = 1 << 1;
+const FLAG_MC_DISABLED  = 1 << 2;
+const FLAG_MW_DISABLED  = 1 << 3;
+const FLAG_UNIT_LY      = 1 << 4;
+const FLAG_MODE_OBSERVE = 1 << 5;
+
+export interface IdMaps {
+  /** HIP → row-index lookup. Built once at boot from `catalog.hip`. */
+  hipToIndex: Map<number, number>;
+  /** Row → HIP lookup; `indexToHip[i] === 0` when the star has no HIP. */
+  indexToHip: Uint32Array;
+  /** Total row count for bounds checks. */
+  starCount: number;
+  /** Sol's row index, or -1 if missing. */
+  solIndex: number;
+}
+
+export type StarRef = { kind: 'hip' | 'index'; id: number };
+
+export interface DecodedView {
+  cam?: [number, number, number];
+  tgt?: [number, number, number];
+  up?: [number, number, number];
+  fov?: number;
+  mag?: number;
+  dmin?: number;
+  dmax?: number;
+  spect?: number;
+  preset?: MagPresetName;
+  con?: number;
+  smin?: number;
+  smax?: number;
+  span?: number;
+  showGalacticGrid?: boolean;
+  showHud?: boolean;
+  showMolecularClouds?: boolean;
+  showMilkyway?: boolean;
+  unit?: 'pc' | 'ly';
+  mode?: 'navigate' | 'observe';
+  /** Star focus. Undefined = default (Sol). 'cleared' = explicitly unfocused. */
+  focus?: 'cleared' | StarRef;
+  /** Vector-to star (the chevron measurement line). */
+  to?: StarRef;
+  /** Cloud focus (mutually exclusive with star focus in Starfield). */
+  cloud?: number;
+  /** Vector-to cloud (mutually exclusive with `to`). */
+  toc?: number;
+}
+
+interface FieldSpec {
+  bit: number;
+  key: string;
+  bytes: number;
+  isPresent(v: DecodedView): boolean;
+  encode(v: DecodedView, dv: DataView, off: number): void;
+  decode(v: DecodedView, dv: DataView, off: number): void;
+}
+
+function vec3Field(bit: number, key: 'cam' | 'tgt' | 'up'): FieldSpec {
+  return {
+    bit, key, bytes: 12,
+    isPresent: v => v[key] !== undefined,
+    encode: (v, dv, o) => {
+      const t = v[key]!;
+      dv.setFloat32(o + 0, t[0], true);
+      dv.setFloat32(o + 4, t[1], true);
+      dv.setFloat32(o + 8, t[2], true);
+    },
+    decode: (v, dv, o) => {
+      v[key] = [dv.getFloat32(o, true), dv.getFloat32(o + 4, true), dv.getFloat32(o + 8, true)];
+    },
+  };
+}
+
+function f32Field(bit: number, key: 'fov' | 'mag' | 'smin' | 'smax' | 'span'): FieldSpec {
+  return {
+    bit, key, bytes: 4,
+    isPresent: v => v[key] !== undefined,
+    encode: (v, dv, o) => { dv.setFloat32(o, v[key]!, true); },
+    decode: (v, dv, o) => { v[key] = dv.getFloat32(o, true); },
+  };
+}
+
+function u16Field(bit: number, key: 'dmin' | 'dmax' | 'spect' | 'cloud' | 'toc'): FieldSpec {
+  return {
+    bit, key, bytes: 2,
+    isPresent: v => v[key] !== undefined,
+    encode: (v, dv, o) => { dv.setUint16(o, v[key]!, true); },
+    decode: (v, dv, o) => { v[key] = dv.getUint16(o, true); },
+  };
+}
+
+function starRefField(bit: number, key: 'focus' | 'to'): FieldSpec {
+  return {
+    bit, key, bytes: 4,
+    isPresent: v => typeof v[key] === 'object' && v[key] !== null,
+    encode: (v, dv, o) => {
+      const ref = v[key] as StarRef;
+      const tagged = ref.kind === 'hip' ? (ref.id | FOCUS_HIP_TAG) : (ref.id & FOCUS_ID_MASK);
+      dv.setUint32(o, tagged >>> 0, true);
+    },
+    decode: (v, dv, o) => {
+      const raw = dv.getUint32(o, true);
+      v[key] = (raw & FOCUS_HIP_TAG)
+        ? { kind: 'hip', id: raw & FOCUS_ID_MASK }
+        : { kind: 'index', id: raw & FOCUS_ID_MASK };
+    },
+  };
+}
+
+const FIELDS: FieldSpec[] = [
+  vec3Field(0, 'cam'),
+  vec3Field(1, 'tgt'),
+  vec3Field(2, 'up'),
+  f32Field(3, 'fov'),
+  f32Field(4, 'mag'),
+  u16Field(5, 'dmin'),
+  u16Field(6, 'dmax'),
+  u16Field(7, 'spect'),
+  {
+    bit: 8, key: 'preset', bytes: 1,
+    isPresent: v => v.preset !== undefined,
+    encode: (v, dv, o) => { dv.setUint8(o, PRESET_TO_INDEX[v.preset!]); },
+    decode: (v, dv, o) => {
+      const idx = dv.getUint8(o);
+      v.preset = INDEX_TO_PRESET[idx] ?? 'naked-eye';
+    },
+  },
+  {
+    bit: 9, key: 'con', bytes: 1,
+    isPresent: v => v.con !== undefined,
+    encode: (v, dv, o) => { dv.setInt8(o, v.con!); },
+    decode: (v, dv, o) => { v.con = dv.getInt8(o); },
+  },
+  f32Field(10, 'smin'),
+  f32Field(11, 'smax'),
+  f32Field(12, 'span'),
+  {
+    bit: 13, key: 'flags', bytes: 1,
+    isPresent: v => packFlags(v) !== 0,
+    encode: (v, dv, o) => { dv.setUint8(o, packFlags(v)); },
+    decode: (v, dv, o) => { unpackFlags(v, dv.getUint8(o)); },
+  },
+  starRefField(14, 'focus'),
+  starRefField(15, 'to'),
+  u16Field(16, 'cloud'),
+  u16Field(17, 'toc'),
+  {
+    // Zero-byte sentinel — presence bit IS the value. Distinct from "focus
+    // bit absent" (= default Sol) and from "focus bit present" (= some
+    // specific star). When this bit is set, the receiver explicitly clears
+    // focus regardless of starting state.
+    bit: 18, key: 'focusCleared', bytes: 0,
+    isPresent: v => v.focus === 'cleared',
+    encode: () => {},
+    decode: v => { v.focus = 'cleared'; },
+  },
+];
+
+function packFlags(v: DecodedView): number {
+  let f = 0;
+  if (v.showGalacticGrid) f |= FLAG_GRID;
+  if (v.showHud) f |= FLAG_HUD;
+  if (v.showMolecularClouds === false) f |= FLAG_MC_DISABLED;
+  if (v.showMilkyway === false) f |= FLAG_MW_DISABLED;
+  if (v.unit === 'ly') f |= FLAG_UNIT_LY;
+  if (v.mode === 'observe') f |= FLAG_MODE_OBSERVE;
+  return f;
+}
+
+function unpackFlags(v: DecodedView, f: number): void {
+  if (f & FLAG_GRID) v.showGalacticGrid = true;
+  if (f & FLAG_HUD) v.showHud = true;
+  if (f & FLAG_MC_DISABLED) v.showMolecularClouds = false;
+  if (f & FLAG_MW_DISABLED) v.showMilkyway = false;
+  if (f & FLAG_UNIT_LY) v.unit = 'ly';
+  if (f & FLAG_MODE_OBSERVE) v.mode = 'observe';
+}
+
+function computePresence(view: DecodedView): number {
+  let mask = 0;
+  for (const f of FIELDS) {
+    if (f.isPresent(view)) mask |= (1 << f.bit);
+  }
+  return mask;
+}
+
+export function encodeBlob(view: DecodedView): string {
+  const mask = computePresence(view);
+  let total = 5; // version + presence
+  for (const f of FIELDS) {
+    if (mask & (1 << f.bit)) total += f.bytes;
+  }
+  const ab = new ArrayBuffer(total);
+  const dv = new DataView(ab);
+  dv.setUint8(0, SCHEMA_VERSION);
+  dv.setUint32(1, mask >>> 0, true);
+  let off = 5;
+  for (const f of FIELDS) {
+    if (mask & (1 << f.bit)) {
+      f.encode(view, dv, off);
+      off += f.bytes;
+    }
+  }
+  return toBase64Url(new Uint8Array(ab));
+}
+
+export function decodeBlob(blob: string): DecodedView {
+  const bytes = fromBase64Url(blob);
+  if (bytes.length < 5) throw new Error(`Blob too short: ${bytes.length} bytes`);
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const version = dv.getUint8(0);
+  if (version !== SCHEMA_VERSION) {
+    throw new Error(`Unsupported view version: ${version} (expected ${SCHEMA_VERSION})`);
+  }
+  const mask = dv.getUint32(1, true);
+  const view: DecodedView = {};
+  let off = 5;
+  for (const f of FIELDS) {
+    if (mask & (1 << f.bit)) {
+      f.decode(view, dv, off);
+      off += f.bytes;
+    }
+  }
+  return view;
+}
+
+// RFC 4648 §5 base64url, no padding.
+function toBase64Url(bytes: Uint8Array): string {
+  let s = '';
+  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function fromBase64Url(blob: string): Uint8Array {
+  let s = blob.replace(/-/g, '+').replace(/_/g, '/');
+  while (s.length % 4) s += '=';
+  const bin = atob(s);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+// Build a DecodedView from current Starfield state. Default-equality is
+// computed against canonical defaults (and the active preset for
+// preset-relative fields like `mag`) so omitted fields keep the blob
+// minimal.
+export function currentStateOf(starfield: Starfield, idMaps: IdMaps): DecodedView {
+  const f = starfield.getFilter();
+  const view: DecodedView = {};
+
+  const sMin = distToSlider(f.minDistSol, true);
+  const sMax = distToSlider(f.maxDistSol, false);
+  if (sMin !== 0) view.dmin = sMin;
+  if (sMax !== SLIDER_STEPS) view.dmax = sMax;
+  if (f.activePreset !== 'naked-eye') view.preset = f.activePreset;
+  // Magnitude diverges from the active preset only when the user moved the
+  // slider — otherwise it should adapt to the receiver's preset.
+  if (!approx(f.maxAppMag, MAG_PRESETS[f.activePreset].maxAppMag)) view.mag = f.maxAppMag;
+  if (f.spectMask !== ALL_SPECT_MASK) view.spect = f.spectMask;
+  if (f.highlightCon !== -1) view.con = f.highlightCon;
+  // Size fields only when explicitly overridden — otherwise the receiver
+  // recomputes from preset + their own viewport (responsive sharing).
+  if (f.sizeMinOverridden) view.smin = f.sizeMin;
+  if (f.sizeMaxOverridden) view.smax = f.sizeMax;
+  if (f.sizeSpanOverridden) view.span = f.sizeSpan;
+  if (f.showGalacticGrid) view.showGalacticGrid = true;
+  if (f.showHud) view.showHud = true;
+  if (!f.showMolecularClouds) view.showMolecularClouds = false;
+  if (!f.showMilkyway) view.showMilkyway = false;
+
+  const fov = starfield.getCameraFov();
+  if (!approx(fov, DEFAULT_FOV)) view.fov = fov;
+
+  if (getUnit() === 'ly') view.unit = 'ly';
+
+  // Star focus and cloud focus are mutually exclusive in Starfield, so at
+  // most one is non-null. Sol focus is the default, encoded by *omitting*
+  // both — so a fully-default state has no `?v=` at all.
+  const star = starfield.getFocusedStar();
+  const cloud = starfield.getFocusedCloud();
+  if (cloud !== null) {
+    view.cloud = cloud;
+  } else if (star === null) {
+    view.focus = 'cleared';
+  } else if (star !== idMaps.solIndex) {
+    view.focus = refFromIndex(star, idMaps);
   }
 
-  // Filter
+  const to = starfield.getVectorTo();
+  const toCloud = starfield.getVectorToCloud();
+  if (to !== null) {
+    view.to = refFromIndex(to, idMaps);
+  } else if (toCloud !== null) {
+    view.toc = toCloud;
+  }
+
+  const mode = starfield.getCameraMode();
+  if (mode !== 'navigate') view.mode = mode;
+
+  const c = starfield.camera.position;
+  const t = starfield.controls.target;
+  const u = starfield.camera.up;
+  const camDefault =
+    approx(c.x, DEFAULT_CAM[0]) && approx(c.y, DEFAULT_CAM[1]) && approx(c.z, DEFAULT_CAM[2]) &&
+    approx(t.x, DEFAULT_TGT[0]) && approx(t.y, DEFAULT_TGT[1]) && approx(t.z, DEFAULT_TGT[2]);
+  if (!camDefault) {
+    view.cam = [c.x, c.y, c.z];
+    view.tgt = [t.x, t.y, t.z];
+  }
+  if (!approx(u.x, DEFAULT_UP[0]) || !approx(u.y, DEFAULT_UP[1]) || !approx(u.z, DEFAULT_UP[2])) {
+    view.up = [u.x, u.y, u.z];
+  }
+
+  return view;
+}
+
+function refFromIndex(idx: number, idMaps: IdMaps): StarRef {
+  const hip = idMaps.indexToHip[idx];
+  return hip > 0 ? { kind: 'hip', id: hip } : { kind: 'index', id: idx };
+}
+
+function resolveStarRef(ref: StarRef, idMaps: IdMaps, fallback: number): number {
+  if (ref.kind === 'hip') {
+    const idx = idMaps.hipToIndex.get(ref.id);
+    return idx ?? fallback;
+  }
+  return ref.id >= 0 && ref.id < idMaps.starCount ? ref.id : fallback;
+}
+
+// Apply a decoded view to Starfield. **The order here is load-bearing**:
+//   - unit is applied first so any DOM sync triggered later reads it
+//   - preset before filter, so derived size defaults are populated before
+//     explicit overrides layer on top
+//   - up before focus/orbit, since focusStar/setOrbitTarget call
+//     controls.update() which reads camera.up
+//   - cam/tgt overwrite whatever focusStar/setOrbitTarget computed
+//   - mode last, because the observe snap reads the camera quaternion
+//     just set by controls.update(position, target, up)
+export function applyDecodedView(
+  starfield: Starfield,
+  view: DecodedView,
+  idMaps: IdMaps,
+): void {
+  if (view.unit) applyUnit(view.unit);
+
+  if (view.preset) starfield.applyMagnitudePreset(view.preset);
+
   const patch: Record<string, number | boolean> = {};
-  if (params.has('dmin') || params.has('dmax')) {
-    const vMin = params.has('dmin') ? Number(params.get('dmin')) : DEFAULTS.dmin;
-    const vMax = params.has('dmax') ? Number(params.get('dmax')) : DEFAULTS.dmax;
-    patch.minDistSol = sliderToDist(vMin, true);
-    patch.maxDistSol = sliderToDist(vMax, false);
+  if (view.dmin !== undefined || view.dmax !== undefined) {
+    patch.minDistSol = sliderToDist(view.dmin ?? 0, true);
+    patch.maxDistSol = sliderToDist(view.dmax ?? SLIDER_STEPS, false);
   }
-  if (params.has('mag')) patch.maxAppMag = Number(params.get('mag'));
-  if (params.has('spect')) patch.spectMask = Number(params.get('spect'));
-  if (params.has('con')) patch.highlightCon = Number(params.get('con'));
-  // Size overrides: presence of the param implies override flag, so the
-  // value sticks across viewport resizes after the URL restore.
-  if (params.has('smin')) {
-    patch.sizeMin = Number(params.get('smin'));
-    patch.sizeMinOverridden = true;
-  }
-  if (params.has('smax')) {
-    patch.sizeMax = Number(params.get('smax'));
-    patch.sizeMaxOverridden = true;
-  }
-  if (params.has('span')) {
-    patch.sizeSpan = Number(params.get('span'));
-    patch.sizeSpanOverridden = true;
-  }
-  if (params.has('grid')) patch.showGalacticGrid = params.get('grid') === '1';
-  if (params.has('hud')) patch.showHud = params.get('hud') === '1';
-  if (params.has('mc')) patch.showMolecularClouds = params.get('mc') === '1';
-  if (params.has('mw')) patch.showMilkyway = params.get('mw') === '1';
+  if (view.mag !== undefined) patch.maxAppMag = view.mag;
+  if (view.spect !== undefined) patch.spectMask = view.spect;
+  if (view.con !== undefined) patch.highlightCon = view.con;
+  if (view.smin !== undefined) { patch.sizeMin = view.smin; patch.sizeMinOverridden = true; }
+  if (view.smax !== undefined) { patch.sizeMax = view.smax; patch.sizeMaxOverridden = true; }
+  if (view.span !== undefined) { patch.sizeSpan = view.span; patch.sizeSpanOverridden = true; }
+  if (view.showGalacticGrid !== undefined) patch.showGalacticGrid = view.showGalacticGrid;
+  if (view.showHud !== undefined) patch.showHud = view.showHud;
+  if (view.showMolecularClouds !== undefined) patch.showMolecularClouds = view.showMolecularClouds;
+  if (view.showMilkyway !== undefined) patch.showMilkyway = view.showMilkyway;
   if (Object.keys(patch).length) starfield.setFilter(patch);
 
-  if (params.has('fov')) {
-    const v = Number(params.get('fov'));
-    if (Number.isFinite(v) && v > 0) starfield.setCameraFov(v);
+  if (view.fov !== undefined && view.fov > 0) starfield.setCameraFov(view.fov);
+
+  if (view.up) {
+    starfield.camera.up.set(view.up[0], view.up[1], view.up[2]).normalize();
   }
 
-  // Detect camera params up-front so focus handling can decide whether to
-  // teleport the camera (manually-typed URL) or just set the orbit target
-  // (shared URL where the camera position is explicit).
-  const hasCam = params.has('cx') || params.has('cy') || params.has('cz');
-  const hasTgt = params.has('tx') || params.has('ty') || params.has('tz');
-  const hasUp = params.has('ux') || params.has('uy') || params.has('uz');
+  const hasCam = view.cam !== undefined;
+  const hasTgt = view.tgt !== undefined;
 
-  // Apply camera.up before focus handling — focusStar/setOrbitTarget call
-  // controls.update() which reads camera.up to orient the view.
-  if (hasUp) {
-    starfield.camera.up.set(
-      Number(params.get('ux') ?? DEFAULTS.upX),
-      Number(params.get('uy') ?? DEFAULTS.upY),
-      Number(params.get('uz') ?? DEFAULTS.upZ),
-    ).normalize();
-  }
-
-  if (params.has('focus')) {
-    const idx = Number(params.get('focus'));
-    if (idx === -1) starfield.unfocus();
-    else if (Number.isFinite(idx) && idx >= 0 && idx < starfield.catalog.count) {
-      if (hasCam || hasTgt) starfield.setOrbitTarget(idx);
-      else starfield.focusStar(idx);
+  if (view.focus !== undefined) {
+    if (view.focus === 'cleared') {
+      starfield.unfocus();
+    } else {
+      const idx = resolveStarRef(view.focus, idMaps, idMaps.solIndex);
+      if (idx >= 0 && idx < idMaps.starCount) {
+        if (hasCam || hasTgt) starfield.setOrbitTarget(idx);
+        else starfield.focusStar(idx);
+      }
     }
   }
-  // Cloud focus mirrors the star-focus pattern: with explicit camera params
-  // we just set the focus state and let the camera params win; without,
-  // flyToCloud both sets focus and snaps the camera. Cloud and star focus
-  // are mutually exclusive in Starfield, so the URL won't carry both —
-  // applying after `focus` lets cloud override on the off chance both are
-  // somehow present.
-  if (params.has('cloud')) {
-    const ci = Number(params.get('cloud'));
-    if (Number.isFinite(ci) && ci >= 0) {
-      if (hasCam || hasTgt) starfield.setFocusedCloud(ci);
-      else starfield.flyToCloud(ci);
-    }
+  // Cloud focus is mutually exclusive with star focus, but encoder never
+  // emits both — apply after `focus` so cloud wins on the off chance both
+  // are present in a hand-crafted blob.
+  if (view.cloud !== undefined && view.cloud >= 0) {
+    if (hasCam || hasTgt) starfield.setFocusedCloud(view.cloud);
+    else starfield.flyToCloud(view.cloud);
   }
-  if (params.has('toc')) {
-    const ci = Number(params.get('toc'));
-    if (Number.isFinite(ci) && ci >= 0) starfield.setVectorToCloud(ci);
+  if (view.toc !== undefined && view.toc >= 0) starfield.setVectorToCloud(view.toc);
+  if (view.to) {
+    const idx = resolveStarRef(view.to, idMaps, -1);
+    if (idx >= 0 && idx < idMaps.starCount) starfield.setVectorTo(idx);
   }
-  if (params.has('to')) {
-    const idx = Number(params.get('to'));
-    if (Number.isFinite(idx) && idx >= 0 && idx < starfield.catalog.count) {
-      starfield.setVectorTo(idx);
-    }
-  }
-  // Camera overrides whatever focusStar/setOrbitTarget set above.
-  if (hasCam) {
-    starfield.camera.position.set(
-      Number(params.get('cx') ?? DEFAULTS.camX),
-      Number(params.get('cy') ?? DEFAULTS.camY),
-      Number(params.get('cz') ?? DEFAULTS.camZ),
-    );
-  }
-  if (hasTgt) {
-    starfield.controls.target.set(
-      Number(params.get('tx') ?? DEFAULTS.tgtX),
-      Number(params.get('ty') ?? DEFAULTS.tgtY),
-      Number(params.get('tz') ?? DEFAULTS.tgtZ),
-    );
-  }
-  if (hasCam || hasTgt || hasUp) starfield.controls.update();
 
-  // Camera mode last — applied after camera/target/up are in place so the
-  // observe snap can read the camera's quaternion (set by controls.update
-  // above from position+target+up) and just collapse the position to the
-  // focal star's local origin without disturbing the look direction.
-  const modeParam = params.get('mode');
-  if (modeParam === 'observe' && starfield.getFocusedStar() !== null) {
+  if (view.cam) {
+    starfield.camera.position.set(view.cam[0], view.cam[1], view.cam[2]);
+  }
+  if (view.tgt) {
+    starfield.controls.target.set(view.tgt[0], view.tgt[1], view.tgt[2]);
+  }
+  if (hasCam || hasTgt || view.up) starfield.controls.update();
+
+  if (view.mode === 'observe' && starfield.getFocusedStar() !== null) {
     starfield.setCameraMode('observe', { animate: false });
   }
 }
 
-export function startUrlSync(starfield: Starfield) {
+export function applyFromUrl(starfield: Starfield, idMaps: IdMaps): void {
+  const params = new URLSearchParams(location.search);
+  const blob = params.get(PARAM_NAME);
+  if (!blob) return;
+  let view: DecodedView;
+  try {
+    view = decodeBlob(blob);
+  } catch (err) {
+    console.warn('Failed to decode ?v= URL state:', err);
+    return;
+  }
+  applyDecodedView(starfield, view, idMaps);
+}
+
+export function startUrlSync(starfield: Starfield, idMaps: IdMaps): void {
   let timer: number | undefined;
   let lastCamHash = '';
 
-  const serialize = (): string => {
-    const f = starfield.getFilter();
-    const p = new URLSearchParams();
-
-    const sMin = distToSlider(f.minDistSol, true);
-    const sMax = distToSlider(f.maxDistSol, false);
-    if (sMin !== DEFAULTS.dmin) p.set('dmin', String(sMin));
-    if (sMax !== DEFAULTS.dmax) p.set('dmax', String(sMax));
-    if (f.activePreset !== DEFAULTS.preset) p.set('preset', f.activePreset);
-    // Magnitude is serialised only when it diverges from the active
-    // preset's defining value (user moved the slider).
-    if (!approx(f.maxAppMag, MAG_PRESETS[f.activePreset].maxAppMag)) {
-      p.set('mag', fmt(f.maxAppMag));
-    }
-    if (f.spectMask !== DEFAULTS.spect) p.set('spect', String(f.spectMask));
-    if (f.highlightCon !== DEFAULTS.con) p.set('con', String(f.highlightCon));
-    // Size fields serialise only when overridden — otherwise the receiver
-    // recomputes them from preset + their own viewport.
-    if (f.sizeMinOverridden) p.set('smin', fmt(f.sizeMin));
-    if (f.sizeMaxOverridden) p.set('smax', fmt(f.sizeMax));
-    if (f.sizeSpanOverridden) p.set('span', fmt(f.sizeSpan));
-    if (f.showGalacticGrid) p.set('grid', '1');
-    if (f.showHud) p.set('hud', '1');
-    if (!f.showMolecularClouds) p.set('mc', '0');
-    if (!f.showMilkyway) p.set('mw', '0');
-
-    const fov = starfield.getCameraFov();
-    if (!approx(fov, DEFAULT_FOV)) p.set('fov', fmt(fov));
-
-    if (getUnit() !== 'pc') p.set('u', getUnit());
-
-    const focus = starfield.getFocusedStar();
-    const focusCloud = starfield.getFocusedCloud();
-    const sol = starfield.catalog.solIndex;
-    if (focusCloud !== null) {
-      p.set('cloud', String(focusCloud));
-      // No `focus=` when a cloud is focused — they're mutually exclusive.
-    } else if (focus === null) {
-      p.set('focus', '-1');
-    } else if (focus !== sol) {
-      p.set('focus', String(focus));
-    }
-
-    const to = starfield.getVectorTo();
-    const toCloud = starfield.getVectorToCloud();
-    if (to !== null) p.set('to', String(to));
-    else if (toCloud !== null) p.set('toc', String(toCloud));
-
-    if (starfield.getCameraMode() !== 'navigate') p.set('mode', starfield.getCameraMode());
-
-    const c = starfield.camera.position;
-    const tgt = starfield.controls.target;
-    const camDefault =
-      approx(c.x, DEFAULTS.camX) && approx(c.y, DEFAULTS.camY) && approx(c.z, DEFAULTS.camZ) &&
-      approx(tgt.x, DEFAULTS.tgtX) && approx(tgt.y, DEFAULTS.tgtY) && approx(tgt.z, DEFAULTS.tgtZ);
-    if (!camDefault) {
-      p.set('cx', fmt(c.x));
-      p.set('cy', fmt(c.y));
-      p.set('cz', fmt(c.z));
-      p.set('tx', fmt(tgt.x));
-      p.set('ty', fmt(tgt.y));
-      p.set('tz', fmt(tgt.z));
-    }
-
-    const up = starfield.camera.up;
-    if (!approx(up.x, DEFAULTS.upX) || !approx(up.y, DEFAULTS.upY) || !approx(up.z, DEFAULTS.upZ)) {
-      p.set('ux', fmt(up.x));
-      p.set('uy', fmt(up.y));
-      p.set('uz', fmt(up.z));
-    }
-    return p.toString();
-  };
-
   const write = () => {
-    const qs = serialize();
+    const view = currentStateOf(starfield, idMaps);
+    const mask = computePresence(view);
+    const qs = mask === 0 ? '' : `${PARAM_NAME}=${encodeBlob(view)}`;
     const url = location.pathname + (qs ? '?' + qs : '');
     if (url !== location.pathname + location.search) {
       history.replaceState(null, '', url);
@@ -259,13 +496,10 @@ export function startUrlSync(starfield: Starfield) {
   onUnitChange(schedule);
 
   starfield.onFrame(() => {
-    // Skip URL writes while a warp is in flight — the camera mutates every
-    // frame and we don't want to serialise every intermediate pose. The
-    // finishWarp() path fires a state change and a focus change that will
-    // flush the final URL on arrival.
+    // Skip URL writes while a warp or observe transition is in flight —
+    // the camera mutates every frame and we don't want intermediate poses
+    // in the URL. The end-of-animation events flush the final pose.
     if (starfield.getWarpActive()) return;
-    // Same reasoning for the observe enter/exit translate: position changes
-    // every frame, but only the endpoint is meaningful.
     if (starfield.isObserveTransitionActive()) return;
     const c = starfield.camera.position;
     const t = starfield.controls.target;
@@ -280,10 +514,4 @@ export function startUrlSync(starfield: Starfield) {
 
 function approx(a: number, b: number): boolean {
   return Math.abs(a - b) < EPS;
-}
-
-function fmt(v: number): string {
-  // Trim unneeded decimal zeros. Up to 3 decimals is plenty for sharing views.
-  const rounded = Math.round(v * 1000) / 1000;
-  return rounded.toString();
 }
