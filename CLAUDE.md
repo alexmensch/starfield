@@ -76,6 +76,8 @@ src/
     debug-panel.ts        generic chrome (slider/colour/section helpers)
     star-tuning.ts        debug section: star-disc profile knobs
     milkyway-tuning.ts    debug section: Milky Way layer tuning
+    keyboard-shortcuts.ts global keydown dispatch (R/G/C/H/S/O/W/+/−/=/?/Esc)
+    help-modal.ts         shortcut help overlay (the `?` target)
     shaders/
       star.vert.glsl, star.frag.glsl              GLSL3/WebGL2
       dust-particle.vert.glsl, dust-particle.frag.glsl   shelved dust splats
@@ -125,9 +127,11 @@ Claude Code should read on demand when working on the relevant area.
   touching anything in `*-overlay.ts` or `*-mask.ts`.
 - **`docs/ui-and-controls.md`** — layout containers, panel reverse-sync,
   TrackballControls tuning, warp animation, two-finger roll, info modal,
-  CSS gotchas (`[hidden]` specificity, `backdrop-filter` stacking
-  contexts), camera near plane invariant. Read when touching the
-  panel/topbar, controls behaviour, or animations.
+  keyboard shortcuts (single capture-phase listener + DOM-relocate modal
+  for the Go / Constellation pickers), CSS gotchas (`[hidden]`
+  specificity, `backdrop-filter` stacking contexts), camera near plane
+  invariant. Read when touching the panel/topbar, controls behaviour,
+  or animations.
 - **`docs/deployment.md`** — Wrangler config,
   `@cloudflare/workers-types` global leak, `compatibility_date`. Read
   when changing deployment or worker code.

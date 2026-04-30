@@ -132,10 +132,20 @@ Stack: TypeScript, Three.js (WebGL2), Vite, Cloudflare Workers.
   per-group across visits.
 - Constellation picker is a typeahead — type the name or 3-letter IAU
   code, or focus the empty field to browse the full alphabetised list.
-- Targeted reset buttons next to constellation, star size, dynamic
-  range, field of view, and exaggeration controls.
+  A "None" entry at the top of the list clears the highlight.
+- Targeted reset buttons next to star size, dynamic range, field of
+  view, and exaggeration controls.
 - Two-finger rotate gesture to roll the view around the center of the
   screen. See [Gesture support](#gesture-support) for platform notes.
+- **Keyboard shortcuts** for power users. `?` opens a help overlay
+  listing the full set; highlights: `G` opens a centred picker that
+  mirrors the topbar search (focus / destination / observe-location
+  depending on context), `C` does the same for constellations, `O`
+  switches to observe mode when a star is focused, `H` / `S` toggle
+  the HUD and galactic-coordinate sphere, `+` / `-` / `=` step the
+  magnitude limit by 0.5 or reset to naked-eye, `R` resets the camera
+  sliders, and `Esc` steps back through observe → destination →
+  focus.
 
 ## Prerequisites
 

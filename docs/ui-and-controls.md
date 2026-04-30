@@ -19,6 +19,102 @@ attributes on the close button and backdrop. The `.ui-top-left`
 container sits independently of `.ui-top` so changes to the
 right-side stack's width / wrap behaviour don't affect the brand.
 
+## Keyboard shortcuts
+
+`keyboard-shortcuts.ts` owns a single `keydown` listener and dispatches
+to existing public APIs — every shortcut is a thin wrapper, so future
+behavioural changes propagate automatically.
+
+**Bindings** (also surfaced via the `?` help modal):
+
+| Key | Action |
+| --- | --- |
+| `G` | Open the Go picker — focus a star, set a destination, or change observe location |
+| `O` | Switch to observe mode (gated on `getFocusedStar() !== null`) |
+| `W` | Trigger the warp animation (handled by `warp-button.ts`, not this module) |
+| `C` | Open the Constellation picker |
+| `R` | Reset Camera-section sliders (size min/max, dynamic range, FOV, exaggeration) |
+| `H` | Toggle `showHud` |
+| `S` | Toggle `showGalacticGrid` |
+| `+` / `-` | Magnitude limit ± 0.5 (clamped to [-2, 15]) |
+| `=` | `applyMagnitudePreset('naked-eye')` |
+| `?` | Open the keyboard-shortcuts help modal |
+| `Esc` | Cascade: observe→navigate (animated exit) → clear destination → clear focus |
+
+**Capture phase.** The listener is registered with `{capture: true}`
+because foreground-modal listeners (info / about / credits / help)
+sit on `document` in bubble phase and flip `hidden=true` when ESC
+fires. A bubble-phase window listener would observe the post-close
+state and the cascade would run on top of the modal's own dismissal.
+Capture lets us sample modal visibility *before* anyone else handles
+the key.
+
+**Modifier guard.** Shortcuts skip when `ctrlKey | metaKey | altKey`
+is held so Cmd+R reload, Cmd+= zoom, etc. aren't intercepted. Shift
+is fine — it's how `+` and `?` are typed on US layouts.
+
+**ESC priority chain** (top of the keydown handler, before the
+shortcut switch):
+
+1. **Open kb-modal first.** SearchBox / typeahead bail their own ESC
+   when `results.length === 0` (e.g., an empty Go modal), so the
+   shortcut module owns ESC for the kb-modal regardless of input
+   focus. Closes both modals (idempotent) and `preventDefault`s.
+2. **Other foreground modals** (`.modal`) — return without action so
+   their own document listener can close them.
+3. **Active warp** — return so `warp-button.ts` can run `skipWarp()`.
+4. **Editable target** — return so `search.ts` / typeahead can handle
+   their own ESC (clear dropdown + blur).
+5. Otherwise run the cascade.
+
+### Go / Constellation pickers — DOM relocation
+
+The two pickers reuse the existing `.search-wrap` (topbar) and
+`#con-picker` (panel) widgets verbatim. On open, the live element is
+moved into `#kb-modal-card` via `appendChild`; on close, it's restored
+via `originalParent.insertBefore(widget, originalNextSibling)`. Event
+listeners survive the move, so all SearchBox / typeahead behaviour
+keeps working unchanged — including OBSERVE-mode rerouting through
+`warpTo()`, OBSERVE-only star filtering in `focusRunQuery`, and the
+None-entry path in the constellation typeahead.
+
+CSS-only relocation was tried first but rejected: the constellation
+typeahead lives inside `data-group="overlays"` and `.panel-inner`,
+both of which use `display: none` when collapsed. `display: none` on
+an ancestor disables descendants regardless of their own `display`
+or `position` — there's no CSS-only way to override it without
+unhiding sibling content as well. DOM moves sidestep this entirely.
+
+The Go picker's focus target depends on context: if `#search-to-row`
+is visible (navigate mode with a focused star) the To input gets
+focus; otherwise the Focus / Location input. `search.ts` already
+toggles the row visibility per mode, so the modal automatically
+mirrors what the panel would have shown.
+
+### Close triggers
+
+The shared `bindRelocateModal` helper closes on:
+
+- ESC (handled in the shortcut module's capture-phase listener).
+- Backdrop click (`.kb-modal-backdrop`).
+- Input blur, deferred 180ms — covers `pick()`-then-blur (SearchBox
+  blurs the input synchronously after `onSelect`), click-outside, and
+  ESC inside the input. The 180ms sits just past SearchBox's own
+  140ms blur deferral so its result-mousedown race finishes first.
+  An `onInputFocus` handler cancels the pending close, so re-focusing
+  via the SearchBox X-clear button doesn't tear down the modal mid
+  edit.
+
+### Reset (R) scope
+
+R resets only the four sliders under the panel's Camera section —
+star size min/max, dynamic range, FOV, exaggeration — by calling the
+same APIs that the per-row reset link buttons use:
+`clearSizeOverrides(['sizeMin','sizeMax'])`, `clearSizeOverrides(['sizeSpan'])`,
+`setCameraFov(DEFAULT_FOV)`, `setStarExaggerationK(getStarExaggerationKDefault())`.
+Magnitude / focus / overlays / camera position are deliberately
+*not* touched — those are user choices, not "default view" state.
+
 ## Per-group collapse in the settings panel
 
 Two layers of collapse: the panel as a whole (top-level, key
@@ -39,8 +135,15 @@ constellation name plus 3-letter IAU code; full alphabetised list shows
 when the input is empty and focused. Single-select — picking fires
 both `setFilter({ highlightCon })` and `aimAtConstellation`, matching
 the prior `<select>` behaviour. Reverse-sync from `onFilterChange`
-keeps the input in step with URL restores. Reset button (`#con-reset`)
-clears the highlight.
+keeps the input in step with URL restores.
+
+A synthetic `NONE_ENTRY` (`idx: -1`, `search: ''`) is prepended to the
+results whenever the input is empty, so users can clear the highlight
+by selecting "None" the same way they'd pick any other constellation
+(Cmd+A → Delete → Enter). The empty `search` field keeps it out of
+filtered results so it can't outrank a real match. `pick()` skips
+`aimAtConstellation` when `idx < 0` so the clear path doesn't try to
+aim at a non-existent target.
 
 ## Reverse-sync in `controls.ts`
 
