@@ -133,14 +133,39 @@ encodes "exact maximum brightness" — that's a deliberate trade for
 glyph legibility.
 
 **Binary wings** are screen-aligned horizontal `<line>`s extending
-`discPx/2 + BINARY_WING_EXTENSION_PX` (4 px) past each disc edge.
-SVG line coordinates are in viewport space, so the wings stay
-horizontal regardless of camera roll by construction. Both glyph
-classes share the per-frame `renderableAppMag` filter — same
-spectMask + distance gates as the GPU disc — so a hidden inner disc
-takes its glyph offscreen with it. Dust extinction is intentionally
-**not** replicated CPU-side (per-star raymarch too expensive for
-the label loop).
+`discPx * BINARY_WING_EXTENSION_RATIO` (0.25) past each disc edge.
+The proportional extension keeps the glyph readable across the
+full chart-mode magnitude range — 16 px discs get 4 px wings,
+6 px discs get 1.5 px wings — instead of overwhelming faint stars
+with the fixed 4 px stub the earlier implementation drew. Below a
+`BINARY_WING_MIN_EXTENSION_PX = 1.5 px` floor the wings would be
+sub-pixel and the underlying disc is too faint to register as a
+double anyway, so the glyph is skipped entirely rather than
+rendered as a degenerate stub. SVG line coordinates are in
+viewport space, so the wings stay horizontal regardless of camera
+roll by construction. Both glyph classes share the per-frame
+`renderableAppMag` filter — same spectMask + distance gates as the
+GPU disc — so a hidden inner disc takes its glyph offscreen with
+it.
+
+**CPU/GPU dust mismatch.** Dust extinction is intentionally **not**
+replicated CPU-side (per-star raymarch too expensive for the label
+loop). For stars sitting behind heavy dust (Cygnus, Ophiuchus,
+Aquila Rift) the GPU renders a much smaller disc than the CPU
+mirror computes, so wings sized to the CPU disc would dwarf the
+real rendered disc. The 1.5 px floor on the wing extension acts as
+a heuristic guard — it requires the un-extincted CPU disc to be
+≥ 6 px before wings render, which gives ~2 mag of headroom for
+dust to attenuate the GPU disc without orphaning the glyph. The
+trade is a few legitimate wings dropped on faint un-extincted
+stars near the magnitude limit. **The proper fix when needed:**
+ship a coarser (~128³ resample of Edenhofer 2023, ~2 MiB) CPU-side
+voxel grid and raymarch per CCDM-flagged binary in the per-frame
+label loop, cached by camera position. That's the right answer for
+chart-mode use from far-from-Sol viewpoints, where this heuristic
+breaks down further (dust columns change as the camera moves and
+the heuristic stays static). Left as future work; the heuristic is
+adequate for current near-Earth chart-mode use.
 
 **Pooling.** Each `<text>` / `<circle>` / `<line>` is keyed by stable
 identity (`n:idx`, `b:idx`, `c:conIdx`, `m:cloudIdx`) so adding /
@@ -162,13 +187,27 @@ case:
    14 px proximity fallback is unchanged but only fires if no other
    disc has won, which on a crowded chart it often has.
 
-## Limits
+## Binary indication coverage
 
-- AT-HYG only stores the primary for most visual doubles (Sirius A,
-  Castor A, Mizar A, γ And A, etc.) — the geometric binary inference
-  in `build-catalog.ts` therefore can't pair them. Only α Cen has
-  both A and B as catalog rows, so today's chart only draws wings on
-  systems where both components made it into the source catalog. A
-  curated HIP list of canonical visual doubles (or a WDS catalog
-  import) would extend this; see `docs/build-and-data.md`
-  §Geometric binary inference.
+Wings are driven by `flags` bit 4. Two build-time passes set that bit:
+
+- **Geometric inference** in `build-catalog.ts` — finds AT-HYG rows
+  where both components of a pair survive the classic_ids cut
+  (~14 systems; α Cen-style cases).
+- **CCDM + MultFlag HIP-keyed cross-match** — every Hipparcos star
+  carries a `CCDM` column linking it to the Catalog of the
+  Components of Double and Multiple stars (Dommanget & Nys 1994).
+  CCDM alone is too permissive (tags ~19k stars including many
+  wide line-of-sight optical pairs like Vega and Pollux), so the
+  build gates it with Hipparcos's own `MultFlag` — keep only
+  `{C, G, O}` (component / resolved-in-field / orbit-known); drop
+  blank, `V`, and `X`. A small curated `KNOWN_VISUAL_DOUBLES` map
+  in `build-catalog.ts` recovers canonical pairs Hipparcos
+  modelled as single stars (Polaris, ε¹ Lyr, 61 Cyg A/B). Surfaces
+  Sirius, Mizar, Castor, α Cen, Albireo, γ And, ε Lyr, 70 Oph,
+  Procyon, Algol, etc. without the optical-pair tail.
+
+Both passes hit the same flag bit, so chart-mode rendering is
+agnostic to which source flagged a given star. See
+`docs/build-and-data.md` §TDSC double-star cross-match for the
+filter rationale and parser format.

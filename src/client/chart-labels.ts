@@ -22,9 +22,26 @@ const COLLISION_PAD_PX = 4;
 // the star centre — keeps the name from sitting on top of its glyph.
 const STAR_LABEL_OFFSET_PX = 9;
 // Sky-Atlas-style horizontal wings on double / multiple stars extend
-// beyond the disc edge by this many pixels on each side. Length scales
-// with the disc, so brighter binaries get longer wings naturally.
-const BINARY_WING_EXTENSION_PX = 4;
+// beyond the disc edge by `discPx * RATIO` pixels on each side, so the
+// wings stay visually proportional across the chart-mode magnitude range
+// (16 px disc → 4 px wings, 6 px disc → 1.5 px wings). Below the
+// MIN_EXTENSION_PX floor the wings would be subpixel and the star would
+// be too faint to read as a binary anyway, so we skip the glyph entirely
+// rather than render a degenerate stub.
+//
+// The 1.5 px floor (≡ requiring an un-extincted CPU disc of ≥ 6 px) also
+// papers over a CPU/GPU mismatch: this code mirrors the chart-mode disc
+// formula without per-star dust extinction (the CPU raymarch is too
+// expensive to replicate per frame), so for stars sitting behind heavy
+// dust the GPU renders a much smaller disc than the CPU computes here.
+// Without this margin the wings on a dust-attenuated star (e.g. 55 Cyg
+// in the Cygnus arm) would dwarf the actual rendered disc. The margin
+// trades a few legitimate wings on faint un-extincted stars for visual
+// coherence in dusty regions. Proper fix when needed: load a coarser
+// (~128³) Edenhofer voxel resample CPU-side and raymarch per-binary in
+// the per-frame loop.
+const BINARY_WING_EXTENSION_RATIO = 0.25;
+const BINARY_WING_MIN_EXTENSION_PX = 1.5;
 // Minimum radial gap (CSS pixels) between the outer variable-ring and the
 // inner pulsing disc at its peak size. Without this, low-amplitude
 // variables draw a ring sitting flush against the disc — no perceptible
@@ -465,7 +482,9 @@ function tick(
       const xy = projectStar(idx, positions, camera, w, h);
       if (!xy) continue;
       const discPx = discPxFor(appMag);
-      const half = discPx * 0.5 + BINARY_WING_EXTENSION_PX;
+      const ext = discPx * BINARY_WING_EXTENSION_RATIO;
+      if (ext < BINARY_WING_MIN_EXTENSION_PX) continue;
+      const half = discPx * 0.5 + ext;
       let line = wingPool.get(idx);
       if (!line) {
         line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
