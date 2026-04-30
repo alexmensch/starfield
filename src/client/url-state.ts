@@ -104,15 +104,26 @@ export interface DecodedView {
 interface FieldSpec {
   bit: number;
   key: string;
-  bytes: number;
+  /** Bytes the field consumes when encoding `v`. Most fields are
+   *  fixed-size and ignore the argument. The `pois` field reads it to
+   *  size the variable-length payload. */
+  encodeBytes(v: DecodedView): number;
+  /** Bytes the field consumes when decoding from `dv` starting at `off`.
+   *  Same shape as encodeBytes — fixed-size fields ignore arguments;
+   *  variable-length fields read a length-prefix byte. */
+  decodeBytes(dv: DataView, off: number): number;
   isPresent(v: DecodedView): boolean;
   encode(v: DecodedView, dv: DataView, off: number): void;
   decode(v: DecodedView, dv: DataView, off: number): void;
 }
 
+function fixed(n: number) {
+  return { encodeBytes: (_v: DecodedView) => n, decodeBytes: (_dv: DataView, _o: number) => n };
+}
+
 function vec3Field(bit: number, key: 'cam' | 'tgt' | 'up'): FieldSpec {
   return {
-    bit, key, bytes: 12,
+    bit, key, ...fixed(12),
     isPresent: v => v[key] !== undefined,
     encode: (v, dv, o) => {
       const t = v[key]!;
@@ -128,7 +139,7 @@ function vec3Field(bit: number, key: 'cam' | 'tgt' | 'up'): FieldSpec {
 
 function f32Field(bit: number, key: 'fov' | 'mag' | 'smin' | 'smax' | 'span'): FieldSpec {
   return {
-    bit, key, bytes: 4,
+    bit, key, ...fixed(4),
     isPresent: v => v[key] !== undefined,
     encode: (v, dv, o) => { dv.setFloat32(o, v[key]!, true); },
     decode: (v, dv, o) => { v[key] = dv.getFloat32(o, true); },
@@ -137,7 +148,7 @@ function f32Field(bit: number, key: 'fov' | 'mag' | 'smin' | 'smax' | 'span'): F
 
 function u16Field(bit: number, key: 'dmin' | 'dmax' | 'spect' | 'cloud' | 'toc'): FieldSpec {
   return {
-    bit, key, bytes: 2,
+    bit, key, ...fixed(2),
     isPresent: v => v[key] !== undefined,
     encode: (v, dv, o) => { dv.setUint16(o, v[key]!, true); },
     decode: (v, dv, o) => { v[key] = dv.getUint16(o, true); },
@@ -146,7 +157,7 @@ function u16Field(bit: number, key: 'dmin' | 'dmax' | 'spect' | 'cloud' | 'toc')
 
 function starRefField(bit: number, key: 'focus' | 'to'): FieldSpec {
   return {
-    bit, key, bytes: 4,
+    bit, key, ...fixed(4),
     isPresent: v => typeof v[key] === 'object' && v[key] !== null,
     encode: (v, dv, o) => {
       const ref = v[key] as StarRef;
@@ -172,7 +183,7 @@ const FIELDS: FieldSpec[] = [
   u16Field(6, 'dmax'),
   u16Field(7, 'spect'),
   {
-    bit: 8, key: 'preset', bytes: 1,
+    bit: 8, key: 'preset', ...fixed(1),
     isPresent: v => v.preset !== undefined,
     encode: (v, dv, o) => { dv.setUint8(o, PRESET_TO_INDEX[v.preset!]); },
     decode: (v, dv, o) => {
@@ -181,7 +192,7 @@ const FIELDS: FieldSpec[] = [
     },
   },
   {
-    bit: 9, key: 'con', bytes: 1,
+    bit: 9, key: 'con', ...fixed(1),
     isPresent: v => v.con !== undefined,
     encode: (v, dv, o) => { dv.setInt8(o, v.con!); },
     decode: (v, dv, o) => { v.con = dv.getInt8(o); },
@@ -190,7 +201,7 @@ const FIELDS: FieldSpec[] = [
   f32Field(11, 'smax'),
   f32Field(12, 'span'),
   {
-    bit: 13, key: 'flags', bytes: 1,
+    bit: 13, key: 'flags', ...fixed(1),
     isPresent: v => packFlags(v) !== 0,
     encode: (v, dv, o) => { dv.setUint8(o, packFlags(v)); },
     decode: (v, dv, o) => { unpackFlags(v, dv.getUint8(o)); },
@@ -204,7 +215,7 @@ const FIELDS: FieldSpec[] = [
     // bit absent" (= default Sol) and from "focus bit present" (= some
     // specific star). When this bit is set, the receiver explicitly clears
     // focus regardless of starting state.
-    bit: 18, key: 'focusCleared', bytes: 0,
+    bit: 18, key: 'focusCleared', ...fixed(0),
     isPresent: v => v.focus === 'cleared',
     encode: () => {},
     decode: v => { v.focus = 'cleared'; },
@@ -248,7 +259,7 @@ export function encodeBlob(view: DecodedView): string {
   const mask = computePresence(view);
   let total = 5; // version + presence
   for (const f of FIELDS) {
-    if (mask & (1 << f.bit)) total += f.bytes;
+    if (mask & (1 << f.bit)) total += f.encodeBytes(view);
   }
   const ab = new ArrayBuffer(total);
   const dv = new DataView(ab);
@@ -258,7 +269,7 @@ export function encodeBlob(view: DecodedView): string {
   for (const f of FIELDS) {
     if (mask & (1 << f.bit)) {
       f.encode(view, dv, off);
-      off += f.bytes;
+      off += f.encodeBytes(view);
     }
   }
   return toBase64Url(new Uint8Array(ab));
@@ -278,7 +289,7 @@ export function decodeBlob(blob: string): DecodedView {
   for (const f of FIELDS) {
     if (mask & (1 << f.bit)) {
       f.decode(view, dv, off);
-      off += f.bytes;
+      off += f.decodeBytes(dv, off);
     }
   }
   return view;
