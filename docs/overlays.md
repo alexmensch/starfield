@@ -5,8 +5,8 @@ mask that lets WebGL stars show through SVG paths, the focus ring,
 the distance vector with near-plane clipping, and the shared arrow
 helper that the Sol/GC arrows reuse.
 
-The Sol/GC arrows themselves are documented in `docs/rendering.md`
-§Galactic reference system because they're tightly coupled to the
+The Sol/GC arrows themselves are documented in
+`docs/galactic-overlay.md` because they're tightly coupled to the
 galactic-overlay feature group.
 
 ## Constellation stick-figure overlay
@@ -82,8 +82,8 @@ gated by `filter.showHud` independently of camera mode. In OBSERVE the
 arrows attach to the HUD ring rim and swivel around it; through the
 transition the focus ring shrinks while the HUD ring grows so the
 arrows stay tangent to whichever circle is dominant. See
-`docs/rendering.md` §Galactic reference system → HUD ring / Shaft start
-radius for the projection math.
+`docs/galactic-overlay.md` § HUD ring / Shaft start radius for the
+projection math.
 
 ## Chart-mode labels and glyphs
 
@@ -104,9 +104,9 @@ mode is active:
 Both layers pool their elements by stable key per frame so adding /
 removing entries is free. The same `renderableAppMag` filter that
 gates the GPU disc also gates the glyphs — a hidden inner disc takes
-its ring or wings offscreen with it. See `docs/rendering.md`
-§Chart mode (Phase 8) for the magnitude-driven sizing formula and
-flux-weighted constellation centroid math.
+its ring or wings offscreen with it. See `docs/chart-mode.md` for
+the magnitude-driven sizing formula and flux-weighted constellation
+centroid math.
 
 ## SVG hide semantics
 

@@ -116,26 +116,43 @@ Claude Code should read on demand when working on the relevant area.
   constellation aim, URL state, floating origin. The cross-cutting
   patterns the rest of the codebase assumes. Read when changing state
   flow, focus/vector behaviour, or anything that reads star positions.
-- **`docs/rendering.md`** — star pipeline (instanced quads, three
-  passes including the core depth-mask, super-Gaussian intensity
-  profile, physical-size, luminosity softness, variability), Milky Way
-  volumetric disc, molecular clouds, galactic reference layer (disc +
-  grid), HUD (Sol/GC arrows + OBSERVE ring + transition lerp), dust
-  extinction, **chart mode** (Phase 8 paper-aesthetic: flat discs,
-  isobar contours, label engine). Read when touching anything visual
-  on the WebGL side.
+- **`docs/rendering.md`** — star pipeline core: instanced quads, three
+  passes (core depth-mask + disc + glow), super-Gaussian intensity
+  profile, physical-size, luminosity softness, variable pulsation,
+  per-star dust extinction. Read when touching the star shaders or
+  the magnitude / size / dust knobs.
+- **`docs/galactic-overlay.md`** — galactic disc outline, coordinate
+  sphere (b/l grid), Sol/GC SVG arrows, HUD ring, navigate↔observe
+  shaft-start lerp. Read when touching any of those layers.
+- **`docs/molecular-clouds.md`** — Phase 3a cloud ellipsoids: data,
+  shader, the unified cloud-as-focus / cloud-as-vector-tip click and
+  warp UX. Read when touching `molecular-clouds.ts` or cloud picking.
+- **`docs/milky-way.md`** — Phase 5 volumetric disc + bulge: density
+  profiles, magnitude-consistency conversion, analytical-only dust,
+  render-order placement, brightness/glow calibration. Read when
+  tuning `milkyway.{ts,frag.glsl}`.
+- **`docs/chart-mode.md`** — Phase 8 paper aesthetic: flat
+  hard-edged discs, isobar contours for MW + clouds, the per-frame
+  label / glyph engine, picking under chart mode. Read when touching
+  `chart-mode.ts`, `chart-labels.ts`, or any chart-specific shader
+  branch.
 - **`docs/overlays.md`** — SVG layers above the canvas: constellation
   stick-figures, disc-mask, focus ring, distance vector with near-plane
-  clipping. (The Sol/GC SVG arrows are documented in `docs/rendering.md`
-  alongside the rest of the galactic overlay feature.) Read when
-  touching anything in `*-overlay.ts` or `*-mask.ts`.
-- **`docs/ui-and-controls.md`** — layout containers, panel reverse-sync,
-  TrackballControls tuning, warp animation, two-finger roll, info modal,
-  keyboard shortcuts (single capture-phase listener + DOM-relocate modal
-  for the Go / Constellation pickers), CSS gotchas (`[hidden]`
-  specificity, `backdrop-filter` stacking contexts), camera near plane
-  invariant. Read when touching the panel/topbar, controls behaviour,
-  or animations.
+  clipping. (The Sol/GC SVG arrows are documented in
+  `docs/galactic-overlay.md` alongside the rest of the galactic
+  overlay feature.) Read when touching anything in `*-overlay.ts` or
+  `*-mask.ts`.
+- **`docs/ui-and-controls.md`** — layout containers, panel
+  reverse-sync, magnitude presets + override flags, FOV / theme /
+  debug-panel hooks, brand box, keyboard shortcuts (single capture-
+  phase listener + DOM-relocate modal for the Go / Constellation
+  pickers), CSS gotchas (`[hidden]` specificity, `backdrop-filter`
+  stacking contexts). Read when touching the panel/topbar.
+- **`docs/camera-modes.md`** — TrackballControls tuning, near-plane
+  vs minDistance invariant, warp animation (3-phase state machine),
+  OBSERVE camera mode + look-around controller, two-finger roll
+  gesture (platform-split). Read when touching camera state, focus
+  travel, or gesture handling.
 - **`docs/deployment.md`** — Wrangler config,
   `@cloudflare/workers-types` global leak, `compatibility_date`. Read
   when changing deployment or worker code.

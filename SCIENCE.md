@@ -183,8 +183,7 @@ These are reused by:
 - The volumetric Milky Way disc + bulge layer.
 - The molecular cloud `quat` orientation for Z2021 ellipsoids.
 
-Implementation details: see `docs/rendering.md` §Galactic reference
-system.
+Implementation details: see `docs/galactic-overlay.md`.
 
 ## Milky Way density profiles
 
@@ -206,10 +205,10 @@ ray. The density at each step is:
 
 Each component multiplies a population colour pre-integration so the
 band's hue varies by line of sight. Defaults are visually calibrated;
-see `docs/rendering.md` §Milky Way volumetric disc (Phase 5) for the
-calibrated values, the magnitude-consistency conversion that ties
-Milky Way brightness to the same magnitude slider as the discrete star
-catalog, and the full coordinate-handling chain.
+see `docs/milky-way.md` for the calibrated values, the magnitude-
+consistency conversion that ties Milky Way brightness to the same
+magnitude slider as the discrete star catalog, and the full
+coordinate-handling chain.
 
 ## Interstellar dust extinction
 
@@ -242,7 +241,7 @@ front of the smooth analytical band.
 Implementation: `src/client/shaders/star.vert.glsl` (per-star) and
 `src/client/shaders/milkyway.frag.glsl` (volumetric); see
 `docs/rendering.md` §Dust extinction + the shelved particle layer and
-§Milky Way volumetric disc (Phase 5).
+`docs/milky-way.md`.
 
 ## Binary inference threshold
 

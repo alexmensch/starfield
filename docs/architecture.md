@@ -31,8 +31,8 @@ mutation paths, or adding any code that reads star positions.
 This is the UX the user settled on. No double-click, no modifier keys.
 
 Clouds are full participants in this state machine alongside stars — see
-`docs/rendering.md` §Molecular cloud overlay for how cloud picks dispatch
-through `onPointerUp`.
+`docs/molecular-clouds.md` for how cloud picks dispatch through
+`onPointerUp`.
 
 In OBSERVE mode the click-state machine no-ops on the canvas — `onPointerUp`
 short-circuits while `cameraMode === 'observe'`. Clicks land on the
@@ -134,8 +134,7 @@ table.
   otherwise flood history with intermediate poses.
 
 Cloud-related state (cloud focus, cloud measurement vector, MC overlay
-toggle) lives in the same `?v=` blob — see `docs/rendering.md`
-§Molecular cloud overlay.
+toggle) lives in the same `?v=` blob — see `docs/molecular-clouds.md`.
 
 **Adding a field.** Claim the next free presence bit in `FIELDS`,
 declare its type and bytes, and add encode/decode logic in
