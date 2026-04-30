@@ -1260,3 +1260,6 @@ body.monochrome .kb-modal-backdrop {
   border: 1px solid var(--border-strong);
   border-radius: 3px;
 }
+body.monochrome .modal-shortcuts kbd {
+  background: rgba(0, 0, 0, 0.06);
+}
