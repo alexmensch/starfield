@@ -408,6 +408,23 @@ export class Starfield {
   private observeAimState: ObserveAimState | null = null;
   private observeAimQ = new THREE.Quaternion();
 
+  // OBSERVE-mode "points of interest". Single-click on a star pins it.
+  // Cleared on every observe → navigate transition (registered in the
+  // constructor). Hard-capped at POI_HARD_CAP — adding past the cap is
+  // a no-op so the cap also bounds the URL blob (poi serialisation in
+  // url-state.ts is HIP-only). Insertion-ordered (Array, not Set) so
+  // round-trips through URL state preserve the user's pin order.
+  private pois: number[] = [];
+  private onPoisHandlers: Array<(pois: readonly number[]) => void> = [];
+  // Pending single-click in OBSERVE mode. Held for OBSERVE_DBL_CLICK_MS
+  // so we can disambiguate single (pin a star) from double (slerp the
+  // camera to the clicked direction). Navigate-mode clicks do not enter
+  // this state — they dispatch immediately.
+  private observePendingClick: { x: number; y: number; timer: number } | null = null;
+  private static OBSERVE_DBL_CLICK_MS = 280;
+  private static OBSERVE_DBL_CLICK_DIST_PX_SQ = 8 * 8;
+  private static POI_HARD_CAP = 16;
+
   // Galactic reference layers (Phase 4c). Disc fades in by camera-distance
   // from Sol and is always-on. Grid is gated by `filter.showGalacticGrid`.
   // The HUD (Sol/GC arrows + OBSERVE-mode ring) is gated by
@@ -732,6 +749,15 @@ export class Starfield {
     // replaces them with the right numbers before the first frame.
     this.recomputePresetPxSizes();
 
+    // Clear pinned POIs on any exit out of observe. Subscribed here
+    // rather than wired into each cameraMode-flip site because all three
+    // exit paths (mode toggle, focus change, search-X clear) emit
+    // onCameraModeChange; one listener catches them all and fires before
+    // the URL writer's debounced flush.
+    this.onCameraModeChange((mode) => {
+      if (mode !== 'observe') this.clearPois();
+    });
+
     this.attachEvents();
     this.animate();
   }
@@ -769,6 +795,81 @@ export class Starfield {
 
   onCameraModeChange(handler: (mode: CameraMode) => void) {
     this.onCameraModeHandlers.push(handler);
+  }
+
+  // ──────────────────── OBSERVE-mode points of interest ────────────────────
+  //
+  // Single-click on a star in OBSERVE pins it; click again to unpin. The
+  // POI overlay (poi-overlay.ts) renders an on-screen label following the
+  // star, and a HUD-ring arrow when it goes off-screen. Cleared automatically
+  // on any observe→navigate transition.
+
+  getPois(): readonly number[] { return this.pois; }
+  onPoisChange(h: (pois: readonly number[]) => void) { this.onPoisHandlers.push(h); }
+
+  /**
+   * Toggle a POI for the given catalog index.
+   *   - Sol is rejected (already represented by the dedicated #sol-arrow).
+   *   - Stars without a Hipparcos ID are rejected (URL state is HIP-only,
+   *     so they couldn't survive a reload anyway).
+   *   - Adding past POI_HARD_CAP is a no-op (caps the URL blob; user can
+   *     unpin first).
+   */
+  togglePoi(idx: number) {
+    if (idx < 0 || idx >= this.catalog.count) return;
+    if (idx === this.catalog.solIndex) {
+      console.info('[POI] Sol is excluded (already shown via #sol-arrow).');
+      return;
+    }
+    if (this.catalog.hip[idx] === 0) {
+      console.info('[POI] cannot pin a star without a Hipparcos ID.');
+      return;
+    }
+    const existing = this.pois.indexOf(idx);
+    if (existing >= 0) {
+      this.pois.splice(existing, 1);
+      this.firePoisChange();
+      return;
+    }
+    if (this.pois.length >= Starfield.POI_HARD_CAP) {
+      console.info(`[POI] cap reached (${Starfield.POI_HARD_CAP}); unpin one first.`);
+      return;
+    }
+    this.pois.push(idx);
+    this.firePoisChange();
+  }
+
+  /**
+   * Replace the current POI list. Used by URL state restore — the
+   * incoming list is already validated (HIPs that resolved in idMaps).
+   */
+  setPois(idxs: readonly number[]) {
+    const next: number[] = [];
+    for (const idx of idxs) {
+      if (next.length >= Starfield.POI_HARD_CAP) break;
+      if (idx < 0 || idx >= this.catalog.count) continue;
+      if (idx === this.catalog.solIndex) continue;
+      if (this.catalog.hip[idx] === 0) continue;
+      if (next.indexOf(idx) >= 0) continue;
+      next.push(idx);
+    }
+    if (
+      next.length === this.pois.length &&
+      next.every((v, i) => v === this.pois[i])
+    ) return;
+    this.pois = next;
+    this.firePoisChange();
+  }
+
+  clearPois() {
+    if (this.pois.length === 0) return;
+    this.pois = [];
+    this.firePoisChange();
+  }
+
+  private firePoisChange() {
+    for (const h of this.onPoisHandlers) h(this.pois);
+    this.fireStateChange();
   }
 
   /**
@@ -2232,14 +2333,21 @@ export class Starfield {
     this.pointerDownAt = null;
     if (!down) return;
     if (this.warpState || this.aimState) return;
-    // OBSERVE swallows canvas clicks — the focal star is the camera anchor,
-    // so star/cloud picking has no useful interaction. The mode toggle in
-    // the topbar is the only way out.
-    if (this.cameraMode === 'observe' || this.observeTransition) return;
+    if (this.observeTransition) return;
     const dx = e.clientX - down.x;
     const dy = e.clientY - down.y;
     if (dx * dx + dy * dy > 25) return;
     if (performance.now() - down.t > 500) return;
+
+    // OBSERVE has its own single/double-click dispatcher: single-click
+    // pins the star under the cursor as a POI, double-click slerps the
+    // camera so the clicked direction lands at view centre. Single-click
+    // is held for OBSERVE_DBL_CLICK_MS to give the second click a window
+    // to arrive.
+    if (this.cameraMode === 'observe') {
+      this.handleObserveClick(e.clientX, e.clientY);
+      return;
+    }
 
     // Pick a star first — they're the primary interaction target. Fall
     // back to clouds when no star is hit.
@@ -2303,6 +2411,57 @@ export class Starfield {
     if (clickedThing.kind === 'star') this.setVectorTo(clickedThing.idx);
     else this.setVectorToCloud(clickedThing.idx);
   };
+
+  private handleObserveClick(x: number, y: number) {
+    const pending = this.observePendingClick;
+    if (pending) {
+      const dx = x - pending.x;
+      const dy = y - pending.y;
+      if (dx * dx + dy * dy <= Starfield.OBSERVE_DBL_CLICK_DIST_PX_SQ) {
+        // Second click close in time + space → double-click. Cancel the
+        // pending single-click and slerp the camera instead.
+        window.clearTimeout(pending.timer);
+        this.observePendingClick = null;
+        this.observeDoubleClick(x, y);
+        return;
+      }
+      // Far apart → treat as a fresh first click. Fire the original
+      // pending single-click immediately (so the user's first pin doesn't
+      // get swallowed) and start a new pending timer for this one.
+      window.clearTimeout(pending.timer);
+      this.observePendingClick = null;
+      this.observeSingleClick(pending.x, pending.y);
+    }
+    const timer = window.setTimeout(() => {
+      this.observePendingClick = null;
+      this.observeSingleClick(x, y);
+    }, Starfield.OBSERVE_DBL_CLICK_MS);
+    this.observePendingClick = { x, y, timer };
+  }
+
+  private observeSingleClick(x: number, y: number) {
+    const idx = this.pickStar(x, y);
+    if (idx < 0) return;
+    this.togglePoi(idx);
+  }
+
+  // Reusable scratch for the double-click ray unproject. Allocated once.
+  private dblClickRay = new THREE.Vector3();
+  private dblClickAimPoint = new THREE.Vector3();
+
+  private observeDoubleClick(x: number, y: number) {
+    // Convert (clientX, clientY) → NDC → unproject → world ray direction.
+    // Build a far point along the ray and feed it to aimAt — that path
+    // already handles the quaternion slerp, the duration ramp, and
+    // disabling observeControls for the duration.
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    this.dblClickRay.set((x / w) * 2 - 1, -(y / h) * 2 + 1, 0.5);
+    this.dblClickRay.unproject(this.camera);
+    this.dblClickRay.sub(this.camera.position).normalize();
+    this.dblClickAimPoint.copy(this.camera.position).addScaledVector(this.dblClickRay, 1e6);
+    this.aimAt(this.dblClickAimPoint);
+  }
 
   private onTouchStart = (e: TouchEvent) => {
     if (e.touches.length === 2) {

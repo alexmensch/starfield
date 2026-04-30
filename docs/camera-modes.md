@@ -273,6 +273,32 @@ blob (flags-byte bit 5), applied after camera params +
 debounced frame hook skips writes during
 `isObserveTransitionActive()` (mirrors the warp guard).
 
+**Click dispatch in OBSERVE.** Canvas clicks have their own dispatcher
+distinct from navigate's click-state machine. `onPointerUp` defers
+single-clicks for `OBSERVE_DBL_CLICK_MS = 280`; if a second click
+arrives within that window AND within `OBSERVE_DBL_CLICK_DIST_PX_SQ`
+(8 px²) of the first, the pending single-click is cancelled and a
+**double-click** fires instead. Otherwise the **single-click** runs
+when the timer elapses.
+
+- *Single-click:* `pickStar()` resolves the click; if a star is hit,
+  `togglePoi()` pins or unpins it. Sol is rejected (the dedicated
+  `#sol-arrow` already covers it); stars without HIP are rejected
+  (URL state is HIP-only); the cap is 16 (adding past the cap is a
+  no-op). The POI overlay (`docs/overlays.md` § Points of interest)
+  renders the resulting label + arrow.
+- *Double-click:* unprojects the click into a world-space ray, builds
+  a far point along it, and feeds that to `aimAt()` — the existing
+  observe-aim path slerps the camera so the clicked direction lands
+  at view centre. Works on stars, on empty sky, and on chart-mode
+  background alike.
+
+POIs clear automatically on every observe → navigate transition (the
+clear is wired via `onCameraModeChange` inside the constructor, so
+all three exit paths — mode toggle, focus change, search-X clear —
+get the same cleanup). They round-trip through the `?v=` blob *only*
+in observe mode (see §URL state), encoded HIP-only at bit 19.
+
 ## Two-finger roll gesture (platform-split)
 
 `starfield.ts` adds a two-finger rotate gesture that rolls the view around

@@ -8,6 +8,7 @@ import { createConstellationOverlay } from './constellation-overlay';
 import { createDiscMask } from './disc-mask';
 import { createDistanceVectorOverlay } from './distance-vector-overlay';
 import { createFocusRingOverlay } from './focus-ring-overlay';
+import { createPoiOverlay } from './poi-overlay';
 import { createScaleBar } from './scale-bar';
 import { bindUnitToggle } from './unit-toggle';
 import { registerThemeStarfield } from './theme-toggle';
@@ -128,6 +129,7 @@ async function main() {
     createConstellationOverlay(starfield);
     createDistanceVectorOverlay(starfield, starLabels);
     createFocusRingOverlay(starfield);
+    createPoiOverlay(starfield, starLabels);
     createScaleBar(starfield);
     bindWarpButton(starfield);
     bindModeToggle(starfield);

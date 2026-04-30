@@ -108,6 +108,35 @@ its ring or wings offscreen with it. See `docs/chart-mode.md` for
 the magnitude-driven sizing formula and flux-weighted constellation
 centroid math.
 
+## Points of interest (OBSERVE-only)
+
+`poi-overlay.ts` renders user-pinned stars (single-click on a star in
+OBSERVE — see `docs/camera-modes.md` for the click dispatcher). Two
+SVG groups under `#overlay`:
+
+- `<g id="poi-arrows">` — pooled `<path>` + `<text>` per POI for
+  off-screen arrows on the HUD ring rim. Arrow geometry comes from
+  `buildArrowSvgPath()` (shared with Sol/GC arrows in `hud-overlay.ts`).
+  Shaft start radius reuses `ringRadiusPx()` so POI arrows attach to
+  the same ring as Sol/GC. Label text is the POI's best name only.
+- `<g id="poi-labels">` — pooled `<text>` per POI for on-screen labels
+  that follow the projected star. Format:
+  `name · constellation-code · distance-from-observer`.
+
+Visibility is gated as a single HUD layer: the whole stack hides when
+`cameraMode !== 'observe'`, when `filter.showHud` is off, during warp
+(via `body.warping #overlay` CSS), and during the navigate↔observe
+transition. Chart-mode (`body.monochrome`) styling flips strokes to
+heavy black ink with a thin white halo so POIs stay readable on the
+high-contrast paper aesthetic — see `.poi-arrow`, `.poi-label`, and
+`.poi-arrow-label` in `styles.css`.
+
+POIs survive page reloads via the `?v=` blob (HIP-only encoding,
+observe-only emission — see `docs/build-and-data.md`-adjacent notes
+in `url-state.ts`). Cleared automatically on every observe→navigate
+transition; no UI element exposes "clear all" because Esc already
+exits observe and clears them as a side-effect.
+
 ## SVG hide semantics
 
 Missing coordinate attributes on SVG elements default to **0**, not "don't

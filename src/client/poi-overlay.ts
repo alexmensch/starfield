@@ -1,0 +1,337 @@
+import * as THREE from 'three';
+import type { Starfield } from './starfield';
+import { fmtDist } from './distance-util';
+import {
+  buildArrowSvgPath,
+  ARROW_HEAD_DEPTH_PX,
+  ARROW_LABEL_OFFSET_PX,
+  ARROW_LABEL_PADDING_PX,
+} from './arrow-path';
+import { ringRadiusPx } from './hud-overlay';
+
+// Point-of-interest overlay. Single-click on a star in OBSERVE pins it
+// (Starfield.togglePoi). The pin renders two ways:
+//   - **On screen** (POI projects inside the viewport, with a small
+//     pull-in margin so labels don't clip at the edge): a text label
+//     `name · ConCode · distance` follows the star.
+//   - **Off screen**: a chevron arrow on the HUD ring rim points toward
+//     the POI direction, with a name-only label by the chevron tip.
+// Visibility is gated as a HUD widget — hidden when cameraMode !=
+// observe, when the HUD checkbox is off, during warp (CSS rule), and
+// during the navigate↔observe transition.
+
+const ARROW_PIXEL_LENGTH = 110;
+const RING_HALO_GAP_PX = 4;
+const MIN_SHAFT_PIXEL_LENGTH = 8;
+// Detection margin: a star within ~40 px of the viewport edge still counts
+// as on-screen so its label survives small look-around drifts without
+// flipping to arrow mode every couple of frames.
+const ON_SCREEN_PULL_IN_PX = 40;
+// Offset from the star's projected centre to the label's text anchor.
+// Diagonal so the label sits clear of the disc + binary companion area.
+const LABEL_OFFSET_X_PX = 10;
+const LABEL_OFFSET_Y_PX = 10;
+
+interface Entry {
+  arrowPath: SVGPathElement;
+  arrowLabel: SVGTextElement;
+  onScreenLabel: SVGTextElement;
+}
+
+export function createPoiOverlay(
+  starfield: Starfield,
+  starLabels: Map<number, string>,
+): void {
+  const arrowsGroup = document.getElementById('poi-arrows') as unknown as SVGGElement | null;
+  const labelsGroup = document.getElementById('poi-labels') as unknown as SVGGElement | null;
+  if (!arrowsGroup || !labelsGroup) return;
+
+  const catalog = starfield.catalog;
+  const pool = new Map<number, Entry>();
+
+  const tmpStarLocal = new THREE.Vector3();
+  const tmpDir = new THREE.Vector3();
+  const tmpAux = new THREE.Vector3();
+
+  function createEntry(): Entry {
+    const NS = 'http://www.w3.org/2000/svg';
+    const arrowPath = document.createElementNS(NS, 'path') as SVGPathElement;
+    arrowPath.setAttribute('class', 'poi-arrow');
+    arrowsGroup!.appendChild(arrowPath);
+
+    const arrowLabel = document.createElementNS(NS, 'text') as SVGTextElement;
+    arrowLabel.setAttribute('class', 'poi-arrow-label');
+    arrowLabel.setAttribute('text-anchor', 'start');
+    arrowLabel.setAttribute('dominant-baseline', 'central');
+    arrowsGroup!.appendChild(arrowLabel);
+
+    const onScreenLabel = document.createElementNS(NS, 'text') as SVGTextElement;
+    onScreenLabel.setAttribute('class', 'poi-label');
+    onScreenLabel.setAttribute('text-anchor', 'start');
+    onScreenLabel.setAttribute('dominant-baseline', 'central');
+    labelsGroup!.appendChild(onScreenLabel);
+
+    return { arrowPath, arrowLabel, onScreenLabel };
+  }
+
+  function destroyEntry(e: Entry) {
+    e.arrowPath.remove();
+    e.arrowLabel.remove();
+    e.onScreenLabel.remove();
+  }
+
+  function syncPool() {
+    const pois = starfield.getPois();
+    const seen = new Set<number>(pois);
+    for (const [idx, e] of pool) {
+      if (!seen.has(idx)) {
+        destroyEntry(e);
+        pool.delete(idx);
+      }
+    }
+    for (const idx of pois) {
+      if (!pool.has(idx)) pool.set(idx, createEntry());
+    }
+  }
+
+  function hideEntry(e: Entry) {
+    e.arrowPath.setAttribute('d', '');
+    e.arrowLabel.style.display = 'none';
+    e.onScreenLabel.style.display = 'none';
+  }
+
+  function hideAll() {
+    arrowsGroup!.style.display = 'none';
+    labelsGroup!.style.display = 'none';
+  }
+
+  function showAll() {
+    arrowsGroup!.style.display = '';
+    labelsGroup!.style.display = '';
+  }
+
+  starfield.onPoisChange(syncPool);
+  syncPool();
+
+  starfield.onFrame(() => {
+    const pois = starfield.getPois();
+    if (pois.length === 0) {
+      hideAll();
+      return;
+    }
+
+    const filter = starfield.getFilter();
+    const cameraMode = starfield.getCameraMode();
+    const transition = starfield.isObserveTransitionActive();
+    const anchorIdx = starfield.getFocusedStar();
+
+    if (cameraMode !== 'observe' || !filter.showHud || transition || anchorIdx === null) {
+      hideAll();
+      return;
+    }
+
+    showAll();
+
+    const camera = starfield.camera;
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    const cx = w * 0.5;
+    const cy = h * 0.5;
+
+    // HUD ring radius — POI arrows attach to the same ring as Sol/GC.
+    const R = ringRadiusPx(camera.fov, filter.sizeMax);
+    const shaftStartPx = R + RING_HALO_GAP_PX;
+    const targetMarginPx = Math.max(filter.sizeMax, 0);
+
+    // Aux-step world-distance for screen-direction derivation. Mirrors
+    // the formula in hud-overlay.ts. In observe steady state the camera
+    // sits at the focal star so distToOrigin → 0; the aux-step
+    // collapses and the fallback path (direct POI projection) takes
+    // over, which is correct because camera == origin means projecting
+    // the POI directly already gives the right angular direction.
+    const camPos = camera.position;
+    const focalPx = h / (2 * Math.tan((camera.fov * Math.PI) / 360));
+    const distToOrigin = camPos.length(); // origin in local frame is camera position relative to anchor; in observe steady state this is ~0
+    const auxStepW = (ARROW_PIXEL_LENGTH * Math.max(distToOrigin, 1e-3)) / Math.max(focalPx, 1);
+
+    // Per-POI distance from observer is in absolute frame (the camera
+    // is parked at the focal star).
+    const absPos = catalog.positions;
+    const ax = absPos[anchorIdx * 3];
+    const ay = absPos[anchorIdx * 3 + 1];
+    const az = absPos[anchorIdx * 3 + 2];
+
+    const localPositions = starfield.localPositions;
+
+    for (const idx of pois) {
+      const e = pool.get(idx);
+      if (!e) continue;
+
+      tmpStarLocal.set(
+        localPositions[idx * 3],
+        localPositions[idx * 3 + 1],
+        localPositions[idx * 3 + 2],
+      );
+      const projected = projectToScreen(tmpStarLocal, camera, w, h);
+
+      const onScreen =
+        projected !== null &&
+        projected[0] >= ON_SCREEN_PULL_IN_PX &&
+        projected[0] <= w - ON_SCREEN_PULL_IN_PX &&
+        projected[1] >= ON_SCREEN_PULL_IN_PX &&
+        projected[1] <= h - ON_SCREEN_PULL_IN_PX;
+
+      const px = absPos[idx * 3];
+      const py = absPos[idx * 3 + 1];
+      const pz = absPos[idx * 3 + 2];
+      const dx = px - ax;
+      const dy = py - ay;
+      const dz = pz - az;
+      const distPc = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+      const name = labelFor(idx, starLabels, catalog);
+      const conIdx = catalog.constellation[idx];
+      const conCode = conIdx !== 255 ? catalog.constellations[conIdx].code : '';
+
+      if (onScreen && projected) {
+        // Hide arrow chrome.
+        e.arrowPath.setAttribute('d', '');
+        e.arrowLabel.style.display = 'none';
+
+        // Show on-screen label with full info.
+        const fullText = conCode
+          ? `${name} · ${conCode} · ${fmtDist(distPc)}`
+          : `${name} · ${fmtDist(distPc)}`;
+        e.onScreenLabel.style.display = '';
+        e.onScreenLabel.textContent = fullText;
+        e.onScreenLabel.setAttribute(
+          'x',
+          (projected[0] + LABEL_OFFSET_X_PX).toFixed(1),
+        );
+        e.onScreenLabel.setAttribute(
+          'y',
+          (projected[1] + LABEL_OFFSET_Y_PX).toFixed(1),
+        );
+        continue;
+      }
+
+      // Off screen — draw arrow on the HUD ring rim. Same screen-direction
+      // derivation as hud-overlay.ts: try aux-step first, then fall back
+      // to direct target projection (reliable in observe steady state).
+      e.onScreenLabel.style.display = 'none';
+
+      tmpDir.set(
+        tmpStarLocal.x - camPos.x,
+        tmpStarLocal.y - camPos.y,
+        tmpStarLocal.z - camPos.z,
+      );
+      const dirLenSq = tmpDir.lengthSq();
+      if (dirLenSq < 1e-12) {
+        hideEntry(e);
+        continue;
+      }
+      tmpDir.multiplyScalar(1 / Math.sqrt(dirLenSq));
+
+      let sux = 0;
+      let suy = 0;
+      let dirOk = false;
+
+      tmpAux.copy(camPos).addScaledVector(tmpDir, auxStepW);
+      const auxScreen = projectToScreen(tmpAux, camera, w, h);
+      if (auxScreen) {
+        const sdx = auxScreen[0] - cx;
+        const sdy = auxScreen[1] - cy;
+        const slen = Math.hypot(sdx, sdy);
+        if (slen >= 1) {
+          sux = sdx / slen;
+          suy = sdy / slen;
+          dirOk = true;
+        }
+      }
+      if (!dirOk && projected) {
+        const tdx = projected[0] - cx;
+        const tdy = projected[1] - cy;
+        const tlen = Math.hypot(tdx, tdy);
+        if (tlen >= 1) {
+          sux = tdx / tlen;
+          suy = tdy / tlen;
+          dirOk = true;
+        }
+      }
+      if (!dirOk) {
+        hideEntry(e);
+        continue;
+      }
+
+      // Shaft length defaults to ARROW_PIXEL_LENGTH; shrunk so the tip
+      // stops `targetMarginPx` short of the projected target when the
+      // POI projects inside the nominal shaft length (close to the
+      // viewport edge but still slightly inside the pull-in margin).
+      let shaftLengthPx = ARROW_PIXEL_LENGTH;
+      if (projected) {
+        const tdx = projected[0] - cx;
+        const tdy = projected[1] - cy;
+        const projAlong = tdx * sux + tdy * suy;
+        if (projAlong > 0) {
+          const allowed = projAlong - shaftStartPx - targetMarginPx;
+          if (allowed < shaftLengthPx) shaftLengthPx = allowed;
+        }
+      }
+      if (shaftLengthPx < MIN_SHAFT_PIXEL_LENGTH) {
+        hideEntry(e);
+        continue;
+      }
+
+      const shaftStartX = cx + sux * shaftStartPx;
+      const shaftStartY = cy + suy * shaftStartPx;
+      const tipX = shaftStartX + sux * shaftLengthPx;
+      const tipY = shaftStartY + suy * shaftLengthPx;
+
+      const d = buildArrowSvgPath(shaftStartX, shaftStartY, tipX, tipY);
+      if (!d) {
+        hideEntry(e);
+        continue;
+      }
+      e.arrowPath.setAttribute('d', d);
+
+      // Name-only label clamped to viewport with the same padding the
+      // Sol/GC arrows use.
+      const labelAnchorX = tipX + ARROW_LABEL_OFFSET_PX + ARROW_HEAD_DEPTH_PX;
+      const labelAnchorY = tipY - ARROW_LABEL_OFFSET_PX;
+      const sx = clamp(labelAnchorX, ARROW_LABEL_PADDING_PX, w - ARROW_LABEL_PADDING_PX);
+      const sy = clamp(labelAnchorY, ARROW_LABEL_PADDING_PX, h - ARROW_LABEL_PADDING_PX);
+      e.arrowLabel.style.display = '';
+      e.arrowLabel.textContent = name;
+      e.arrowLabel.setAttribute('x', sx.toFixed(1));
+      e.arrowLabel.setAttribute('y', sy.toFixed(1));
+    }
+  });
+}
+
+function labelFor(
+  idx: number,
+  starLabels: Map<number, string>,
+  catalog: { hip: Uint32Array },
+): string {
+  const fromMap = starLabels.get(idx);
+  if (fromMap) return fromMap;
+  const hip = catalog.hip[idx];
+  if (hip > 0) return `HIP ${hip}`;
+  return `#${idx}`;
+}
+
+function clamp(v: number, lo: number, hi: number): number {
+  return v < lo ? lo : v > hi ? hi : v;
+}
+
+function projectToScreen(
+  p: THREE.Vector3,
+  camera: THREE.PerspectiveCamera,
+  w: number,
+  h: number,
+): [number, number] | null {
+  const v = p.clone().applyMatrix4(camera.matrixWorldInverse);
+  if (v.z >= -camera.near) return null;
+  const ndc = v.applyMatrix4(camera.projectionMatrix);
+  return [(ndc.x + 1) * 0.5 * w, (1 - ndc.y) * 0.5 * h];
+}

@@ -45,6 +45,12 @@
       </g>
       <text id="sol-arrow-label" class="gal-arrow-label sol" text-anchor="start" dominant-baseline="central"></text>
       <text id="gc-arrow-label" class="gal-arrow-label gc" text-anchor="start" dominant-baseline="central"></text>
+      <!-- Point-of-interest arrows (off-screen) and on-screen labels.
+           Pooled <path> + <text> children created at runtime by
+           poi-overlay.ts. Visibility tracks cameraMode==='observe' AND
+           the HUD checkbox; POIs are part of the HUD layer. -->
+      <g id="poi-arrows"></g>
+      <g id="poi-labels"></g>
       <circle id="focus-ring" class="focus-ring" />
     </svg>
 

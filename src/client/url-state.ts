@@ -99,7 +99,14 @@ export interface DecodedView {
   toc?: number;
   /** Chart mode (observe-only). Only encoded when `mode === 'observe'`. */
   chart?: boolean;
+  /** Pinned points-of-interest as HIP IDs. Observe-only — encoded only
+   *  when `mode === 'observe'`, since POIs clear on observe→navigate
+   *  exit anyway. HIP-only (no catalog-index fallback) so URLs survive
+   *  catalog rebuilds. Hard-capped at POI_MAX_COUNT to bound the blob. */
+  pois?: number[];
 }
+
+const POI_MAX_COUNT = 16;
 
 interface FieldSpec {
   bit: number;
@@ -219,6 +226,30 @@ const FIELDS: FieldSpec[] = [
     isPresent: v => v.focus === 'cleared',
     encode: () => {},
     decode: v => { v.focus = 'cleared'; },
+  },
+  {
+    // Variable-length: 1-byte count + count × 4-byte HIP IDs. Hard-capped
+    // at POI_MAX_COUNT both at encode time (defensive cap on `currentStateOf`
+    // emission) and at decode time (defensive cap on hand-edited URLs).
+    bit: 19, key: 'pois',
+    encodeBytes: v => 1 + 4 * Math.min(v.pois?.length ?? 0, POI_MAX_COUNT),
+    decodeBytes: (dv, off) => 1 + 4 * Math.min(dv.getUint8(off), POI_MAX_COUNT),
+    isPresent: v => Array.isArray(v.pois) && v.pois.length > 0,
+    encode: (v, dv, o) => {
+      const list = (v.pois ?? []).slice(0, POI_MAX_COUNT);
+      dv.setUint8(o, list.length);
+      for (let i = 0; i < list.length; i++) {
+        dv.setUint32(o + 1 + i * 4, list[i] >>> 0, true);
+      }
+    },
+    decode: (v, dv, o) => {
+      const n = Math.min(dv.getUint8(o), POI_MAX_COUNT);
+      const out: number[] = [];
+      for (let i = 0; i < n; i++) {
+        out.push(dv.getUint32(o + 1 + i * 4, true));
+      }
+      v.pois = out;
+    },
   },
 ];
 
@@ -371,6 +402,24 @@ export function currentStateOf(starfield: Starfield, idMaps: IdMaps): DecodedVie
   // Chart on/off rides FLAG_CHART, gated to observe-only at pack time.
   if (f.chart) view.chart = true;
 
+  // POIs are observe-only and clear on observe→navigate exit, so we only
+  // emit them when the camera is in observe mode. Encoded as HIP IDs (not
+  // catalog indices) so a future catalog rebuild doesn't break old URLs;
+  // stars without HIP can't be pinned in the first place. Capped at
+  // POI_MAX_COUNT defensively.
+  if (mode === 'observe') {
+    const pois = starfield.getPois();
+    if (pois.length > 0) {
+      const hipsOut: number[] = [];
+      for (const idx of pois) {
+        if (hipsOut.length >= POI_MAX_COUNT) break;
+        const hip = idMaps.indexToHip[idx];
+        if (hip > 0) hipsOut.push(hip);
+      }
+      if (hipsOut.length > 0) view.pois = hipsOut;
+    }
+  }
+
   const c = starfield.camera.position;
   const t = starfield.controls.target;
   const u = starfield.camera.up;
@@ -486,6 +535,19 @@ export function applyDecodedView(
   // resulting filter-change event.
   if (view.chart && starfield.getCameraMode() === 'observe') {
     starfield.setFilter({ chart: true });
+  }
+
+  // POIs are observe-only — only restore them when the camera is parked
+  // in observe (the encoder also gates emission on this). Resolve each
+  // HIP through idMaps; HIPs that don't resolve in the current catalog
+  // are silently dropped (graceful partial restore on a catalog rebuild).
+  if (Array.isArray(view.pois) && view.pois.length > 0 && starfield.getCameraMode() === 'observe') {
+    const resolved: number[] = [];
+    for (const hip of view.pois) {
+      const idx = idMaps.hipToIndex.get(hip);
+      if (idx !== undefined) resolved.push(idx);
+    }
+    if (resolved.length > 0) starfield.setPois(resolved);
   }
 }
 

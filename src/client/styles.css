@@ -737,6 +737,63 @@ body.monochrome .hud-ring {
   stroke: rgba(31, 35, 48, 0.55);
 }
 
+/* Point-of-interest layer (single-click in OBSERVE pins a star). Colour is
+   a soft violet, distinct from Sol's warm yellow and GC's cool blue so
+   POIs read as a third HUD category. Mirrors `.gal-arrow*` stroke widths
+   and the paint-order halo on labels so all HUD widgets share one
+   silhouette. The whole layer is gated on cameraMode==='observe' and the
+   HUD checkbox by poi-overlay.ts; warping hides it via the existing
+   `body.warping #overlay` rule. */
+.poi-arrow-bg {
+  fill: none;
+  stroke: none;
+}
+.poi-arrow {
+  fill: none;
+  stroke: rgba(195, 170, 235, 0.55);
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.poi-arrow-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  fill: rgba(195, 170, 235, 0.85);
+  paint-order: stroke;
+  stroke: rgba(7, 9, 18, 0.9);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+/* On-screen label (shown when the POI star is in view). Bigger than the
+   arrow label so it reads as the primary anchor; the arrow takes over
+   when the POI is off-screen. Same halo treatment as the distance
+   label so it stays legible against bright stars. */
+.poi-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  fill: rgba(195, 170, 235, 0.92);
+  paint-order: stroke;
+  stroke: rgba(7, 9, 18, 0.9);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+/* Chart-mode (body.monochrome) — translucent strokes vanish against the
+   high-contrast paper aesthetic, so flip to heavy black ink with a thin
+   white halo on labels (matching the existing Sol/GC chart-mode flip and
+   the chart-labels engine's outlines). */
+body.monochrome .poi-arrow {
+  stroke: rgba(31, 35, 48, 0.85);
+}
+body.monochrome .poi-arrow-label,
+body.monochrome .poi-label {
+  fill: rgba(31, 35, 48, 0.95);
+  stroke: rgba(255, 255, 255, 0.9);
+}
+
 .scale-bar {
   color: var(--fg);
   font-size: 10.5px;
