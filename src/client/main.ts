@@ -16,6 +16,7 @@ import { bindWarpButton } from './warp-button';
 import { bindModeToggle } from './mode-toggle';
 import { maybeShowInfoModal } from './info-modal';
 import { bindBrandModals } from './brand-modal';
+import { bindKeyboardShortcuts } from './keyboard-shortcuts';
 import { applyFromUrl, startUrlSync } from './url-state';
 import { fmtDist, onUnitChange } from './distance-util';
 import { setupDebug } from './debug';
@@ -163,6 +164,7 @@ async function main() {
       meta.hidden = false;
       bindPanelLayout();
       bindBrandModals();
+      bindKeyboardShortcuts(starfield);
       maybeShowInfoModal(catalog.count);
     }, 400);
 

@@ -1021,3 +1021,64 @@ body.monochrome .modal-card {
 body.monochrome .modal-backdrop {
   background: rgba(0, 0, 0, 0.3);
 }
+
+/* Keyboard-shortcut "go" / "constellation" picker modals. The actual
+ * widget (`.search-wrap` or `#con-typeahead`) is moved into
+ * `#kb-modal-card` on open and restored on close — see
+ * keyboard-shortcuts.ts. The card itself just provides centring and a
+ * positioned ancestor so the search-results dropdown lands beneath the
+ * input. */
+.kb-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: start center;
+}
+.kb-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+}
+.kb-modal-card {
+  position: relative;
+  margin-top: 16vh;
+  width: min(520px, calc(100vw - 32px));
+  z-index: 1;
+}
+/* The constellation typeahead has a top margin in its panel home; reset
+ * it inside the modal so the input sits flush with the card top. */
+.kb-modal-card .con-typeahead { margin-top: 0; }
+body.monochrome .kb-modal-backdrop {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+/* Help modal shortcut list. Two-column grid of `<kbd>` keys and short
+ * descriptions. `<kbd>` styling matches the panel's dim-on-dark palette. */
+.modal-shortcuts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 10px 16px;
+  margin: 0;
+  font-size: 13px;
+  color: var(--fg);
+}
+.modal-shortcuts dt {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.modal-shortcuts dd { margin: 0; color: var(--fg); }
+.modal-shortcuts kbd {
+  display: inline-block;
+  min-width: 22px;
+  padding: 1px 6px;
+  font-family: inherit;
+  font-size: 11px;
+  text-align: center;
+  color: var(--fg);
+  background: rgba(11, 16, 32, 0.7);
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+}

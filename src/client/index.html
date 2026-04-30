@@ -52,6 +52,43 @@
 
     <button id="warp-btn" class="warp-btn" type="button" hidden></button>
 
+    <div id="kb-modal" class="kb-modal" hidden>
+      <div class="kb-modal-backdrop" data-kb-dismiss></div>
+      <div class="kb-modal-card" id="kb-modal-card" role="dialog" aria-modal="true"></div>
+    </div>
+
+    <div id="help-modal" class="modal" hidden>
+      <div class="modal-backdrop" data-modal-dismiss></div>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="help-title">
+        <button class="modal-close" type="button" data-modal-dismiss aria-label="Close">×</button>
+        <h2 id="help-title">Keyboard shortcuts</h2>
+        <dl class="modal-shortcuts">
+          <dt><kbd>G</kbd></dt>
+          <dd>Go: focus a star, set a destination, or change observe location</dd>
+          <dt><kbd>O</kbd></dt>
+          <dd>Switch to observe mode when a star is focused</dd>
+          <dt><kbd>W</kbd></dt>
+          <dd>Warp to the destination</dd>
+          <dt><kbd>C</kbd></dt>
+          <dd>Show a constellation</dd>
+          <dt><kbd>R</kbd></dt>
+          <dd>Reset all camera settings</dd>
+          <dt><kbd>H</kbd></dt>
+          <dd>Toggle the head-up display (HUD)</dd>
+          <dt><kbd>S</kbd></dt>
+          <dd>Toggle the galactic-coordinate sphere</dd>
+          <dt><kbd>+</kbd> / <kbd>−</kbd></dt>
+          <dd>Magnitude limit ± 0.5</dd>
+          <dt><kbd>=</kbd></dt>
+          <dd>Reset magnitude to naked-eye (6.5)</dd>
+          <dt><kbd>?</kbd></dt>
+          <dd>Show this help</dd>
+          <dt><kbd>Esc</kbd></dt>
+          <dd>Step back: exit observe → clear destination → clear focus</dd>
+        </dl>
+      </div>
+    </div>
+
     <div id="info-modal" class="modal" hidden>
       <div class="modal-backdrop" id="info-backdrop"></div>
       <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="info-title">
@@ -273,21 +310,18 @@
             <button class="group-toggle" type="button" aria-label="Toggle Overlays section" aria-expanded="true">−</button>
           </header>
           <div class="group-body">
-            <div class="sub-label-row">
+            <div id="con-picker">
               <label class="sub-label">Constellation</label>
-              <span class="row-actions">
-                <button id="con-reset" class="link-btn" type="button">reset</button>
-              </span>
-            </div>
-            <div class="con-typeahead" id="con-typeahead">
-              <input
-                id="con-input"
-                type="search"
-                placeholder="Search constellation…"
-                autocomplete="off"
-                spellcheck="false"
-              />
-              <ul id="con-results" class="search-results" hidden></ul>
+              <div class="con-typeahead" id="con-typeahead">
+                <input
+                  id="con-input"
+                  type="search"
+                  placeholder="Search constellation…"
+                  autocomplete="off"
+                  spellcheck="false"
+                />
+                <ul id="con-results" class="search-results" hidden></ul>
+              </div>
             </div>
 
             <label class="checkbox-row" style="margin-top: 12px;">

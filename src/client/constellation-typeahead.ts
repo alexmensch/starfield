@@ -12,7 +12,7 @@ import type { Starfield } from './starfield';
 // `aimAtConstellation`, matching the prior `<select>`'s behaviour.
 
 interface ConEntry {
-  idx: number;
+  idx: number;  // -1 for the synthetic "None" entry that clears the highlight
   name: string;
   code: string;
   search: string;  // lowercased "name code" for substring matching
@@ -20,10 +20,15 @@ interface ConEntry {
 
 const MAX_RESULTS = 30;
 
+// Synthetic top-of-list entry that clears the highlight when picked. We
+// pin it on top whenever the input is empty so users can land on it
+// after Cmd+A → Delete → Enter, mirroring the way they pick any other
+// constellation.
+const NONE_ENTRY: ConEntry = { idx: -1, name: 'None', code: '', search: '' };
+
 export function bindConstellationTypeahead(starfield: Starfield) {
   const input = document.getElementById('con-input') as HTMLInputElement;
   const resultsEl = document.getElementById('con-results') as HTMLUListElement;
-  const resetBtn = document.getElementById('con-reset')!;
   if (!input || !resultsEl) return;
 
   const entries: ConEntry[] = starfield.catalog.constellations
@@ -48,7 +53,7 @@ export function bindConstellationTypeahead(starfield: Starfield) {
 
   const filter = (query: string): ConEntry[] => {
     const q = query.trim().toLowerCase();
-    if (!q) return entries.slice(0, MAX_RESULTS);
+    if (!q) return [NONE_ENTRY, ...entries.slice(0, MAX_RESULTS - 1)];
     return entries.filter((e) => e.search.includes(q)).slice(0, MAX_RESULTS);
   };
 
@@ -78,7 +83,9 @@ export function bindConstellationTypeahead(starfield: Starfield) {
     const e = results[i];
     if (!e) return;
     starfield.setFilter({ highlightCon: e.idx });
-    starfield.aimAtConstellation(e.idx);
+    // The synthetic None entry has no constellation to aim at — picking
+    // it just clears the highlight.
+    if (e.idx >= 0) starfield.aimAtConstellation(e.idx);
     resultsEl.hidden = true;
     input.blur();
   };
@@ -115,12 +122,7 @@ export function bindConstellationTypeahead(starfield: Starfield) {
     }
   });
 
-  resetBtn.addEventListener('click', (e) => {
-    e.preventDefault();
-    starfield.setFilter({ highlightCon: -1 });
-  });
-
-  // Reverse-sync from filter state — URL restore, "reset" click, etc.
+  // Reverse-sync from filter state — URL restore, "None"-pick, etc.
   const syncFromFilter = () => {
     const idx = starfield.getFilter().highlightCon;
     displayName = nameForIdx(idx);
