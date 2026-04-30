@@ -115,23 +115,28 @@ export function createDistanceVectorOverlay(
 
     // Place the label just past the chevron tip — same offsets as the
     // Sol/GC arrows so the three reference arrows have identical label
-    // geometry. Clamp inside the viewport so it stays readable when the
-    // tip is near an edge.
-    const labelAnchorX = tipX + ARROW_LABEL_OFFSET_PX + ARROW_HEAD_DEPTH_PX;
-    const labelAnchorY = tipY - ARROW_LABEL_OFFSET_PX;
-    const mx = Math.max(ARROW_LABEL_PADDING_PX, Math.min(w - ARROW_LABEL_PADDING_PX, labelAnchorX));
-    const my = Math.max(ARROW_LABEL_PADDING_PX, Math.min(h - ARROW_LABEL_PADDING_PX, labelAnchorY));
+    // geometry. When the tip is off-screen, anchor instead to where the
+    // shaft visibly exits the viewport so the label stays attached to
+    // the line rather than drifting to a clamped corner.
+    const exit = viewportSegmentExit(pA[0], pA[1], tipX, tipY, w, h);
+    const anchorX = exit ? exit[0] : tipX;
+    const anchorY = exit ? exit[1] : tipY;
     distUi.style.display = '';
+    label.textContent = `${destLabel} · ${fmtDist(distPc)}`;
+    // The label is anchor-start so `x` is its left edge; subtract its width
+    // from the right-side clamp so the visible text stays inside the
+    // viewport when the line exits near the right edge.
+    const labelWidth = label.getComputedTextLength();
+    const labelAnchorX = anchorX + ARROW_LABEL_OFFSET_PX + ARROW_HEAD_DEPTH_PX;
+    const labelAnchorY = anchorY - ARROW_LABEL_OFFSET_PX;
+    const mxMax = Math.max(ARROW_LABEL_PADDING_PX, w - ARROW_LABEL_PADDING_PX - labelWidth);
+    const mx = Math.max(ARROW_LABEL_PADDING_PX, Math.min(mxMax, labelAnchorX));
+    const my = Math.max(ARROW_LABEL_PADDING_PX, Math.min(h - ARROW_LABEL_PADDING_PX, labelAnchorY));
     label.setAttribute('x', mx.toFixed(1));
     label.setAttribute('y', my.toFixed(1));
-    label.textContent = `${destLabel} · ${fmtDist(distPc)}`;
 
-    // Position the warp affordance to the right of the distance label. The
-    // label is now anchor-start (matching Sol/GC arrows), so its right edge
-    // sits at (mx + getComputedTextLength()); the warp text — also
-    // anchor-start — places its left edge there plus a gap.
-    const fullWidth = label.getComputedTextLength();
-    warpText.setAttribute('x', (mx + fullWidth + WARP_GAP_PX).toFixed(1));
+    // Position the warp affordance to the right of the distance label.
+    warpText.setAttribute('x', (mx + labelWidth + WARP_GAP_PX).toFixed(1));
     warpText.setAttribute('y', my.toFixed(1));
   });
 }
@@ -188,5 +193,43 @@ function projectWithNearClip(
   }
 
   return { pA, pB };
+}
+
+// Liang-Barsky exit point: where does segment (ax,ay)→(bx,by) leave the
+// viewport rectangle [0,w]×[0,h]? Returns the b-side intersection (largest
+// t in [0,1] that touches the rect) when the segment crosses it, else null.
+// Returns null when (bx,by) is already inside — caller treats that as
+// "use (bx,by) as-is." Handles the case where (ax,ay) is also off-screen
+// (extreme camera drag) by intersecting both ends of the segment with the
+// rect; the meaningful t for label placement is the one nearest b.
+function viewportSegmentExit(
+  ax: number, ay: number, bx: number, by: number,
+  w: number, h: number,
+): [number, number] | null {
+  if (bx >= 0 && bx <= w && by >= 0 && by <= h) return null;
+  const dx = bx - ax;
+  const dy = by - ay;
+  const ps = [-dx, dx, -dy, dy];
+  const qs = [ax, w - ax, ay, h - ay];
+  let tEnter = 0;
+  let tExit = 1;
+  for (let i = 0; i < 4; i++) {
+    const p = ps[i];
+    const q = qs[i];
+    if (Math.abs(p) < 1e-9) {
+      if (q < 0) return null;
+      continue;
+    }
+    const t = q / p;
+    if (p < 0) {
+      if (t > tExit) return null;
+      if (t > tEnter) tEnter = t;
+    } else {
+      if (t < tEnter) return null;
+      if (t < tExit) tExit = t;
+    }
+  }
+  if (tEnter > tExit) return null;
+  return [ax + dx * tExit, ay + dy * tExit];
 }
 

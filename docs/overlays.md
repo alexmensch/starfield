@@ -50,8 +50,10 @@ Betelgeuse goes behind the camera when the camera is within ~20 pc of Sol),
    intersection and uses it as an "effective destination" strictly in front,
 3. caps the off-screen point at 1.5× viewport diagonal so SVG coords stay
    sane,
-4. clamps the label position to `LABEL_PADDING_PX` from any edge so the
-   distance stays readable.
+4. when the chevron tip is off-screen, anchors the distance label to
+   the line's viewport-exit point (Liang-Barsky `tExit`) so it stays
+   attached to the visible shaft, then clamps to `LABEL_PADDING_PX`
+   from any edge.
 
 If you see a disappearing vector, check this logic first.
 
