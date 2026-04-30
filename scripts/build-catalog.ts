@@ -24,8 +24,9 @@ const DEFAULT_CI = 0.65;
 const BINARY_MAX_SEP_PC = 0.005;
 
 const HEADER_SIZE = 32;
-const RECORD_SIZE = 40;
-const BINARY_VERSION = 3;
+const RECORD_SIZE = 44;
+const BINARY_VERSION = 4;
+const MAGIC = 'HYG4';
 
 const CONSTELLATIONS: { code: string; name: string }[] = [
   { code: 'And', name: 'Andromeda' },
@@ -801,7 +802,7 @@ async function main() {
   const bytes = new Uint8Array(out);
 
   // Header.
-  const magicBytes = encoder.encode('HYG3');
+  const magicBytes = encoder.encode(MAGIC);
   bytes.set(magicBytes, 0);
   view.setUint32(4, BINARY_VERSION, true);
   view.setUint32(8, stars.length, true);
@@ -847,6 +848,9 @@ async function main() {
       view.setUint8(off + 37, 0);
       view.setUint16(off + 38, 0, true);
     }
+    // HIP (v4): Hipparcos number, 0 = no HIP. Used for stable star IDs in
+    // shared URL state — see docs/build-and-data.md and url-state.ts.
+    view.setUint32(off + 40, s.hip ?? 0, true);
     if (s.flags & 0x02) solIndex = i;
     off += RECORD_SIZE;
   }

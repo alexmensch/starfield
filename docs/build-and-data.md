@@ -8,18 +8,19 @@ gets computed (Stefan–Boltzmann radii, etc.), see `SCIENCE.md`.
 ## Binary catalog format (`public/catalog.bin`)
 
 Fixed-size records, sorted brightest-first by `absmag`. Current version is
-**v3** with a 40-byte stride. Magic stayed `HYG3` — only the version field
-changed to disambiguate. v3 added the two variability fields packed into
-bytes 36–39, previously reserved.
+**v4** with a 44-byte stride. Magic and version step together
+(v3=`HYG3`, v4=`HYG4`). v4 added a `uint32` HIP at bytes 40–43 so the
+URL-state encoder can use Hipparcos numbers as stable star IDs that
+survive future catalog reorderings.
 
 - Header (32 bytes)
-  - 0–3   ASCII `HYG3`
-  - 4–7   `uint32` version (currently 3)
+  - 0–3   ASCII `HYG4`
+  - 4–7   `uint32` version (currently 4)
   - 8–11  `uint32` count
   - 12–15 `uint32` nameTableOffset
   - 16–19 `uint32` nameTableLength
   - 20–31 reserved
-- Record (40 bytes per star)
+- Record (44 bytes per star)
   - 0–11  `float32 × 3`  x, y, z in parsecs (equatorial, Sol at origin)
   - 12–15 `float32`      absmag
   - 16–19 `float32`      ci (B–V colour index, default 0.65 for missing)
@@ -33,6 +34,12 @@ bytes 36–39, previously reserved.
   - 36    `uint8`        **variability amplitude** in 0.05 mag units (0 = not variable)
   - 37    `uint8`        reserved (future: variability type)
   - 38–39 `uint16`       **variability period** in 0.1 days (0 = not variable, max 6553.5 d)
+  - 40–43 `uint32`       **HIP** (Hipparcos number; 0 = no HIP). Only ~37%
+                          of the catalogue carries HIP — the rest are filled
+                          with 0 and fall back to row-index addressing in
+                          shared URLs. Max observed HIP is 120,404 (fits in
+                          17 bits) so 24 bits would suffice, but `uint32`
+                          keeps the record stride a multiple of 4.
 - Name table: length-prefixed UTF-8 strings (`uint16` length then bytes).
   **Offset 0 is reserved** as the "no name" sentinel (2 zero bytes of
   padding); real names start at offset ≥ 2.
@@ -47,8 +54,8 @@ Amplitude encoding saturates at 255 × 0.05 = 12.75 mag; periods over
 majority of real variables (a few multi-decade symbiotics and extreme
 eclipsers clip but those render imperceptibly slowly anyway).
 
-If you add fields, keep the 40-byte stride (pad as needed) and **bump
-`version`** in both the writer and reader.
+If you add fields, keep the 44-byte stride (pad as needed) and **bump
+`version`** (and the matching magic) in both the writer and reader.
 
 ## Search index (`public/search-index.json`)
 

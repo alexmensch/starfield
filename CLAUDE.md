@@ -40,7 +40,7 @@ data/                                All large catalogs tracked via Git LFS.
     particles.bin                    50K importance-sampled dust points (LFS)
     manifest.json                    grid params + chunk index + particle count
 public/
-  catalog.bin             generated (gitignored, ~12 MB, binary v3)
+  catalog.bin             generated (gitignored, ~13 MB, binary v4)
   constellations.json     generated (gitignored)
   search-index.json       generated (gitignored, ~13 MB raw, ~2 MB gzipped)
   clouds.json             generated (gitignored, ~30 KB)

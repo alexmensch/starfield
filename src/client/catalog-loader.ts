@@ -20,14 +20,16 @@ export interface Catalog {
   companion: Int32Array;         // length = count, -1 = no companion
   periodDays: Float32Array;      // length = count, 0 = not variable
   amplitudeMag: Float32Array;    // length = count, 0 = not variable
+  hip: Uint32Array;              // length = count, 0 = no HIP
   names: Map<number, string>;    // star index -> proper name (named stars only)
   solIndex: number;              // -1 if not found
   constellations: Constellation[];
 }
 
 const HEADER_SIZE = 32;
-const RECORD_SIZE = 40;
-const EXPECTED_VERSION = 3;
+const RECORD_SIZE = 44;
+const EXPECTED_VERSION = 4;
+const EXPECTED_MAGIC = 'HYG4';
 const NO_COMPANION = 0xffffffff;
 
 export interface LoadProgress {
@@ -84,7 +86,7 @@ async function fetchBinary(
 function parseBinary(ab: ArrayBuffer, constellations: Constellation[]): Catalog {
   const view = new DataView(ab);
   const magic = new TextDecoder().decode(new Uint8Array(ab, 0, 4));
-  if (magic !== 'HYG3') throw new Error(`Bad magic: ${magic}`);
+  if (magic !== EXPECTED_MAGIC) throw new Error(`Bad magic: ${magic}`);
   const version = view.getUint32(4, true);
   if (version !== EXPECTED_VERSION) {
     throw new Error(`Unsupported catalog version: ${version} (expected ${EXPECTED_VERSION})`);
@@ -104,6 +106,7 @@ function parseBinary(ab: ArrayBuffer, constellations: Constellation[]): Catalog 
   const companion = new Int32Array(count);
   const periodDays = new Float32Array(count);
   const amplitudeMag = new Float32Array(count);
+  const hip = new Uint32Array(count);
   const nameOffsetArr = new Uint32Array(count);
 
   let solIndex = -1;
@@ -126,6 +129,7 @@ function parseBinary(ab: ArrayBuffer, constellations: Constellation[]): Catalog 
     // Zero period = not a known variable.
     amplitudeMag[i] = view.getUint8(off + 36) * 0.05;
     periodDays[i] = view.getUint16(off + 38, true) * 0.1;
+    hip[i] = view.getUint32(off + 40, true);
     if (flags[i] & 0x02) solIndex = i;
   }
 
@@ -167,6 +171,7 @@ function parseBinary(ab: ArrayBuffer, constellations: Constellation[]): Catalog 
     companion,
     periodDays,
     amplitudeMag,
+    hip,
     names,
     solIndex,
     constellations,

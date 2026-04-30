@@ -198,7 +198,7 @@ npm run build
 npm run deploy
 ```
 
-No additional services (R2, KV, D1) are used — the ~12 MB catalog binary
+No additional services (R2, KV, D1) are used — the ~13 MB catalog binary
 and the ~13 MB JSON search index ship as static assets alongside the
 HTML/JS. Both compress well (~2 MB each gzipped), so the wire transfer
 is moderate even on mobile networks.

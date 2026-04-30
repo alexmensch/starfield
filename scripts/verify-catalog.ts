@@ -8,7 +8,7 @@ const BIN = resolve(ROOT, 'public/catalog.bin');
 const CON = resolve(ROOT, 'public/constellations.json');
 
 const HEADER_SIZE = 32;
-const RECORD_SIZE = 40;
+const RECORD_SIZE = 44;
 const NO_COMPANION = 0xffffffff;
 
 const buf = await readFile(BIN);
@@ -50,6 +50,7 @@ function readRecord(i: number) {
   const name = flags & 0x01 ? nameAt.get(nameOffset) : null;
   const comp = view.getUint32(off + 24, true);
   const conIdx = view.getUint8(off + 34);
+  const hip = view.getUint32(off + 40, true);
   return {
     i,
     x: view.getFloat32(off + 0, true),
@@ -65,6 +66,7 @@ function readRecord(i: number) {
     flags: flags.toString(2).padStart(8, '0'),
     amplitudeMag: view.getUint8(off + 36) * 0.05,
     periodDays: view.getUint16(off + 38, true) * 0.1,
+    hip: hip === 0 ? null : hip,
     name,
     con: conIdx === 255 ? null : constellations[conIdx]?.code,
   };
