@@ -192,24 +192,64 @@ vanishes before the camera arrives. `controls.enabled = false`;
 `animate=false` URL-restore path skips the transition and sets
 `uHideFocusIdx` immediately, since there's no glide to defer to.
 
-**Look-around controller (`observe-controls.ts`):**
-- Drag rotates the camera in place: yaw around `camera.up`, pitch
-  around the screen-right axis derived from the live quaternion.
-- **Pitch is FPS-style clamped** (`PITCH_LIMIT = π/2 − 0.01`). Yaw is
-  rotation around the world-up axis (`camera.up`); without the clamp,
-  pitching past the pole flips the screen-right axis and the next yaw
-  input feels like left/right are swapped — the classic FPS pole
-  singularity. Shoemake-style 6-DOF (yaw around camera-local up) is
-  the only alternative and was rejected because it loses the stable
-  horizon.
+**Look-around controller (`observe-controls.ts`) — direct manipulation:**
+- Drag grabs whatever world point sits under the cursor at pointer-down
+  and keeps it under the cursor for the rest of the drag. Like
+  fingertip-dragging the inside of a celestial sphere.
+- **Mechanism.** On pointer-down, `pixelToWorldDir` converts the cursor
+  pixel into a world-space ray direction `dGrabbed` — built from
+  FOV/aspect and rotated by the live `camera.quaternion`, no
+  `unproject()` (avoids depending on `matrixWorld` being up-to-date,
+  which matters because pointer-move can fire multiple times between
+  frames). On every pointer-move we recompute the cursor's world
+  direction `dCurrent` the same way and pre-multiply
+  `camera.quaternion` by the shortest rotation
+  `setFromUnitVectors(dCurrent, dGrabbed)`. Premultiply rotates the
+  camera's basis in world space; the pixel under the cursor — whose
+  *camera-local* direction is fixed by FOV/aspect/pixel — therefore
+  now points at `dGrabbed` in world. Repeat per move event and the
+  grabbed world point is glued to the cursor pixel-perfectly.
+- **No fixed yaw axis, no pole singularity, no pitch clamp.** Each drag
+  rotates around whatever screen-relative axis matches the cursor
+  motion. Shortest-path rotations are well-defined through ±90°, so a
+  vertical drag passes straight over NGP and out the far side without
+  the camera getting stuck.
+- **Roll-independent.** A two-finger Safari twist mutates only
+  `camera.quaternion` (`rollCamera` skips the `camera.up` update in
+  observe — direct manipulation doesn't read it). The twist changes
+  which world point is under each pixel, but pointer-down captures
+  whatever's under the cursor at that moment and pointer-move keeps it
+  there. So the user can rotate the screen image to match the sky
+  overhead and dragging still drags the world along intuitively.
+- **Release momentum.** On `pointermove` we extract the per-event
+  rotation as axis-angle (`lastRotAxis`, `lastRotAngle`,
+  `lastMoveTimeMs`). On `pointerup`, if the gap between the last move
+  and the release is ≤ `MOMENTUM_MAX_RELEASE_GAP_MS` (80 ms — releases
+  after a longer pause are deliberate stops, not flicks), we promote
+  that to an angular velocity (`momentumAxis`, `momentumSpeed` in
+  rad/sec). `update()` runs every frame from Starfield's animate loop
+  while in observe (and not in a transition / aim slerp): it applies
+  `momentumSpeed · dt` of rotation around `momentumAxis` and decays
+  `momentumSpeed` by `exp(-dt / MOMENTUM_TAU_SEC)` per step. `dt` is
+  capped at 100 ms so a stalled rAF (background tab, GC pause) doesn't
+  resume with one giant rotation. `MOMENTUM_TAU_SEC = 0.4` is looser
+  than TrackballControls' navigate damping by design — the direct-manip
+  drag has no "throw" of its own, so a longer glide (~2 s before fully
+  stopped) gives flicks somewhere to land. A new `pointerdown` zeroes
+  `momentumSpeed` so the user can grab and stop instantly.
+- **Aim-at slerps don't preserve roll.** `aimAt`'s OBSERVE branch
+  builds the target via `Matrix4.lookAt(pos, point, camera.up)` with
+  `camera.up = (0, 1, 0)`, so a slerp triggered by the constellation
+  typeahead, Sol/GC labels, or canvas double-click lands with ICRS Y
+  as screen-up and unwinds any roll the user had applied. Acceptable
+  trade-off — aim-at is an explicit "take me there" command, not a
+  drag, and re-twisting after arrival is cheap.
 - Wheel adjusts `camera.fov` (1.5° per notch, clamped 10–120°) instead
   of camera distance. Distance has no meaning when the camera is
   parked.
-- Two-finger roll still works — `rollCamera` mutates `camera.up` for
-  navigate-mode persistence and additionally rotates `camera.quaternion`
-  around the forward axis when `cameraMode === 'observe'` (the orbit
-  controls' camera-up read-back path doesn't run in observe, so a
-  bare `camera.up` change wouldn't be visible).
+- In navigate-mode, `rollCamera` keeps its old behaviour (mutates
+  `camera.up` so TrackballControls picks up the rolled vertical on
+  every `update()`).
 
 **HUD locators:** Sol and Galactic-Centre arrows are part of the HUD
 (`hud-overlay.ts`, gated by `filter.showHud`). In observe their anchor

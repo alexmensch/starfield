@@ -1,28 +1,63 @@
 import * as THREE from 'three';
 
-// Custom look-around controller for OBSERVE mode. Drag rotates the camera in
-// place (yaw around the camera's current up, pitch around the camera's right
-// axis). Wheel adjusts the camera FOV. Two-finger roll on Safari continues
-// to mutate camera.up directly via Starfield's existing handlers — yaw uses
-// camera.up, so a tilted head still produces a sensible horizontal sweep.
+// Direct-manipulation look-around for OBSERVE mode. The user puts the
+// cursor on a world point ("grabs" it) and drags; the camera rotates so
+// that point stays glued to the cursor across the entire drag — like
+// fingertip-dragging the inside of a celestial sphere.
 //
-// Coexists with TrackballControls: when this controller is enabled, the
-// caller should set TrackballControls.enabled = false. We attach our own
-// pointer/wheel listeners on enable() and detach them on disable() so the
-// two control schemes never see the same gesture.
+// On pointer-down we unproject the cursor pixel into a world-space ray
+// direction `dGrabbed`. On every pointer-move we unproject the current
+// pixel into `dCurrent` (using the live camera quaternion), compute the
+// shortest rotation R that takes `dCurrent → dGrabbed`, and pre-multiply
+// `camera.quaternion` by R. Premultiply rotates the camera's basis in
+// world space; the pixel under the cursor — whose direction in
+// camera-local coordinates is fixed by FOV/aspect/pixel — therefore
+// now points at `dGrabbed` in world. The grabbed world point follows
+// the cursor pixel-perfectly, frame after frame.
+//
+// Properties of this scheme:
+//   - No fixed yaw axis. Every drag rotates around whatever screen-
+//     relative axis matches the cursor motion; there's no "world up"
+//     to align with anything.
+//   - No pole singularity. Shortest-path rotations are well-defined
+//     through ±90° in any direction, so a vertical drag can pass
+//     straight over NGP and out the far side without the camera
+//     getting stuck.
+//   - Roll-independent. A two-finger Safari twist rotates
+//     camera.quaternion via Starfield's rollCamera, which changes
+//     which world point is under each pixel — but pointer-down captures
+//     whatever's under the cursor at that instant and pointer-move
+//     keeps it there. So the user can rotate the screen image to match
+//     the sky overhead and dragging still drags the world along.
+//
+// Wheel adjusts the camera FOV. Coexists with TrackballControls: when
+// this controller is enabled, the caller should set
+// TrackballControls.enabled = false. We attach our own pointer/wheel
+// listeners on enable() and detach them on disable() so the two control
+// schemes never see the same gesture.
 export class ObserveControls {
-  private static ROTATE_SPEED = 0.005;     // radians per CSS pixel
   private static FOV_STEP_PER_WHEEL = 1.5; // degrees per typical wheel notch
   private static FOV_MIN = 10;
   private static FOV_MAX = 120;
-  // Hard pitch limit. Yaw is around camera.up (world-vertical), pitch is
-  // around the screen-right axis derived from the camera quaternion. As the
-  // forward vector approaches camera.up the screen-right axis flips its
-  // world orientation, which makes left/right swap on the next yaw input —
-  // the classic FPS pole singularity. Clamping pitch a hair shy of ±90°
-  // keeps yaw on the same side of the pole and avoids the swap, matching
-  // every first-person game that uses a fixed world-up convention.
-  private static PITCH_LIMIT = Math.PI / 2 - 0.01;
+
+  // Momentum / inertia after release. Time constant of the exponential
+  // decay (e-fold time) — at 0.4 s the rotation falls to ~37% of its
+  // release speed after ~half a second, ~14% after a second, and is
+  // visually stopped (below MOMENTUM_MIN_SPEED for any normal release
+  // velocity) by ~2 s. Looser than TrackballControls' navigate-mode
+  // damping by design — the direct-manip drag has no "throw" of its
+  // own, so a longer glide gives flicks somewhere to land.
+  private static MOMENTUM_TAU_SEC = 0.4;
+  // Stop momentum below this angular speed (rad/sec). 0.001 rad/sec ≈
+  // 0.06°/sec — sub-pixel motion at any sane FOV/window combo.
+  private static MOMENTUM_MIN_SPEED = 0.001;
+  // Don't kick off momentum if the last move event is older than this
+  // when the user releases — they paused before letting go and almost
+  // certainly meant to stop.
+  private static MOMENTUM_MAX_RELEASE_GAP_MS = 80;
+  // Cap dt per momentum step so a stalled rAF (tab background, GC) on
+  // resume doesn't apply one giant rotation.
+  private static MOMENTUM_MAX_STEP_SEC = 0.1;
 
   private canvas: HTMLCanvasElement;
   private camera: THREE.PerspectiveCamera;
@@ -31,14 +66,29 @@ export class ObserveControls {
 
   private enabled = false;
   private dragging = false;
-  private lastX = 0;
-  private lastY = 0;
   private activePointerId: number | null = null;
 
-  // Reusable scratch so per-frame motion allocates nothing.
-  private tmpQ = new THREE.Quaternion();
-  private tmpRight = new THREE.Vector3();
-  private tmpFwd = new THREE.Vector3();
+  // World-space direction of the world point grabbed at pointer-down.
+  // Reused throughout the drag so the same point follows the cursor.
+  private dGrabbed = new THREE.Vector3();
+
+  // Reusable scratch for the per-move unproject + rotation.
+  private dCurrent = new THREE.Vector3();
+  private rotQ = new THREE.Quaternion();
+
+  // Last applied per-event rotation, kept as axis-angle so we can read
+  // an instantaneous angular velocity off it at release. lastMoveTimeMs
+  // is the timestamp of the move event that produced lastRotAxis /
+  // lastRotAngle.
+  private lastRotAxis = new THREE.Vector3();
+  private lastRotAngle = 0;
+  private lastMoveTimeMs = 0;
+
+  // Live momentum state, advanced by update() each frame after release.
+  // momentumSpeed = 0 means no momentum to apply.
+  private momentumAxis = new THREE.Vector3();
+  private momentumSpeed = 0; // rad / sec
+  private momentumLastMs = 0;
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -70,62 +120,116 @@ export class ObserveControls {
     this.canvas.removeEventListener('wheel', this.onWheel);
     this.dragging = false;
     this.activePointerId = null;
+    this.momentumSpeed = 0;
+    this.lastRotAngle = 0;
+  }
+
+  /**
+   * Advance any post-release momentum. Called from Starfield's animate
+   * loop while in OBSERVE (and not in a transition / aim slerp). No-op
+   * during an active drag — momentum only runs after the user has
+   * released the pointer.
+   */
+  update() {
+    if (!this.enabled) return;
+    const now = performance.now();
+    if (this.dragging || this.momentumSpeed === 0) {
+      this.momentumLastMs = now;
+      return;
+    }
+    const dt = Math.min(
+      ObserveControls.MOMENTUM_MAX_STEP_SEC,
+      (now - this.momentumLastMs) / 1000,
+    );
+    this.momentumLastMs = now;
+    if (dt <= 0) return;
+
+    const angle = this.momentumSpeed * dt;
+    this.rotQ.setFromAxisAngle(this.momentumAxis, angle);
+    this.camera.quaternion.premultiply(this.rotQ).normalize();
+
+    this.momentumSpeed *= Math.exp(-dt / ObserveControls.MOMENTUM_TAU_SEC);
+    if (this.momentumSpeed < ObserveControls.MOMENTUM_MIN_SPEED) {
+      this.momentumSpeed = 0;
+    }
   }
 
   private onPointerDown = (e: PointerEvent) => {
     if (e.button !== 0) return;
     this.dragging = true;
     this.activePointerId = e.pointerId;
-    this.lastX = e.clientX;
-    this.lastY = e.clientY;
+    this.pixelToWorldDir(e.clientX, e.clientY, this.dGrabbed);
+    // New grab cancels any in-flight momentum and resets the per-event
+    // rotation tracker so a subsequent quick release doesn't inherit a
+    // stale axis from the previous drag.
+    this.momentumSpeed = 0;
+    this.lastRotAngle = 0;
   };
 
   private onPointerUp = (e: PointerEvent) => {
     if (this.activePointerId !== null && e.pointerId !== this.activePointerId) return;
     this.dragging = false;
     this.activePointerId = null;
+    // Promote the last per-event rotation to an angular velocity if the
+    // release was close enough in time to that move — otherwise the user
+    // paused before letting go and we shouldn't fling.
+    const gapMs = performance.now() - this.lastMoveTimeMs;
+    if (
+      this.lastRotAngle > 0 &&
+      gapMs <= ObserveControls.MOMENTUM_MAX_RELEASE_GAP_MS &&
+      gapMs > 0
+    ) {
+      this.momentumAxis.copy(this.lastRotAxis);
+      this.momentumSpeed = this.lastRotAngle / (gapMs / 1000);
+      this.momentumLastMs = performance.now();
+    } else {
+      this.momentumSpeed = 0;
+    }
   };
 
   private onPointerMove = (e: PointerEvent) => {
     if (!this.dragging) return;
     if (this.activePointerId !== null && e.pointerId !== this.activePointerId) return;
-    const dx = e.clientX - this.lastX;
-    const dy = e.clientY - this.lastY;
-    this.lastX = e.clientX;
-    this.lastY = e.clientY;
-    if (dx === 0 && dy === 0) return;
+    this.pixelToWorldDir(e.clientX, e.clientY, this.dCurrent);
+    // Skip near-identity rotations so micro-jitter doesn't bleed into
+    // camera.quaternion through repeated normalize() calls.
+    if (this.dCurrent.dot(this.dGrabbed) > 0.9999999) return;
+    this.rotQ.setFromUnitVectors(this.dCurrent, this.dGrabbed);
+    this.camera.quaternion.premultiply(this.rotQ).normalize();
 
-    // Yaw around camera.up (the world-vertical we maintain across two-finger
-    // roll). Drag-right rotates the camera right, so the world drags left;
-    // negate dx for the conventional first-person feel.
-    const yaw = -dx * ObserveControls.ROTATE_SPEED;
-    let pitch = -dy * ObserveControls.ROTATE_SPEED;
-
-    // Clamp pitch so the forward vector can't cross either pole. asin of
-    // (forward · up) is the signed angle off the equatorial plane: +π/2
-    // looking straight up, -π/2 straight down. Yaw is rotation around
-    // camera.up so it preserves this dot product, hence sampling forward
-    // before the yaw apply is fine.
-    this.tmpFwd.set(0, 0, -1).applyQuaternion(this.camera.quaternion);
-    const dotUp = clamp(this.tmpFwd.dot(this.camera.up), -1, 1);
-    const currentPitch = Math.asin(dotUp);
-    pitch = clamp(
-      pitch,
-      -ObserveControls.PITCH_LIMIT - currentPitch,
-      ObserveControls.PITCH_LIMIT - currentPitch,
-    );
-
-    this.tmpQ.setFromAxisAngle(this.camera.up, yaw);
-    this.camera.quaternion.premultiply(this.tmpQ);
-
-    // Camera-right axis after the yaw — premultiply rotated the basis in
-    // world space, so re-derive the right vector from the updated quaternion
-    // before applying pitch.
-    this.tmpRight.set(1, 0, 0).applyQuaternion(this.camera.quaternion);
-    this.tmpQ.setFromAxisAngle(this.tmpRight, pitch);
-    this.camera.quaternion.premultiply(this.tmpQ);
-    this.camera.quaternion.normalize();
+    // Pull axis-angle out of rotQ for momentum tracking. setFromUnitVectors
+    // produces a unit quaternion, so |w| = cos(θ/2) and (x,y,z) =
+    // sin(θ/2) · axis. The dot-product guard above keeps θ bounded above
+    // ~1e-4 rad, so sin(θ/2) is well clear of zero.
+    const w = Math.max(-1, Math.min(1, this.rotQ.w));
+    const s = Math.sqrt(1 - w * w);
+    if (s > 1e-5) {
+      this.lastRotAxis.set(this.rotQ.x / s, this.rotQ.y / s, this.rotQ.z / s);
+      this.lastRotAngle = 2 * Math.acos(w);
+      this.lastMoveTimeMs = performance.now();
+    }
   };
+
+  // Convert a viewport pixel to a world-space unit ray direction from the
+  // camera through that pixel. Builds the local-frame direction from
+  // FOV/aspect and rotates it by camera.quaternion — avoids unproject()'s
+  // dependency on matrixWorld being up-to-date, which matters because
+  // multiple pointer-move events can fire between frames and we mutate
+  // the quaternion on every one.
+  private pixelToWorldDir(
+    clientX: number,
+    clientY: number,
+    out: THREE.Vector3,
+  ): void {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    const xn = (clientX / w) * 2 - 1;
+    const yn = -(clientY / h) * 2 + 1;
+    const tanHalfFov = Math.tan((this.camera.fov * Math.PI) / 360);
+    const aspect = this.camera.aspect;
+    out.set(xn * tanHalfFov * aspect, yn * tanHalfFov, -1);
+    out.applyQuaternion(this.camera.quaternion).normalize();
+  }
 
   private onWheel = (e: WheelEvent) => {
     e.preventDefault();

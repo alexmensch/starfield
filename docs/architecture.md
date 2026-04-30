@@ -36,10 +36,10 @@ Clouds are full participants in this state machine alongside stars — see
 
 In OBSERVE mode the click-state machine no-ops on the canvas — `onPointerUp`
 short-circuits while `cameraMode === 'observe'`. Clicks land on the
-custom look-around controller (yaw + pitch + wheel-FOV) instead. The
-SVG-layer Sol/GC arrow labels remain clickable; they route through
-`aimAt(localPoint)`, which has its own observe-mode branch that slerps
-the camera quaternion in place.
+custom look-around controller (direct-manipulation drag + wheel-FOV)
+instead. The SVG-layer Sol/GC arrow labels remain clickable; they route
+through `aimAt(localPoint)`, which has its own observe-mode branch that
+slerps the camera quaternion in place.
 
 ## OBSERVE mode and the warp state machine
 

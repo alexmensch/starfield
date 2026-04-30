@@ -2505,21 +2505,28 @@ export class Starfield {
     this.rollCamera(-delta);
   };
 
-  // Rotate the camera's up vector around the view direction. TrackballControls
-  // reads camera.up on every update() so the new orientation persists through
-  // subsequent orbit/zoom without needing to touch the controls' internals.
-  // OBSERVE mode drives orientation through `camera.quaternion` directly
-  // (TrackballControls is disabled), so updating only camera.up has no
-  // visible effect — apply the same axis-angle to the quaternion as well.
+  // Rotate the camera around the view direction.
+  //
+  // NAVIGATE: mutate camera.up — TrackballControls reads it every update()
+  // and the orbit math needs the rolled vertical to persist through
+  // subsequent orbit/zoom.
+  //
+  // OBSERVE: rotate camera.quaternion only, leave camera.up alone. The
+  // direct-manipulation look-around in observe-controls.ts doesn't read
+  // camera.up at all (rotations are derived purely from the cursor's
+  // unprojected ray + the live quaternion), so mutating it would do
+  // nothing useful. Twisting just rolls the visible image; subsequent
+  // drags continue to grab whatever world point is under the cursor.
   private rollCamera(angle: number) {
     const forward = new THREE.Vector3()
       .subVectors(this.controls.target, this.camera.position);
     if (forward.lengthSq() === 0) return;
     forward.normalize();
-    this.camera.up.applyAxisAngle(forward, angle).normalize();
     if (this.cameraMode === 'observe') {
       const q = new THREE.Quaternion().setFromAxisAngle(forward, angle);
       this.camera.quaternion.premultiply(q).normalize();
+    } else {
+      this.camera.up.applyAxisAngle(forward, angle).normalize();
     }
   }
 
@@ -2573,10 +2580,12 @@ export class Starfield {
       this.updateObserveTransition();
     } else if (this.cameraMode === 'observe') {
       // Look-around input (yaw/pitch/roll/FOV) mutates the camera directly
-      // via observeControls + the existing two-finger handlers. Per-frame
-      // we just re-pin controls.target one parsec ahead of the camera so
-      // URL state writers (which serialise camera.position + target) still
-      // round-trip the look direction correctly.
+      // via observeControls + the existing two-finger handlers. update()
+      // here advances any post-release momentum from a flick. Per-frame
+      // we also re-pin controls.target one parsec ahead of the camera so
+      // URL state writers (which serialise camera.position + target)
+      // still round-trip the look direction correctly.
+      this.observeControls.update();
       this.observeUpdateTarget();
     } else {
       this.controls.update();
