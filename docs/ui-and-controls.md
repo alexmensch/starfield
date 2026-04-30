@@ -238,33 +238,44 @@ on the clip plane at max zoom and gets culled. If adjusting, keep that
 invariant. Earlier attempts to zoom closer than 0.005 pc hit float32
 precision jitter when the destination star is far from the world origin.
 
-When a star is focused, `controls.minDistance = minDistForStar(idx)` —
-**not** the 0.005 pc default. `minDistForStar` is the single source of
-truth for the camera's "near-star" landing distance, used by:
+When a star is focused, two distinct distances are in play —
+deliberately decoupled so manual zoom can push past the auto-park
+distance:
 
-- `controls.minDistance` (orbit-zoom clamp).
-- Observe-exit landing position (camera pulls back to `minDistForStar`
-  along its current view direction when leaving observe).
-- Warp source departure (`pStart = A + dirBack × minDistForStar(destIdx)`).
-- Warp arrival (`pEnd = B − forward × minDistForStar(destIdx)`).
+1. **Manual-zoom floor** — `controls.minDistance =
+   minOrbitDistForStar(idx)`: `DEFAULT_MIN_DIST_PC` for solo stars,
+   `Math.max(DEFAULT_MIN_DIST_PC, sep × BINARY_MIN_DIST_FACTOR)` for
+   binaries. This lets the user orbit close enough that the largest
+   stars fill ~50% of the smaller viewport dimension at max zoom, with
+   smaller stars scaling proportionally — needed for inspecting
+   stellar discs and (future) close-in planets.
 
-It's computed from a per-star disc-size formula:
+2. **Auto-park target** — `minDistForStar(idx)`: where the camera
+   automatically lands. Used by:
 
-```
-sizeAtRef = mix(uPhysMinPx, uPhysMaxPx, logRatio(physicalRadius))
-discDist  = sizeAtRef × uRefDistPc / TARGET_APPROACH_DISC_PX
-```
+   - Observe-exit landing position (camera pulls back to
+     `minDistForStar` along its current view direction when leaving
+     observe).
+   - Warp source departure (`pStart = A + dirBack × minDistForStar(destIdx)`).
+   - Warp arrival (`pEnd = B − forward × minDistForStar(destIdx)`).
 
-Same on-screen disc size at parking for any star — supergiants land
-much further out than dwarfs. The single tunable is
-`TARGET_APPROACH_DISC_PX` at the top of `starfield.ts` (currently 10
-px). Binary companions still get a `Math.max(discDist, sep × BINARY_MIN_DIST_FACTOR)`
-bump on top so both components stay inside the viewport half-angle
-(~25°) at max zoom — the binary requirement is additive, not a
-replacement.
+   Computed from a per-star disc-size formula:
 
-Mirrors the disc term of `renderedSizePx` exactly. Keep the two in sync
-if the shader's physical-size math changes.
+   ```
+   sizeAtRef = mix(uPhysMinPx, uPhysMaxPx, logRatio(physicalRadius))
+   discDist  = sizeAtRef × uRefDistPc / TARGET_APPROACH_DISC_PX
+   ```
+
+   Same on-screen disc size at parking for any star — supergiants land
+   much further out than dwarfs. The single tunable is
+   `TARGET_APPROACH_DISC_PX` at the top of `starfield.ts` (currently
+   10 px). Binary companions still get a `Math.max(discDist, sep ×
+   BINARY_MIN_DIST_FACTOR)` bump on top so both components stay inside
+   the viewport half-angle (~25°) at parking — the binary requirement
+   is additive, not a replacement.
+
+   Mirrors the disc term of `renderedSizePx` exactly. Keep the two in
+   sync if the shader's physical-size math changes.
 
 ## TrackballControls tuning
 

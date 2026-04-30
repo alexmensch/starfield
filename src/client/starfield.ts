@@ -900,7 +900,7 @@ export class Starfield {
     } else {
       this.recenterOrigin(this.tmpRecenter.set(0, 0, 0));
     }
-    this.controls.minDistance = idx !== null ? this.minDistForStar(idx) : DEFAULT_MIN_DIST_PC;
+    this.controls.minDistance = idx !== null ? this.minOrbitDistForStar(idx) : DEFAULT_MIN_DIST_PC;
     for (const h of this.onFocusHandlers) h(idx);
     this.fireStateChange();
   }
@@ -1702,7 +1702,7 @@ export class Starfield {
     ));
     this.focusedStar = newIdx;
     this.material.uniforms.uHideFocusIdx.value = newIdx;
-    this.controls.minDistance = this.minDistForStar(newIdx);
+    this.controls.minDistance = this.minOrbitDistForStar(newIdx);
     // Park at the new anchor's local origin — observe invariant is
     // camera at (0,0,0) under the floating origin. Quaternion preserved
     // from the post-arrival slerp end state.
@@ -2109,8 +2109,26 @@ export class Starfield {
     return Math.max(appSize, physSize);
   }
 
-  // Single source of truth for "near-star" approach distance — used by
-  // controls.minDistance (orbit clamp), observe-exit landing, warp source
+  // Manual-zoom floor for TrackballControls when a star is focused.
+  // Distinct from `minDistForStar` (auto-park target): the user can
+  // orbit past the parking distance, all the way down to
+  // DEFAULT_MIN_DIST_PC, so the largest stars can fill ~50% of the
+  // smaller viewport dimension at max zoom — needed for inspecting
+  // stellar discs and (future) close-in planets. Binary companions
+  // still get the half-angle bump so the partner stays in frame.
+  private minOrbitDistForStar(idx: number): number {
+    const base = DEFAULT_MIN_DIST_PC;
+    const comp = this.catalog.companion[idx];
+    if (comp < 0) return base;
+    const p = this.catalog.positions;
+    const dx = p[comp * 3] - p[idx * 3];
+    const dy = p[comp * 3 + 1] - p[idx * 3 + 1];
+    const dz = p[comp * 3 + 2] - p[idx * 3 + 2];
+    const sep = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    return Math.max(base, sep * BINARY_MIN_DIST_FACTOR);
+  }
+
+  // Auto-park target — used by observe-exit landing, warp source
   // departure, and warp arrival.
   //
   // Distance is chosen so the star renders at TARGET_APPROACH_DISC_PX in
