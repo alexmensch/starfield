@@ -2440,6 +2440,9 @@ export class Starfield {
   }
 
   private observeSingleClick(x: number, y: number) {
+    // Mirror the POI overlay visibility gate — toggling without a visible
+    // ring/arrow would change state with no feedback.
+    if (!this.filter.showHud || this.isObserveTransitionActive()) return;
     const idx = this.pickStar(x, y);
     if (idx < 0) return;
     this.togglePoi(idx);
