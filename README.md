@@ -55,6 +55,18 @@ Stack: TypeScript, Three.js (WebGL2), Vite, Cloudflare Workers.
   far tip to travel there instantly, or hover the distance label and click
   the "→ Warp" affordance (or press `W`) for an animated flight between the
   two stars.
+- **Star chart mode** (observe-only). Press `M` while in observe mode
+  to flip the scene to a paper-chart aesthetic inspired by Sky Atlas
+  2000.0 — flat hard-edged star discs sized linearly by magnitude
+  across the visible range, single-line isobar contours instead of the
+  Milky Way volumetric glow and shaded molecular clouds, and a
+  per-frame label engine that draws proper-named stars, every Bayer-
+  letter Greek glyph, constellation Latin names (outline-style overlay
+  typography that's allowed to overlap), and cloud names with greedy
+  collision avoidance. Variable stars get an outer ring around an
+  inner pulsing disc; double / multiple stars get short horizontal
+  wings through the disc. Disabled automatically when leaving observe
+  mode.
 - Two camera modes via the navigate / observe pill in the top-right card.
   **Navigate** is the default orbit camera. **Observe** parks the camera
   at the focused star (the star's disc itself is hidden; you're standing
@@ -143,7 +155,8 @@ Stack: TypeScript, Three.js (WebGL2), Vite, Cloudflare Workers.
   listing the full set; highlights: `G` opens a centred picker that
   mirrors the topbar search (focus / destination / observe-location
   depending on context), `C` does the same for constellations, `O`
-  switches to observe mode when a star is focused, `H` / `S` toggle
+  switches to observe mode when a star is focused, `M` toggles chart
+  mode (observe only), `H` / `S` toggle
   the HUD and galactic-coordinate sphere, `+` / `-` / `=` step the
   magnitude limit by 0.5 or reset to naked-eye, `R` resets the camera
   sliders, and `Esc` steps back through observe → destination →
@@ -315,9 +328,13 @@ pan) works the same everywhere.
   lack a HIP/HD cross-reference, or whose entry in GCVS lacks a parseable
   period, render as non-variable.
 - **Binary pairs detected purely geometrically** — any two catalog stars
-  within ~1030 AU of each other are flagged as a system. Real unresolved
-  spectroscopic binaries (whose components aren't separate catalog
-  entries) aren't rendered as pairs.
+  within ~1030 AU of each other are flagged as a system. AT-HYG only
+  stores the primary for most famous visual doubles (Sirius, Castor,
+  Mizar, γ And, Albireo, Algol, Rigel, ε Lyr, …), so the pairing pass
+  has nothing to match against and these systems render as singletons —
+  α Cen is essentially the only canonical visual double where both
+  components are separate catalog rows. Spectroscopic binaries
+  (components never separately catalogued) likewise aren't paired.
 
 ## Licence
 

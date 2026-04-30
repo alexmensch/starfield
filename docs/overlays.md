@@ -85,6 +85,29 @@ arrows stay tangent to whichever circle is dominant. See
 `docs/rendering.md` §Galactic reference system → HUD ring / Shaft start
 radius for the projection math.
 
+## Chart-mode labels and glyphs
+
+`chart-labels.ts` adds two SVG layers under `#overlay` while chart
+mode is active:
+
+- `<g id="chart-labels">` — `<text>` elements for proper-named stars,
+  Bayer-letter Greek glyphs, constellation Latin names, and molecular
+  cloud names. Greedy collision pass over axis-aligned bounding rects;
+  constellation names bypass it entirely (outline-style typography
+  that reads as a sparse semi-transparent overlay à la Sky Atlas).
+- `<g id="chart-glyphs">` — `<circle class="chart-variable-ring">`
+  around variable stars, `<line class="chart-binary-wings">` through
+  binary primaries. Both screen-aligned by construction (SVG line
+  uses viewport coords; circles are circles regardless of camera
+  roll).
+
+Both layers pool their elements by stable key per frame so adding /
+removing entries is free. The same `renderableAppMag` filter that
+gates the GPU disc also gates the glyphs — a hidden inner disc takes
+its ring or wings offscreen with it. See `docs/rendering.md`
+§Chart mode (Phase 8) for the magnitude-driven sizing formula and
+flux-weighted constellation centroid math.
+
 ## SVG hide semantics
 
 Missing coordinate attributes on SVG elements default to **0**, not "don't

@@ -31,6 +31,7 @@ behavioural changes propagate automatically.
 | --- | --- |
 | `G` | Open the Go picker — focus a star, set a destination, or change observe location |
 | `O` | Switch to observe mode (gated on `getFocusedStar() !== null`) |
+| `M` | Toggle chart mode (gated on `cameraMode === 'observe'`; auto-clears on observe→navigate) |
 | `W` | Trigger the warp animation (handled by `warp-button.ts`, not this module) |
 | `C` | Open the Constellation picker |
 | `R` | Reset Camera-section sliders (size min/max, dynamic range, FOV, exaggeration) |

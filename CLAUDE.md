@@ -76,8 +76,10 @@ src/
     debug-panel.ts        generic chrome (slider/colour/section helpers)
     star-tuning.ts        debug section: star-disc profile knobs
     milkyway-tuning.ts    debug section: Milky Way layer tuning
-    keyboard-shortcuts.ts global keydown dispatch (R/G/C/H/S/O/W/+/−/=/?/Esc)
+    keyboard-shortcuts.ts global keydown dispatch (R/G/C/H/S/O/W/M/+/−/=/?/Esc)
     help-modal.ts         shortcut help overlay (the `?` target)
+    chart-mode.ts         observe-only chart-mode orchestrator (theme + isobar + label engine)
+    chart-labels.ts       per-frame chart label engine + SVG glyphs (variable rings, binary wings)
     shaders/
       star.vert.glsl, star.frag.glsl              GLSL3/WebGL2
       dust-particle.vert.glsl, dust-particle.frag.glsl   shelved dust splats
@@ -119,7 +121,9 @@ Claude Code should read on demand when working on the relevant area.
   profile, physical-size, luminosity softness, variability), Milky Way
   volumetric disc, molecular clouds, galactic reference layer (disc +
   grid), HUD (Sol/GC arrows + OBSERVE ring + transition lerp), dust
-  extinction. Read when touching anything visual on the WebGL side.
+  extinction, **chart mode** (Phase 8 paper-aesthetic: flat discs,
+  isobar contours, label engine). Read when touching anything visual
+  on the WebGL side.
 - **`docs/overlays.md`** — SVG layers above the canvas: constellation
   stick-figures, disc-mask, focus ring, distance vector with near-plane
   clipping. (The Sol/GC SVG arrows are documented in `docs/rendering.md`

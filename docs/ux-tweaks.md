@@ -67,6 +67,23 @@ for the surrounding context.
   system when focused. Smaller angle = more padding.
 - **Info-modal dismissal** — cleared by removing the
   `starfield.info-dismissed` localStorage key.
+- **Chart-mode disc size range** — `uChartDiscMaxPx` (16 px) and
+  `uChartDiscMinPx` (1.5 px) defaults set in the shared-uniforms map
+  in `starfield.ts`; spread linearly across the visible magnitude
+  range. `uChartMagBright` (−2.0) is the magnitude that maps to MAX.
+- **Variable-ring gap** — `VARIABLE_RING_MIN_GAP_PX` (1.0 px) in
+  `chart-labels.ts`. Minimum radial gap between the outer ring and
+  the peak inner disc; raise if low-amplitude variables look
+  cluttered.
+- **Binary-wing extension** — `BINARY_WING_EXTENSION_PX` (4 px) in
+  `chart-labels.ts`. Length past each disc edge.
+- **Star-name label offset** — `STAR_LABEL_OFFSET_PX` (9 px) in
+  `chart-labels.ts`. Distance from the disc centre to the label
+  anchor, applied as `(x + offset, y - offset)` for a top-right read.
+- **Pick hit-radius floor** — `MIN_DISC_HIT_RADIUS_PX` (4 px) in
+  `pickStar` (`starfield.ts`). Floor on the prime-disc hit test so
+  tiny chart-mode discs stay hoverable. Raise for easier hover at the
+  cost of foreground stars stealing picks from neighbours.
 - **Panel collapse default** — persisted under `starfield.panel-collapsed`
   (`'0'` = expanded, `'1'` = collapsed, missing = collapsed by default for
   first-time visitors). The default-collapsed check is phrased as
