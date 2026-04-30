@@ -246,6 +246,32 @@ export function buildSpectralMap(raw: SearchIndexEntry[]): Map<number, string> {
   return out;
 }
 
+export interface BayerInfo {
+  /** Greek letter glyph, e.g. "α". */
+  greek: string;
+  /** Optional unicode-superscript suffix for A/B components, e.g. "¹". */
+  suffix: string;
+  /** Constellation index from the catalog (255 = none). */
+  conIdx: number;
+}
+
+// Map star idx → its Bayer designation parts. Used by chart mode to render
+// Greek-letter labels alongside proper names. Entries without a parseable
+// Bayer string or a constellation are skipped — chart labels need both.
+export function buildBayerMap(raw: SearchIndexEntry[]): Map<number, BayerInfo> {
+  const out = new Map<number, BayerInfo>();
+  for (const entry of raw) {
+    if (!entry.b) continue;
+    if (entry.c === undefined || entry.c === 255) continue;
+    const split = splitBayer(entry.b);
+    if (!split) continue;
+    const greek = BAYER_GREEK[split.letter3];
+    const suffix = split.suffix ? superscript(split.suffix.slice(1)) : '';
+    out.set(entry.i, { greek, suffix, conIdx: entry.c });
+  }
+  return out;
+}
+
 export function bindSearch(
   starfield: Starfield,
   catalog: Catalog,

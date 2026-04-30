@@ -15,6 +15,16 @@ uniform float uPixelRatio;
 uniform float uSizeMin;
 uniform float uSizeMax;
 uniform float uSizeSpan;
+// Chart-mode disc sizing. Stars render as flat hard-edged discs whose
+// pixel diameter spreads linearly between [Min, Max] across the visible
+// magnitude range [Bright, MaxAppMag]. Linear in mag = log10 in flux,
+// matching naked-eye perception (defined that way). Uniforms read only
+// when uMonochrome > 0.5; outside chart mode the existing physical-size
+// + apparent-magnitude blend formula runs unchanged.
+uniform float uChartDiscMaxPx;   // brightest end (e.g. 16 px)
+uniform float uChartDiscMinPx;   // faintest end (e.g. 1.5 px)
+uniform float uChartMagBright;   // magnitude that maps to MAX (e.g. -2.0)
+uniform float uMonochrome;       // 0 = colour mode, 1 = chart mode (shared with frag)
 
 // Physical-size rendering term. At the reference camera distance uRefDistPc
 // (= the default controls.minDistance), a star's rendered pixel size is a
@@ -94,6 +104,12 @@ out float vPhysRatio;  // physSize / pxSize, in [0,1] — 1 means the physical
                        // (distant, render as a soft glow)
 out float vSoftness;   // 0 = crisp (white dwarf), 1 = fuzzy (hypergiant) —
                        // drives halo falloff and disc-edge AA width
+// Chart-mode anti-aliasing. Width of the disc edge in vUv units, computed
+// per quad in the vertex shader as `1.0 / pxSize`. Stable across quad
+// sizes — the alternative `fwidth(r)` blows up near the quad centre where
+// the screen-space derivative of `length(vUv)` is undefined, leaving the
+// inner disc faint or invisible.
+out float vAaWidth;
 
 const float LOG10 = 2.302585093;
 
@@ -152,6 +168,7 @@ void main() {
         vUv = aCorner;
         vPhysRatio = 0.0;
         vSoftness = 0.0;
+        vAaWidth = 0.0;
         return;
     }
 
@@ -231,6 +248,7 @@ void main() {
         vUv = aCorner;
         vPhysRatio = 0.0;
         vSoftness = softness;
+        vAaWidth = 0.0;
         return;
     }
 
@@ -239,25 +257,53 @@ void main() {
     vUv = aCorner;
     vSoftness = softness;
 
-    // Apparent-magnitude size term (CSS pixels). The √Δm curve comes from
-    // a Gaussian PSF model: perceived radius ∝ √(magnitudes above threshold)
-    // because the visible footprint of a star is "where intensity > detection
-    // threshold" and that grows as the square root of brightness above
-    // threshold. Linear-in-mag would compress bright stars too far; √Δm
-    // keeps Sirius distinctively larger than the field.
-    float brightness = clamp((uMaxAppMag - appMag) / max(uSizeSpan, 0.001), 0.0, 1.0);
-    float appSize = mix(uSizeMin, uSizeMax, sqrt(brightness));
+    float pxSize;
+    if (uMonochrome > 0.5) {
+        // Chart-mode flat-disc sizing. appMag is already the post-magMod
+        // value, so variables breathe between (appMag - amp/2) and
+        // (appMag + amp/2) in pixel space exactly the way Sky Atlas's
+        // glyph implies. Stars brighter than the bright reference get
+        // clamped to MAX; everything from there to the slider limit
+        // spreads linearly into [MAX..MIN].
+        float chartT = clamp(
+            (appMag - uChartMagBright)
+                / max(uMaxAppMag - uChartMagBright, 0.001),
+            0.0, 1.0);
+        pxSize = mix(uChartDiscMaxPx, uChartDiscMinPx, chartT);
+        // Force the frag shader's chart-mode disc path. (Outside chart
+        // mode this is computed below from physSize/appSize.)
+        vPhysRatio = 1.0;
+    } else {
+        // Apparent-magnitude size term (CSS pixels). The √Δm curve comes
+        // from a Gaussian PSF model: perceived radius ∝ √(magnitudes
+        // above threshold) because the visible footprint of a star is
+        // "where intensity > detection threshold" and that grows as the
+        // square root of brightness above threshold. Linear-in-mag would
+        // compress bright stars too far; √Δm keeps Sirius distinctively
+        // larger than the field.
+        float brightness = clamp((uMaxAppMag - appMag) / max(uSizeSpan, 0.001), 0.0, 1.0);
+        float appSize = mix(uSizeMin, uSizeMax, sqrt(brightness));
 
-    // Physical-size term. Log-map the star's radius into the size range,
-    // then scale by ref/distance so the curve falls off with distance.
-    // radiusFactor is the already-compressed variability modulation above.
-    float logSpan = max(uLogRMax - uLogRMin, 0.001);
-    float logRatio = clamp((iLogRadius - uLogRMin) / logSpan, 0.0, 1.0);
-    float sizeAtRef = mix(uPhysMinPx, uPhysMaxPx, logRatio);
-    float physSize = sizeAtRef * (uRefDistPc / dPc) * radiusFactor;
+        // Physical-size term. Log-map the star's radius into the size
+        // range, then scale by ref/distance so the curve falls off with
+        // distance. radiusFactor is the already-compressed variability
+        // modulation above.
+        float logSpan = max(uLogRMax - uLogRMin, 0.001);
+        float logRatio = clamp((iLogRadius - uLogRMin) / logSpan, 0.0, 1.0);
+        float sizeAtRef = mix(uPhysMinPx, uPhysMaxPx, logRatio);
+        float physSize = sizeAtRef * (uRefDistPc / dPc) * radiusFactor;
 
-    float pxSize = max(appSize, physSize);
-    vPhysRatio = clamp(physSize / max(pxSize, 0.001), 0.0, 1.0);
+        pxSize = max(appSize, physSize);
+        vPhysRatio = clamp(physSize / max(pxSize, 0.001), 0.0, 1.0);
+    }
+
+    // Edge AA in vUv units. The quad spans pxSize CSS pixels; vUv ranges
+    // [-0.5, +0.5] across that span, so 1 CSS pixel ≈ 1/pxSize in vUv
+    // space. The chart-mode frag shader uses this directly to keep the
+    // disc's antialiased edge at exactly one pixel wide regardless of
+    // size. Outside chart mode the frag uses a different profile and
+    // ignores this varying.
+    vAaWidth = 1.0 / max(pxSize, 0.5);
 
     // Project the star centre to clip space, then offset each corner in
     // screen space by aCorner × pxSize. Multiplying the clip-space offset

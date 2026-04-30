@@ -3,7 +3,7 @@ import { DustField, loadDustManifest, loadDustParticles } from './dust-loader';
 import { loadClouds } from './cloud-loader';
 import { Starfield } from './starfield';
 import { bindControls } from './controls';
-import { bindSearch, buildStarLabels, buildSpectralMap, type SearchIndexEntry } from './search';
+import { bindSearch, buildStarLabels, buildSpectralMap, buildBayerMap, type SearchIndexEntry } from './search';
 import { createConstellationOverlay } from './constellation-overlay';
 import { createDiscMask } from './disc-mask';
 import { createDistanceVectorOverlay } from './distance-vector-overlay';
@@ -11,6 +11,7 @@ import { createFocusRingOverlay } from './focus-ring-overlay';
 import { createScaleBar } from './scale-bar';
 import { bindUnitToggle } from './unit-toggle';
 import { registerThemeStarfield } from './theme-toggle';
+import { bindChartMode } from './chart-mode';
 import { bindPanelLayout } from './panel-layout';
 import { bindWarpButton } from './warp-button';
 import { bindModeToggle } from './mode-toggle';
@@ -63,6 +64,7 @@ async function main() {
 
     const starLabels = buildStarLabels(catalog, searchIndex);
     const spectralMap = buildSpectralMap(searchIndex);
+    const bayerMap = buildBayerMap(searchIndex);
 
     const starfield = new Starfield({ canvas, catalog });
     // Dev-console access: `starfield.setExtinctionStrength(X)` etc. Handy for
@@ -119,6 +121,7 @@ async function main() {
 
     bindUnitToggle();
     registerThemeStarfield(starfield);
+    bindChartMode(starfield, { bayerMap, starLabels });
     bindControls(starfield);
     bindSearch(starfield, catalog, searchIndex, starLabels, cloudCatalog);
     createDiscMask(starfield);

@@ -1,0 +1,76 @@
+import type { Starfield } from './starfield';
+import type { BayerInfo } from './search';
+import { applyTheme } from './theme-toggle';
+import { startChartLabels, stopChartLabels } from './chart-labels';
+
+// Phase 8 — star chart mode orchestrator.
+//
+// Activation predicate:  cameraMode === 'observe'  &&  filter.chart
+//
+// Chart mode is gated on observe so the camera is anchored at a focal star
+// — the chart's "you are here" — and the user has a stable, FPS-style
+// look-around to read labels by. Toggling out of observe (ESC, mode
+// button) auto-deactivates chart so the next navigate-mode session starts
+// clean. The user's chart preference persists in `filter.chart` so a
+// subsequent observe entry restores chart mode automatically.
+//
+// Side-effects when chart engages:
+//   - body.chart class on document.body (selectors in styles.css can
+//     branch on this independently of the existing body.monochrome).
+//   - Paper-aesthetic palette via the existing setMonochrome plumbing
+//     (stars, clouds, hud, galactic disc/grid, blend modes, clear color).
+//   - Isobar passes on cloud + milky-way layers (driven by uMaxAppMag).
+//   - Constellation-overlay flips to "all constellations" mode (handled
+//     directly inside constellation-overlay.ts via the same predicate).
+//   - Label engine spins up to render proper-name + Bayer + constellation
+//     + cloud labels each frame.
+
+export interface ChartModeContext {
+  bayerMap: Map<number, BayerInfo>;
+  starLabels: Map<number, string>;
+}
+
+export function bindChartMode(starfield: Starfield, ctx: ChartModeContext) {
+  // Track the active state separately from filter.chart so we can run
+  // teardown only on real transitions (avoid flapping if filter changes
+  // arrive in quick succession). The active state is derived from the
+  // gate predicate; filter.chart is the user's intent.
+  let active = false;
+
+  const sync = () => {
+    const f = starfield.getFilter();
+    const observed = starfield.getCameraMode() === 'observe';
+    const next = f.chart && observed;
+    if (next === active) return;
+    active = next;
+    if (active) {
+      document.body.classList.add('chart');
+      applyTheme('mono');
+      starfield.setCloudsIsobar(true);
+      starfield.setMilkywayIsobar(true);
+      startChartLabels(starfield, ctx);
+    } else {
+      document.body.classList.remove('chart');
+      applyTheme('dark');
+      starfield.setCloudsIsobar(false);
+      starfield.setMilkywayIsobar(false);
+      stopChartLabels();
+    }
+  };
+
+  starfield.onCameraModeChange(() => {
+    // Leaving observe always deactivates chart — the camera state required
+    // to interpret the chart goes away. Clear the user's `chart` flag so
+    // the next observe session starts clean unless they re-enable it.
+    if (starfield.getCameraMode() !== 'observe' && starfield.getFilter().chart) {
+      starfield.setFilter({ chart: false });
+      return; // setFilter triggers sync via onFilterChange
+    }
+    sync();
+  });
+  starfield.onFilterChange(sync);
+
+  // Initial reconciliation in case URL state restored chart=on before the
+  // orchestrator was bound.
+  sync();
+}

@@ -108,6 +108,17 @@ export function bindKeyboardShortcuts(starfield: Starfield) {
           e.preventDefault();
         }
         break;
+      case 'm': case 'M':
+        // Chart mode toggle. Observe-only — chart needs a focal star and
+        // a stable camera (orbit camera doesn't make sense for reading
+        // labels). No-op outside observe rather than auto-mode-switching:
+        // the user should know they're entering observe before chart
+        // engages on top.
+        if (starfield.getCameraMode() === 'observe') {
+          starfield.setFilter({ chart: !starfield.getFilter().chart });
+          e.preventDefault();
+        }
+        break;
       case '?':
         help.open();
         e.preventDefault();

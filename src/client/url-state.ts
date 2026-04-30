@@ -46,13 +46,15 @@ const INDEX_TO_PRESET: MagPresetName[] = ['naked-eye', 'binoculars', 'all'];
 
 // Flags byte — packed booleans + small enums. Each bit is "non-default":
 //   0 = grid on, 1 = HUD on, 2 = MC disabled, 3 = MW disabled,
-//   4 = unit ly, 5 = mode observe.
+//   4 = unit ly, 5 = mode observe, 6 = chart on (only set when also
+//   mode=observe — chart is observe-gated).
 const FLAG_GRID         = 1 << 0;
 const FLAG_HUD          = 1 << 1;
 const FLAG_MC_DISABLED  = 1 << 2;
 const FLAG_MW_DISABLED  = 1 << 3;
 const FLAG_UNIT_LY      = 1 << 4;
 const FLAG_MODE_OBSERVE = 1 << 5;
+const FLAG_CHART        = 1 << 6;
 
 export interface IdMaps {
   /** HIP → row-index lookup. Built once at boot from `catalog.hip`. */
@@ -95,6 +97,8 @@ export interface DecodedView {
   cloud?: number;
   /** Vector-to cloud (mutually exclusive with `to`). */
   toc?: number;
+  /** Chart mode (observe-only). Only encoded when `mode === 'observe'`. */
+  chart?: boolean;
 }
 
 interface FieldSpec {
@@ -215,6 +219,10 @@ function packFlags(v: DecodedView): number {
   if (v.showMilkyway === false) f |= FLAG_MW_DISABLED;
   if (v.unit === 'ly') f |= FLAG_UNIT_LY;
   if (v.mode === 'observe') f |= FLAG_MODE_OBSERVE;
+  // Chart only persists when observe is also active — chart-mode is an
+  // observe-only feature, so emitting chart=on without mode=observe would
+  // round-trip to a state that can't activate.
+  if (v.chart && v.mode === 'observe') f |= FLAG_CHART;
   return f;
 }
 
@@ -225,6 +233,7 @@ function unpackFlags(v: DecodedView, f: number): void {
   if (f & FLAG_MW_DISABLED) v.showMilkyway = false;
   if (f & FLAG_UNIT_LY) v.unit = 'ly';
   if (f & FLAG_MODE_OBSERVE) v.mode = 'observe';
+  if (f & FLAG_CHART) v.chart = true;
 }
 
 function computePresence(view: DecodedView): number {
@@ -348,6 +357,9 @@ export function currentStateOf(starfield: Starfield, idMaps: IdMaps): DecodedVie
   const mode = starfield.getCameraMode();
   if (mode !== 'navigate') view.mode = mode;
 
+  // Chart on/off rides FLAG_CHART, gated to observe-only at pack time.
+  if (f.chart) view.chart = true;
+
   const c = starfield.camera.position;
   const t = starfield.controls.target;
   const u = starfield.camera.up;
@@ -456,6 +468,13 @@ export function applyDecodedView(
 
   if (view.mode === 'observe' && starfield.getFocusedStar() !== null) {
     starfield.setCameraMode('observe', { animate: false });
+  }
+
+  // Chart applies after observe mode is engaged so the chart-mode
+  // orchestrator's observe-gate sees the right cameraMode on the
+  // resulting filter-change event.
+  if (view.chart && starfield.getCameraMode() === 'observe') {
+    starfield.setFilter({ chart: true });
   }
 }
 

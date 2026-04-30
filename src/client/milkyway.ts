@@ -172,9 +172,16 @@ export class MilkyWay {
     uBrightnessScale: { value: number };
     uGlowMagOffset: { value: number };
   };
+  // Chart-mode isobar uniforms — shared between disc + bulge so the
+  // contour appearance is uniform across the band. uChartInkColor is the
+  // ink tone used against the paper-aesthetic chart background.
+  private sharedChart: {
+    uChartIsobar: { value: number };
+    uChartInkColor: { value: THREE.Color };
+  };
 
   private enabled = true;
-  private monochrome = false;
+  private isobar = false;
 
   constructor(shared: MilkywaySharedUniforms) {
     this.sharedDust = {
@@ -195,6 +202,10 @@ export class MilkyWay {
     this.sharedTone = {
       uBrightnessScale: { value: DEFAULT_BRIGHTNESS },
       uGlowMagOffset: { value: GLOW_MAG_OFFSET },
+    };
+    this.sharedChart = {
+      uChartIsobar: { value: 0 },
+      uChartInkColor: { value: new THREE.Color(0x000000) },
     };
 
     // --- Disc -----------------------------------------------------------
@@ -266,6 +277,7 @@ export class MilkyWay {
         ...this.sharedDust,
         ...this.sharedFrame,
         ...this.sharedTone,
+        ...this.sharedChart,
         uMaxAppMag: opts.magnitudeShared.uMaxAppMag,
         uSizeSpan: opts.magnitudeShared.uSizeSpan,
 
@@ -321,16 +333,31 @@ export class MilkyWay {
 
   setEnabled(on: boolean) {
     this.enabled = on;
-    this.group.visible = on && !this.monochrome;
+    this.group.visible = on;
   }
 
   isEnabled(): boolean { return this.enabled; }
 
-  setMonochrome(on: boolean) {
-    this.monochrome = on;
-    // Chart mode hides the analytical background entirely — paper-chart
-    // aesthetic shows discrete named objects, not a diffuse glow.
-    this.group.visible = this.enabled && !on;
+  /**
+   * Chart-mode isobar pass. When on, both component materials emit only
+   * a thin contour where the integrated apparent magnitude crosses
+   * uMaxAppMag, blended over the paper background instead of additively
+   * onto stars. Chart-mode orchestrator (chart-mode.ts) is the sole
+   * caller; the user-facing visibility toggle is `setEnabled` and is
+   * orthogonal — when the user has the milky-way overlay disabled, the
+   * isobar doesn't render either.
+   */
+  setIsobar(on: boolean) {
+    if (this.isobar === on) return;
+    this.isobar = on;
+    this.sharedChart.uChartIsobar.value = on ? 1 : 0;
+    for (const mat of [this.disc.material, this.bulge.material]) {
+      // Outline ink: alpha-over against the chart palette. Outside the
+      // isobar pass we revert to the original additive emission tone-map.
+      mat.blending = on ? THREE.NormalBlending : THREE.AdditiveBlending;
+      mat.depthWrite = false; // unchanged across modes
+      mat.needsUpdate = true;
+    }
   }
 
   setBrightness(x: number) {
@@ -382,7 +409,7 @@ export class MilkyWay {
    *  under the floating-origin offset, and refreshes the camera-side
    *  frame uniforms. Call once before scene render. */
   update(_camera: THREE.PerspectiveCamera, worldOffset: THREE.Vector3) {
-    if (!this.enabled || this.monochrome) return;
+    if (!this.enabled) return;
 
     // Both meshes sit at the galactic centre in absolute ICRS, which
     // becomes (GALACTIC_CENTRE_PC - worldOffset) in renderer-local frame.

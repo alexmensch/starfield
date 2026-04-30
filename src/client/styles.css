@@ -830,7 +830,7 @@ body.monochrome input[type="range"]::-moz-range-thumb {
 }
 body.monochrome #con-figure {
   fill: none;
-  stroke: rgba(30, 64, 175, 0.8);
+  stroke: rgba(20, 22, 30, 0.85);
 }
 /* In chart mode the three reference arrows (distance vector + Sol/GC) all
    collapse to the same dark-grey-on-white palette — chart aesthetic
@@ -851,6 +851,101 @@ body.monochrome .search-results li:hover,
 body.monochrome .search-results li.active {
   background: rgba(30, 64, 175, 0.08);
   color: var(--accent);
+}
+/* Brand box (top-left) and constellation typeahead picked up the dark
+   default background — switch them to the paper palette in chart mode so
+   they don't read as visual holes. .con-typeahead input falls back to the
+   --bg-2 token already updated by body.monochrome above; only its
+   parent wrapper / focus styling needs explicit override. */
+body.monochrome .brand-box {
+  background: rgba(255, 255, 255, 0.92);
+  border-color: var(--border);
+}
+body.monochrome .brand-title { color: var(--fg); }
+body.monochrome .brand-links { color: var(--fg-dim); }
+body.monochrome .con-typeahead input {
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--fg);
+  border-color: var(--border);
+}
+body.monochrome .con-typeahead input:focus {
+  border-color: var(--border-strong);
+}
+body.monochrome #con-results {
+  background: rgba(255, 255, 255, 0.96);
+  color: var(--fg);
+}
+
+/* ---- Chart-mode labels (Phase 8) ---- */
+/* Single SVG <g id="chart-labels"> container holds every dynamic label
+   rendered while chart mode is active. Outside chart mode the layer is
+   hidden via display:none from chart-labels.ts; CSS only defines the
+   rest pose. The paint-order: stroke + white halo gives the labels a
+   paper-chart legibility against the beige background even when they
+   land over a star glyph. */
+#chart-labels {
+  font-family: var(--font-ui, system-ui, sans-serif);
+  fill: #000;
+  stroke: rgba(255, 255, 255, 0.9);
+  stroke-width: 2.5;
+  paint-order: stroke;
+  pointer-events: none;
+  letter-spacing: 0.02em;
+}
+#chart-labels .chart-label.kind-name {
+  font-size: 11.5px;
+  font-weight: 500;
+}
+#chart-labels .chart-label.kind-bayer {
+  font-size: 11px;
+}
+/* Constellation Latin labels are large overlay typography à la Sky Atlas
+   2000.0 — wide letter-spacing + semi-transparent fill so the type can sit
+   over star fields without collision. The .chart-label.kind-con elements
+   bypass the engine's collision pass entirely; they always render and
+   yield to nothing. The halo is suppressed so the type reads as
+   transparent ink rather than competing with star-name labels. */
+#chart-labels .chart-label.kind-con {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  fill: rgba(0, 0, 0, 0.55);
+  stroke: none;
+}
+#chart-labels .chart-label.kind-cloud {
+  font-size: 10.5px;
+  font-style: italic;
+}
+
+#show-chart:disabled + span {
+  opacity: 0.55;
+}
+
+/* ---- Chart-mode glyphs (Phase 8 v2) ---- */
+/* Sibling SVG <g id="chart-glyphs"> holds Sky Atlas-style overlays that
+   ride alongside the GPU-rendered star discs:
+     - .chart-variable-ring — thin circle at the max-brightness extreme
+       of a variable star's sine. The GPU disc continues to pulse
+       inside, giving Sky Atlas's ring + breathing-dot pair.
+     - .chart-binary-wings — thin horizontal line through the disc of
+       a double / multiple star primary. SVG line coords are in the
+       viewport frame so the wings stay horizontal regardless of
+       camera roll. */
+#chart-glyphs {
+  pointer-events: none;
+}
+#chart-glyphs .chart-variable-ring {
+  fill: none;
+  stroke: #000;
+  stroke-width: 0.9;
+  vector-effect: non-scaling-stroke;
+}
+#chart-glyphs .chart-binary-wings {
+  stroke: #000;
+  stroke-width: 1;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
 }
 
 .modal {

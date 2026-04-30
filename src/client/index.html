@@ -67,6 +67,8 @@
           <dd>Go: focus a star, set a destination, or change observe location</dd>
           <dt><kbd>O</kbd></dt>
           <dd>Switch to observe mode when a star is focused</dd>
+          <dt><kbd>M</kbd></dt>
+          <dd>Toggle star chart mode (in observe mode only)</dd>
           <dt><kbd>W</kbd></dt>
           <dd>Warp to the destination</dd>
           <dt><kbd>C</kbd></dt>
@@ -335,6 +337,10 @@
             <label class="checkbox-row">
               <input id="show-galactic-grid" type="checkbox" />
               <span>Galactic sphere</span>
+            </label>
+            <label class="checkbox-row" id="show-chart-row" title="Available in observe mode">
+              <input id="show-chart" type="checkbox" disabled />
+              <span>Star chart mode</span>
             </label>
           </div>
         </section>

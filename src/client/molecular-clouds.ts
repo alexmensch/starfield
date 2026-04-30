@@ -20,10 +20,12 @@ const SEGMENTS_LAT = 16;
 const DARK_COLOR_DEFAULT = 0xb87850;
 const DARK_OPACITY_DEFAULT = 0.18;
 
-// Chart/mono mode: soft warm grey, normal alpha blend so it reads as ink
-// on the paper canvas rather than a glow.
-const MONO_COLOR_DEFAULT = 0x8a7864;
-const MONO_OPACITY_DEFAULT = 0.22;
+// Chart/mono mode: solid black ink so the isobar contour reads as a
+// definite chart annotation against the paper background. Single-line
+// isobar pass uses uMonoColor at full alpha; the older shaded mono path
+// (now unused by Phase 8) carried the same colour at lower opacity.
+const MONO_COLOR_DEFAULT = 0x000000;
+const MONO_OPACITY_DEFAULT = 0.95;
 
 /**
  * Always-on layer rendering molecular clouds as soft warm ellipsoids.
@@ -100,6 +102,28 @@ export class MolecularClouds {
       // multiplies into rgb a second time and the cloud comes out ~30×
       // too dim to see.
       mat.blending = on ? THREE.NormalBlending : THREE.AdditiveBlending;
+      mat.needsUpdate = true;
+    }
+  }
+
+  /**
+   * Chart-mode isobar pass. When on, each cloud's fragment shader emits
+   * only a thin outline at the density iso-line driven by uMaxAppMag — a
+   * topographic-contour treatment that follows the user's "minimally
+   * visible magnitude" slider. The outline is opaque-over, so the shader
+   * always uses NormalBlending while in isobar mode regardless of the
+   * mono palette state.
+   */
+  setIsobar(on: boolean, magnitudeUniform: { value: number }) {
+    for (const mat of this.materials) {
+      mat.uniforms.uChartIsobar.value = on ? 1 : 0;
+      // Reuse the starfield's shared uMaxAppMag uniform reference so the
+      // isobar threshold tracks the slider live without per-frame writes.
+      mat.uniforms.uMaxAppMag = magnitudeUniform;
+      if (on) {
+        // Outline ink — opaque-over against the chart palette.
+        mat.blending = THREE.NormalBlending;
+      }
       mat.needsUpdate = true;
     }
   }
@@ -183,6 +207,11 @@ export class MolecularClouds {
         uMonoColor: { value: this.monoColor },
         uOpacity: { value: this.darkOpacity },
         uMonochrome: { value: 0 },
+        // Isobar (chart-mode contour) pass. The shared uMaxAppMag uniform
+        // is wired in from the starfield material via setIsobar() — until
+        // then a placeholder is fine since uChartIsobar gates the branch.
+        uChartIsobar: { value: 0 },
+        uMaxAppMag: { value: 6.5 },
       },
     });
   }

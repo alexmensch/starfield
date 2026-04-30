@@ -12,10 +12,13 @@ export function createConstellationOverlay(starfield: Starfield) {
   const v = new THREE.Vector3();
 
   let current = -1;
+  let chartActive = false;
 
   const update = () => {
-    current = starfield.getFilter().highlightCon;
-    if (current < 0) {
+    const f = starfield.getFilter();
+    current = f.highlightCon;
+    chartActive = f.chart && starfield.getCameraMode() === 'observe';
+    if (current < 0 && !chartActive) {
       figure.setAttribute('d', '');
       return;
     }
@@ -23,43 +26,51 @@ export function createConstellationOverlay(starfield: Starfield) {
   };
 
   const tick = () => {
-    if (current < 0) return;
+    if (current < 0 && !chartActive) return;
 
     const cons = starfield.catalog.constellations;
-    const lines = current < cons.length ? cons[current].lines : undefined;
-    if (!lines || lines.length === 0) {
-      figure.setAttribute('d', '');
-      return;
-    }
-
     const w = window.innerWidth;
     const h = window.innerHeight;
     const camera = starfield.camera;
     const positions = starfield.localPositions;
 
     const segments: string[] = [];
-    for (const polyline of lines) {
-      // Project each vertex; null if behind the near plane.
-      const projected: Array<[number, number] | null> = polyline.map((i) => {
-        v.set(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
-        v.applyMatrix4(camera.matrixWorldInverse);
-        if (v.z > -camera.near) return null;
-        v.applyMatrix4(camera.projectionMatrix);
-        return [(v.x + 1) * 0.5 * w, (1 - v.y) * 0.5 * h];
-      });
+    // Chart mode draws every constellation; otherwise only the highlighted
+    // one. Same projection + near-clip path either way.
+    const indices: number[] = [];
+    if (chartActive) {
+      for (let i = 0; i < cons.length; i++) indices.push(i);
+    } else if (current >= 0 && current < cons.length) {
+      indices.push(current);
+    }
 
-      for (let j = 0; j < projected.length - 1; j++) {
-        const a = projected[j];
-        const b = projected[j + 1];
-        if (!a || !b) continue;
-        const seg = shortenedSegment(a, b);
-        if (seg) segments.push(seg);
+    for (const conIdx of indices) {
+      const lines = cons[conIdx].lines;
+      if (!lines || lines.length === 0) continue;
+      for (const polyline of lines) {
+        // Project each vertex; null if behind the near plane.
+        const projected: Array<[number, number] | null> = polyline.map((i) => {
+          v.set(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
+          v.applyMatrix4(camera.matrixWorldInverse);
+          if (v.z > -camera.near) return null;
+          v.applyMatrix4(camera.projectionMatrix);
+          return [(v.x + 1) * 0.5 * w, (1 - v.y) * 0.5 * h];
+        });
+
+        for (let j = 0; j < projected.length - 1; j++) {
+          const a = projected[j];
+          const b = projected[j + 1];
+          if (!a || !b) continue;
+          const seg = shortenedSegment(a, b);
+          if (seg) segments.push(seg);
+        }
       }
     }
     figure.setAttribute('d', segments.join(''));
   };
 
   starfield.onFilterChange(update);
+  starfield.onCameraModeChange(update);
   starfield.onFrame(tick);
   update();
 

@@ -86,6 +86,13 @@ uniform float uMaxAppMag;     // shared with star pipeline
 uniform float uSizeSpan;      // shared with star pipeline
 uniform float uGlowMagOffset; // calibration: integrated density → appMag
 
+// Chart-mode isobar pass. When > 0.5 the fragment renders only a thin
+// outline at the iso-line where the integrated apparent magnitude crosses
+// uMaxAppMag — giving the galactic glow a topographic-contour treatment
+// that follows the user's "minimally visible magnitude" slider.
+uniform float uChartIsobar;
+uniform vec3  uChartInkColor;
+
 // Raymarch resolution. 32 log-distributed steps over distance-from-
 // camera. Log spacing concentrates samples near the camera (where
 // dust + density vary fastest) and spreads the rest over the longer
@@ -237,6 +244,23 @@ void main() {
   // continue affecting already-bright sightlines.
   float intensity = max(colorAccum.r + colorAccum.g + colorAccum.b, 1e-12);
   float appMag = uGlowMagOffset - 2.5 * log(intensity) / LOG10;
+
+  if (uChartIsobar > 0.5) {
+    // Single solid contour line at the iso-magnitude where the
+    // integrated brightness equals the user's threshold. Use fwidth on
+    // appMag so the line is a constant 1 px wide regardless of how
+    // steep the local gradient is — flat regions of the band would
+    // otherwise paint a wide smudge and steep regions a hairline.
+    float fw = max(fwidth(appMag), 1e-5);
+    float line = 1.0 - smoothstep(fw * 0.5, fw * 1.5, abs(appMag - uMaxAppMag));
+    if (line <= 0.0) {
+      fragColor = vec4(0.0);
+      return;
+    }
+    fragColor = vec4(uChartInkColor * line, line);
+    return;
+  }
+
   float gate = max((uMaxAppMag - appMag) / max(uSizeSpan, 0.001), 0.0);
   vec3 scaled = colorAccum * uBrightnessScale * gate;
   vec3 result = vec3(1.0) - exp(-scaled);

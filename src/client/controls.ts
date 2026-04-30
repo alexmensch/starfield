@@ -52,6 +52,7 @@ export function bindControls(starfield: Starfield) {
   const showClouds = document.getElementById('show-clouds') as HTMLInputElement;
   const showMilkyway = document.getElementById('show-milkyway') as HTMLInputElement;
   const showGalacticGrid = document.getElementById('show-galactic-grid') as HTMLInputElement;
+  const showChart = document.getElementById('show-chart') as HTMLInputElement;
   const fov = document.getElementById('fov') as HTMLInputElement;
   const fovReadout = document.getElementById('fov-readout')!;
   const exag = document.getElementById('exag') as HTMLInputElement;
@@ -155,6 +156,9 @@ export function bindControls(starfield: Starfield) {
   showGalacticGrid.addEventListener('change', () => {
     starfield.setFilter({ showGalacticGrid: showGalacticGrid.checked });
   });
+  showChart.addEventListener('change', () => {
+    starfield.setFilter({ chart: showChart.checked });
+  });
 
   document.getElementById('size-reset')!.addEventListener('click', () => {
     starfield.clearSizeOverrides(['sizeMin', 'sizeMax']);
@@ -214,6 +218,12 @@ export function bindControls(starfield: Starfield) {
     if (showGalacticGrid.checked !== f.showGalacticGrid) {
       showGalacticGrid.checked = f.showGalacticGrid;
     }
+    // Chart toggle is observe-gated. Disable when not in observe so the
+    // user sees why it can't be enabled (the title attribute on the row
+    // explains it).
+    const observeMode = starfield.getCameraMode() === 'observe';
+    showChart.disabled = !observeMode;
+    if (showChart.checked !== f.chart) showChart.checked = f.chart;
     const fovVal = starfield.getCameraFov();
     const fovStr = String(Math.round(fovVal));
     if (fov.value !== fovStr) fov.value = fovStr;
@@ -224,6 +234,7 @@ export function bindControls(starfield: Starfield) {
   };
 
   starfield.onFilterChange(syncFromFilter);
+  starfield.onCameraModeChange(syncFromFilter);
   onUnitChange(() => {
     if (distUnitLabel) distUnitLabel.textContent = getUnit();
     syncFromFilter();

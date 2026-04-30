@@ -47,10 +47,16 @@ export interface FilterState {
   // Molecular cloud overlay (Phase 3a). Default-on; toggle suppresses both
   // 3D rendering and hover/pick.
   showMolecularClouds: boolean;
-  // Milky Way analytic background (Phase 5). Default-on; suppressed in
-  // chart mode regardless. May be force-flipped off by the FPS probe on
-  // the first few frames if the device can't sustain ≥30 fps with it on.
+  // Milky Way analytic background (Phase 5). Default-on; in chart mode
+  // it switches to outline-only rendering (gated on this same toggle).
+  // May be force-flipped off by the FPS probe on the first few frames
+  // if the device can't sustain ≥30 fps with it on.
   showMilkyway: boolean;
+  // Star chart mode (Phase 8). Only meaningful while cameraMode==='observe';
+  // chart-mode orchestrator (chart-mode.ts) ignores it otherwise. Drives
+  // the paper-aesthetic palette, label rendering, isobar outlines on
+  // cloud / milkyway, and flat-disc star rendering.
+  chart: boolean;
 }
 
 export interface StarfieldOptions {
@@ -320,6 +326,7 @@ export const DEFAULT_FILTER: FilterState = {
   showHud: false,
   showMolecularClouds: true,
   showMilkyway: true,
+  chart: false,
 };
 
 export class Starfield {
@@ -550,6 +557,13 @@ export class Starfield {
       uSizeMax: { value: this.filter.sizeMax },
       uSizeSpan: { value: this.filter.sizeSpan },
       uMonochrome: { value: 0 },
+      // Chart-mode disc sizing (Phase 8 v2). Pixel range + bright-end
+      // magnitude reference; vertex shader uses these only when
+      // uMonochrome > 0.5. The same constants are read JS-side by
+      // chart-labels.ts to size variable rings + binary wings.
+      uChartDiscMaxPx: { value: 16.0 },
+      uChartDiscMinPx: { value: 1.5 },
+      uChartMagBright: { value: -2.0 },
       uLogRMin: { value: logRMin },
       uLogRMax: { value: logRMax },
       uPhysMinPx: { value: 2.0 },
@@ -1442,8 +1456,37 @@ export class Starfield {
     this.galacticGrid.setMonochrome(on);
     this.hudOverlay.setMonochrome(on);
     this.clouds?.setMonochrome(on);
-    this.milkyway.setMonochrome(on);
+    // The milky-way layer used to fully hide in chart mode, but Phase 8
+    // re-purposes it to render an isobar contour. Visibility/contour
+    // are now driven by the chart-mode orchestrator via
+    // `setMilkywayIsobar` and `setCloudsIsobar` below — call them
+    // alongside setMonochrome.
     this.fireStateChange();
+  }
+
+  /** Chart-mode isobar pass on/off for the molecular cloud layer.
+   *  Wires the shader's uMaxAppMag uniform to the starfield's shared
+   *  reference so the contour tracks the magnitude slider live. */
+  setCloudsIsobar(on: boolean) {
+    this.clouds?.setIsobar(on, this.material.uniforms.uMaxAppMag);
+  }
+
+  /** Chart-mode isobar pass on/off for the milky-way layer. */
+  setMilkywayIsobar(on: boolean) {
+    this.milkyway.setIsobar(on);
+  }
+
+  /** Chart-mode disc sizing parameters — JS mirror of the GPU
+   *  uniforms, so chart-labels.ts can compute the same disc pixel size
+   *  the vertex shader produces. Variable rings + binary wings rely on
+   *  this to align with the rendered glyph. */
+  getChartDiscParams(): { maxPx: number; minPx: number; magBright: number } {
+    const u = this.material.uniforms;
+    return {
+      maxPx: u.uChartDiscMaxPx.value as number,
+      minPx: u.uChartDiscMinPx.value as number,
+      magBright: u.uChartMagBright.value as number,
+    };
   }
 
   focusStar(starIndex: number, distancePc = 2) {
@@ -1937,9 +1980,17 @@ export class Starfield {
     // camera lives in local frame under the floating origin).
     const absPos = this.catalog.positions;
     const locPos = this._localPositions;
-    const { absmag, spectClass } = this.catalog;
+    const { absmag, spectClass, amplitudeMag, periodDays } = this.catalog;
     const f = this.filter;
     const v = new THREE.Vector3();
+    // Floor on the prime-disc hit radius. Tiny chart-mode discs (down to
+    // 1–2 px) leave a sub-pixel target that the cursor can easily miss
+    // even when visually right on top of the star. Hover then falls
+    // through to the proximity fallback only if no other disc has won —
+    // which on a crowded chart it often has, so the small star never
+    // surfaces. Floor the disc-test radius to a value the cursor can
+    // realistically land within.
+    const MIN_DISC_HIT_RADIUS_PX = 4;
 
     // Two-tier picking:
     //   1. Cursor inside a star's rendered disc → prime candidate. Among
@@ -1967,7 +2018,14 @@ export class Starfield {
       const dz = z - camPos.z;
       const dCam = Math.max(Math.sqrt(dx * dx + dy * dy + dz * dz), 0.001);
       const appMag = absmag[i] + 5 * (Math.log10(dCam) - 1);
-      if (appMag > f.maxAppMag) continue;
+      // For variables, use the bright-extreme appMag so a star whose
+      // disc is only visible at peak phase remains pickable across the
+      // whole cycle. Without this, a variable with static appMag just
+      // above the limit gets dropped here even though the GPU shows
+      // its disc whenever magMod swings negative.
+      const amp = periodDays[i] > 0 ? amplitudeMag[i] : 0;
+      const filterMag = appMag - amp * 0.5;
+      if (filterMag > f.maxAppMag) continue;
 
       v.set(x, y, z).project(this.camera);
       if (v.z < -1 || v.z > 1) continue;
@@ -1975,8 +2033,9 @@ export class Starfield {
       const screenY = (1 - v.y) * 0.5 * viewportH;
       const pxDist = Math.hypot(cursorX - screenX, cursorY - screenY);
       const pxSize = this.renderedSizePx(i);
+      const hitRadius = Math.max(pxSize * 0.5, MIN_DISC_HIT_RADIUS_PX);
 
-      if (pxDist <= pxSize * 0.5) {
+      if (pxDist <= hitRadius) {
         if (dCam < discBestCamDist) {
           discBestCamDist = dCam;
           discIdx = i;

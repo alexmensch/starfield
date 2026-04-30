@@ -49,6 +49,7 @@ in vec2 vUv;
 in float vPhysRatio; // 1 = physical-size-driven (render as solid disc),
                      // 0 = apparent-mag-driven (render as soft point glow)
 in float vSoftness;  // 0 = crisp (WD) … 1 = fuzzy (hypergiant)
+in float vAaWidth;   // chart-mode disc edge width in vUv units (1 CSS px)
 
 out vec4 outColor;
 
@@ -69,11 +70,42 @@ float starProfile(float r, float softness, float physRatio) {
 void main() {
     float r = length(vUv);
     if (r > 0.5) discard;
-    float glow = starProfile(r, vSoftness, vPhysRatio);
 
     // Default: write our actual depth. The disc pass overrides this for
     // halo fragments so they don't occlude background stars drawn later.
     gl_FragDepth = gl_FragCoord.z;
+
+    // Chart mode: flatten everything. Stars render as solid hard-edged
+    // discs filling the inscribed circle of the calibrated quad, against
+    // the paper background under MultiplyBlending. No glow profile, no
+    // halo, no luminosity-class softening — the brightness-driven quad
+    // size is the only encoding of magnitude. The vertex shader passes
+    // vAaWidth as 1 CSS pixel in vUv space so the edge is always one
+    // pixel wide regardless of quad size. (Earlier `fwidth(r)` was
+    // unstable near the quad centre — `length(vUv)` has an undefined
+    // screen-space derivative at vUv = 0 and tiny quads ended up with
+    // disc≈0.5 in the middle, rendering as a faint grey rather than
+    // solid black.)
+    if (uMonochrome > 0.5) {
+        if (uRenderMode == 0 && vPhysRatio >= PHYS_RATIO_THRESHOLD) discard;
+        if (uRenderMode == 1 && vPhysRatio <  PHYS_RATIO_THRESHOLD) discard;
+        if (uRenderMode == 2 && vPhysRatio <  PHYS_RATIO_THRESHOLD) discard;
+        if (vAppMag > uMaxAppMag) discard;
+        float aa = max(vAaWidth, 1e-3);
+        float disc = 1.0 - smoothstep(0.5 - aa, 0.5, r);
+        if (disc <= 0.0) discard;
+        if (uRenderMode == 2) {
+            outColor = vec4(0.0); // material has colorWrite = false on the mask
+            return;
+        }
+        // MultiplyBlending: rgb = 1.0 leaves dst unchanged, rgb = 0.0
+        // multiplies dst toward black. mix(1, 0, disc) paints solid
+        // black ink with an antialiased outer pixel.
+        outColor = vec4(vec3(1.0 - disc), 1.0);
+        return;
+    }
+
+    float glow = starProfile(r, vSoftness, vPhysRatio);
 
     if (uRenderMode == 2) {
         // Core depth-mask — write near depth only for disc-pass cores.
@@ -96,11 +128,7 @@ void main() {
         // the magnitude limit so stars don't pop in/out at the threshold.
         float tap = 1.0 - smoothstep(uMaxAppMag, uMaxAppMag + 0.5, vAppMag);
         glow *= tap;
-        if (uMonochrome > 0.5) {
-            outColor = vec4(vec3(1.0 - glow), 1.0);
-        } else {
-            outColor = vec4(vColor * glow, glow);
-        }
+        outColor = vec4(vColor * glow, glow);
     } else {
         // Disc pass — only disc-dominated stars. Premultiplied-alpha
         // blending; depth handling below decides whether each fragment
@@ -119,10 +147,6 @@ void main() {
         // accumulate additively — the haze stays visible while distant
         // stars peek through it.
         if (glow < uCoreThreshold) gl_FragDepth = 1.0;
-        if (uMonochrome > 0.5) {
-            outColor = vec4(vec3(1.0 - glow), 1.0);
-        } else {
-            outColor = vec4(vColor * glow, glow);
-        }
+        outColor = vec4(vColor * glow, glow);
     }
 }
