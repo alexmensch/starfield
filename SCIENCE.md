@@ -27,6 +27,19 @@ into them where relevant.
   Institute. `gcvs5.txt` (main file) + `crossid.txt` (Hip/HD/Tyc/etc. →
   GCVS name mappings). Free for research/educational use with
   attribution.
+- **Hipparcos CCDM + MultFlag cross-reference**: VizieR
+  `I/239/hip_main`, HIP main catalogue. We commit a three-column
+  slice (`-out=HIP,CCDM,MultFlag`) as `data/hip_ccdm.tsv`, used as
+  the HIP-keyed visual-doubles flag. CCDM links each Hipparcos
+  star to the Catalog of the Components of Double and Multiple
+  stars (Dommanget & Nys 1994); `MultFlag` is Hipparcos's own
+  multiplicity confidence flag. A star is flagged as a visual
+  double when both CCDM is non-blank *and* `MultFlag ∈ {C, G, O}`,
+  which keeps Hipparcos-confirmed pairs and rejects CCDM-listed
+  optical pairs (line-of-sight chance alignments) that Hipparcos
+  did not model. Unlike TDSC there is no bright-star saturation
+  gap (Sirius, Mizar, Castor, α Cen, Albireo all carry CCDM IDs
+  with confirming `MultFlag`).
 - **Stellarium modern sky culture** (constellation stick figures):
   https://github.com/Stellarium/stellarium/tree/master/skycultures/modern
   — MIT-licensed JSON, HIP-indexed polylines. Committed as
@@ -245,21 +258,37 @@ Implementation: `src/client/shaders/star.vert.glsl` (per-star) and
 
 ## Binary inference threshold
 
-Binaries are inferred geometrically at build time using a separation
-threshold of `BINARY_MAX_SEP_PC = 0.005 pc` (≈1030 AU). Rationale: at
-the renderer's `minDistance = 0.005 pc` orbit, anything farther than
-that separation subtends >45° from the camera — it wouldn't fit the
-viewport as a visual "system", which is what the render layer cares
-about. Wider physically-bound pairs exist in the catalog but won't
-render usefully.
+Binaries are flagged at build time from two sources, both ORing onto
+the same `flags` bit so the chart-mode wings glyph surfaces either:
 
-Yields ~14 pairs out of the classic_ids subset — almost all famous
-named visual binaries (α Cen A/B, Alula Australis, Struve 2398, etc.).
-The brighter member of each pair is flagged as primary.
+**Geometric pass.** Spatial nearest-neighbour pass at separation
+`BINARY_MAX_SEP_PC = 0.005 pc` (≈1030 AU). Rationale: at the
+renderer's `minDistance = 0.005 pc` orbit, anything farther than that
+subtends >45° from the camera — it wouldn't fit the viewport as a
+visual "system". Yields only ~14 pairs from the classic_ids subset —
+the brighter primary of most visual doubles has a classical ID, but
+the secondary often doesn't, so the geometric pass can only see the
+α Cen-style cases where both components survive the cut. Each side
+stores the other's row index in `companionIdx`.
+
+**CCDM + MultFlag HIP-keyed cross-match.** Hipparcos's `CCDM`
+column links each HIP to the Catalog of the Components of Double
+and Multiple stars (Dommanget & Nys 1994). CCDM alone is too
+permissive — it tags wide line-of-sight optical pairs Hipparcos
+didn't confirm — so the build script gates it with `MultFlag`,
+keeping only `C` (component), `G` (resolved-in-field), and `O`
+(orbit known) entries. A small curated `KNOWN_VISUAL_DOUBLES` set
+in `build-catalog.ts` recovers canonical visual doubles Hipparcos
+modelled as single stars (Polaris, ε¹ Lyr, 61 Cyg A/B). This
+surfaces Sirius, Mizar, Castor, α Cen, Albireo, γ And, ε Lyr,
+70 Oph, Procyon, Algol, etc. that the geometric pass misses. No
+`companionIdx` is assigned — the secondary is usually not in the
+classic_ids subset, and the renderer's zoom-fit code already
+guards on `companion ≥ 0`.
 
 Implementation: `scripts/build-catalog.ts`; see
-`docs/build-and-data.md` §Geometric binary inference for the spatial-
-hash details.
+`docs/build-and-data.md` §Geometric binary inference and
+§TDSC double-star cross-match for the per-pass details.
 
 ## Constellation stick figures
 

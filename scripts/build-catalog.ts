@@ -12,6 +12,7 @@ const SRC_CSV = resolve(ROOT, 'data/athyg_33_classic_ids.csv');
 const SRC_STELLARIUM = resolve(ROOT, 'data/stellarium-modern-skyculture.json');
 const SRC_GCVS = resolve(ROOT, 'data/gcvs5.txt');
 const SRC_GCVS_XREF = resolve(ROOT, 'data/crossid.txt');
+const SRC_HIP_CCDM = resolve(ROOT, 'data/hip_ccdm.tsv');
 const OUT_BIN = resolve(ROOT, 'public/catalog.bin');
 const OUT_CON = resolve(ROOT, 'public/constellations.json');
 const OUT_SEARCH = resolve(ROOT, 'public/search-index.json');
@@ -135,6 +136,19 @@ const CON_INDEX: Map<string, number> = new Map(
 const KNOWN_MISSING_HIPS: Map<number, string> = new Map([
   [5165, 'α Phoenicis (Ankaa) — HYG lacks parallax for this multiple-star system; upstream data gap'],
   [89341, 'μ Sagittarii (Polis) — HYG lacks parallax; upstream data gap'],
+]);
+
+// Curated HIPs of canonical visual doubles that the CCDM+MultFlag filter
+// (see parseHipCcdm) drops because Hipparcos's main catalogue modelled
+// them as single stars (`MultFlag` blank, `Ncomp=1`). Each entry must
+// include a justification. Visual review of new chart-mode renders may
+// surface more — extend conservatively, only for systems where the pair
+// is canonical enough to expect wings on the chart.
+const KNOWN_VISUAL_DOUBLES: Map<number, string> = new Map([
+  [11767, 'Polaris (α UMi) — Polaris B at sep ≈ 18″ is a real companion; Hipparcos modelled as Ncomp=1'],
+  [91971, 'ε¹ Lyr — inner pair Aa+Ab at sep ≈ 2.4″; ε² Lyr (HIP 91926) carries MultFlag=C as the analogue'],
+  [104214, '61 Cyg A — famous nearby K-dwarf pair at sep ≈ 30″ from 61 Cyg B (HIP 104217)'],
+  [104217, '61 Cyg B — companion of 61 Cyg A (HIP 104214)'],
 ]);
 
 function spectClassIndex(firstChar: string): number {
@@ -321,13 +335,15 @@ function isUpToDate(): boolean {
     : 0;
   const gcvsMtime = existsSync(SRC_GCVS) ? statSync(SRC_GCVS).mtimeMs : 0;
   const xrefMtime = existsSync(SRC_GCVS_XREF) ? statSync(SRC_GCVS_XREF).mtimeMs : 0;
+  const hipCcdmMtime = existsSync(SRC_HIP_CCDM) ? statSync(SRC_HIP_CCDM).mtimeMs : 0;
   const scriptMtime = statSync(__filename).mtimeMs;
   return (
     binMtime > srcMtime &&
     binMtime > scriptMtime &&
     binMtime > stellariumMtime &&
     binMtime > gcvsMtime &&
-    binMtime > xrefMtime
+    binMtime > xrefMtime &&
+    binMtime > hipCcdmMtime
   );
 }
 
@@ -429,6 +445,119 @@ function parseGcvsCrossref(): VarStarXref {
     else byHd.set(num, gcvsName);
   }
   return { byHip, byHd };
+}
+
+// Hipparcos main catalogue carries a CCDM cross-reference per star: the
+// `CCDM` column is non-blank when the star is a component of a system in
+// the Catalog of the Components of Double and Multiple stars (Dommanget &
+// Nys 1994), the curated pre-WDS reference for visual doubles. CCDM alone
+// is too permissive — it lumps physical doubles together with wide
+// line-of-sight optical pairs (so Vega and Pollux end up tagged) — so we
+// gate it with Hipparcos's own `MultFlag` column (H59):
+//
+//   C = component star in a Hipparcos-resolved system
+//   G = double resolved within the Hipparcos field
+//   O = orbit known (spectroscopic / astrometric)
+//   blank, V, X = unconfirmed by Hipparcos's own astrometry
+//
+// Keeping `{C, G, O}` removes the bulk of CCDM optical pairs while
+// preserving real binaries Hipparcos modelled. A handful of canonical
+// visual doubles are still dropped this way (Polaris, ε¹ Lyr, 61 Cyg —
+// wide pairs Hipparcos treated as single stars); KNOWN_VISUAL_DOUBLES
+// recovers them.
+//
+// Expected file: VizieR TSV from
+// `asu-tsv?-source=I/239/hip_main&-out=HIP,CCDM,MultFlag&-out.max=unlimited`.
+// The parser tolerates VizieR's preamble (`#` comments, header row,
+// dash-separator row, then data).
+
+function parseHipCcdm(): Set<number> {
+  const flagged = new Set<number>();
+  // Curated overrides flag unconditionally — these stars don't need to
+  // appear in the CCDM file, and if they do appear, the override path
+  // reaches the same answer.
+  for (const hip of KNOWN_VISUAL_DOUBLES.keys()) flagged.add(hip);
+
+  if (!existsSync(SRC_HIP_CCDM)) return flagged;
+
+  const text = readFileSync(SRC_HIP_CCDM, 'utf8');
+  const rawLines = text.split(/\r?\n/);
+
+  let header: string[] | null = null;
+  let hipIdx = -1, ccdmIdx = -1, mfIdx = -1;
+  let scanned = 0, kept = 0, viaOverride = 0;
+  let droppedNoHip = 0, droppedNoCcdm = 0, droppedMultFlag = 0;
+
+  for (const line of rawLines) {
+    if (!line || !line.trim()) continue;
+    if (line.startsWith('#')) continue;
+
+    const cols = line.split('\t');
+    // VizieR TSVs include a dash-separator row right after the header.
+    if (cols.every((c) => /^[-\s]+$/.test(c) && c.includes('-'))) continue;
+
+    if (!header) {
+      header = cols.map((c) => c.trim());
+      hipIdx = header.indexOf('HIP');
+      ccdmIdx = header.indexOf('CCDM');
+      mfIdx = header.indexOf('MultFlag');
+      const missing: string[] = [];
+      if (hipIdx < 0) missing.push('HIP');
+      if (ccdmIdx < 0) missing.push('CCDM');
+      if (mfIdx < 0) missing.push('MultFlag');
+      if (missing.length) {
+        throw new Error(
+          `Hipparcos CCDM TSV is missing required columns: ${missing.join(', ')}.\n` +
+            `  Header was: ${header.map((h) => JSON.stringify(h)).join(', ')}\n` +
+            `  Re-fetch from VizieR with -out=HIP,CCDM,MultFlag.`,
+        );
+      }
+      continue;
+    }
+
+    scanned++;
+    const hipStr = (cols[hipIdx] ?? '').trim();
+    if (!hipStr) { droppedNoHip++; continue; }
+    const hip = parseInt(hipStr, 10);
+    if (!Number.isFinite(hip) || hip <= 0) { droppedNoHip++; continue; }
+
+    if (KNOWN_VISUAL_DOUBLES.has(hip)) {
+      viaOverride++;
+      continue; // already added above
+    }
+
+    const ccdm = (cols[ccdmIdx] ?? '').trim();
+    if (!ccdm) { droppedNoCcdm++; continue; }
+
+    const mf = (cols[mfIdx] ?? '').trim();
+    if (mf !== 'C' && mf !== 'G' && mf !== 'O') {
+      droppedMultFlag++;
+      continue;
+    }
+
+    flagged.add(hip);
+    kept++;
+  }
+
+  console.log(
+    `  ${kept} HIPs via CCDM+MultFlag(C/G/O), ${KNOWN_VISUAL_DOUBLES.size} via override; ` +
+      `${scanned} scanned, dropped ${droppedNoHip} no-HIP, ${droppedNoCcdm} blank CCDM, ${droppedMultFlag} unconfirmed MultFlag, ${viaOverride} duplicate(override)`,
+  );
+  return flagged;
+}
+
+// OR `flags |= 0x10` onto every catalog star whose HIP appears in the
+// flagged set. Coexists with the geometric inference: both sources hit the
+// same bit, and stars without a matching companion in AT-HYG keep
+// `companionIdx = -1` (the renderer's zoom-fit guards on companion ≥ 0).
+function applyDoublesFlag(stars: Star[], hipSet: Set<number>): number {
+  let flagged = 0;
+  for (const s of stars) {
+    if (s.hip === null || !hipSet.has(s.hip)) continue;
+    s.flags |= 0x10;
+    flagged++;
+  }
+  return flagged;
 }
 
 interface Star {
@@ -769,6 +898,21 @@ async function main() {
     );
   } else {
     console.log('GCVS files not found; skipping variability cross-match.');
+  }
+
+  // Hipparcos CCDM double-star cross-match. Optional. ORs onto the same
+  // 0x10 flag bit the geometric pass uses, so chart-mode wings surface both
+  // sources without renderer-side changes.
+  if (existsSync(SRC_HIP_CCDM)) {
+    console.log('Parsing Hipparcos CCDM double-star cross-reference...');
+    const tCcdm = Date.now();
+    const flaggedHips = parseHipCcdm();
+    const flagged = applyDoublesFlag(stars, flaggedHips);
+    console.log(
+      `  ${flaggedHips.size} CCDM-tagged HIPs → ${flagged} catalog stars flagged in ${Date.now() - tCcdm}ms`,
+    );
+  } else {
+    console.log('Hipparcos CCDM file not found; skipping double-star cross-match.');
   }
 
   // Build name table — just proper names. Bayer/Flam/HIP/etc. go in

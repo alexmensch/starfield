@@ -195,11 +195,90 @@ time — they update rarely (yearly-ish). If bumping to a new GCVS
 version, re-download from http://www.sai.msu.su/gcvs/ and replace the
 existing files; LFS handles the large-blob storage on push.
 
+## CCDM double-star cross-match
+
+Visual binaries get the same `flags` bit 4 the geometric pass uses, so
+chart mode renders wings on either source with no renderer-side
+changes. The geometric pass alone yields ~14 pairs (the only AT-HYG
+rows where both components survive the classic-IDs cut); the CCDM
+pass pulls in everything else where the primary has a HIP — Sirius,
+Mizar, Castor, α Cen, Polaris, Albireo, γ And, ε Lyr, etc.
+
+`parseHipCcdm` in `build-catalog.ts` reads `data/hip_ccdm.tsv`, a
+three-column slice of the **Hipparcos main catalogue** (VizieR
+`I/239/hip_main`). The `CCDM` column on each Hipparcos row carries
+the cross-reference into the Catalog of the Components of Double
+and Multiple stars (Dommanget & Nys 1994), the curated pre-WDS
+register of visual doubles. CCDM alone is too permissive — it
+lumps physical pairs together with wide line-of-sight optical
+pairs that happen to land near each other on the sky, so flagging
+on `CCDM != ""` alone tags Vega, Pollux, and ~19k other stars
+including a substantial optical-pair tail.
+
+To gate optical pairs out, we additionally filter on Hipparcos's
+own `MultFlag` (H59) column:
+
+| `MultFlag` | Meaning                                | Action |
+|------------|----------------------------------------|--------|
+| `C`        | Component star in a Hipparcos system   | keep   |
+| `G`        | Double resolved within Hipparcos field | keep   |
+| `O`        | Orbit known (spectroscopic / astrom.)  | keep   |
+| blank      | CCDM listed but Hipparcos didn't model | drop   |
+| `V`        | Variability-induced double             | drop   |
+| `X`        | Stochastic, low confidence             | drop   |
+
+This drops the bulk of optical pairs while preserving every
+binary Hipparcos itself confirmed.
+
+A handful of canonical visual doubles fall through the gate
+because Hipparcos modelled them as single stars (`Ncomp=1`,
+blank `MultFlag`) — typically wide pairs where the secondary is
+faint or angularly outside what Hipparcos resolved. **`KNOWN_VISUAL_DOUBLES`** in `build-catalog.ts` recovers them
+unconditionally. Each entry must include a justification.
+Current list: Polaris (sep 18″ Polaris B), ε¹ Lyr (inner pair
+2.4″), 61 Cyg A and B (the famous nearby K-dwarf pair). Visual
+review of new chart-mode renders may surface more — extend
+conservatively.
+
+Why this and not TDSC or WDS directly:
+
+- **TDSC** (Fabricius et al. 2002) is built from Tycho-2, which
+  saturates on the brightest stars (V ≲ 3) — Sirius, Mizar, Castor,
+  α Cen, Polaris are all *missing* from TDSC. CCDM has no such gap.
+- **WDS** itself doesn't carry HIP. Doing positional matching
+  ourselves would invite false positives in dense fields. CCDM
+  side-steps that by giving us the HIP↔system mapping pre-built.
+
+The file is a VizieR TSV fetched once from
+`vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=I/239/hip_main&-out=HIP,CCDM,MultFlag&-out.max=unlimited`
+and committed via Git LFS. The parser tolerates VizieR's preamble
+(`#` comment lines, header row, dash-separator row). Required
+columns are the literal labels `HIP`, `CCDM`, and `MultFlag`; if a
+future fetch renames them the build fails with a clear message
+naming the actual header that was read.
+
+No separation gate at the per-row level (CCDM and Hipparcos's
+`rho` column are both inconsistently populated). The chart-mode
+wings glyph is iconic rather than a depiction of resolved pair
+geometry, so even Sirius B at ΔV ≈ 10 earns wings on Sirius A.
+
+`applyDoublesFlag` then walks the post-sort catalog and ORs `0x10`
+onto every star whose HIP appears in the flagged set. No
+`companionIdx` write — the secondary often isn't in the AT-HYG
+classic_ids subset, and the renderer's zoom-fit code at
+`starfield.ts` already guards on `companion ≥ 0`, so a
+flagged-but-unpaired primary is fine.
+
+If the CCDM file is absent the build logs and continues — the
+geometric pass still runs and chart mode still works, just with the
+~14-pair coverage.
+
 ## Preprocessor idempotency
 
 `scripts/build-catalog.ts isUpToDate` skips rebuild if `catalog.bin`,
 `constellations.json`, **and** `search-index.json` are newer than all
-source inputs (AT-HYG CSV, Stellarium JSON, GCVS files, and the script
-itself). If you change field mapping but not the script mtime (e.g.
-edit in a way that updates atime only), you may need to
-`touch scripts/build-catalog.ts` or delete the generated files.
+source inputs (AT-HYG CSV, Stellarium JSON, GCVS files, Hipparcos
+CCDM TSV, and the script itself). If you change field mapping but
+not the script mtime (e.g. edit in a way that updates atime only),
+you may need to `touch scripts/build-catalog.ts` or delete the
+generated files.

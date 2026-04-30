@@ -26,10 +26,16 @@ Stack: TypeScript, Three.js (WebGL2), Vite, Cloudflare Workers.
   catalogue. Pulsate both in apparent-magnitude-driven point size (distant)
   and physically in disc radius (close). Time compressed so Cepheids cycle
   in a few seconds, Miras in ~minute, Betelgeuse takes ~8 minutes.
-- **Binary-system rendering.** Geometric inference flags catalog pairs
-  within ~1030 AU of each other as visual binaries. When focused on a
-  binary member, `minDistance` bumps so both components stay in the
-  viewport.
+- **Binary-system rendering.** Two-pass flagging surfaces ~13k visual
+  doubles for chart mode. Geometric inference catches catalog pairs
+  within ~1030 AU of each other (~14 systems where AT-HYG carries both
+  components, e.g. α Cen). The Hipparcos CCDM × MultFlag cross-match
+  catches the rest — Sirius, Mizar, Castor, Albireo, γ And, ε Lyr,
+  Algol, 70 Oph, Polaris, … — using the published double-multiple
+  cross-reference filtered to physical components (`MultFlag ∈ {C, G,
+  O}`) so wide line-of-sight optical pairs (Vega, Pollux, …) don't
+  flag. When focused on a geometrically-paired binary member,
+  `minDistance` bumps so both components stay in the viewport.
 - Filter by distance from Sol, maximum apparent magnitude (with `naked eye` /
   `binoculars` / `all` presets), spectral class, and constellation. The
   presets carry physically calibrated angular star sizes (Gaussian-PSF
@@ -327,14 +333,16 @@ pan) works the same everywhere.
   between AT-HYG (via HIP or HD) and the GCVS. Known variables that
   lack a HIP/HD cross-reference, or whose entry in GCVS lacks a parseable
   period, render as non-variable.
-- **Binary pairs detected purely geometrically** — any two catalog stars
-  within ~1030 AU of each other are flagged as a system. AT-HYG only
-  stores the primary for most famous visual doubles (Sirius, Castor,
-  Mizar, γ And, Albireo, Algol, Rigel, ε Lyr, …), so the pairing pass
-  has nothing to match against and these systems render as singletons —
-  α Cen is essentially the only canonical visual double where both
-  components are separate catalog rows. Spectroscopic binaries
-  (components never separately catalogued) likewise aren't paired.
+- **Most secondaries aren't separately positioned** — the chart-mode
+  CCDM cross-match (above) flags ~13k primaries as visual doubles, so
+  the canonical naked-eye list (Sirius, Mizar, Castor, γ And, Albireo,
+  Algol, ε Lyr, 70 Oph, Polaris, …) all carry the binary glyph. But
+  AT-HYG only stores the *primary's* position for most of these, so
+  apart from α Cen-style cases caught by the geometric pass the
+  secondary doesn't render as its own disc — the wings glyph is the
+  only visible cue that the star is a multiple. Spectroscopic binaries
+  (components never separately catalogued) carry the wings glyph if
+  CCDM lists them but otherwise render as singletons.
 
 ## Licence
 
@@ -351,6 +359,13 @@ Samus et al at the Sternberg Astronomical Institute, Lomonosov Moscow
 State University, and is free for research and educational use with
 attribution. See [http://www.sai.msu.su/gcvs/gcvs/](http://www.sai.msu.su/gcvs/gcvs/)
 for citation details.
+
+The **Hipparcos Main Catalogue** (ESA SP-1200, 1997) supplies the
+HIP↔CCDM↔MultFlag cross-reference used to flag visual doubles.
+Hipparcos data is in the public domain; see
+[https://cdsarc.cds.unistra.fr/viz-bin/cat/I/239](https://cdsarc.cds.unistra.fr/viz-bin/cat/I/239)
+for the CDS-hosted release notes. CCDM (Catalog of the Components of
+Double and Multiple stars) is by Dommanget & Nys (1994).
 
 The classical **constellation stick-figure** lines are taken from
 [Stellarium's modern sky culture](https://github.com/Stellarium/stellarium/tree/master/skycultures/modern).

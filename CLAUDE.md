@@ -29,6 +29,7 @@ data/                                All large catalogs tracked via Git LFS.
   athyg_33_classic_ids.csv           AT-HYG source CSV (~64 MB, LFS)
   gcvs5.txt                          GCVS main catalogue (~14 MB, LFS)
   crossid.txt                        GCVS cross-reference (~12 MB, LFS)
+  hip_ccdm.tsv                       Hipparcos HIP↔CCDM cross-reference (LFS) — visual-doubles flag
   stellarium-modern-skyculture.json  Stellarium constellation lines (~200 KB)
   molecular-clouds/
     zucker2020-tablea1.tsv           Zucker 2020 cloud distances (~88 KB)
