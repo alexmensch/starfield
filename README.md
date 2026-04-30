@@ -60,12 +60,16 @@ Stack: TypeScript, Three.js (WebGL2), Vite, Cloudflare Workers.
   at the focused star (the star's disc itself is hidden; you're standing
   on it) and switches to a custom look-around controller — drag to yaw +
   pitch (clamped at the poles, FPS-style), wheel adjusts FOV, two-finger
-  roll still tilts the horizon, the Sol / Galactic-Centre arrows become
-  HUD locators centred on the screen. Picking a new "Location" while in
-  observe re-uses the warp animation to fly to the new anchor; on
-  arrival, the camera slerps back to the same celestial direction it was
-  facing at warp start, so the user sees the same patch of sky from a
-  different vantage with all the parallax that implies.
+  roll still tilts the horizon. The optional **head-up display** adds a
+  translucent screen-centred ring (sized in angular units, so it scales
+  with FOV) and Sol / Galactic-Centre locator arrows that tangent the
+  ring rim and swivel as you look around; the focus ring smoothly morphs
+  into the HUD ring through the navigate↔observe transition so the
+  arrow attachment slides instead of popping. Picking a new "Location"
+  while in observe re-uses the warp animation to fly to the new anchor;
+  on arrival, the camera slerps back to the same celestial direction it
+  was facing at warp start, so the user sees the same patch of sky from
+  a different vantage with all the parallax that implies.
 - Per-star "approach distance" — the camera's near-star landing distance
   (warp arrival, observe-exit, orbit-min clamp) is computed per-star so
   the disc renders at a uniform on-screen size regardless of stellar
@@ -101,8 +105,10 @@ Stack: TypeScript, Three.js (WebGL2), Vite, Cloudflare Workers.
   Milky Way's geometry: an always-on translucent disc outline (15 kpc
   midplane + bulge wireframe) that fades in as the camera pulls away
   from Sol, plus a toggleable galactic coordinate sphere (equator + lat
-  circles every 10° + meridians every 10°) and a pair of locator arrows
-  pointing toward Sol and the Galactic Centre with live distance labels.
+  circles every 10° + meridians every 10°). The Sol / Galactic-Centre
+  locator arrows live on the head-up display (its own toggle), with live
+  distance labels — clickable to slerp the camera toward the named
+  object.
 - **Milky Way volumetric background.** A bounded raymarch through two
   galactic-scale proxy meshes (a flattened disc + an oblate bulge,
   both anchored at the galactic centre) produces an integrated

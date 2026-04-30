@@ -20,36 +20,62 @@ export function createFocusRingOverlay(starfield: Starfield) {
   starfield.onFrame(() => {
     const idx = starfield.getFocusedStar();
     if (idx === null) return;
-    // OBSERVE parks the camera on the focal star, so the ring would either
-    // tile screen-centre or fight the disc-mask cutout. Hide either way —
-    // the HUD arrows take over the "you are here" cue.
-    if (starfield.getCameraMode() === 'observe' || starfield.isObserveTransitionActive()) {
+
+    // During the navigate↔observe transition the ring smoothly shrinks to
+    // 0 (enter) or grows back to RADIUS_PX (exit) so it visually morphs
+    // into the HUD ring instead of popping out. In steady-state observe
+    // the ring stays hidden — the HUD ring takes over the "you are here"
+    // role.
+    const transition = starfield.getObserveTransitionProgress();
+    if (starfield.getCameraMode() === 'observe' && !transition) {
       hide();
       return;
     }
-    const positions = starfield.localPositions;
+
     const camera = starfield.camera;
+    let r = RADIUS_PX;
+    if (transition) {
+      r = transition.kind === 'enter'
+        ? RADIUS_PX * (1 - transition.f)
+        : RADIUS_PX * transition.f;
+      if (r <= 0.5) {
+        hide();
+        return;
+      }
+    } else {
+      // Steady-state navigate: skip the ring when the focal star's rendered
+      // disc exceeds the ring diameter — the ring becomes redundant chrome
+      // on top of the star. Skipped during transitions because the disc is
+      // about to be hidden / has just appeared anyway.
+      if (starfield.renderedSizePx(idx) > RADIUS_PX * 2) {
+        hide();
+        return;
+      }
+    }
+
+    // Project the focal star to screen. During the enter transition the
+    // projection naturally slides toward screen-centre as the camera
+    // approaches; during the exit transition it starts degenerate (camera
+    // sits at the star) and becomes well-defined as the camera pulls away.
+    // Either way, fall back to screen-centre when the projection fails so
+    // the shrinking/growing ring still has a sensible centre.
+    const positions = starfield.localPositions;
     v.set(positions[idx * 3], positions[idx * 3 + 1], positions[idx * 3 + 2]);
     v.applyMatrix4(camera.matrixWorldInverse);
+    let sx: number, sy: number;
     if (v.z > -camera.near) {
-      hide();
-      return;
+      if (!transition) { hide(); return; }
+      sx = window.innerWidth * 0.5;
+      sy = window.innerHeight * 0.5;
+    } else {
+      v.applyMatrix4(camera.projectionMatrix);
+      sx = (v.x + 1) * 0.5 * window.innerWidth;
+      sy = (1 - v.y) * 0.5 * window.innerHeight;
     }
-    // When the focused star's rendered disc exceeds the ring diameter,
-    // the ring becomes redundant chrome on top of the star — hide it.
-    // Keeps the zoomed-in view of a resolved disc clean. Hysteresis via
-    // the diameter comparison (not diameter + some margin) is acceptable
-    // because zoom steps rarely land exactly on the threshold.
-    if (starfield.renderedSizePx(idx) > RADIUS_PX * 2) {
-      hide();
-      return;
-    }
-    v.applyMatrix4(camera.projectionMatrix);
+
     if (ring.style.display === 'none') show();
-    const sx = (v.x + 1) * 0.5 * window.innerWidth;
-    const sy = (1 - v.y) * 0.5 * window.innerHeight;
     ring.setAttribute('cx', sx.toFixed(1));
     ring.setAttribute('cy', sy.toFixed(1));
-    ring.setAttribute('r', String(RADIUS_PX));
+    ring.setAttribute('r', r.toFixed(1));
   });
 }

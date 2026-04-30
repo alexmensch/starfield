@@ -21,10 +21,15 @@
         </mask>
       </defs>
       <path id="con-figure" mask="url(#disc-occlude-mask)" />
-      <!-- Sol/GC locator arrows (Phase 4c). Each gets a dark backing stroke
-           drawn first for halo readability over bright stars, then the
-           coloured stroke on top. Path data is rebuilt each frame by
-           galactic-arrows.ts. -->
+      <!-- HUD ring — translucent screen-centred guide visible in OBSERVE mode
+           when the HUD is on. Sized and positioned each frame by
+           hud-overlay.ts. Drawn before the Sol/GC arrows so the arrow strokes
+           sit on top of the ring. -->
+      <circle id="hud-ring" class="hud-ring" cx="-100" cy="-100" r="0" />
+      <!-- Sol/GC locator arrows. Each gets a dark backing stroke drawn first
+           for halo readability over bright stars, then the coloured stroke on
+           top. Path data is rebuilt each frame by hud-overlay.ts (the arrows
+           are part of the HUD). -->
       <path id="sol-arrow-bg" class="gal-arrow-bg" />
       <path id="sol-arrow" class="gal-arrow sol" />
       <path id="gc-arrow-bg" class="gal-arrow-bg" />
@@ -218,8 +223,8 @@
               <button class="toggle-btn" data-unit="ly" type="button">lightyears</button>
             </div>
             <label class="checkbox-row" style="margin-top: 10px;">
-              <input id="gal-overlays" type="checkbox" />
-              <span>Galactic sphere &amp; locators</span>
+              <input id="show-hud" type="checkbox" />
+              <span>Head up display (HUD)</span>
             </label>
           </div>
         </section>
@@ -292,6 +297,10 @@
             <label class="checkbox-row">
               <input id="show-milkyway" type="checkbox" checked />
               <span>Galactic background glow</span>
+            </label>
+            <label class="checkbox-row">
+              <input id="show-galactic-grid" type="checkbox" />
+              <span>Galactic sphere</span>
             </label>
           </div>
         </section>

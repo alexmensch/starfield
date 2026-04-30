@@ -8,7 +8,7 @@ import dustParticleVert from './shaders/dust-particle.vert.glsl?raw';
 import dustParticleFrag from './shaders/dust-particle.frag.glsl?raw';
 import { GalacticDisc } from './galactic-disc';
 import { GalacticGrid } from './galactic-grid';
-import { GalacticArrows } from './galactic-arrows';
+import { HudOverlay } from './hud-overlay';
 import { GALACTIC_CENTRE_PC } from './galactic-coords';
 import { MolecularClouds, cloudViewingDistancePc } from './molecular-clouds';
 import type { CloudCatalog } from './cloud-loader';
@@ -38,9 +38,12 @@ export interface FilterState {
   sizeMinOverridden: boolean;
   sizeMaxOverridden: boolean;
   sizeSpanOverridden: boolean;
-  // Galactic coordinate sphere + Sol/GC arrows toggle. Disc is always-on
-  // (fades by zoom) so it isn't gated here.
-  showGalacticOverlays: boolean;
+  // Galactic coordinate sphere (grid lines on a 50 kpc sphere). Disc is
+  // always-on (fades by zoom) so it isn't gated here.
+  showGalacticGrid: boolean;
+  // HUD: Sol/GC locator arrows in both navigate + observe modes, plus the
+  // OBSERVE-mode screen-centred ring. Future HUD widgets hang off this flag.
+  showHud: boolean;
   // Molecular cloud overlay (Phase 3a). Default-on; toggle suppresses both
   // 3D rendering and hover/pick.
   showMolecularClouds: boolean;
@@ -313,7 +316,8 @@ export const DEFAULT_FILTER: FilterState = {
   sizeMinOverridden: false,
   sizeMaxOverridden: false,
   sizeSpanOverridden: false,
-  showGalacticOverlays: false,
+  showGalacticGrid: false,
+  showHud: false,
   showMolecularClouds: true,
   showMilkyway: true,
 };
@@ -398,12 +402,13 @@ export class Starfield {
   private observeAimQ = new THREE.Quaternion();
 
   // Galactic reference layers (Phase 4c). Disc fades in by camera-distance
-  // from Sol and is always-on; grid + arrows are gated by
-  // `filter.showGalacticOverlays`. Mono mode swaps strokes to a paper-chart
-  // palette via setMonochrome on each layer.
+  // from Sol and is always-on. Grid is gated by `filter.showGalacticGrid`.
+  // The HUD (Sol/GC arrows + OBSERVE-mode ring) is gated by
+  // `filter.showHud`. Mono mode swaps strokes to a paper-chart palette via
+  // setMonochrome on each layer (HUD is CSS-only).
   private galacticDisc: GalacticDisc;
   private galacticGrid: GalacticGrid;
-  private galacticArrows: GalacticArrows;
+  private hudOverlay: HudOverlay;
 
   // Molecular cloud overlay (Phase 3a). null until attachClouds() runs;
   // the layer loads asynchronously after the catalog and search index so
@@ -665,20 +670,21 @@ export class Starfield {
     this.scene.add(this.glowMesh);
 
     // Galactic reference layers — disc is always added; grid hides itself
-    // until enabled. Arrows are pure SVG inside the existing #overlay so they
-    // share the distance vector's stroke + halo styling and inherit the
-    // `body.warping` hide rule for free.
+    // until enabled. The HUD (ring + Sol/GC arrows) is pure SVG inside the
+    // existing #overlay so it shares the distance vector's stroke + halo
+    // styling and inherits the `body.warping` hide rule for free.
     this.galacticDisc = new GalacticDisc();
     this.scene.add(this.galacticDisc.group);
     this.galacticGrid = new GalacticGrid();
     this.scene.add(this.galacticGrid.group);
+    const hudRing = document.getElementById('hud-ring') as unknown as SVGCircleElement;
     const solPath = document.getElementById('sol-arrow') as unknown as SVGPathElement;
     const solBg = document.getElementById('sol-arrow-bg') as unknown as SVGPathElement;
     const gcPath = document.getElementById('gc-arrow') as unknown as SVGPathElement;
     const gcBg = document.getElementById('gc-arrow-bg') as unknown as SVGPathElement;
     const solLabel = document.getElementById('sol-arrow-label') as unknown as SVGTextElement;
     const gcLabel = document.getElementById('gc-arrow-label') as unknown as SVGTextElement;
-    this.galacticArrows = new GalacticArrows(solPath, solBg, gcPath, gcBg, solLabel, gcLabel);
+    this.hudOverlay = new HudOverlay(hudRing, solPath, solBg, gcPath, gcBg, solLabel, gcLabel);
 
     // Clicking either label aims the camera at the named object. Sol's
     // local-frame position is just `-worldOffset` (Sol is the catalog
@@ -734,6 +740,18 @@ export class Starfield {
 
   getCameraMode(): CameraMode { return this.cameraMode; }
   isObserveTransitionActive(): boolean { return this.observeTransition !== null; }
+
+  // Eased progress of the in-flight observe-mode camera translate, or null
+  // if no transition is active. `f` matches the easing inside
+  // updateObserveTransition so overlays that lerp alongside the camera
+  // (focus ring shrink, HUD ring grow) stay in sync visually.
+  getObserveTransitionProgress(): { f: number; kind: 'enter' | 'exit' } | null {
+    const s = this.observeTransition;
+    if (!s) return null;
+    const t = Math.min(1, (performance.now() - s.startTimeMs) / s.durationMs);
+    const f = t < 0.5 ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t);
+    return { f, kind: s.kind };
+  }
 
   onCameraModeChange(handler: (mode: CameraMode) => void) {
     this.onCameraModeHandlers.push(handler);
@@ -1422,7 +1440,7 @@ export class Starfield {
     this.renderer.setClearColor(on ? 0xf5f2ea : 0x000000, on ? 1 : 0);
     this.galacticDisc.setMonochrome(on);
     this.galacticGrid.setMonochrome(on);
-    this.galacticArrows.setMonochrome(on);
+    this.hudOverlay.setMonochrome(on);
     this.clouds?.setMonochrome(on);
     this.milkyway.setMonochrome(on);
     this.fireStateChange();
@@ -2352,7 +2370,7 @@ export class Starfield {
     if (this.warpState) {
       this.galacticDisc.group.visible = false;
       this.galacticGrid.group.visible = false;
-      this.galacticArrows.setVisible(false);
+      this.hudOverlay.setVisible(false);
       this.clouds?.update(this.worldOffset, this.filter.showMolecularClouds);
       return;
     }
@@ -2374,7 +2392,7 @@ export class Starfield {
     const distFromSol = Math.sqrt(ax * ax + ay * ay + az * az);
     this.galacticDisc.update(this.worldOffset, distFromSol);
 
-    if (this.filter.showGalacticOverlays) {
+    if (this.filter.showGalacticGrid) {
       this.galacticGrid.group.visible = true;
       this.galacticGrid.update(this.camera.position);
     } else {
@@ -2385,16 +2403,19 @@ export class Starfield {
       this.focusedStar !== null ? this.starLocalPosition(this.focusedStar) : null;
     const isSolFocus =
       this.focusedStar !== null && this.focusedStar === this.catalog.solIndex;
-    this.galacticArrows.update(
-      this.camera,
-      this.controls.target,
-      this.worldOffset,
+    this.hudOverlay.update({
+      enabled: this.filter.showHud,
+      camera: this.camera,
+      target: this.controls.target,
+      worldOffset: this.worldOffset,
       focusedLocal,
-      isSolFocus,
-      this.filter.showGalacticOverlays,
-      this.filter.sizeMax,
-      this.cameraMode === 'observe',
-    );
+      hideSolArrow: isSolFocus,
+      sizeMaxPx: this.filter.sizeMax,
+      cameraMode: this.cameraMode,
+      transition: this.getObserveTransitionProgress(),
+      w: window.innerWidth,
+      h: window.innerHeight,
+    });
 
     this.clouds?.update(this.worldOffset, this.filter.showMolecularClouds);
   }

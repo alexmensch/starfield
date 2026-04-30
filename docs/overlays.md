@@ -59,9 +59,12 @@ If you see a disappearing vector, check this logic first.
 
 Three SVG layers conditionally hide while `cameraMode === 'observe'`:
 
-- **Focus ring** (`focus-ring-overlay.ts`) — early-returns when in
-  observe or mid-observe-transition. The ring is meaningless when the
-  camera sits *at* the focal star.
+- **Focus ring** (`focus-ring-overlay.ts`) — hidden in steady-state
+  observe (the ring is meaningless when the camera sits *at* the focal
+  star), but during the navigate↔observe transition its radius lerps to
+  0 (enter) or back to 24 px (exit) instead of hard-hiding so it visually
+  morphs through the HUD ring. The eased progress comes from
+  `Starfield.getObserveTransitionProgress()`.
 - **Disc mask cutouts** (`disc-mask.ts`) — the focal star and its
   binary-companion candidates are skipped when in observe, so the
   constellation overlay paints unmasked through that region (and the
@@ -72,8 +75,13 @@ Three SVG layers conditionally hide while `cameraMode === 'observe'`:
   `setVectorTo` / `setVectorToCloud` setters guard against
   observe-mode calls defensively.
 
-The Sol/GC arrows do **not** hide — they switch to a HUD path instead
-(see `docs/rendering.md` §Galactic reference system).
+The Sol/GC arrows + the HUD ring do **not** hide — they're the HUD,
+gated by `filter.showHud` independently of camera mode. In OBSERVE the
+arrows attach to the HUD ring rim and swivel around it; through the
+transition the focus ring shrinks while the HUD ring grows so the
+arrows stay tangent to whichever circle is dominant. See
+`docs/rendering.md` §Galactic reference system → HUD ring / Shaft start
+radius for the projection math.
 
 ## SVG hide semantics
 

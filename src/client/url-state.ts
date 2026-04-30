@@ -17,7 +17,6 @@ const DEFAULTS = {
   preset: 'naked-eye' as MagPresetName,
   spect: ALL_SPECT_MASK,
   con: -1,
-  gov: 0,
   // Molecular cloud overlay defaults to ON, so the URL param appears only
   // when the user explicitly turns it off.
   mc: 1,
@@ -80,7 +79,8 @@ export function applyFromUrl(starfield: Starfield) {
     patch.sizeSpan = Number(params.get('span'));
     patch.sizeSpanOverridden = true;
   }
-  if (params.has('gov')) patch.showGalacticOverlays = params.get('gov') === '1';
+  if (params.has('grid')) patch.showGalacticGrid = params.get('grid') === '1';
+  if (params.has('hud')) patch.showHud = params.get('hud') === '1';
   if (params.has('mc')) patch.showMolecularClouds = params.get('mc') === '1';
   if (params.has('mw')) patch.showMilkyway = params.get('mw') === '1';
   if (Object.keys(patch).length) starfield.setFilter(patch);
@@ -190,7 +190,8 @@ export function startUrlSync(starfield: Starfield) {
     if (f.sizeMinOverridden) p.set('smin', fmt(f.sizeMin));
     if (f.sizeMaxOverridden) p.set('smax', fmt(f.sizeMax));
     if (f.sizeSpanOverridden) p.set('span', fmt(f.sizeSpan));
-    if (f.showGalacticOverlays) p.set('gov', '1');
+    if (f.showGalacticGrid) p.set('grid', '1');
+    if (f.showHud) p.set('hud', '1');
     if (!f.showMolecularClouds) p.set('mc', '0');
     if (!f.showMilkyway) p.set('mw', '0');
 

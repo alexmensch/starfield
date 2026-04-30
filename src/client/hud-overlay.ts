@@ -1,0 +1,404 @@
+import * as THREE from 'three';
+import { GALACTIC_CENTRE_PC } from './galactic-coords';
+import { fmtDist } from './distance-util';
+import {
+  buildArrowSvgPath,
+  ARROW_HEAD_DEPTH_PX,
+  ARROW_LABEL_OFFSET_PX,
+  ARROW_LABEL_PADDING_PX,
+} from './arrow-path';
+
+// Nominal apparent length of each arrow on screen, in CSS pixels. The shaft
+// is built directly in screen space so this length is exact regardless of
+// how the arrow's 3D direction projects. The actual length is capped per
+// frame so the tip never crowds the projected target — see `updateOne`.
+const ARROW_PIXEL_LENGTH = 110;
+// Halo gap between the active ring rim and the arrow shaft start. Same gap
+// used in both navigate (around the focus ring) and observe (around the
+// HUD ring), so the arrows visually detach from the ring identically in
+// both modes.
+const RING_HALO_GAP_PX = 4;
+// Mirrors `RADIUS_PX` in focus-ring-overlay.ts. Duplicated here rather than
+// exported because the focus-ring module would have to import nothing else
+// from this one — keeping the focus ring's geometry self-contained beats
+// adding a one-symbol cross-import.
+const FOCUS_RING_RADIUS_PX = 24;
+// Minimum shaft length below which the shrunken arrow reads as a stub. We
+// hide instead of drawing it. 8 px keeps the chevron + a sliver of shaft
+// visible when on the edge.
+const MIN_SHAFT_PIXEL_LENGTH = 8;
+// FOV anchor for the OBSERVE ring: at 10° vertical FOV the ring radius
+// equals `RING_SIZE_FACTOR × f.sizeMax`. Above that the radius scales
+// `1/fov` so the ring's angular size stays constant as FOV changes; the
+// factor lifts the ring up to a comfortably-readable size at typical
+// FOVs (raw `sizeMax` is single-digit pixels and reads as a dot).
+const RING_FOV_ANCHOR_DEG = 10;
+const RING_SIZE_FACTOR = 5;
+
+/**
+ * Map current vertical FOV (degrees) and the user-tuned max star size to
+ * the HUD ring's pixel radius. Used by the ring itself and by the Sol/GC
+ * arrow shafts so the arrows attach to the ring rim and swivel around it
+ * as the user looks around in OBSERVE mode.
+ */
+export function ringRadiusPx(fovDeg: number, sizeMaxPx: number): number {
+  return RING_SIZE_FACTOR * sizeMaxPx * (RING_FOV_ANCHOR_DEG / Math.max(fovDeg, 0.0001));
+}
+
+export interface HudUpdateOpts {
+  /** User-facing HUD toggle. When false the entire overlay hides. */
+  enabled: boolean;
+  /** Live perspective camera (matrices must be current). */
+  camera: THREE.PerspectiveCamera;
+  /** Orbit target in local frame — used as origin when unfocused. */
+  target: THREE.Vector3;
+  /** Floating-origin offset (catalog absolute → local). */
+  worldOffset: THREE.Vector3;
+  /** Focused star's local-frame position, or null when unfocused. */
+  focusedLocal: THREE.Vector3 | null;
+  /** True when the focused star is Sol — Sol arrow hidden in that case. */
+  hideSolArrow: boolean;
+  /** Current max-app-size from the Camera panel (≈ disc diameter). The
+   *  arrow tip stays this far from the projected target so it doesn't
+   *  crowd the star's disc. */
+  sizeMaxPx: number;
+  /** Steady-state camera mode. */
+  cameraMode: 'navigate' | 'observe';
+  /** Eased progress of the in-flight observe transition, or null. Driven
+   *  by Starfield.getObserveTransitionProgress(). */
+  transition: { f: number; kind: 'enter' | 'exit' } | null;
+  /** Viewport size in CSS pixels. */
+  w: number;
+  h: number;
+}
+
+/**
+ * The HUD: Sol/GC locator arrows + the OBSERVE-mode screen-centred ring.
+ * One feature, one module. Future HUD widgets (e.g. compass tick marks,
+ * roll indicator) hang off the same toggle and live here.
+ *
+ * The arrows project from the focused-star (or controls.target when
+ * unfocused) and point toward Sol / the galactic centre. They share the
+ * `#overlay` SVG with the distance vector so they inherit the
+ * `body.warping` hide rule and the same stroke palette.
+ *
+ * Per-frame the ring + the arrow shaft start radius scale together with
+ * mode + transition state so the navigate→observe (and reverse)
+ * transition reads as a smooth morph: the focus ring shrinks while the
+ * HUD ring grows, and the arrows track whichever circle is dominant.
+ */
+export class HudOverlay {
+  private ring: SVGCircleElement;
+  private solPath: SVGPathElement;
+  private solBg: SVGPathElement;
+  private gcPath: SVGPathElement;
+  private gcBg: SVGPathElement;
+  private solLabel: SVGTextElement;
+  private gcLabel: SVGTextElement;
+
+  // Reusable scratch vectors so per-frame updates allocate nothing.
+  private tmpDir = new THREE.Vector3();
+  private tmpOrigin = new THREE.Vector3();
+  private tmpAux = new THREE.Vector3();
+  private tmpSolLocal = new THREE.Vector3();
+  private tmpGcLocal = new THREE.Vector3();
+
+  constructor(
+    ring: SVGCircleElement,
+    solPath: SVGPathElement,
+    solBg: SVGPathElement,
+    gcPath: SVGPathElement,
+    gcBg: SVGPathElement,
+    solLabel: SVGTextElement,
+    gcLabel: SVGTextElement,
+  ) {
+    this.ring = ring;
+    this.solPath = solPath;
+    this.solBg = solBg;
+    this.gcPath = gcPath;
+    this.gcBg = gcBg;
+    this.solLabel = solLabel;
+    this.gcLabel = gcLabel;
+    this.hideAll();
+  }
+
+  /** Per-frame update. */
+  update(opts: HudUpdateOpts) {
+    if (!opts.enabled) {
+      this.hideAll();
+      return;
+    }
+
+    const { camera, target, worldOffset, focusedLocal, hideSolArrow,
+            sizeMaxPx, cameraMode, transition, w, h } = opts;
+
+    // Sol's local-frame position is `-worldOffset` (Sol is the catalog
+    // origin); GC is the absolute GC vector minus the same offset.
+    this.tmpSolLocal.set(-worldOffset.x, -worldOffset.y, -worldOffset.z);
+    this.tmpGcLocal.set(
+      GALACTIC_CENTRE_PC.x - worldOffset.x,
+      GALACTIC_CENTRE_PC.y - worldOffset.y,
+      GALACTIC_CENTRE_PC.z - worldOffset.z,
+    );
+
+    // Origin: the focal star (or controls.target if unfocused) is what the
+    // arrows project from and what distance labels measure to.
+    const origin = this.tmpOrigin.copy(focusedLocal ?? target);
+
+    // 2D anchor for the ring + arrow shaft starts. Try projecting origin;
+    // fall back to screen-centre when the projection is degenerate (camera
+    // at/behind origin — the OBSERVE steady state, where the camera is
+    // parked at the focal star). The fallback is also what the focal-star
+    // projection naturally tends toward as the enter-transition completes,
+    // so the post-transition switch is invisible.
+    const originScreen = projectToScreen(origin, camera, w, h);
+    const cx = originScreen ? originScreen[0] : w * 0.5;
+    const cy = originScreen ? originScreen[1] : h * 0.5;
+
+    // Mode-aware shaft start radius. Drives both arrow shaft starts and
+    // the ring's drawn radius. Anchored to the user's max-star-size knob
+    // so the ring scales with the rest of the scene's star presentation.
+    const R = ringRadiusPx(camera.fov, sizeMaxPx);
+    const shaftStartPx = computeShaftStartRadius(cameraMode, transition, R);
+    const ringRadius = computeRingRadius(cameraMode, transition, R);
+
+    // Ring rendering. Centred on the same anchor as the arrow shaft starts
+    // so the arrows always tangent the ring rim, even mid-transition when
+    // the anchor slides from the projected focal-star toward screen-centre.
+    if (ringRadius > 0) {
+      this.ring.style.display = '';
+      this.ring.setAttribute('cx', cx.toFixed(1));
+      this.ring.setAttribute('cy', cy.toFixed(1));
+      this.ring.setAttribute('r', ringRadius.toFixed(1));
+    } else {
+      this.ring.style.display = 'none';
+    }
+
+    // Aux-step for screen-direction derivation. Sized as the world
+    // equivalent of ARROW_PIXEL_LENGTH at the focal depth — long enough for
+    // clean projection error, short enough to stay in front of the camera
+    // even when `dir` points toward the camera.
+    const distToOrigin = camera.position.distanceTo(origin);
+    const focalPx = h / (2 * Math.tan((camera.fov * Math.PI) / 360));
+    const auxStepW = (ARROW_PIXEL_LENGTH * Math.max(distToOrigin, 1e-3)) / Math.max(focalPx, 1);
+
+    const targetMarginPx = Math.max(sizeMaxPx, 0);
+
+    const solDist = this.tmpSolLocal.distanceTo(origin);
+    this.updateOne(
+      this.solPath, this.solBg, this.solLabel,
+      origin, cx, cy,
+      this.tmpDir.copy(this.tmpSolLocal).sub(origin),
+      solDist, this.tmpSolLocal,
+      auxStepW, camera, w, h,
+      hideSolArrow, targetMarginPx, shaftStartPx, 'Sol',
+    );
+
+    const gcDist = this.tmpGcLocal.distanceTo(origin);
+    this.updateOne(
+      this.gcPath, this.gcBg, this.gcLabel,
+      origin, cx, cy,
+      this.tmpDir.copy(this.tmpGcLocal).sub(origin),
+      gcDist, this.tmpGcLocal,
+      auxStepW, camera, w, h,
+      false, targetMarginPx, shaftStartPx, 'Galactic centre',
+    );
+  }
+
+  private updateOne(
+    path: SVGPathElement,
+    bg: SVGPathElement,
+    label: SVGTextElement,
+    origin: THREE.Vector3,
+    cx: number,
+    cy: number,
+    dir: THREE.Vector3,
+    distancePc: number,
+    targetLocal: THREE.Vector3,
+    auxStepW: number,
+    camera: THREE.PerspectiveCamera,
+    w: number,
+    h: number,
+    hide: boolean,
+    targetMarginPx: number,
+    shaftStartPx: number,
+    labelPrefix: string,
+  ) {
+    const dirLenSq = dir.lengthSq();
+    if (hide || dirLenSq < 1e-12) {
+      this.hideArrow(path, bg, label);
+      return;
+    }
+    dir.multiplyScalar(1 / Math.sqrt(dirLenSq));
+
+    const targetScreen = projectToScreen(targetLocal, camera, w, h);
+
+    // Direction in screen space. Two derivations, picked by which one is
+    // well-defined this frame:
+    //   1. Aux-step (primary, navigate-mode-friendly): project a tiny step
+    //      along `dir` from `origin` and take the screen-space delta. Gets
+    //      perspective right when `origin` ≠ camera.
+    //   2. Target-projection fallback (observe-mode-friendly): use the
+    //      direct screen vector from anchor to projected target. Aux-step
+    //      collapses when `origin` sits at the camera (observe steady
+    //      state) — the aux point projects to the same degenerate point —
+    //      so we fall back to projecting the target itself, which gives
+    //      the correct angular direction since camera == origin.
+    let sux = 0, suy = 0;
+    let dirOk = false;
+    this.tmpAux.copy(origin).addScaledVector(dir, auxStepW);
+    const auxScreen = projectToScreen(this.tmpAux, camera, w, h);
+    if (auxScreen) {
+      const sdx = auxScreen[0] - cx;
+      const sdy = auxScreen[1] - cy;
+      const slen = Math.hypot(sdx, sdy);
+      if (slen >= 1) {
+        sux = sdx / slen;
+        suy = sdy / slen;
+        dirOk = true;
+      }
+    }
+    if (!dirOk && targetScreen) {
+      const tdx = targetScreen[0] - cx;
+      const tdy = targetScreen[1] - cy;
+      const tlen = Math.hypot(tdx, tdy);
+      if (tlen >= 1) {
+        sux = tdx / tlen;
+        suy = tdy / tlen;
+        dirOk = true;
+      }
+    }
+    if (!dirOk) {
+      // Both derivations degenerate: target is behind the camera AND the
+      // origin's near-camera position killed the aux step, OR the user is
+      // looking exactly at / exactly along the target direction (no useful
+      // 2D arrow direction).
+      this.hideArrow(path, bg, label);
+      return;
+    }
+
+    // Shaft endpoints + chevron tip in screen pixels. Default length
+    // ARROW_PIXEL_LENGTH; shrunk so the tip stays `targetMarginPx` short of
+    // the projected target when the target falls inside the nominal shaft.
+    let shaftLengthPx = ARROW_PIXEL_LENGTH;
+    if (targetScreen) {
+      const tdx = targetScreen[0] - cx;
+      const tdy = targetScreen[1] - cy;
+      const projAlong = tdx * sux + tdy * suy;
+      if (projAlong > 0) {
+        const allowed = projAlong - shaftStartPx - targetMarginPx;
+        if (allowed < shaftLengthPx) shaftLengthPx = allowed;
+      }
+    }
+    if (shaftLengthPx < MIN_SHAFT_PIXEL_LENGTH) {
+      this.hideArrow(path, bg, label);
+      return;
+    }
+
+    const shaftStartX = cx + sux * shaftStartPx;
+    const shaftStartY = cy + suy * shaftStartPx;
+    const tipX = shaftStartX + sux * shaftLengthPx;
+    const tipY = shaftStartY + suy * shaftLengthPx;
+
+    const d = buildArrowSvgPath(shaftStartX, shaftStartY, tipX, tipY);
+    if (!d) {
+      this.hideArrow(path, bg, label);
+      return;
+    }
+    path.setAttribute('d', d);
+    bg.setAttribute('d', d);
+
+    const labelAnchorX = tipX + ARROW_LABEL_OFFSET_PX + ARROW_HEAD_DEPTH_PX;
+    const labelAnchorY = tipY - ARROW_LABEL_OFFSET_PX;
+    const sx = clamp(labelAnchorX, ARROW_LABEL_PADDING_PX, w - ARROW_LABEL_PADDING_PX);
+    const sy = clamp(labelAnchorY, ARROW_LABEL_PADDING_PX, h - ARROW_LABEL_PADDING_PX);
+    label.style.display = '';
+    label.setAttribute('x', sx.toFixed(1));
+    label.setAttribute('y', sy.toFixed(1));
+    label.textContent = `${labelPrefix} · ${fmtDist(distancePc)}`;
+  }
+
+  /** Mono-mode swap is handled by CSS rules on `.gal-arrow`, `.gal-arrow-bg`,
+   *  and `.hud-ring`, so this method is intentionally empty. Kept on the
+   *  interface for symmetry with the disc/grid layers. */
+  setMonochrome(_on: boolean) { /* CSS-only */ }
+
+  /** Top-level visibility for warp-hide. */
+  setVisible(on: boolean) {
+    if (!on) this.hideAll();
+  }
+
+  private hideAll() {
+    this.ring.style.display = 'none';
+    this.hideArrow(this.solPath, this.solBg, this.solLabel);
+    this.hideArrow(this.gcPath, this.gcBg, this.gcLabel);
+  }
+
+  private hideArrow(path: SVGPathElement, bg: SVGPathElement, label: SVGTextElement) {
+    path.setAttribute('d', '');
+    bg.setAttribute('d', '');
+    label.style.display = 'none';
+  }
+}
+
+// The "active" ring the arrows attach to:
+//   - Navigate steady state → focus ring (24 px, drawn by focus-ring-overlay)
+//   - Observe steady state  → HUD ring (R px, drawn by this module)
+//   - Transition            → max of the two as both lerp through 0
+// The arrow shaft starts `RING_HALO_GAP_PX` outside this radius, so the
+// halo gap reads identically in either mode and lerps continuously through
+// the transition.
+function activeRingRadius(
+  cameraMode: 'navigate' | 'observe',
+  transition: { f: number; kind: 'enter' | 'exit' } | null,
+  R: number,
+): number {
+  if (transition) {
+    const focus = transition.kind === 'enter'
+      ? FOCUS_RING_RADIUS_PX * (1 - transition.f)
+      : FOCUS_RING_RADIUS_PX * transition.f;
+    const hud = transition.kind === 'enter'
+      ? R * transition.f
+      : R * (1 - transition.f);
+    return Math.max(focus, hud);
+  }
+  return cameraMode === 'observe' ? R : FOCUS_RING_RADIUS_PX;
+}
+
+function computeShaftStartRadius(
+  cameraMode: 'navigate' | 'observe',
+  transition: { f: number; kind: 'enter' | 'exit' } | null,
+  R: number,
+): number {
+  return activeRingRadius(cameraMode, transition, R) + RING_HALO_GAP_PX;
+}
+
+// HUD ring's drawn radius (the focus ring is rendered separately by
+// focus-ring-overlay.ts, with its own lerp). Returns 0 when the ring
+// shouldn't be drawn this frame.
+function computeRingRadius(
+  cameraMode: 'navigate' | 'observe',
+  transition: { f: number; kind: 'enter' | 'exit' } | null,
+  R: number,
+): number {
+  if (transition) {
+    return transition.kind === 'enter' ? R * transition.f : R * (1 - transition.f);
+  }
+  return cameraMode === 'observe' ? R : 0;
+}
+
+function clamp(v: number, lo: number, hi: number): number {
+  return v < lo ? lo : v > hi ? hi : v;
+}
+
+function projectToScreen(
+  p: THREE.Vector3,
+  camera: THREE.PerspectiveCamera,
+  w: number,
+  h: number,
+): [number, number] | null {
+  const v = p.clone().applyMatrix4(camera.matrixWorldInverse);
+  if (v.z >= -camera.near) return null;
+  const ndc = v.applyMatrix4(camera.projectionMatrix);
+  return [(ndc.x + 1) * 0.5 * w, (1 - ndc.y) * 0.5 * h];
+}

@@ -624,31 +624,38 @@ input[type="range"]::-moz-range-thumb {
 }
 /* Rose/pink to contrast with the warm-yellow Sol arrow (#fde68a) and the
    cyan GC arrow (#9ad7e0). Three distinct colours read as three distinct
-   reference arrows. */
+   reference arrows; opacity unified with the HUD arrows + ring at 0.4 so
+   star light shows through every arrow path. */
 #dist-line {
   fill: none;
-  stroke: rgba(249, 168, 212, 0.95);
-  stroke-width: 1.25;
+  stroke: rgba(249, 168, 212, 0.4);
+  stroke-width: 1.4;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+/* Backing paths for the distance vector + galactic arrows are kept in the
+   SVG markup (the overlay code updates their `d`) but rendered with no
+   stroke and no fill — translucent foregrounds need no opaque halo behind
+   them. `fill: none` is critical: SVG path default fill is solid black,
+   and the chevron's open subpaths would close implicitly under the
+   nonzero winding rule, painting black wedges behind the arrows. */
 #dist-line-bg {
   fill: none;
-  stroke: rgba(7, 9, 18, 0.9);
-  stroke-width: 3.5;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  stroke: none;
 }
 
+/* Focus ring + HUD ring + GC arrow share the galactic-grid hue (the slate
+   blue used by the 3D galactic-coordinate sphere) so the orientation
+   layers all read as one palette. Sol arrow and the distance vector keep
+   their distinct hues to stay individually identifiable. */
 .focus-ring {
   fill: none;
-  stroke: rgba(255, 255, 255, 0.75);
-  stroke-width: 1;
-  stroke-dasharray: 3 3;
+  stroke: rgba(102, 136, 170, 0.4);
+  stroke-width: 1.4;
   pointer-events: none;
 }
 .dist-label, .dist-warp-text {
-  fill: rgba(249, 168, 212, 1);
+  fill: rgba(249, 168, 212, 0.7);
   font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: 0.05em;
@@ -669,15 +676,14 @@ input[type="range"]::-moz-range-thumb {
   opacity: 1;
 }
 
-/* Galactic locator arrows (Sol / GC). Same stroke + halo treatment as the
-   distance vector for visual consistency: dark backing stroke laid down
-   first, coloured stroke on top. */
+/* Galactic locator arrows (Sol / GC). Translucent solid strokes — no dark
+   backing — so star light reads through every part of the HUD. The bg
+   element stays in the DOM so hud-overlay.ts can keep writing its `d`,
+   but renders nothing (no stroke, and fill: none to suppress the SVG
+   default black fill that would otherwise paint chevron wedges). */
 .gal-arrow-bg {
   fill: none;
-  stroke: rgba(7, 9, 18, 0.9);
-  stroke-width: 3.5;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  stroke: none;
 }
 .gal-arrow {
   fill: none;
@@ -685,11 +691,11 @@ input[type="range"]::-moz-range-thumb {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-.gal-arrow.sol { stroke: rgba(253, 230, 138, 0.95); }
-.gal-arrow.gc { stroke: rgba(154, 215, 224, 0.95); }
-body.monochrome .gal-arrow-bg {
-  stroke: rgba(255, 255, 255, 0.9);
-}
+/* HUD strokes share the same alpha (0.4) across the ring + arrows + the
+   distance vector — translucent enough that star light passes through but
+   solid lines, no dashes. Hue stays distinct (warm Sol, cool GC). */
+.gal-arrow.sol { stroke: rgba(253, 230, 138, 0.4); }
+.gal-arrow.gc { stroke: rgba(102, 136, 170, 0.4); }
 body.monochrome .gal-arrow.sol,
 body.monochrome .gal-arrow.gc {
   stroke: rgba(31, 35, 48, 0.85);
@@ -710,11 +716,25 @@ body.monochrome .gal-arrow.gc {
   pointer-events: auto;
   cursor: pointer;
 }
-.gal-arrow-label.sol { fill: rgba(253, 230, 138, 1); }
-.gal-arrow-label.gc { fill: rgba(154, 215, 224, 1); }
+.gal-arrow-label.sol { fill: rgba(253, 230, 138, 0.7); }
+.gal-arrow-label.gc { fill: rgba(102, 136, 170, 0.85); }
 body.monochrome .gal-arrow-label {
   fill: rgba(31, 35, 48, 0.9);
   stroke: rgba(255, 255, 255, 0.9);
+}
+
+/* HUD ring — translucent screen-centred guide visible in OBSERVE mode (and
+   during the navigate↔observe transition). Solid stroke at the same 0.4
+   alpha as the arrows so the whole HUD reads as one visual layer. Sized in
+   hud-overlay.ts (anchored to f.sizeMax × 10° / fov). */
+.hud-ring {
+  fill: none;
+  stroke: rgba(102, 136, 170, 0.4);
+  stroke-width: 1.4;
+  pointer-events: none;
+}
+body.monochrome .hud-ring {
+  stroke: rgba(31, 35, 48, 0.55);
 }
 
 .scale-bar {
@@ -814,12 +834,10 @@ body.monochrome #con-figure {
 }
 /* In chart mode the three reference arrows (distance vector + Sol/GC) all
    collapse to the same dark-grey-on-white palette — chart aesthetic
-   treats them as identical paper-chart annotations. */
+   treats them as identical paper-chart annotations. Backing strokes stay
+   off in mono so the look stays unified. */
 body.monochrome #dist-line {
   stroke: rgba(31, 35, 48, 0.85);
-}
-body.monochrome #dist-line-bg {
-  stroke: rgba(255, 255, 255, 0.9);
 }
 body.monochrome .focus-ring {
   stroke: rgba(31, 35, 48, 0.6);

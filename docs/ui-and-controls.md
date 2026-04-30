@@ -320,11 +320,15 @@ vanishes before the camera arrives. `controls.enabled = false`;
   controls' camera-up read-back path doesn't run in observe, so a
   bare `camera.up` change wouldn't be visible).
 
-**HUD locators:** Sol and Galactic-Centre arrows skip their normal 3D
-projection (degenerate when camera ≈ focal star) and anchor at screen
-centre with a `STAR_GAP_PX` (9 px) offset, pointing toward the
-projected target. See `docs/rendering.md` §Galactic reference system
-for the HUD-path branch.
+**HUD locators:** Sol and Galactic-Centre arrows are part of the HUD
+(`hud-overlay.ts`, gated by `filter.showHud`). In observe their anchor
+falls back to screen centre (the focal-star projection is degenerate
+since camera ≈ focal star) and the shaft start radius equals the HUD
+ring's `ringRadiusPx(fov, w, h)` so the arrows attach to the ring rim
+and swivel around it. The same shaft-start value lerps through the
+navigate↔observe transition so there's no pop on entry/exit. See
+`docs/rendering.md` §Galactic reference system → HUD ring / Shaft start
+radius for the formula and projection math.
 
 **Aim from observe:** `aimAt(localPoint)` (Sol/GC labels +
 constellation typeahead) has an observe-mode branch that builds a

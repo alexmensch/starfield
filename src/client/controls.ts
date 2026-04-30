@@ -48,9 +48,10 @@ export function bindControls(starfield: Starfield) {
   const sizeSpan = document.getElementById('size-span') as HTMLInputElement;
   const sizeReadout = document.getElementById('size-readout')!;
   const distUnitLabel = document.getElementById('dist-unit-label');
-  const galOverlays = document.getElementById('gal-overlays') as HTMLInputElement;
+  const showHud = document.getElementById('show-hud') as HTMLInputElement;
   const showClouds = document.getElementById('show-clouds') as HTMLInputElement;
   const showMilkyway = document.getElementById('show-milkyway') as HTMLInputElement;
+  const showGalacticGrid = document.getElementById('show-galactic-grid') as HTMLInputElement;
   const fov = document.getElementById('fov') as HTMLInputElement;
   const fovReadout = document.getElementById('fov-readout')!;
   const exag = document.getElementById('exag') as HTMLInputElement;
@@ -142,14 +143,17 @@ export function bindControls(starfield: Starfield) {
   sizeSpan.addEventListener('input', () => {
     starfield.setFilter({ sizeSpan: Number(sizeSpan.value), sizeSpanOverridden: true });
   });
-  galOverlays.addEventListener('change', () => {
-    starfield.setFilter({ showGalacticOverlays: galOverlays.checked });
+  showHud.addEventListener('change', () => {
+    starfield.setFilter({ showHud: showHud.checked });
   });
   showClouds.addEventListener('change', () => {
     starfield.setFilter({ showMolecularClouds: showClouds.checked });
   });
   showMilkyway.addEventListener('change', () => {
     starfield.setFilter({ showMilkyway: showMilkyway.checked });
+  });
+  showGalacticGrid.addEventListener('change', () => {
+    starfield.setFilter({ showGalacticGrid: showGalacticGrid.checked });
   });
 
   document.getElementById('size-reset')!.addEventListener('click', () => {
@@ -198,14 +202,17 @@ export function bindControls(starfield: Starfield) {
     if (sizeSpan.value !== spanStr) sizeSpan.value = spanStr;
     sizeReadout.textContent = `${f.sizeMin.toFixed(1)} – ${f.sizeMax.toFixed(1)}px · span ${f.sizeSpan.toFixed(0)}mag`;
 
-    if (galOverlays.checked !== f.showGalacticOverlays) {
-      galOverlays.checked = f.showGalacticOverlays;
+    if (showHud.checked !== f.showHud) {
+      showHud.checked = f.showHud;
     }
     if (showClouds.checked !== f.showMolecularClouds) {
       showClouds.checked = f.showMolecularClouds;
     }
     if (showMilkyway.checked !== f.showMilkyway) {
       showMilkyway.checked = f.showMilkyway;
+    }
+    if (showGalacticGrid.checked !== f.showGalacticGrid) {
+      showGalacticGrid.checked = f.showGalacticGrid;
     }
     const fovVal = starfield.getCameraFov();
     const fovStr = String(Math.round(fovVal));

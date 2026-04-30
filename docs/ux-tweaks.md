@@ -12,6 +12,17 @@ for the surrounding context.
 - **Chevron density** — `CHEVRON_SPACING_PX` / `_HALF_WIDTH` / `_DEPTH` in
   `distance-vector-overlay.ts`.
 - **Focus ring size** — `RADIUS_PX` in `focus-ring-overlay.ts`.
+  `hud-overlay.ts` mirrors the value as `FOCUS_RING_RADIUS_PX` so the
+  HUD's shaft-start computation tracks the same circle.
+- **HUD ring size** — `RING_SIZE_FACTOR` (5×) and `RING_FOV_ANCHOR_DEG`
+  (10°) in `hud-overlay.ts`. The ring radius is
+  `RING_SIZE_FACTOR × f.sizeMax × (RING_FOV_ANCHOR_DEG / fov)`. Bump the
+  factor to make the OBSERVE-mode HUD ring more prominent at typical
+  FOVs; lower the anchor to make zoomed-in views grow the ring more
+  aggressively.
+- **HUD halo gap** — `RING_HALO_GAP_PX` (4 px) in `hud-overlay.ts`.
+  Distance between the active ring rim (focus ring in navigate, HUD
+  ring in observe) and the start of the Sol/GC arrow shafts.
 - **Constellation polygon prominence** — `#con-polygon` stroke/fill in
   `styles.css` (currently deliberately subtle).
 - **Star size defaults** — `MAG_PRESETS` table in `starfield.ts`. Each

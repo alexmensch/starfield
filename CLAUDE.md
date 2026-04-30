@@ -116,8 +116,8 @@ Claude Code should read on demand when working on the relevant area.
   passes including the core depth-mask, super-Gaussian intensity
   profile, physical-size, luminosity softness, variability), Milky Way
   volumetric disc, molecular clouds, galactic reference layer (disc +
-  grid + Sol/GC arrows), dust extinction. Read when touching anything
-  visual on the WebGL side.
+  grid), HUD (Sol/GC arrows + OBSERVE ring + transition lerp), dust
+  extinction. Read when touching anything visual on the WebGL side.
 - **`docs/overlays.md`** — SVG layers above the canvas: constellation
   stick-figures, disc-mask, focus ring, distance vector with near-plane
   clipping. (The Sol/GC SVG arrows are documented in `docs/rendering.md`
