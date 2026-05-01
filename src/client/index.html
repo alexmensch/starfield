@@ -107,16 +107,16 @@
         <h2 id="info-title">Welcome to Starfield</h2>
         <p>
           Starfield is an interactive 3D map of <span id="info-star-count">—</span>
-          real stars. Each star is rendered at the colour and apparent
-          brightness you would actually see from the camera's current
-          position.
+          real stars within ~1250 parsecs of the Sun. Each star is rendered
+          at the colour and apparent brightness you would actually see from
+          the camera's current position, including dimming and reddening
+          from interstellar dust.
         </p>
         <p>
-          Drag to orbit, scroll to zoom, and hover over a star to see its
-          name. Click a star to focus on it, click a second star to measure
-          the distance between them, then click the far end of the line to
-          travel there. Search for &ldquo;Sol&rdquo; to return home to our
-          sun. Enjoy!
+          Drag to orbit, scroll to zoom, hover for a name. Click a star to
+          focus it, click a second to measure the distance, then click the
+          far end to travel there. Search &ldquo;Sol&rdquo; to come home,
+          or press ? for keyboard shortcuts.
         </p>
         <label class="modal-dismiss">
           <input type="checkbox" id="info-dontshow" /> Don't show this again
@@ -130,28 +130,36 @@
         <button class="modal-close" type="button" data-modal-dismiss aria-label="Close">×</button>
         <h2 id="about-title">About Starfield</h2>
         <p>
-          Starfield is a navigable 3D model of stars and nebulae mostly within
-          ~1250 parsecs of the Sun. Each star is rendered at the colour and
-          apparent brightness you would actually see from any given point in
-          space, including the effects of light extinction through dust in
-          the interstellar medium. Known variable stars are shown to pulsate
-          at their catalogue period.
+          Starfield is a navigable 3D model of stars and the local
+          interstellar medium, mostly within ~1250 parsecs of the Sun.
+          Each star is rendered at the colour and apparent brightness you
+          would actually see from any given point in space, including the
+          effects of dust extinction and reddening through the local Milky
+          Way. Known variable stars pulsate at their catalogue period.
         </p>
         <p>
-          The catalogue is based entirely on scientific measurement: ~313,000
-          stars from AT-HYG v3.3, cross-matched with the GCVS variable-star
-          catalogue. Constellation stick-figures, molecular cloud structure,
-          and the Milky Way's volumetric backdrop are all drawn from
-          published astronomy data. See Credits for the full list and more
-          details.
+          The catalogue is based entirely on scientific measurement:
+          ~313,000 stars from AT-HYG v3.3, cross-matched with the GCVS
+          variable-star catalogue and the Hipparcos CCDM list of visual
+          binaries. The Milky Way's volumetric backdrop is drawn from
+          published density profiles. See Credits for the full list and
+          more details.
         </p>
         <p>
-          Created by <strong>Alex Marshall</strong> and released under
-          AGPL-3.0.
+          Two camera modes: Navigate orbits, zooms, and warps between
+          stars; Observe stands at a chosen vantage point and lets you
+          look around. Press M while observing to switch to a Sky Atlas–
+          style monochrome chart with proper-name and Bayer labels. Press
+          ? for the full keyboard reference.
         </p>
         <p>
+          Created by <a href="https://alxm.me" target="_blank" rel="noopener noreferrer">Alex Marshall</a>
+          and released under AGPL-3.0.
+        </p>
+        <div class="about-footer">
           <a href="https://github.com/alexmensch/starfield" target="_blank" rel="noopener noreferrer">View source on GitHub →</a>
-        </p>
+          <span class="about-version" id="about-version"></span>
+        </div>
       </div>
     </div>
 
@@ -168,28 +176,26 @@
           <div class="credit-entry">
             <div class="credit-label">Stars</div>
             <a href="https://codeberg.org/astronexus/athyg" target="_blank" rel="noopener noreferrer">AT-HYG v3.3</a>
-            — David Nash. Combined Tycho-2 / Hipparcos / Gaia DR3 catalogue.
+            — David Nash. Combined Tycho-2 / Hipparcos / Gaia DR3 catalogue
           </div>
           <div class="credit-entry">
             <div class="credit-label">Variable stars</div>
             <a href="http://www.sai.msu.su/gcvs/gcvs/" target="_blank" rel="noopener noreferrer">GCVS 5.1</a>
-            — Samus et al., Sternberg Astronomical Institute.
+            — Samus et al., Sternberg Astronomical Institute
+          </div>
+          <div class="credit-entry">
+            <div class="credit-label">Visual binaries</div>
+            <a href="https://cdsarc.cds.unistra.fr/viz-bin/cat/I/239" target="_blank" rel="noopener noreferrer">Hipparcos CCDM</a>
+            — ESA, via VizieR
           </div>
           <div class="credit-entry">
             <div class="credit-label">Constellation lines</div>
-            <a href="https://github.com/Stellarium/stellarium" target="_blank" rel="noopener noreferrer">Stellarium</a>.
-          </div>
-          <div class="credit-entry">
-            <div class="credit-label">Molecular clouds</div>
-            <a href="https://doi.org/10.1051/0004-6361/201936145" target="_blank" rel="noopener noreferrer">Zucker et al. 2020</a>
-            (cloud distance compendium) and
-            <a href="https://doi.org/10.3847/1538-4357/ac1f96" target="_blank" rel="noopener noreferrer">Zucker et al. 2021</a>
-            (3D structure of local clouds).
+            <a href="https://github.com/Stellarium/stellarium" target="_blank" rel="noopener noreferrer">Stellarium</a>
           </div>
           <div class="credit-entry">
             <div class="credit-label">Interstellar dust</div>
             <a href="https://doi.org/10.5281/zenodo.8187943" target="_blank" rel="noopener noreferrer">Edenhofer &amp; Green 2024</a>
-            — 3D dust extinction map of the local Milky Way.
+            — 3D dust extinction map of the local Milky Way
           </div>
         </div>
         <p style="margin-top: 16px;">
@@ -321,6 +327,10 @@
             <button class="group-toggle" type="button" aria-label="Toggle Overlays section" aria-expanded="true">−</button>
           </header>
           <div class="group-body">
+            <label class="checkbox-row">
+              <input id="show-constellation" type="checkbox" checked />
+              <span>Show constellations</span>
+            </label>
             <div id="con-picker">
               <label class="sub-label">Constellation</label>
               <div class="con-typeahead" id="con-typeahead">
@@ -336,10 +346,6 @@
             </div>
 
             <label class="checkbox-row" style="margin-top: 12px;">
-              <input id="show-clouds" type="checkbox" checked />
-              <span>Molecular clouds</span>
-            </label>
-            <label class="checkbox-row">
               <input id="show-milkyway" type="checkbox" checked />
               <span>Galactic background glow</span>
             </label>

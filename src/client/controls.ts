@@ -1,4 +1,4 @@
-import { Starfield, ALL_SPECT_MASK, DEFAULT_FOV, type MagPresetName } from './starfield';
+import { Starfield, ALL_SPECT_MASK, DEFAULT_FOV, MAG_PRESETS, type MagPresetName } from './starfield';
 import { fmtDist, onUnitChange, getUnit } from './distance-util';
 import { bindConstellationTypeahead } from './constellation-typeahead';
 
@@ -49,7 +49,9 @@ export function bindControls(starfield: Starfield) {
   const sizeReadout = document.getElementById('size-readout')!;
   const distUnitLabel = document.getElementById('dist-unit-label');
   const showHud = document.getElementById('show-hud') as HTMLInputElement;
-  const showClouds = document.getElementById('show-clouds') as HTMLInputElement;
+  const showConstellation = document.getElementById('show-constellation') as HTMLInputElement;
+  const conInput = document.getElementById('con-input') as HTMLInputElement | null;
+  const conPicker = document.getElementById('con-picker');
   const showMilkyway = document.getElementById('show-milkyway') as HTMLInputElement;
   const showGalacticGrid = document.getElementById('show-galactic-grid') as HTMLInputElement;
   const showChart = document.getElementById('show-chart') as HTMLInputElement;
@@ -147,8 +149,8 @@ export function bindControls(starfield: Starfield) {
   showHud.addEventListener('change', () => {
     starfield.setFilter({ showHud: showHud.checked });
   });
-  showClouds.addEventListener('change', () => {
-    starfield.setFilter({ showMolecularClouds: showClouds.checked });
+  showConstellation.addEventListener('change', () => {
+    starfield.setFilter({ showConstellation: showConstellation.checked });
   });
   showMilkyway.addEventListener('change', () => {
     starfield.setFilter({ showMilkyway: showMilkyway.checked });
@@ -193,6 +195,18 @@ export function bindControls(starfield: Starfield) {
     if (appMag.value !== magStr) appMag.value = magStr;
     appMagReadout.textContent = `≤ ${f.maxAppMag.toFixed(1)}`;
 
+    // Highlight whichever preset button matches the current slider value.
+    // Value-driven (not click-driven) so dragging the slider to 6.5 still
+    // lights up "naked eye".
+    for (const btn of Array.from(magPresets)) {
+      const preset = btn.dataset.preset as MagPresetName | undefined;
+      const matches =
+        preset === 'naked-eye' || preset === 'binoculars' || preset === 'all'
+          ? Math.abs(f.maxAppMag - MAG_PRESETS[preset].maxAppMag) < 0.05
+          : false;
+      btn.classList.toggle('on', matches);
+    }
+
     for (const el of chipEls) {
       const bit = Number(el.dataset.bit);
       el.classList.toggle('on', (f.spectMask & (1 << bit)) !== 0);
@@ -209,9 +223,17 @@ export function bindControls(starfield: Starfield) {
     if (showHud.checked !== f.showHud) {
       showHud.checked = f.showHud;
     }
-    if (showClouds.checked !== f.showMolecularClouds) {
-      showClouds.checked = f.showMolecularClouds;
+    if (showConstellation.checked !== f.showConstellation) {
+      showConstellation.checked = f.showConstellation;
     }
+    // Picker mirrors the master toggle: disabled when constellations are
+    // hidden, so the user can't change `highlightCon` from a state they
+    // can't see. The picked value persists on the filter, so re-enabling
+    // restores whatever was last chosen. The `.disabled` class on the
+    // wrapper drives the muted styling on the "Constellation" sub-label
+    // alongside the input itself.
+    if (conInput) conInput.disabled = !f.showConstellation;
+    if (conPicker) conPicker.classList.toggle('disabled', !f.showConstellation);
     if (showMilkyway.checked !== f.showMilkyway) {
       showMilkyway.checked = f.showMilkyway;
     }
@@ -224,6 +246,11 @@ export function bindControls(starfield: Starfield) {
     const observeMode = starfield.getCameraMode() === 'observe';
     showChart.disabled = !observeMode;
     if (showChart.checked !== f.chart) showChart.checked = f.chart;
+    // Galactic-glow checkbox is meaningless in chart mode (the volumetric
+    // layer is hidden), so freeze it visually while preserving the
+    // underlying filter value for restoration on chart-off.
+    const chartActive = f.chart && observeMode;
+    showMilkyway.disabled = chartActive;
     const fovVal = starfield.getCameraFov();
     const fovStr = String(Math.round(fovVal));
     if (fov.value !== fovStr) fov.value = fovStr;

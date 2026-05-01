@@ -147,6 +147,41 @@ filtered results so it can't outrank a real match. `pick()` skips
 `aimAtConstellation` when `idx < 0` so the clear path doesn't try to
 aim at a non-existent target.
 
+**Master toggle (`showConstellation`).** A `<input id="show-constellation">`
+checkbox at the top of the Overlays group gates the entire constellation
+overlay — both the highlighted-only-in-navigate and the all-at-once
+chart-mode pass, plus the chart-mode Latin-name labels. When off,
+`controls.ts` disables `#con-input` and adds `.disabled` to `#con-picker`
+(faded sub-label), and `keyboard-shortcuts.ts` makes the `C` shortcut a
+no-op. `highlightCon` is preserved while disabled, so re-enabling
+restores the prior selection. URL flag bit 7 (`FLAG_CON_DISABLED`)
+encodes the off state; default (on) is implicit.
+
+## Disabled-control styling
+
+`controls.ts` toggles native `.disabled` on inputs whose state is
+preserved-but-frozen, and the panel CSS leans on the standard
+`:disabled` selectors so each fade lives in one place:
+
+- `.checkbox-row input[type="checkbox"]:not(:disabled):hover` — only
+  *enabled* checkboxes pick up the hover border, so a disabled box
+  doesn't look interactive.
+- `.checkbox-row input[type="checkbox"]:disabled` — opacity 0.45 +
+  muted border so the box itself reads as disabled (matches the
+  faded label text).
+- `.checkbox-row input[type="checkbox"]:disabled + span` — opacity
+  0.55 on the label.
+- `.con-typeahead input:disabled` + `#con-picker.disabled .sub-label`
+  — same fade on the typeahead row when the master toggle is off.
+
+Two specific freezes use this:
+
+- **Star chart mode** disables `#show-milkyway` (the Milky Way layer is
+  hidden under chart anyway, see `docs/chart-mode.md`); `f.showMilkyway`
+  is preserved so the toggle restores its prior state on chart-off.
+- **`showConstellation === false`** disables `#con-input` and the
+  surrounding `#con-picker` styling.
+
 ## Reverse-sync in `controls.ts`
 
 Widgets subscribe to `starfield.onFilterChange` and write DOM from the filter
@@ -185,6 +220,14 @@ value; `smin/smax/span` only when their override flag is true.
 Receiver applies the preset first, then layers the explicit overrides
 on top. See `docs/architecture.md` §URL state for the binary `?v=`
 format.
+
+**Active-preset highlight.** The reverse-sync in `controls.ts` compares
+`f.maxAppMag` against `MAG_PRESETS[*].maxAppMag` (epsilon 0.05) and
+toggles the `.on` class on the matching preset button. The match is
+value-driven, not click-driven — dragging the slider to 6.5 lights up
+"naked eye" the same as clicking it. Styling lives in
+`styles.css :.mag-preset.on` (accent colour + faint pill background,
+matching `.toggle-btn.on`).
 
 ## Field of view
 

@@ -266,7 +266,9 @@ function tick(
   // as the maxAppMag slider crosses one threshold instead of the other.
   // Per-frame iteration over a few thousand member stars is cheap.
   const constellations = cat.constellations;
-  for (const [conIdx, m] of conStars) {
+  // The Latin-name labels follow the constellation lines — when the
+  // master toggle is off, both disappear together.
+  if (f.showConstellation) for (const [conIdx, m] of conStars) {
     const con = constellations[conIdx];
     if (!con) continue;
 

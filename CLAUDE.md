@@ -162,6 +162,22 @@ Claude Code should read on demand when working on the relevant area.
   chevron density, focus-ring size, panel defaults, etc.) and where to
   find them. Read when the user asks for a tweak.
 
+## Temporarily shelved (v1.0)
+
+Code paths preserved; rendering / visibility disabled until the visual
+treatment is refined. Don't refactor the underlying machinery away.
+
+- **Molecular cloud overlay.** `molecular-clouds.ts`, `cloud-loader.ts`,
+  the cloud shaders, and `data/molecular-clouds/` all stay; the user
+  toggle is removed from settings and `FilterState.showMolecularClouds`
+  defaults to `false`. URL flag bit 2 is reserved for the prior
+  encoding. Chart-mode still calls `setCloudsIsobar` against the
+  invisible layer so the integration is intact for re-enable.
+- **Volumetric Milky Way in chart mode.** `Milkyway.setIsobar` now
+  hard-hides the disc + bulge meshes when chart engages instead of
+  emitting an isobar contour. The chart-isobar uniform / blending
+  switches stay wired so the contour pass can return.
+
 ## Things deliberately kept out
 
 Noted here so we don't re-debate scope:

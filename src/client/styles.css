@@ -508,6 +508,14 @@ input[type="range"]::-moz-range-thumb {
   min-width: 0;
 }
 .con-typeahead input:focus { border-color: var(--border-strong); }
+.con-typeahead input:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+#con-picker.disabled .sub-label {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
 @media (pointer: coarse) {
   .con-typeahead input { font-size: 16px; }
 }
@@ -568,6 +576,13 @@ input[type="range"]::-moz-range-thumb {
 }
 .link-btn:hover { color: var(--accent); }
 .row-actions .sep { opacity: 0.4; margin: 0 4px; }
+.mag-preset.on {
+  color: var(--accent);
+  background: rgba(125, 211, 252, 0.12);
+  padding: 1px 6px;
+  border-radius: 2px;
+  margin: 0 -6px;
+}
 
 .toggle-group {
   display: inline-flex;
@@ -1001,8 +1016,12 @@ body.monochrome #con-results {
   font-style: italic;
 }
 
-#show-chart:disabled + span {
+.checkbox-row input[type="checkbox"]:disabled {
+  cursor: not-allowed;
+}
+.checkbox-row input[type="checkbox"]:disabled + span {
   opacity: 0.55;
+  cursor: not-allowed;
 }
 
 /* ---- Chart-mode glyphs (Phase 8 v2) ---- */
@@ -1146,6 +1165,18 @@ body.monochrome .warp-btn:hover {
   margin-bottom: 2px;
 }
 
+.about-footer {
+  display: flex;
+  align-items: baseline;
+  margin-top: 14px;
+}
+.about-version {
+  margin-left: auto;
+  color: var(--fg-dim);
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+
 .modal-dismiss {
   display: inline-flex;
   align-items: center;
@@ -1173,12 +1204,16 @@ body.monochrome .warp-btn:hover {
   display: inline-block;
   vertical-align: middle;
 }
-.checkbox-row input[type="checkbox"]:hover,
+.checkbox-row input[type="checkbox"]:not(:disabled):hover,
 .modal-dismiss input[type="checkbox"]:hover { border-color: var(--fg-dim); }
 .checkbox-row input[type="checkbox"]:checked,
 .modal-dismiss input[type="checkbox"]:checked {
   background: var(--accent);
   border-color: var(--accent);
+}
+.checkbox-row input[type="checkbox"]:disabled {
+  opacity: 0.45;
+  border-color: var(--border);
 }
 .checkbox-row input[type="checkbox"]:checked::after,
 .modal-dismiss input[type="checkbox"]:checked::after {

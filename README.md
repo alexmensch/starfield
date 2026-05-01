@@ -64,15 +64,13 @@ Stack: TypeScript, Three.js (WebGL2), Vite, Cloudflare Workers.
 - **Star chart mode** (observe-only). Press `M` while in observe mode
   to flip the scene to a paper-chart aesthetic inspired by Sky Atlas
   2000.0 — flat hard-edged star discs sized linearly by magnitude
-  across the visible range, single-line isobar contours instead of the
-  Milky Way volumetric glow and shaded molecular clouds, and a
-  per-frame label engine that draws proper-named stars, every Bayer-
-  letter Greek glyph, constellation Latin names (outline-style overlay
-  typography that's allowed to overlap), and cloud names with greedy
-  collision avoidance. Variable stars get an outer ring around an
-  inner pulsing disc; double / multiple stars get short horizontal
-  wings through the disc. Disabled automatically when leaving observe
-  mode.
+  across the visible range, and a per-frame label engine that draws
+  proper-named stars, every Bayer-letter Greek glyph, and constellation
+  Latin names (outline-style overlay typography that's allowed to
+  overlap) with greedy collision avoidance. Variable stars get an outer
+  ring around an inner pulsing disc; double / multiple stars get short
+  horizontal wings through the disc. Disabled automatically when
+  leaving observe mode.
 - Two camera modes via the navigate / observe pill in the top-right card.
   **Navigate** is the default orbit camera. **Observe** parks the camera
   at the focused star (the star's disc itself is hidden; you're standing
@@ -112,13 +110,6 @@ Stack: TypeScript, Three.js (WebGL2), Vite, Cloudflare Workers.
   the client. The vertex shader raymarches camera-to-star at run time
   and dims + reddens stars by line-of-sight A_V — so stars behind dense
   dust look fainter and redder, exactly as you'd see them.
-- **Molecular cloud overlay.** ~96 named local star-forming clouds
-  (Taurus, Ophiuchus, Orion A/B/λ, Perseus, Cepheus, Aquila Rift,
-  Coalsack, etc.) rendered as soft warm ellipsoids with view-direction-
-  based density falloff. The 12 in Zucker 2021 use real 3D bounding
-  boxes for shape; the rest are spheres sized by sightline spread.
-  Search by name, hover for details, click to focus, click again to
-  measure, click the vector tip or press `W` to warp.
 - **Galactic reference layers** to anchor the local catalog against the
   Milky Way's geometry: an always-on translucent disc outline (15 kpc
   midplane + bulge wireframe) that fades in as the camera pulls away
@@ -233,13 +224,11 @@ is moderate even on mobile networks.
 | `data/crossid.txt` | GCVS ↔ Hip/HD cross-references | same as above | ~12 MB, LFS |
 | `data/stellarium-modern-skyculture.json` | Classical constellation stick figures | [Stellarium modern sky culture](https://github.com/Stellarium/stellarium/tree/master/skycultures/modern) | ~200 KB |
 | `data/dust/chunk_*.bin` + `manifest.json` + `particles.bin` | Resampled 3D interstellar-dust grid for per-star extinction | [Edenhofer et al. 2023](https://doi.org/10.5281/zenodo.8187943) (Zenodo) — fetched via the `dustmaps` Python package and resampled by `scripts/build-dust.py` | ~120 MiB total, LFS |
-| `data/molecular-clouds/zucker2020-tablea1.tsv` | Cloud distances (326 sightlines, ~96 named clouds) | [Zucker et al. 2020](https://doi.org/10.1051/0004-6361/201936145) — VizieR `J/A+A/633/A51` | ~88 KB |
-| `data/molecular-clouds/zucker2021-table[1-3].dat` | 3D bounding boxes, radial-profile fits, masses for 12 famous local SF clouds | [Zucker et al. 2021](https://doi.org/10.3847/1538-4357/ac1f96) — Harvard Dataverse | ~5 KB total |
 
 The larger catalogue files are tracked via Git LFS so they don't balloon
-the git pack. Small files (Stellarium JSON, Zucker tables) stay as
-regular blobs. Builds are fully self-contained — refresh from upstream
-is a manual, infrequent step, not a build dependency.
+the git pack. Small files (Stellarium JSON) stay as regular blobs.
+Builds are fully self-contained — refresh from upstream is a manual,
+infrequent step, not a build dependency.
 
 The AT-HYG **classic-IDs** subset selects stars that have at least one
 classical designation (IAU proper name, Bayer, Flamsteed, HIP, HD, HR, or
@@ -344,6 +333,13 @@ pan) works the same everywhere.
   (components never separately catalogued) carry the wings glyph if
   CCDM lists them but otherwise render as singletons.
 
+## Releases
+
+Tagged releases live on the
+[Releases page](https://github.com/alexmensch/starfield/releases) and
+are summarised in [`CHANGELOG.md`](./CHANGELOG.md). The cut-a-release
+runbook is in [`RELEASING.md`](./RELEASING.md).
+
 ## Licence
 
 The code in this repository is licensed under AGPL-3.0-only. See [`LICENSE`](./LICENSE).
@@ -376,8 +372,3 @@ The **Edenhofer et al. 2023 3D dust map** is published on Zenodo under
 CC-BY-4.0 (DOI [10.5281/zenodo.8187943](https://doi.org/10.5281/zenodo.8187943)).
 The resampled voxel grid in `data/dust/` is a derivative work and
 carries the same licence; see the dataset page for citation details.
-
-The **Zucker et al. 2020** cloud distance compendium and **Zucker et al.
-2021** 3D structure tables are published under CC-BY-4.0 via VizieR and
-Harvard Dataverse respectively. See the per-paper DOIs in the data
-sources table for citation details.

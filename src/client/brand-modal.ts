@@ -7,6 +7,8 @@ export function bindBrandModals() {
   const creditsBtn = document.getElementById('brand-credits')!;
   const aboutModal = document.getElementById('about-modal')!;
   const creditsModal = document.getElementById('credits-modal')!;
+  const versionEl = document.getElementById('about-version');
+  if (versionEl) versionEl.textContent = `v${import.meta.env.VITE_APP_VERSION}`;
 
   const open = (modal: HTMLElement) => {
     modal.hidden = false;

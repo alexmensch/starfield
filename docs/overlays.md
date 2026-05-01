@@ -11,6 +11,14 @@ galactic-overlay feature group.
 
 ## Constellation stick-figure overlay
 
+`FilterState.showConstellation` is the master visibility flag for both
+the stick-figure overlay and the chart-mode Latin-name labels (default
+on, panel toggle at the top of Overlays). When false the overlay clears
+itself and skips the per-frame projection pass entirely; the picker UI
+in the panel is also disabled while the flag is off so users can't
+mutate the unseen `highlightCon`. See `docs/ui-and-controls.md`
+§Constellation typeahead.
+
 When a constellation is highlighted, `constellation-overlay.ts` draws the
 classical asterism lines (sourced from Stellarium — see
 `docs/build-and-data.md` §Stick figures from Stellarium) as

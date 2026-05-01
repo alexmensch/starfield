@@ -51,24 +51,14 @@ into them where relevant.
   Produces `data/dust/chunk_*.bin` (64 chunks, 128 MiB total, LFS) plus
   `data/dust/particles.bin` (50K importance-sampled dust points, LFS).
   Density in E_ZGR per parsec; A_V/E_ZGR ≈ 2.742 at V band.
-- **Zucker et al. 2020** (cloud distance compendium):
-  https://doi.org/10.1051/0004-6361/201936145 — VizieR `J/A+A/633/A51`,
-  table A1, fetched via `vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=...`
-  and committed as `data/molecular-clouds/zucker2020-tablea1.tsv`. 326
-  sightlines through ~96 unique named SF clouds (Aquila Rift, Cepheus,
-  IC 1396, etc.) with 5%-precision distances. CC-BY 4.0.
-- **Zucker et al. 2021** (3D structure of local clouds):
-  https://doi.org/10.3847/1538-4357/ac1f96 — Harvard Dataverse, three
-  tables (DOIs `10.7910/DVN/CAVMAQ`, `QKYR3G`, `EIPHPR`). Table 1 (12
-  famous local SF clouds) gives axis-aligned 3D bounding boxes in
-  galactic Cartesian heliocentric pc — these become the ellipsoid axes
-  for Taurus / Ophiuchus / Orion A/B/λ / etc. Tables 2, 3 (radial-profile
-  fits + masses) committed for future use; not consumed today. CC-BY 4.0.
 
-The Zucker tables are processed by `scripts/build-clouds.py` into
-`public/clouds.json` (~30 KB). Z2021 is authoritative for the 12 clouds
-it covers; Z2020 fills the long tail as spheres with radius estimated
-from per-cloud sightline spread (or 5 pc default for singletons).
+> **Molecular cloud sources shelved for v1.0.** Zucker et al. 2020 +
+> 2021 cloud distances and 3D bounding boxes drive the molecular-cloud
+> ellipsoid layer, which is committed but not rendered in v1.0 while
+> the visual treatment is being refined. The build script
+> (`scripts/build-clouds.py`) and source files
+> (`data/molecular-clouds/`) remain in the repository for the future
+> re-enable.
 
 ## Stellar physics
 
@@ -194,7 +184,6 @@ These are reused by:
 - The galactic coordinate sphere (b/l grid).
 - The Sol/GC SVG arrow overlay.
 - The volumetric Milky Way disc + bulge layer.
-- The molecular cloud `quat` orientation for Z2021 ellipsoids.
 
 Implementation details: see `docs/galactic-overlay.md`.
 
@@ -247,9 +236,7 @@ self-shielding term. Default global strength = 0.45.
 The Edenhofer voxel grid is **deliberately not used** for the Milky Way
 band — voxel structure (~5 pc native) aliases into visible streaks
 along long camera→fragment rays (8–15 kpc) regardless of step
-distribution. Voxels stay in use for short per-star sightlines;
-molecular cloud ellipsoids carry the discrete near-cloud detail in
-front of the smooth analytical band.
+distribution. Voxels stay in use for short per-star sightlines.
 
 Implementation: `src/client/shaders/star.vert.glsl` (per-star) and
 `src/client/shaders/milkyway.frag.glsl` (volumetric); see

@@ -1,9 +1,18 @@
 # Molecular cloud overlay (Phase 3a)
 
+> **Status (v1.0):** Shelved. `FilterState.showMolecularClouds` defaults
+> to `false`, the user-facing toggle is removed from the panel, and the
+> URL flag bit 2 is reserved (no longer encoded). The render path,
+> shaders, build script, and data files are all preserved so the layer
+> can be re-enabled with a default flip once the visual treatment is
+> refined. Chart-mode integration (`setCloudsIsobar`) is still wired
+> against the now-invisible group.
+
 `molecular-clouds.ts` renders ~96 named local SF clouds as soft warm
-ellipsoids. Default-on; toggle in the Galactic-overlays panel section,
-encoded in the URL `?v=` flags byte when disabled. Stays visible during
-warp by design (flying past Taurus is a feature, not noise).
+ellipsoids. Originally default-on with a toggle in the Galactic-overlays
+panel section; in v1.0 the toggle is gone and the layer renders nothing.
+Stays visible during warp by design (flying past Taurus is a feature,
+not noise) — relevant once re-enabled.
 
 **Data:** `public/clouds.json` is the merged output of `build-clouds.py`:
 - Z2021 Table 1 → 12 ellipsoid clouds with axis-aligned bounding boxes in

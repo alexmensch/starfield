@@ -339,25 +339,24 @@ export class MilkyWay {
   isEnabled(): boolean { return this.enabled; }
 
   /**
-   * Chart-mode isobar pass. When on, both component materials emit only
-   * a thin contour where the integrated apparent magnitude crosses
-   * uMaxAppMag, blended over the paper background instead of additively
-   * onto stars. Chart-mode orchestrator (chart-mode.ts) is the sole
-   * caller; the user-facing visibility toggle is `setEnabled` and is
-   * orthogonal — when the user has the milky-way overlay disabled, the
-   * isobar doesn't render either.
+   * Chart-mode hook. The original design rendered an isobar contour pass
+   * here; for v1.0 the volumetric layer is hidden entirely in chart mode
+   * while the contour treatment is refined. The blending / uniform
+   * switch is preserved against future re-enable.
    */
   setIsobar(on: boolean) {
     if (this.isobar === on) return;
     this.isobar = on;
     this.sharedChart.uChartIsobar.value = on ? 1 : 0;
     for (const mat of [this.disc.material, this.bulge.material]) {
-      // Outline ink: alpha-over against the chart palette. Outside the
-      // isobar pass we revert to the original additive emission tone-map.
       mat.blending = on ? THREE.NormalBlending : THREE.AdditiveBlending;
-      mat.depthWrite = false; // unchanged across modes
+      mat.depthWrite = false;
       mat.needsUpdate = true;
     }
+    // Hard-hide both meshes under chart mode (independent of setEnabled,
+    // which gates the whole group from the user-facing toggle).
+    this.discMesh.visible = !on;
+    this.bulgeMesh.visible = !on;
   }
 
   setBrightness(x: number) {

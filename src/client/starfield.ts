@@ -38,6 +38,11 @@ export interface FilterState {
   sizeMinOverridden: boolean;
   sizeMaxOverridden: boolean;
   sizeSpanOverridden: boolean;
+  // Master visibility for constellation stick figures. When false the
+  // overlay draws nothing regardless of `highlightCon` (which is preserved
+  // so re-enabling restores the prior selection); the picker UI is also
+  // disabled and the C shortcut is suppressed by their own gates.
+  showConstellation: boolean;
   // Galactic coordinate sphere (grid lines on a 50 kpc sphere). Disc is
   // always-on (fades by zoom) so it isn't gated here.
   showGalacticGrid: boolean;
@@ -322,9 +327,10 @@ export const DEFAULT_FILTER: FilterState = {
   sizeMinOverridden: false,
   sizeMaxOverridden: false,
   sizeSpanOverridden: false,
+  showConstellation: true,
   showGalacticGrid: false,
   showHud: false,
-  showMolecularClouds: true,
+  showMolecularClouds: false,
   showMilkyway: true,
   chart: false,
 };

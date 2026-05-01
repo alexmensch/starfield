@@ -86,8 +86,12 @@ export function bindKeyboardShortcuts(starfield: Starfield) {
         e.preventDefault();
         break;
       case 'c': case 'C':
-        conModal.open();
-        e.preventDefault();
+        // Master toggle gates the picker UI — keep the shortcut quiet too
+        // so it doesn't pop a disabled input into a modal.
+        if (starfield.getFilter().showConstellation) {
+          conModal.open();
+          e.preventDefault();
+        }
         break;
       case 'h': case 'H':
         starfield.setFilter({ showHud: !starfield.getFilter().showHud });

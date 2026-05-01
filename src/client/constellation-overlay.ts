@@ -13,12 +13,14 @@ export function createConstellationOverlay(starfield: Starfield) {
 
   let current = -1;
   let chartActive = false;
+  let visible = true;
 
   const update = () => {
     const f = starfield.getFilter();
     current = f.highlightCon;
+    visible = f.showConstellation;
     chartActive = f.chart && starfield.getCameraMode() === 'observe';
-    if (current < 0 && !chartActive) {
+    if (!visible || (current < 0 && !chartActive)) {
       figure.setAttribute('d', '');
       return;
     }
@@ -26,6 +28,7 @@ export function createConstellationOverlay(starfield: Starfield) {
   };
 
   const tick = () => {
+    if (!visible) return;
     if (current < 0 && !chartActive) return;
 
     const cons = starfield.catalog.constellations;

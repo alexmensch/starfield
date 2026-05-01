@@ -14,15 +14,23 @@ are set (FLAG_CHART = 1 << 6 in the flags byte; see
    labels, monochrome topbar / brand box / typeahead).
 2. `applyTheme('mono')` — flips the existing dark-mode palette to the
    mono palette (already in `theme-toggle.ts`).
-3. `setCloudsIsobar(true)` + `setMilkywayIsobar(true)` — swaps the
-   relevant fragment shaders to isobar branches (below).
+3. `setCloudsIsobar(true)` + `setMilkywayIsobar(true)` — flips the
+   layers into chart-mode treatment (below).
 4. `startChartLabels()` — registers the per-frame label engine
    (`chart-labels.ts`).
 5. Constellation overlay flips to "always draw every constellation"
    (vs. only the highlighted one) so the chart shows the full asterism
-   network.
+   network. Subject to the master `showConstellation` toggle —
+   when off, no asterism lines or constellation Latin labels render.
 
 Exit reverses each step.
+
+> **v1.0 caveat.** The molecular cloud layer is shelved (see
+> `docs/molecular-clouds.md`), so its isobar pass is a no-op against an
+> invisible group. The Milky Way isobar is also disabled for v1.0 —
+> `Milkyway.setIsobar(true)` now hard-hides the disc + bulge meshes
+> instead of emitting the contour. The blending / `uChartIsobar` switch
+> is preserved in code so the contour pass can return after refinement.
 
 ## Star disc sizing — magnitude-driven
 

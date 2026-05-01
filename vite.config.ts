@@ -1,5 +1,14 @@
 import { defineConfig } from 'vite';
 import { resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
+
+// Expose package.json version as `import.meta.env.VITE_APP_VERSION`. The
+// VITE_ prefix is the supported way to inject build-time values that work
+// in both dev and prod (define behaves differently across the two).
+const pkgVersion: string = JSON.parse(
+  readFileSync(resolve(__dirname, 'package.json'), 'utf8'),
+).version;
+process.env.VITE_APP_VERSION = pkgVersion;
 
 // In dev we serve from the origin root for convenience; in production the
 // Worker mounts the app under /starfield, so generated asset URLs must be
