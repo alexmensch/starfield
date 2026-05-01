@@ -60,6 +60,72 @@ into them where relevant.
 > (`data/molecular-clouds/`) remain in the repository for the future
 > re-enable.
 
+## Stellar catalog ingestion
+
+AT-HYG is not a single survey — it's a heterogeneous merge that David
+Nash maintains across Tycho-2 (bulk positions and photometry, ~2.5M
+stars complete to V≈11), Hipparcos (the bright end), Gaia DR3 (most
+distances and a small fraction of positions), and Gliese (nearby stars).
+The classic-IDs subset we consume isn't a population from any one of
+those — it's whichever rows from the merge carry at least one classical
+designation (proper name, Bayer, Flamsteed, HIP, HD, HR, or Gliese).
+
+**Per-row provenance.** Every row carries four `*_src` columns naming
+which underlying catalog supplied each piece of data:
+
+- `pos_src` — origin of `ra`/`dec`. ~99.4% Tycho-2 (`T`), <1% HIP / GJ.
+- `dist_src` — origin of `dist` and the derived `x0`/`y0`/`z0`. ~97.9%
+  Gaia DR3 (`G_R3`), ~1.2% no distance available (`N`), small remainders
+  from HIP / Gaia DR2 / Gliese.
+- `mag_src` — origin of apparent `mag`. ~62.5% Tycho-2 V_T (`T`),
+  ~37.2% Hipparcos (`HIP`), <1% Gliese.
+- `pm_src` — origin of proper motion (we ingest the columns but don't
+  apply T-axis animation, so `pm_src` is unused).
+
+The two source families have meaningfully different magnitude
+distributions: HIP-sourced rows average `mag ≈ 8.4`, while Tycho-sourced
+rows average `mag ≈ 10.2` and reach the Tycho-2 completeness limit at
+V_T ≈ 11.5. This matters because rendering decisions like the
+`naked-eye` (m_lim = 6.5) preset draw essentially only from the HIP
+family, while widening to `binoculars` (10.5) or `all` (15) progressively
+exposes the Tycho-dominated population.
+
+**What we keep at build time.** `scripts/build-catalog.ts` (`readStars`)
+applies three filters and nothing else:
+
+1. Drop rows missing `x0`/`y0`/`z0` (no usable 3D position).
+2. Drop rows missing `absmag` (can't size or shade them).
+3. Drop rows with `dist > 50,000 pc` (out of any plausible volume of
+   interest; safety net for catalog noise).
+
+There is no source-aware filtering. The 44-byte v4 binary record
+preserves none of the `*_src` columns either, so the renderer can't
+distinguish a Tycho-positioned, Gaia-distanced row from a "pure"
+Hipparcos one — every star is shaded by the same physical model
+(§Stellar physics, §Stellar perception model).
+
+**Known cross-match completeness artefact.** Filter (1) above is the
+load-bearing one: AT-HYG can only emit `x0`/`y0`/`z0` for a Tycho-2
+star when that star's Gaia DR3 distance lookup succeeded, and Gaia DR3's
+crossmatch success rate is *spatially non-uniform* — Gaia scans the sky
+in great-circle strips with overlapping caustics, and DR3's footprint
+has visible cutoffs along the ecliptic plane. The result is that
+contiguous patches of Tycho-2 stars get distances (and survive into our
+binary) while adjacent patches don't. Those boundaries surface in the
+rendered scene as axis-aligned rectangular regions of denser, fainter
+stars — invisible at `maxAppMag` ≤ ~9 (the Tycho-mag population is
+filtered out anyway), increasingly obvious from there to `all` at
+mag 15. A denser future ingest from the same AT-HYG pipeline will likely
+make the rectangles *more* prominent before they smooth out, since the
+Tycho+Gaia-DR3 composite rows are the bulk of the new population.
+Treatment (filter by source, wait for Gaia DR4, or live with it) is
+deferred until a denser-than-mag-11 ingest makes the call necessary.
+
+Implementation: `scripts/build-catalog.ts` (filters live in `readStars`,
+binary schema in the `pack*` helpers); see `docs/build-and-data.md` for
+the per-record byte layout and the GCVS / CCDM cross-match passes that
+run after the AT-HYG read.
+
 ## Stellar physics
 
 **Physical radius.** Each star's `physicalRadius` (in solar radii) is
