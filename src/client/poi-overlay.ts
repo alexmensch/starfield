@@ -138,16 +138,25 @@ export function createPoiOverlay(
     e.onScreenLabel.style.display = 'none';
   }
 
+  // Idempotent show/hide: track visibility so the per-frame handler
+  // doesn't re-set the same display values every idle frame in observe
+  // mode (POI overlay is observe-only, so the navigate-mode bail path
+  // ran 60×/sec under no-POI conditions).
+  let groupsVisible = false;
   function hideAll() {
+    if (!groupsVisible) return;
     arrowsGroup!.style.display = 'none';
     ringsGroup!.style.display = 'none';
     labelsGroup!.style.display = 'none';
+    groupsVisible = false;
   }
 
   function showAll() {
+    if (groupsVisible) return;
     arrowsGroup!.style.display = '';
     ringsGroup!.style.display = '';
     labelsGroup!.style.display = '';
+    groupsVisible = true;
   }
 
   starfield.onPoisChange(syncPool);

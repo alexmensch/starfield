@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { Starfield } from './starfield';
 import type { ChartModeContext } from './chart-mode';
+import { mark as perfMark, measure as perfMeasure } from './perf-hud';
 
 // Phase 8 — chart-mode label engine. Per-frame, projects every candidate
 // label (proper-named star, Bayer-letter star, constellation Latin name,
@@ -74,6 +75,27 @@ interface PooledText {
   el: SVGTextElement;
   width: number; // last measured text width
   height: number; // last measured height
+  // Dirty-tracked attribute writes — every visible label updates x/y per
+  // frame, but on a stationary camera those values are identical to the
+  // previous frame. Skipping the setAttribute avoids SVG attribute
+  // parsing + style invalidation (visible in chart.dom under the perf HUD).
+  // Sentinel -Infinity guarantees the first write always happens.
+  lastX: number;
+  lastY: number;
+}
+
+interface PooledCircle {
+  el: SVGCircleElement;
+  lastCx: number;
+  lastCy: number;
+  lastR: number;
+}
+
+interface PooledLine {
+  el: SVGLineElement;
+  lastX1: number;
+  lastX2: number;
+  lastY: number; // y1 and y2 are equal — wings are horizontal
 }
 
 // Single per-page state — chart mode is a single-instance feature.
@@ -88,15 +110,30 @@ let glyphLayer: SVGGElement | null = null;
 let conStars: Map<number, ConMembership> | null = null;
 let variableIdxs: number[] | null = null;
 let binaryIdxs: number[] | null = null;
+// Filter-derived subsets of the static lists above. Eligibility encodes
+// the *static* parts of renderableAppMag: spectral-mask and Sol-distance
+// bounds. Rebuilt on filter change so the per-frame variable/binary
+// loops only walk stars that already passed those gates — typically 50–
+// 90% smaller than the full lists under non-default filters.
+let variableEligible: number[] | null = null;
+let binaryEligible: number[] | null = null;
+let eligibleDirty = true;
 // distSol[i] = distance from Sol to star i, in parsecs. Catalog positions
 // are absolute (Sol-centred ICRS), so |position| is the absolute distance.
 // Precomputed once at chart entry; the GPU mirrors this via iDistSol.
 let distSolCache: Float32Array | null = null;
 let activeCtx: ChartModeContext | null = null;
 const pool = new Map<string, PooledText>();
-const ringPool = new Map<number, SVGCircleElement>();
-const wingPool = new Map<number, SVGLineElement>();
+const ringPool = new Map<number, PooledCircle>();
+const wingPool = new Map<number, PooledLine>();
+// 0.05px threshold — half the display precision of .toFixed(1). Below
+// this, the attribute string would round to the same value, so the
+// browser would treat the write as a no-op anyway (after re-parsing).
+const ATTR_DIRTY_PX = 0.05;
 const tmpV3 = new THREE.Vector3();
+// Dedicated scratch for projectVec — never aliased with tmpV3 (which is
+// owned by projectStar's caller path) so the two can be in flight together.
+const projVec = new THREE.Vector3();
 
 export function startChartLabels(
   starfield: Starfield,
@@ -139,7 +176,21 @@ export function startChartLabels(
       if (!active || !layer || !glyphLayer || !conStars || !activeCtx) return;
       tick(starfield, activeCtx, conStars);
     });
+    // Filter changes invalidate both the centroid cache and the static
+    // variable/binary eligibility lists. spectMask/distance/maxAppMag
+    // don't all feed the centroid math, but bumping on any change is
+    // cheap and avoids stale-cache bugs.
+    starfield.onFilterChange(() => {
+      centroidsVersion++;
+      eligibleDirty = true;
+    });
   }
+  // Force a recompute on each chart-mode entry so the cache doesn't
+  // serve a stale centroid from a prior session at a different vantage,
+  // and so the full-tick skip definitely runs the first frame after
+  // re-entry (stopChartLabels() empties the SVG pools).
+  lastCentroidCamPos.set(NaN, NaN, NaN);
+  lastTickCamPos.set(NaN, NaN, NaN);
 }
 
 export function stopChartLabels(): void {
@@ -170,9 +221,63 @@ function ensureLayer(id: string): SVGGElement {
 
 interface ConMembership {
   stars: number[];
-  // Recomputed per frame from positions[]. Stored on the membership
-  // object itself to avoid allocating per-frame.
+  // Brightness-weighted centroid in local frame. Cached across frames
+  // when the camera hasn't moved meaningfully (see CENTROID_RECOMPUTE_DIST_SQ).
   centroid: THREE.Vector3;
+  // Brightest apparent magnitude among members at the time the centroid
+  // was last computed. Cached alongside the centroid; valid iff
+  // `centroidsValid` is true for the membership map as a whole.
+  minAppMag: number;
+}
+
+// Cache state for the constellation centroid block. The flux-weighted
+// centroid pulls toward whichever member is currently apparent-brightest,
+// so it depends weakly on camera position — recomputing every frame is
+// wasteful when the camera is steady. We invalidate on:
+//   - camera moved more than CENTROID_RECOMPUTE_DIST (~0.5 pc), OR
+//   - filter changed (spectMask doesn't actually feed the centroid pass,
+//     but a single bump on any filter change is conservative and cheap)
+let lastCentroidCamPos = new THREE.Vector3(NaN, NaN, NaN);
+let centroidsVersion = 0;
+let lastCentroidsVersion = -1;
+const CENTROID_RECOMPUTE_DIST_SQ = 0.25; // 0.5 pc squared
+
+// Full-tick skip state. The chart-mode visual is purely a function of
+// camera transform + filter version + viewport size — variable-star
+// pulsation animates on the GPU side via uTime, the CPU labels and ring
+// glyphs don't move when those inputs are stable. Identity-comparing the
+// state at the top of tick() lets us drop ~1.6ms / frame of iteration
+// work when the user is sitting idle in chart mode.
+const lastTickCamPos = new THREE.Vector3(NaN, NaN, NaN);
+// Quaternion sentinel: x=NaN forces a mismatch on the first equals() call
+// after entering chart mode, since NaN === anything is always false.
+const lastTickCamQuat = new THREE.Quaternion(NaN, 0, 0, 0);
+let lastTickFilterVersion = -1;
+let lastTickViewportW = 0;
+let lastTickViewportH = 0;
+
+function rebuildEligible(starfield: Starfield): void {
+  if (!variableIdxs || !binaryIdxs || !distSolCache) return;
+  const f = starfield.getFilter();
+  const cat = starfield.catalog;
+  const ds = distSolCache;
+  const ve: number[] = [];
+  for (const idx of variableIdxs) {
+    const dSol = ds[idx];
+    if (dSol < f.minDistSol || dSol > f.maxDistSol) continue;
+    if ((f.spectMask & (1 << cat.spectClass[idx])) === 0) continue;
+    ve.push(idx);
+  }
+  const be: number[] = [];
+  for (const idx of binaryIdxs) {
+    const dSol = ds[idx];
+    if (dSol < f.minDistSol || dSol > f.maxDistSol) continue;
+    if ((f.spectMask & (1 << cat.spectClass[idx])) === 0) continue;
+    be.push(idx);
+  }
+  variableEligible = ve;
+  binaryEligible = be;
+  eligibleDirty = false;
 }
 
 function buildConstellationMembership(starfield: Starfield): Map<number, ConMembership> {
@@ -183,7 +288,7 @@ function buildConstellationMembership(starfield: Starfield): Map<number, ConMemb
     if (conIdx === 255) continue;
     const m = out.get(conIdx);
     if (!m) {
-      out.set(conIdx, { stars: [i], centroid: new THREE.Vector3() });
+      out.set(conIdx, { stars: [i], centroid: new THREE.Vector3(), minAppMag: Infinity });
     } else {
       m.stars.push(i);
     }
@@ -206,6 +311,27 @@ function tick(
   const positions = starfield.localPositions;
   const cat = starfield.catalog;
 
+  // Full-tick skip. Chart-mode SVG output is fully determined by camera
+  // transform + filter version + viewport — none of which are changing
+  // when the user is sitting still. Iterating ~1500 binaries / ~1000
+  // variables and ~hundreds of named stars to discover that nothing
+  // moved is the dominant idle cost; skipping the entire body collapses
+  // chart.* sections to zero on stationary frames.
+  if (
+    camera.position.equals(lastTickCamPos) &&
+    camera.quaternion.equals(lastTickCamQuat) &&
+    centroidsVersion === lastTickFilterVersion &&
+    w === lastTickViewportW &&
+    h === lastTickViewportH
+  ) {
+    return;
+  }
+  lastTickCamPos.copy(camera.position);
+  lastTickCamQuat.copy(camera.quaternion);
+  lastTickFilterVersion = centroidsVersion;
+  lastTickViewportW = w;
+  lastTickViewportH = h;
+
   const candidates: Candidate[] = [];
   const seen = new Set<number>(); // dedupe star idx across name+bayer
 
@@ -213,6 +339,7 @@ function tick(
   // map is small (~hundreds) so this is cheap. Priority sits below the
   // constellation Latin labels (priority 0) so the constellation name
   // always wins a collision.
+  perfMark('chart.names');
   for (const [idx, name] of cat.names) {
     const xy = projectStar(idx, positions, camera, w, h);
     if (!xy) continue;
@@ -230,6 +357,7 @@ function tick(
     });
     seen.add(idx);
   }
+  perfMeasure('chart.names');
 
   // 2) Bayer-letter stars — render the Greek glyph + optional unicode
   // superscript. Iterating the bayerMap covers every Bayer'd star;
@@ -237,6 +365,7 @@ function tick(
   // wins). The constellation-relative form is just the glyph — chart
   // mode renders the Latin name separately at the constellation's
   // brightness-weighted centroid.
+  perfMark('chart.bayer');
   for (const [idx, info] of ctx.bayerMap) {
     if (seen.has(idx)) continue;
     const xy = projectStar(idx, positions, camera, w, h);
@@ -255,6 +384,7 @@ function tick(
       key: `b:${idx}`,
     });
   }
+  perfMeasure('chart.bayer');
 
   // 3) Constellation Latin names — at the brightness-weighted centroid
   // of the member stars. Iterate every member to find the *apparent*
@@ -268,37 +398,60 @@ function tick(
   const constellations = cat.constellations;
   // The Latin-name labels follow the constellation lines — when the
   // master toggle is off, both disappear together.
+  perfMark('chart.constellations');
+  // Decide whether to recompute centroids this frame. The flux-weighted
+  // barycentre depends weakly on camera position, so a small camera nudge
+  // doesn't meaningfully shift it. With ~88 constellations × ~30 members
+  // each = ~2,600 inner iterations doing transcendentals, skipping the
+  // recompute on stationary frames is the largest single chart-mode CPU
+  // win.
+  const camDx = camera.position.x - lastCentroidCamPos.x;
+  const camDy = camera.position.y - lastCentroidCamPos.y;
+  const camDz = camera.position.z - lastCentroidCamPos.z;
+  const camMovedSq = camDx * camDx + camDy * camDy + camDz * camDz;
+  // NaN propagates through the comparison so the initial sentinel value
+  // forces a recompute on first use after chart-mode entry.
+  const recompute =
+    !(camMovedSq < CENTROID_RECOMPUTE_DIST_SQ) ||
+    centroidsVersion !== lastCentroidsVersion;
+  if (recompute) {
+    lastCentroidCamPos.copy(camera.position);
+    lastCentroidsVersion = centroidsVersion;
+  }
   if (f.showConstellation) for (const [conIdx, m] of conStars) {
     const con = constellations[conIdx];
     if (!con) continue;
 
-    // Find the brightest apparent magnitude among constellation members.
-    // While iterating, also accumulate the brightness-weighted centroid
-    // (weight in flux space so Sirius dominates over a faint dim star).
-    let minAppMag = Infinity;
-    let sx = 0;
-    let sy = 0;
-    let sz = 0;
-    let wsum = 0;
-    for (const i of m.stars) {
-      const px = positions[i * 3];
-      const py = positions[i * 3 + 1];
-      const pz = positions[i * 3 + 2];
-      const dCam = Math.sqrt(px * px + py * py + pz * pz);
-      const appMag = dCam > 0
-        ? cat.absmag[i] + 5 * (Math.log10(dCam) - 1)
-        : cat.absmag[i];
-      if (appMag < minAppMag) minAppMag = appMag;
-      // Flux weight = 10^(-0.4 * appMag) — brighter (lower) appMag gives
-      // exponentially more pull, matching how the eye reads a chart.
-      const wi = Math.pow(10, -0.4 * appMag);
-      sx += px * wi;
-      sy += py * wi;
-      sz += pz * wi;
-      wsum += wi;
+    if (recompute) {
+      // Find the brightest apparent magnitude among constellation members.
+      // While iterating, also accumulate the brightness-weighted centroid
+      // (weight in flux space so Sirius dominates over a faint dim star).
+      let minAppMag = Infinity;
+      let sx = 0;
+      let sy = 0;
+      let sz = 0;
+      let wsum = 0;
+      for (const i of m.stars) {
+        const px = positions[i * 3];
+        const py = positions[i * 3 + 1];
+        const pz = positions[i * 3 + 2];
+        const dCam = Math.sqrt(px * px + py * py + pz * pz);
+        const appMag = dCam > 0
+          ? cat.absmag[i] + 5 * (Math.log10(dCam) - 1)
+          : cat.absmag[i];
+        if (appMag < minAppMag) minAppMag = appMag;
+        // Flux weight = 10^(-0.4 * appMag) — brighter (lower) appMag gives
+        // exponentially more pull, matching how the eye reads a chart.
+        const wi = Math.pow(10, -0.4 * appMag);
+        sx += px * wi;
+        sy += py * wi;
+        sz += pz * wi;
+        wsum += wi;
+      }
+      m.minAppMag = minAppMag;
+      if (wsum > 0) m.centroid.set(sx / wsum, sy / wsum, sz / wsum);
     }
-    if (wsum === 0 || minAppMag > f.maxAppMag) continue;
-    m.centroid.set(sx / wsum, sy / wsum, sz / wsum);
+    if (m.minAppMag > f.maxAppMag) continue;
     const xy = projectVec(m.centroid, camera, w, h);
     if (!xy) continue;
     candidates.push({
@@ -312,13 +465,15 @@ function tick(
       // priority value is purely a sort key for the order they get laid
       // down in (matters only if two collide, but the outline-style
       // typography accepts overlap). Brightest constellation first.
-      priority: 0 + minAppMag * 0.01,
+      priority: 0 + m.minAppMag * 0.01,
       key: `c:${conIdx}`,
     });
   }
+  perfMeasure('chart.constellations');
 
   // 4) Molecular clouds — name labels at the cloud centroid. Cheap to
   // iterate (count is in the hundreds at most).
+  perfMark('chart.clouds');
   const clouds = starfield.getCloudCatalog();
   if (clouds && f.showMolecularClouds) {
     for (let i = 0; i < clouds.clouds.length; i++) {
@@ -338,12 +493,14 @@ function tick(
       });
     }
   }
+  perfMeasure('chart.clouds');
 
   // Sort by priority — proper names first, then Bayer, then clouds.
   // Constellation Latin labels skip the collision pass entirely
   // (rendered as outline-style overlay typography à la Sky Atlas
   // 2000.0; see styles.css `.chart-label.kind-con`). They're laid out
   // separately below and are never excluded by competing labels.
+  perfMark('chart.collision');
   candidates.sort((a, b) => a.priority - b.priority);
 
   // Greedy collision pass against star/Bayer/cloud labels only. Walks
@@ -363,9 +520,11 @@ function tick(
     if (collides(cand, accepted)) continue;
     accepted.push(cand);
   }
+  perfMeasure('chart.collision');
 
   // Render: ensure each accepted candidate has a pooled <text>; drop any
   // pooled elements not in the accepted set this frame.
+  perfMark('chart.dom');
   const used = new Set<string>();
   for (const cand of accepted) {
     used.add(cand.key);
@@ -376,12 +535,18 @@ function tick(
       el.setAttribute('text-anchor', cand.kind === 'con' ? 'middle' : 'start');
       el.setAttribute('dominant-baseline', 'central');
       labelLayer.appendChild(el);
-      p = { el, width: 0, height: 0 };
+      p = { el, width: 0, height: 0, lastX: -Infinity, lastY: -Infinity };
       pool.set(cand.key, p);
     }
     if (p.el.textContent !== cand.text) p.el.textContent = cand.text;
-    p.el.setAttribute('x', cand.x.toFixed(1));
-    p.el.setAttribute('y', cand.y.toFixed(1));
+    if (Math.abs(cand.x - p.lastX) >= ATTR_DIRTY_PX) {
+      p.el.setAttribute('x', cand.x.toFixed(1));
+      p.lastX = cand.x;
+    }
+    if (Math.abs(cand.y - p.lastY) >= ATTR_DIRTY_PX) {
+      p.el.setAttribute('y', cand.y.toFixed(1));
+      p.lastY = cand.y;
+    }
   }
   for (const [key, p] of pool) {
     if (!used.has(key)) {
@@ -389,6 +554,7 @@ function tick(
       pool.delete(key);
     }
   }
+  perfMeasure('chart.dom');
 
   // ---- Glyphs (variable rings + binary wings) ----
   // Both layers paint screen-space SVG primitives sized in the same
@@ -405,28 +571,15 @@ function tick(
     return discParams.maxPx + (discParams.minPx - discParams.maxPx) * t;
   };
 
-  // Helper: replicate the GPU's "is this star renderable" gate as
-  // closely as we can on the CPU. Spectral mask + per-star distance
-  // filter are exact mirrors of the shader; dust extinction is the
-  // one filter we don't replicate (the per-star raymarch is too
-  // expensive on CPU) so a star deep behind dust may still get a ring
-  // even though its inner disc is dust-attenuated past the limit.
-  // Returns the computed appMag, or null if any CPU-side filter
-  // rejects the star.
-  const renderableAppMag = (idx: number): number | null => {
-    const dSol = distSolCache ? distSolCache[idx] : 0;
-    if (dSol < f.minDistSol || dSol > f.maxDistSol) return null;
-    const spect = cat.spectClass[idx];
-    if ((f.spectMask & (1 << spect)) === 0) return null;
-    // Camera-relative distance — local-frame positions cover the
-    // floating-origin recentering automatically.
-    const x = positions[idx * 3];
-    const y = positions[idx * 3 + 1];
-    const z = positions[idx * 3 + 2];
-    const dCam = Math.sqrt(x * x + y * y + z * z);
-    if (dCam <= 0) return cat.absmag[idx];
-    return cat.absmag[idx] + 5 * (Math.log10(dCam) - 1);
-  };
+  // Spectral mask + Sol-distance bounds are encoded in variableEligible
+  // and binaryEligible (rebuilt on filter change), so the per-frame loops
+  // below only need to compute the camera-relative apparent magnitude
+  // and apply the maxAppMag gate. Dust extinction is the one shader
+  // filter we don't replicate (per-star raymarch is too expensive on
+  // CPU) — see BINARY_WING_MIN_EXTENSION_PX for the visual margin that
+  // covers the resulting CPU/GPU disc-size mismatch.
+  if (eligibleDirty) rebuildEligible(starfield);
+  const absmag = cat.absmag;
 
   // Variable stars — outer ring at the max-brightness extreme of the
   // variability sine. Inner disc keeps pulsing on the GPU side, so the
@@ -436,12 +589,23 @@ function tick(
   // extreme* (mag - amp/2). At the faint extreme the inner disc may
   // dim past the limit and disappear; the ring still indicates that
   // a variable lives here.
-  if (variableIdxs) {
-    for (const idx of variableIdxs) {
-      const appMag = renderableAppMag(idx);
-      if (appMag === null) continue;
+  perfMark('chart.glyphs.var');
+  if (variableEligible) {
+    for (const idx of variableEligible) {
+      // Inlined appMag: spectral / distance-from-Sol gates already done
+      // by eligibility filtering, so just camera-relative magnitude.
+      const px = positions[idx * 3];
+      const py = positions[idx * 3 + 1];
+      const pz = positions[idx * 3 + 2];
+      const dCam = Math.sqrt(px * px + py * py + pz * pz);
+      const appMag = dCam > 0
+        ? absmag[idx] + 5 * (Math.log10(dCam) - 1)
+        : absmag[idx];
       const amp = cat.amplitudeMag[idx];
       const ringMag = appMag - amp * 0.5;
+      // Magnitude gate hoisted above the projection — projectStar's
+      // matrix-multiply is the expensive part, so pre-rejecting saves
+      // it for stars over the brightness limit.
       if (ringMag > f.maxAppMag) continue;
       const xy = projectStar(idx, positions, camera, w, h);
       if (!xy) continue;
@@ -451,62 +615,99 @@ function tick(
       // ring. Adds 2× to the diameter (one gap on each side).
       const peakDiscPx = discPxFor(ringMag);
       const ringPx = peakDiscPx + 2 * VARIABLE_RING_MIN_GAP_PX;
-      let circle = ringPool.get(idx);
-      if (!circle) {
-        circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-        circle.setAttribute('class', 'chart-variable-ring');
-        glyphs.appendChild(circle);
-        ringPool.set(idx, circle);
+      const ringR = ringPx * 0.5;
+      let p = ringPool.get(idx);
+      if (!p) {
+        const el = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        el.setAttribute('class', 'chart-variable-ring');
+        glyphs.appendChild(el);
+        p = { el, lastCx: -Infinity, lastCy: -Infinity, lastR: -Infinity };
+        ringPool.set(idx, p);
       }
-      circle.setAttribute('cx', xy[0].toFixed(1));
-      circle.setAttribute('cy', xy[1].toFixed(1));
-      circle.setAttribute('r', (ringPx * 0.5).toFixed(2));
+      if (Math.abs(xy[0] - p.lastCx) >= ATTR_DIRTY_PX) {
+        p.el.setAttribute('cx', xy[0].toFixed(1));
+        p.lastCx = xy[0];
+      }
+      if (Math.abs(xy[1] - p.lastCy) >= ATTR_DIRTY_PX) {
+        p.el.setAttribute('cy', xy[1].toFixed(1));
+        p.lastCy = xy[1];
+      }
+      // r uses .toFixed(2), so half-precision is 0.005 — but the ring
+      // radius is dominated by the disc-pulse magnitude formula and
+      // changes whenever the camera moves. The tighter threshold here
+      // catches the genuinely-static-frame case.
+      if (Math.abs(ringR - p.lastR) >= 0.005) {
+        p.el.setAttribute('r', ringR.toFixed(2));
+        p.lastR = ringR;
+      }
       usedRings.add(idx);
     }
   }
-  for (const [idx, el] of ringPool) {
+  for (const [idx, p] of ringPool) {
     if (!usedRings.has(idx)) {
-      glyphs.removeChild(el);
+      glyphs.removeChild(p.el);
       ringPool.delete(idx);
     }
   }
+  perfMeasure('chart.glyphs.var');
 
   // Binary primaries — horizontal wings extending past the disc on
   // each side. Always horizontal in screen space (SVG line uses
   // viewport coords) so camera roll doesn't tilt them. Same per-star
   // filter gate as variable rings so the wings track inner-disc
   // visibility instead of floating standalone.
-  if (binaryIdxs) {
-    for (const idx of binaryIdxs) {
-      const appMag = renderableAppMag(idx);
-      if (appMag === null) continue;
+  perfMark('chart.glyphs.bin');
+  if (binaryEligible) {
+    for (const idx of binaryEligible) {
+      const px = positions[idx * 3];
+      const py = positions[idx * 3 + 1];
+      const pz = positions[idx * 3 + 2];
+      const dCam = Math.sqrt(px * px + py * py + pz * pz);
+      const appMag = dCam > 0
+        ? absmag[idx] + 5 * (Math.log10(dCam) - 1)
+        : absmag[idx];
+      // Magnitude gate before the projection — same reasoning as above.
       if (appMag > f.maxAppMag) continue;
-      const xy = projectStar(idx, positions, camera, w, h);
-      if (!xy) continue;
       const discPx = discPxFor(appMag);
       const ext = discPx * BINARY_WING_EXTENSION_RATIO;
       if (ext < BINARY_WING_MIN_EXTENSION_PX) continue;
+      const xy = projectStar(idx, positions, camera, w, h);
+      if (!xy) continue;
       const half = discPx * 0.5 + ext;
-      let line = wingPool.get(idx);
-      if (!line) {
-        line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-        line.setAttribute('class', 'chart-binary-wings');
-        glyphs.appendChild(line);
-        wingPool.set(idx, line);
+      const x1 = xy[0] - half;
+      const x2 = xy[0] + half;
+      const y = xy[1];
+      let p = wingPool.get(idx);
+      if (!p) {
+        const el = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        el.setAttribute('class', 'chart-binary-wings');
+        glyphs.appendChild(el);
+        p = { el, lastX1: -Infinity, lastX2: -Infinity, lastY: -Infinity };
+        wingPool.set(idx, p);
       }
-      line.setAttribute('x1', (xy[0] - half).toFixed(1));
-      line.setAttribute('x2', (xy[0] + half).toFixed(1));
-      line.setAttribute('y1', xy[1].toFixed(1));
-      line.setAttribute('y2', xy[1].toFixed(1));
+      if (Math.abs(x1 - p.lastX1) >= ATTR_DIRTY_PX) {
+        p.el.setAttribute('x1', x1.toFixed(1));
+        p.lastX1 = x1;
+      }
+      if (Math.abs(x2 - p.lastX2) >= ATTR_DIRTY_PX) {
+        p.el.setAttribute('x2', x2.toFixed(1));
+        p.lastX2 = x2;
+      }
+      if (Math.abs(y - p.lastY) >= ATTR_DIRTY_PX) {
+        p.el.setAttribute('y1', y.toFixed(1));
+        p.el.setAttribute('y2', y.toFixed(1));
+        p.lastY = y;
+      }
       usedWings.add(idx);
     }
   }
-  for (const [idx, el] of wingPool) {
+  for (const [idx, p] of wingPool) {
     if (!usedWings.has(idx)) {
-      glyphs.removeChild(el);
+      glyphs.removeChild(p.el);
       wingPool.delete(idx);
     }
   }
+  perfMeasure('chart.glyphs.bin');
 }
 
 function projectStar(
@@ -526,14 +727,16 @@ function projectVec(
   w: number,
   h: number,
 ): [number, number] | null {
-  // Reuse the same matrix transform pattern as constellation-overlay /
-  // hud-overlay (near-clip safe). Important: clone before transforming
-  // so the caller's vector isn't clobbered.
-  const v = p.clone().applyMatrix4(camera.matrixWorldInverse);
-  if (v.z >= -camera.near) return null;
-  v.applyMatrix4(camera.projectionMatrix);
-  const x = (v.x + 1) * 0.5 * w;
-  const y = (1 - v.y) * 0.5 * h;
+  // Near-clip-safe matrix transform; same shape as constellation-overlay /
+  // hud-overlay. Uses a module-level scratch to avoid the per-call
+  // Vector3 allocation — the chart-mode tick projects 5–15k vectors per
+  // frame and the GC pressure from clone() showed up directly in 1%-low
+  // FPS during long observe sessions.
+  projVec.copy(p).applyMatrix4(camera.matrixWorldInverse);
+  if (projVec.z >= -camera.near) return null;
+  projVec.applyMatrix4(camera.projectionMatrix);
+  const x = (projVec.x + 1) * 0.5 * w;
+  const y = (1 - projVec.y) * 0.5 * h;
   // Drop labels well outside the viewport — saves measurement cost.
   if (x < -200 || x > w + 200 || y < -100 || y > h + 100) return null;
   return [x, y];

@@ -30,13 +30,20 @@ export function createDistanceVectorOverlay(
   const tmpA = new THREE.Vector3();
   const tmpB = new THREE.Vector3();
 
+  // Idempotent hide: skip the SVG attribute writes and style mutation when
+  // the vector is already hidden. The per-frame handler short-circuits to
+  // hide() through several bail paths, so an unguarded hide ran 60×/sec
+  // any time no vector was set.
+  let visible = false;
   const hide = () => {
+    if (!visible) return;
     line.setAttribute('d', '');
     lineBg.setAttribute('d', '');
     // Hide the whole UI group so both label and warp suffix disappear at
     // once. Using display rather than clearing textContent keeps the static
     // warp element in the DOM so its :hover styling keeps working on show.
     distUi.style.display = 'none';
+    visible = false;
   };
 
   starfield.onVectorChange(() => {
@@ -121,7 +128,10 @@ export function createDistanceVectorOverlay(
     const exit = viewportSegmentExit(pA[0], pA[1], tipX, tipY, w, h);
     const anchorX = exit ? exit[0] : tipX;
     const anchorY = exit ? exit[1] : tipY;
-    distUi.style.display = '';
+    if (!visible) {
+      distUi.style.display = '';
+      visible = true;
+    }
     label.textContent = `${destLabel} · ${fmtDist(distPc)}`;
     // The label is anchor-start so `x` is its left edge; subtract its width
     // from the right-side clamp so the visible text stays inside the

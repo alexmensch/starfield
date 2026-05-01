@@ -14,6 +14,7 @@ import { MolecularClouds, cloudViewingDistancePc } from './molecular-clouds';
 import type { CloudCatalog } from './cloud-loader';
 import { MilkyWay } from './milkyway';
 import { ObserveControls } from './observe-controls';
+import { mark as perfMark, measure as perfMeasure, frame as perfFrame } from './perf-hud';
 
 export type MagPresetName = 'naked-eye' | 'binoculars' | 'all';
 
@@ -376,6 +377,15 @@ export class Starfield {
   private _localPositions: Float32Array;
   private iPositionAttr!: THREE.InstancedBufferAttribute;
 
+  // Sorted-by-distance-from-Sol index for the core-mask query. Distance
+  // from Sol is intrinsic (computed from absolute catalog positions) and
+  // therefore stable across floating-origin recenters, so this index is
+  // built once at construction. Each frame we slice a window via triangle
+  // inequality on the camera's distance-from-Sol, turning a 313k linear
+  // scan into a few-hundred-element check.
+  private sortedDistFromSol!: Float32Array;
+  private sortedByDistFromSol!: Uint32Array;
+
   private filter: FilterState = { ...DEFAULT_FILTER };
 
   private disposed = false;
@@ -529,6 +539,17 @@ export class Starfield {
     // since worldOffset is (0,0,0) at construction. Recenter rewrites this
     // in place.
     this._localPositions = new Float32Array(catalog.positions);
+    // Sort indices by distance from Sol (ascending). The sorted view lets
+    // shouldEnableCoreMask() walk only stars whose Sol-distance falls
+    // within `[camDistFromSol - dThresh, camDistFromSol + dThresh]` —
+    // typically a few-hundred-element window instead of the full catalog.
+    this.sortedByDistFromSol = new Uint32Array(catalog.count);
+    for (let i = 0; i < catalog.count; i++) this.sortedByDistFromSol[i] = i;
+    this.sortedByDistFromSol.sort((a, b) => distSol[a] - distSol[b]);
+    this.sortedDistFromSol = new Float32Array(catalog.count);
+    for (let i = 0; i < catalog.count; i++) {
+      this.sortedDistFromSol[i] = distSol[this.sortedByDistFromSol[i]];
+    }
     const physMaxPx = this.computePhysMaxPx();
 
     // Instanced quads: one unit square per star, expanded in screen space in
@@ -2548,8 +2569,12 @@ export class Starfield {
   // CORE_MASK_MIN_PX. Derived from the live uniforms, so changing
   // exaggeration K, FOV, or viewport keeps the gate honest.
   //
-  // Tight Float32 loop with early-exit on the first hit; the worst case
-  // (no star within range) is ~313k float ops per frame, ~sub-millisecond.
+  // Uses the sorted-by-distance-from-Sol index plus the triangle
+  // inequality: any star within `dThresh` of the camera must have
+  // |distFromSol(star) - distFromSol(camera)| <= dThresh. We binary-
+  // search that window in the sorted array (typically tens to hundreds of
+  // candidates) and only do the squared-distance check on those. Replaces
+  // a full 313k-element linear scan that ran every frame in every mode.
   private shouldEnableCoreMask(): boolean {
     const u = this.material.uniforms;
     const physMaxPx = u.uPhysMaxPx.value as number;
@@ -2557,12 +2582,40 @@ export class Starfield {
     const dThresh = (physMaxPx * refDistPc) / Starfield.CORE_MASK_MIN_PX;
     const dThreshSq = dThresh * dThresh;
 
+    // Camera distance from Sol in absolute space (catalog frame).
+    const camAbsX = this.camera.position.x + this.worldOffset.x;
+    const camAbsY = this.camera.position.y + this.worldOffset.y;
+    const camAbsZ = this.camera.position.z + this.worldOffset.z;
+    const camDistFromSol = Math.sqrt(
+      camAbsX * camAbsX + camAbsY * camAbsY + camAbsZ * camAbsZ,
+    );
+    const lo = camDistFromSol - dThresh;
+    const hi = camDistFromSol + dThresh;
+
+    const sortedDist = this.sortedDistFromSol;
+    const sortedIdx = this.sortedByDistFromSol;
+    const n = sortedDist.length;
+    // Lower bound: first index with sortedDist[i] >= lo.
+    let l = 0, r = n;
+    while (l < r) {
+      const m = (l + r) >>> 1;
+      if (sortedDist[m] < lo) l = m + 1; else r = m;
+    }
+    const start = l;
+    // Upper bound: first index with sortedDist[i] > hi.
+    l = start; r = n;
+    while (l < r) {
+      const m = (l + r) >>> 1;
+      if (sortedDist[m] <= hi) l = m + 1; else r = m;
+    }
+    const end = l;
+
     const positions = this._localPositions;
     const cx = this.camera.position.x;
     const cy = this.camera.position.y;
     const cz = this.camera.position.z;
-    const count = this.catalog.count;
-    for (let i = 0; i < count; i++) {
+    for (let k = start; k < end; k++) {
+      const i = sortedIdx[k];
       const dx = positions[i * 3] - cx;
       const dy = positions[i * 3 + 1] - cy;
       const dz = positions[i * 3 + 2] - cz;
@@ -2574,6 +2627,8 @@ export class Starfield {
   private animateStartMs = performance.now();
   private animate = () => {
     if (this.disposed) return;
+    perfMark('frame.total');
+    perfMark('controls.update');
     if (this.warpState) {
       this.updateWarp();
     } else if (this.aimState) {
@@ -2598,19 +2653,30 @@ export class Starfield {
     } else {
       this.controls.update();
     }
+    perfMeasure('controls.update');
+    perfMark('pre-render');
     this.material.uniforms.uCameraPos.value.copy(this.camera.position);
     // Advance variability clock (seconds since start). Shared with glow
     // material via sharedUniforms so both passes see the same time.
     this.material.uniforms.uTime.value = (performance.now() - this.animateStartMs) / 1000;
+    perfMark('coreMask');
     this.coreMaskMesh.visible = this.shouldEnableCoreMask();
+    perfMeasure('coreMask');
     this.updateGalacticLayers();
     // Milky Way analytic background. The skybox mesh is already in the
     // main scene at renderOrder = -3; this call re-anchors it to
     // camera.position and refreshes the absolute-camera-position uniform
     // for the shader's raymarch.
     this.milkyway.update(this.camera, this.worldOffset);
+    perfMeasure('pre-render');
+    perfMark('gpu.render');
     this.renderer.render(this.scene, this.camera);
+    perfMeasure('gpu.render');
+    perfMark('onFrame.total');
     for (const h of this.onFrameHandlers) h();
+    perfMeasure('onFrame.total');
+    perfMeasure('frame.total');
+    perfFrame();
     requestAnimationFrame(this.animate);
   };
 

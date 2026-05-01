@@ -60,8 +60,11 @@ export function createDiscMask(starfield: Starfield) {
     return true;
   };
 
+  // Track how many circles were active last frame so we only re-clear the
+  // pool when transitioning out of a focused-disc state — avoids the
+  // 4-circle setAttribute sweep every idle frame in observe mode.
+  let lastUsed = 0;
   starfield.onFrame(() => {
-    const candidates: number[] = [];
     const focus = starfield.getFocusedStar();
     // In OBSERVE mode the focal star (and its companion if any) are hidden
     // by the vertex shader, so a mask cutout for them would just be a black
@@ -69,16 +72,18 @@ export function createDiscMask(starfield: Starfield) {
     // entirely; any other rendered disc isn't a candidate today.
     const observe =
       starfield.getCameraMode() === 'observe' || starfield.isObserveTransitionActive();
-    if (focus !== null && !observe) {
-      candidates.push(focus);
-      const comp = starfield.catalog.companion[focus];
-      if (comp >= 0) candidates.push(comp);
+    if (focus === null || observe) {
+      if (lastUsed > 0) {
+        for (let i = 0; i < circles.length; i++) clearCircle(circles[i]);
+        lastUsed = 0;
+      }
+      return;
     }
     let used = 0;
-    for (const idx of candidates) {
-      if (used >= circles.length) break;
-      if (placeCircle(circles[used], idx)) used++;
-    }
+    if (used < circles.length && placeCircle(circles[used], focus)) used++;
+    const comp = starfield.catalog.companion[focus];
+    if (comp >= 0 && used < circles.length && placeCircle(circles[used], comp)) used++;
     for (let i = used; i < circles.length; i++) clearCircle(circles[i]);
+    lastUsed = used;
   });
 }

@@ -2,6 +2,7 @@ import type { Starfield } from './starfield';
 import { makeDebugPanel } from './debug-panel';
 import { buildMilkywaySection } from './milkyway-tuning';
 import { buildStarSection } from './star-tuning';
+import { installPerfHud, togglePerfHud } from './perf-hud';
 import {
   type DecodedView,
   type IdMaps,
@@ -29,6 +30,8 @@ export interface DebugTools {
   decodeView(blob: string): DecodedView;
   /** Encode the current Starfield state into a `?v=` blob string. */
   encodeView(): string;
+  /** Toggle the perf HUD (FPS + per-section frame timing). */
+  perf(): void;
 }
 
 export function setupDebug(starfield: Starfield, idMaps: IdMaps): DebugTools {
@@ -57,9 +60,13 @@ export function setupDebug(starfield: Starfield, idMaps: IdMaps): DebugTools {
       return view;
     },
     encodeView: () => encodeBlob(currentStateOf(starfield, idMaps)),
+    perf: () => {
+      installPerfHud(starfield);
+      togglePerfHud();
+    },
   };
 
   (window as unknown as { debug: DebugTools }).debug = tools;
-  console.info('Debug tools: debug.panel(), debug.decodeView(blob), debug.encodeView()');
+  console.info('Debug tools: debug.panel(), debug.decodeView(blob), debug.encodeView(), debug.perf()');
   return tools;
 }
