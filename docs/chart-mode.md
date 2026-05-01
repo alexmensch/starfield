@@ -126,12 +126,15 @@ overlay à la Sky Atlas, allowed to overlap small star symbols
 underneath.
 
 The constellation centroid is the **flux-weighted** position of every
-member (`weight = 10^(-0.4 × appMag)` per star) recomputed each frame
-from the current camera vantage. The visibility gate uses
-`min(appMag) ≤ maxAppMag` over all members. Iterating every member
-per frame is cheap (a few thousand) and was needed to fix a bug where
-constellations with no single dominant intrinsic-brightest star (Vela,
-Pyxis, Sagittarius, etc.) silently dropped their label.
+member (`weight = 10^(-0.4 × appMag)` per star). The visibility gate
+uses `min(appMag) ≤ maxAppMag` over all members. The full member walk
+is needed to fix a bug where constellations with no single dominant
+intrinsic-brightest star (Vela, Pyxis, Sagittarius, etc.) silently
+dropped their label, but the result is **cached** under a 0.5 pc
+camera-translation threshold + filter version (see
+`docs/performance.md` § Cached constellation centroids). The cached
+centroid is still re-projected every frame; only the inner per-member
+loop is elided.
 
 **Variable rings** size to the bright-extreme magnitude
 (`appMag - amplitude/2`) plus a `VARIABLE_RING_MIN_GAP_PX = 1.0` radial
