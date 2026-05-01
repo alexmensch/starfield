@@ -4,71 +4,21 @@ A roadmap for the remaining ISM (interstellar medium) and post-ISM work.
 Each section is self-contained enough to drive a separate Claude Code
 session against — open a fresh chat, paste the relevant section, go.
 
-The session that produced Phase 1 (per-star extinction) and shelved
-Phase 2 (particle-cloud visualisation) ran on 2026-04-24/25; commit log
-under `git log --oneline | head -20` is the canonical record of what
-landed.
+For what has already shipped, see `CLAUDE.md` and the topic-specific
+docs under `docs/`.
 
-## Current state
-
-Done:
-- **Phase 1: per-star extinction** — Edenhofer 2023 dust map resampled
-  onto a 512³ ICRS Cartesian voxel grid, served as 64 chunks via LFS,
-  progressively uploaded to a `Data3DTexture` on the client, raymarched
-  in the star vertex shader to dim + redden stars by line-of-sight A_V.
-  See `CLAUDE.md` "Dust extinction" section for details.
-- **Phase 3a: molecular cloud catalog** — 96 named local SF clouds
-  rendered as soft warm ellipsoids. 12 from Zucker 2021 Table 1 with
-  proper 3D bounding boxes (Taurus, Ophiuchus, Orion A/B/λ, Perseus,
-  Cepheus, Lupus, Chamaeleon, Musca, Pipe, Corona Australis); 84 from
-  Zucker 2020 Table A1 as spheres with sightline-spread radii. Search
-  by name, hover for details, click to fly. Default-on; URL `mc=0` to
-  disable. See `CLAUDE.md` "Molecular cloud overlay" section.
-- **Phase 4c: Galactic reference system** — always-on translucent disc
-  outline (15 kpc midplane + bulge wireframe) that fades in past 500 pc
-  from Sol; toggleable galactic coordinate sphere (equator + lat/long
-  grid every 10°); SVG-projected Sol and Galactic Centre locator arrows
-  with live distance labels. Distance vector unified onto the same
-  shared chevron+label silhouette. See `CLAUDE.md` "Galactic reference
-  system" section.
-- **Phase 5: Milky Way volumetric background** — physically-grounded
-  band visible from any 3D position. Bounded volumetric raymarch through
-  two proxy meshes (a flattened disc + an oblate bulge) anchored at the
-  galactic centre. Each fragment ray-sphere-intersects the mesh in mesh-
-  local frame, then marches 32 log-distributed steps from entry to back-
-  face exit, evaluating component density (disc double-exponential,
-  bulge `exp(-r'/r_b)` with q=0.6) and an analytical dust profile with
-  CCM reddening, accumulating with Beer-Lambert. Output gated through
-  the same magnitude-clamp curve as the star pipeline (folded into the
-  tone-map exponent so the slider lifts continuously, no plateau). A
-  console-triggered tuning panel (`debug.milkyway()`) exposes sliders
-  and colour pickers for further calibration. Default-on; URL `mw=0`
-  to disable; chart mode hides. See `CLAUDE.md` "Milky Way volumetric
-  disc (Phase 5)" section.
-- **Phase 9: OBSERVE camera mode** — second camera mode parked at the
-  focal star with a custom look-around controller (drag yaw + pitch
-  with FPS-style pole clamp, wheel adjusts FOV). Focal disc hidden via
-  `uHideFocusIdx` shader uniform; Sol/GC arrows become HUD locators;
-  picking a new "Location" routes through the warp animation and the
-  post-arrival quaternion slerp leaves the camera pointing in the
-  same celestial direction from the new vantage (parallax view). Star-
-  only — clouds aren't valid observation anchors. Includes a unified
-  near-star approach distance (`minDistForStar` from disc-size formula,
-  tuned via `TARGET_APPROACH_DISC_PX`) used by warp arrival, observe
-  exit, and the orbit minDistance clamp. URL `mode=observe`. See
-  `docs/ui-and-controls.md` §OBSERVE camera mode and
-  `docs/architecture.md` §OBSERVE mode and the warp state machine.
+## Pending
 
 Shelved (dark code):
 - **Phase 2: dust visualisation layer** — particles loaded but rendered
   at strength = 0 by default. Revisit notes below.
 
 Not started:
+- Phase 3b: Nebulae catalogs (PN, RNe, H II, SNR)
 - Phase 4a: Local Bubble shell mesh
 - Phase 4b: Radcliffe Wave spine
 - Phase 6: Realism indicator + per-star dust slab fallback
 - Phase 7: ATHYG `reduced_m12` catalog upgrade
-- Phase 8: Star chart mode
 - Phase 10: Wander mode (autonomous gravity-field camera)
 - Phase 11: Exoplanets around host stars
 - Phase 12a: Solar-system layer (time scrubber + planets + heliopause + scale rings)
@@ -362,67 +312,6 @@ make travel away from Sol feel populated at every scale.
 
 **Estimate:** half-day for the build pipeline change + verification
 runs. Most of the time goes to catalog regeneration and perf testing.
-
----
-
-## Phase 8: Star chart mode
-
-**Goal:** present the catalog as a real star chart — named stars
-labelled, constellations drawn out, named nebulae/clouds with labels.
-**Replaces** the current mono toggle. Aesthetic close to a printed
-astronomical chart.
-
-**The rule:** chart shows discrete *named* objects only. No diffuse
-background, no unresolved stellar density, no unnamed nebulae.
-
-**What's drawn in chart mode:**
-- Stars with proper names, Bayer designations, or Flamsteed numbers —
-  labelled with their primary identifier near the glyph.
-- Constellation stick figures — always on (not just when one is
-  selected, as today).
-- Constellation Latin names — labelled at the brightness-weighted
-  centroid.
-- Named nebulae from Phase 3b — drawn as their procedural shape with
-  a label.
-- Distance vector and focus ring — keep their current behaviour.
-
-**What's hidden in chart mode:**
-- Phase 5 Milky Way background (already noted there).
-- Unnamed stars (most of the `reduced_m12` set added in Phase 7).
-- Unnamed nebulae or clouds.
-- Phase 4a Local Bubble translucent mesh.
-- Phase 4b Radcliffe Wave spine.
-
-**Relationship to existing mono mode:**
-The current "mono" toggle becomes "chart". Underlying paper-aesthetic
-plumbing (MultiplyBlending, depth disabled, light canvas) is reused;
-chart mode adds the labels and always-on constellations on top. There
-is no separate intermediate mode — you're either in default
-(physical-realism) or chart (named-objects).
-
-**Label density:**
-Discrete-step density slider — at the lowest, only proper names plus
-the brightest 1–2 Bayer stars per constellation; at the highest, all
-named stars. Default: medium. Avoids label collisions in zoomed-out
-views.
-
-**Files:**
-- Touch: `src/client/theme-toggle.ts` (rename concept from mono to
-  chart), `starfield.ts` (label rendering for stars + nebulae +
-  constellation names), `constellation-overlay.ts` (always-on path
-  generation when chart mode active), `styles.css` (label
-  typography), `index.html` (label density slider), `url-state.ts`
-  (chart mode + density).
-
-**Watch out for:**
-- Label collision is the hard UX problem. Use a simple greedy
-  reject-on-overlap pass each frame, prioritised by star brightness.
-- Label readability on the paper background: thin dark text with no
-  halo (chart mode is high-contrast already).
-- Chart mode should still respect the camera state — labels for stars
-  outside the current view-frustum are skipped.
-
-**Estimate:** 1 day, label collision tuning is most of it.
 
 ---
 
