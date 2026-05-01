@@ -1,13 +1,32 @@
 name = "stellata"
+main = "src/worker.ts"
 compatibility_date = "2026-04-22"
+placement = { mode = "smart" }
 
-# stellata.xyz served at the apex via assets-only deploy. routes must come
-# before [assets] — TOML scopes subsequent keys to whatever section
-# precedes them.
+# custom_domain = true makes wrangler auto-register the proxied DNS
+# record for stellata.xyz at the apex. The zone must already exist in
+# the Cloudflare account.
+# NOTE: `routes` must come before [assets] — TOML scopes subsequent keys
+# to whatever section precedes them.
 routes = [
-  { pattern = "stellata.xyz", zone_name = "stellata.xyz" },
-  { pattern = "stellata.xyz/*", zone_name = "stellata.xyz" },
+  { pattern = "stellata.xyz", custom_domain = true },
 ]
 
 [assets]
 directory = "./dist"
+binding = "ASSETS"
+
+[observability]
+enabled = false
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 0.1
+persist = true
+invocation_logs = true
+
+[observability.traces]
+enabled = false
+persist = true
+head_sampling_rate = 1

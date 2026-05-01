@@ -47,6 +47,7 @@ public/
   clouds.json             generated (gitignored, ~30 KB)
   dust/                   gitignored mirror of data/dust/
 src/
+  worker.ts               Cloudflare Worker entry (passthrough to ASSETS)
   client/
     main.ts               bootstrap
     stellata.ts          Three.js scene + state machine + event bus
@@ -154,9 +155,9 @@ Claude Code should read on demand when working on the relevant area.
   OBSERVE camera mode + look-around controller, two-finger roll
   gesture (platform-split). Read when touching camera state, focus
   travel, or gesture handling.
-- **`docs/deployment.md`** — Wrangler config for the assets-only deploy
-  (no Worker), routes, `compatibility_date`. Read when changing
-  deployment.
+- **`docs/deployment.md`** — Wrangler config, `@cloudflare/workers-types`
+  global leak, `compatibility_date`, `custom_domain` DNS auto-registration.
+  Read when changing deployment or worker code.
 - **`docs/ux-tweaks.md`** — reference table of UX knobs (orbit feel,
   chevron density, focus-ring size, panel defaults, etc.) and where to
   find them. Read when the user asks for a tweak.
