@@ -1,9 +1,9 @@
 import * as THREE from 'three';
-import type { Starfield } from './starfield';
+import type { Stellata } from './stellata';
 
 const RADIUS_PX = 24;
 
-export function createFocusRingOverlay(starfield: Starfield) {
+export function createFocusRingOverlay(stellata: Stellata) {
   const ring = document.getElementById('focus-ring') as unknown as SVGCircleElement;
   const v = new THREE.Vector3();
 
@@ -11,14 +11,14 @@ export function createFocusRingOverlay(starfield: Starfield) {
   const show = () => { ring.style.display = ''; };
 
   const syncVisibility = () => {
-    if (starfield.getFocusedStar() === null) hide();
+    if (stellata.getFocusedStar() === null) hide();
     else show();
   };
-  starfield.onFocusChange(syncVisibility);
+  stellata.onFocusChange(syncVisibility);
   syncVisibility();
 
-  starfield.onFrame(() => {
-    const idx = starfield.getFocusedStar();
+  stellata.onFrame(() => {
+    const idx = stellata.getFocusedStar();
     if (idx === null) return;
 
     // During the navigate↔observe transition the ring smoothly shrinks to
@@ -26,13 +26,13 @@ export function createFocusRingOverlay(starfield: Starfield) {
     // into the HUD ring instead of popping out. In steady-state observe
     // the ring stays hidden — the HUD ring takes over the "you are here"
     // role.
-    const transition = starfield.getObserveTransitionProgress();
-    if (starfield.getCameraMode() === 'observe' && !transition) {
+    const transition = stellata.getObserveTransitionProgress();
+    if (stellata.getCameraMode() === 'observe' && !transition) {
       hide();
       return;
     }
 
-    const camera = starfield.camera;
+    const camera = stellata.camera;
     let r = RADIUS_PX;
     if (transition) {
       r = transition.kind === 'enter'
@@ -47,7 +47,7 @@ export function createFocusRingOverlay(starfield: Starfield) {
       // disc exceeds the ring diameter — the ring becomes redundant chrome
       // on top of the star. Skipped during transitions because the disc is
       // about to be hidden / has just appeared anyway.
-      if (starfield.renderedSizePx(idx) > RADIUS_PX * 2) {
+      if (stellata.renderedSizePx(idx) > RADIUS_PX * 2) {
         hide();
         return;
       }
@@ -59,7 +59,7 @@ export function createFocusRingOverlay(starfield: Starfield) {
     // sits at the star) and becomes well-defined as the camera pulls away.
     // Either way, fall back to screen-centre when the projection fails so
     // the shrinking/growing ring still has a sensible centre.
-    const positions = starfield.localPositions;
+    const positions = stellata.localPositions;
     v.set(positions[idx * 3], positions[idx * 3 + 1], positions[idx * 3 + 2]);
     v.applyMatrix4(camera.matrixWorldInverse);
     let sx: number, sy: number;

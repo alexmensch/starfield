@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { Starfield } from './starfield';
+import type { Stellata } from './stellata';
 
 // Per-frame SVG mask updater. Overlays that should appear BEHIND any close
 // rendered-disc star apply `mask="url(#disc-occlude-mask)"`. This module
@@ -14,7 +14,7 @@ import type { Starfield } from './starfield';
 const MAX_MASK_CIRCLES = 4;
 const DISC_THRESHOLD_PX = 48;
 
-export function createDiscMask(starfield: Starfield) {
+export function createDiscMask(stellata: Stellata) {
   const mask = document.getElementById('disc-occlude-mask') as unknown as SVGMaskElement;
   // Remove any placeholder cutout from the static HTML first; we manage the
   // mask children fully from here.
@@ -44,10 +44,10 @@ export function createDiscMask(starfield: Starfield) {
   // Project a star's world position to screen + set a mask circle. Returns
   // whether a circle was placed (false = off-screen / too small).
   const placeCircle = (c: SVGCircleElement, idx: number): boolean => {
-    const size = starfield.renderedSizePx(idx);
+    const size = stellata.renderedSizePx(idx);
     if (size <= DISC_THRESHOLD_PX) return false;
-    const positions = starfield.localPositions;
-    const camera = starfield.camera;
+    const positions = stellata.localPositions;
+    const camera = stellata.camera;
     v.set(positions[idx * 3], positions[idx * 3 + 1], positions[idx * 3 + 2]);
     v.applyMatrix4(camera.matrixWorldInverse);
     if (v.z > -camera.near) return false;
@@ -64,14 +64,14 @@ export function createDiscMask(starfield: Starfield) {
   // pool when transitioning out of a focused-disc state — avoids the
   // 4-circle setAttribute sweep every idle frame in observe mode.
   let lastUsed = 0;
-  starfield.onFrame(() => {
-    const focus = starfield.getFocusedStar();
+  stellata.onFrame(() => {
+    const focus = stellata.getFocusedStar();
     // In OBSERVE mode the focal star (and its companion if any) are hidden
     // by the vertex shader, so a mask cutout for them would just be a black
     // hole carved out of overlays for nothing. Skip the focal-system masks
     // entirely; any other rendered disc isn't a candidate today.
     const observe =
-      starfield.getCameraMode() === 'observe' || starfield.isObserveTransitionActive();
+      stellata.getCameraMode() === 'observe' || stellata.isObserveTransitionActive();
     if (focus === null || observe) {
       if (lastUsed > 0) {
         for (let i = 0; i < circles.length; i++) clearCircle(circles[i]);
@@ -81,7 +81,7 @@ export function createDiscMask(starfield: Starfield) {
     }
     let used = 0;
     if (used < circles.length && placeCircle(circles[used], focus)) used++;
-    const comp = starfield.catalog.companion[focus];
+    const comp = stellata.catalog.companion[focus];
     if (comp >= 0 && used < circles.length && placeCircle(circles[used], comp)) used++;
     for (let i = used; i < circles.length; i++) clearCircle(circles[i]);
     lastUsed = used;

@@ -1,11 +1,11 @@
 import * as THREE from 'three';
-import type { Starfield } from './starfield';
+import type { Stellata } from './stellata';
 
 // Pixel radius left blank around every figure-star so lines don't obscure
 // the star glyph.
 export const STAR_GAP_PX = 9;
 
-export function createConstellationOverlay(starfield: Starfield) {
+export function createConstellationOverlay(stellata: Stellata) {
   const overlay = document.getElementById('overlay') as unknown as SVGSVGElement;
   const figure = document.getElementById('con-figure') as unknown as SVGPathElement;
 
@@ -16,10 +16,10 @@ export function createConstellationOverlay(starfield: Starfield) {
   let visible = true;
 
   const update = () => {
-    const f = starfield.getFilter();
+    const f = stellata.getFilter();
     current = f.highlightCon;
     visible = f.showConstellation;
-    chartActive = f.chart && starfield.getCameraMode() === 'observe';
+    chartActive = f.chart && stellata.getCameraMode() === 'observe';
     if (!visible || (current < 0 && !chartActive)) {
       figure.setAttribute('d', '');
       return;
@@ -31,11 +31,11 @@ export function createConstellationOverlay(starfield: Starfield) {
     if (!visible) return;
     if (current < 0 && !chartActive) return;
 
-    const cons = starfield.catalog.constellations;
+    const cons = stellata.catalog.constellations;
     const w = window.innerWidth;
     const h = window.innerHeight;
-    const camera = starfield.camera;
-    const positions = starfield.localPositions;
+    const camera = stellata.camera;
+    const positions = stellata.localPositions;
 
     const segments: string[] = [];
     // Chart mode draws every constellation; otherwise only the highlighted
@@ -72,9 +72,9 @@ export function createConstellationOverlay(starfield: Starfield) {
     figure.setAttribute('d', segments.join(''));
   };
 
-  starfield.onFilterChange(update);
-  starfield.onCameraModeChange(update);
-  starfield.onFrame(tick);
+  stellata.onFilterChange(update);
+  stellata.onCameraModeChange(update);
+  stellata.onFrame(tick);
   update();
 
   return { overlay };

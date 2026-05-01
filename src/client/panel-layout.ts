@@ -5,8 +5,8 @@
 // column, so nothing needs to measure the topbar or reposition on
 // resize.
 
-const PANEL_KEY = 'starfield.panel-collapsed';
-const GROUP_KEY_PREFIX = 'starfield.group-collapsed.';
+const PANEL_KEY = 'stellata.panel-collapsed';
+const GROUP_KEY_PREFIX = 'stellata.group-collapsed.';
 
 export function bindPanelLayout() {
   bindTopLevel();

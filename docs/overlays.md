@@ -74,7 +74,7 @@ Three SVG layers conditionally hide while `cameraMode === 'observe'`:
   star), but during the navigate↔observe transition its radius lerps to
   0 (enter) or back to 24 px (exit) instead of hard-hiding so it visually
   morphs through the HUD ring. The eased progress comes from
-  `Starfield.getObserveTransitionProgress()`.
+  `Stellata.getObserveTransitionProgress()`.
 - **Disc mask cutouts** (`disc-mask.ts`) — the focal star and its
   binary-companion candidates are skipped when in observe, so the
   constellation overlay paints unmasked through that region (and the
@@ -137,10 +137,10 @@ SVG groups under `#overlay`:
   `name · constellation-code · distance-from-observer`.
 
 Click affordances (both label classes set `pointer-events: auto`):
-- **On-screen label** → `Starfield.togglePoi(idx)` deselects the POI.
+- **On-screen label** → `Stellata.togglePoi(idx)` deselects the POI.
   The star itself stays clickable via `observeSingleClick` for the
   same effect; the label is a second, larger click target.
-- **Off-screen arrow label** → `Starfield.aimAt(localPositions[idx])`
+- **Off-screen arrow label** → `Stellata.aimAt(localPositions[idx])`
   slerps the camera so the POI lands at view centre. Mirrors the
   Sol/GC label affordance in `hud-overlay.ts`.
 - **Ring** stays `pointer-events: none` so the star underneath remains

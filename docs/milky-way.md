@@ -158,7 +158,7 @@ memory. The `DebugTools` interface in `debug.ts` is the registration
 point if you add more dev tools later.
 
 The same setters are also available individually under
-`starfield.milkywayLayer.*`:
+`stellata.milkywayLayer.*`:
 - `setBrightness(x)` — global gain in the tone-map exponent
 - `setGlowMagOffset(x)` — magnitude calibration (raise → dimmer)
 - `setDiscDensity(x)` / `setBulgeDensity(x)` — per-component emission

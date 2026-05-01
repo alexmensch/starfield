@@ -266,7 +266,7 @@ geometry, so even Sirius B at ΔV ≈ 10 earns wings on Sirius A.
 onto every star whose HIP appears in the flagged set. No
 `companionIdx` write — the secondary often isn't in the AT-HYG
 classic_ids subset, and the renderer's zoom-fit code at
-`starfield.ts` already guards on `companion ≥ 0`, so a
+`stellata.ts` already guards on `companion ≥ 0`, so a
 flagged-but-unpaired primary is fine.
 
 If the CCDM file is absent the build logs and continues — the

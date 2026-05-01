@@ -1,11 +1,11 @@
-import type { Starfield } from './starfield';
+import type { Stellata } from './stellata';
 
 // Two-button pill in the top-right card. Switches the camera between
 // NAVIGATE (default orbit) and OBSERVE (parked at the focused star, custom
 // look-around). OBSERVE is disabled until a star is focused — the
 // handler-side `setCameraMode('observe')` no-ops without an anchor, but
 // disabling the button advertises the affordance up-front.
-export function bindModeToggle(starfield: Starfield) {
+export function bindModeToggle(stellata: Stellata) {
   const host = document.getElementById('mode-toggle');
   if (!host) return;
   const buttons = Array.from(
@@ -17,14 +17,14 @@ export function bindModeToggle(starfield: Starfield) {
       if (btn.disabled) return;
       const mode = btn.dataset.mode;
       if (mode === 'navigate' || mode === 'observe') {
-        starfield.setCameraMode(mode);
+        stellata.setCameraMode(mode);
       }
     });
   }
 
   const sync = () => {
-    const mode = starfield.getCameraMode();
-    const hasFocus = starfield.getFocusedStar() !== null;
+    const mode = stellata.getCameraMode();
+    const hasFocus = stellata.getFocusedStar() !== null;
     for (const btn of buttons) {
       const btnMode = btn.dataset.mode;
       btn.classList.toggle('on', btnMode === mode);
@@ -39,7 +39,7 @@ export function bindModeToggle(starfield: Starfield) {
     }
   };
 
-  starfield.onCameraModeChange(sync);
-  starfield.onFocusChange(sync);
+  stellata.onCameraModeChange(sync);
+  stellata.onFocusChange(sync);
   sync();
 }

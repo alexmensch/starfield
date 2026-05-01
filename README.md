@@ -1,4 +1,4 @@
-# Starfield
+# Stellata
 
 A browser-based interactive 3D star catalog viewer. Loads the classic-IDs
 subset of the [AT-HYG catalog](https://codeberg.org/astronexus/athyg)
@@ -90,7 +90,7 @@ Stack: TypeScript, Three.js (WebGL2), Vite, Cloudflare Workers.
   (warp arrival, observe-exit, orbit-min clamp) is computed per-star so
   the disc renders at a uniform on-screen size regardless of stellar
   radius. Supergiants land much further away than dwarfs but read the
-  same visual size at parking. Single tunable in `starfield.ts`
+  same visual size at parking. Single tunable in `stellata.ts`
   (`TARGET_APPROACH_DISC_PX`).
 - Dual search inputs: one for focusing, one for measurement destination.
   Matches proper names (fuzzy), Bayer designations (`α Cen` / `Alpha Cen` /
@@ -172,7 +172,7 @@ Stack: TypeScript, Three.js (WebGL2), Vite, Cloudflare Workers.
 ```bash
 git lfs install        # one-time, if you haven't already
 git clone <this-repo>
-cd starfield
+cd stellata
 npm install
 ```
 
@@ -337,7 +337,7 @@ pan) works the same everywhere.
 ## Releases
 
 Tagged releases live on the
-[Releases page](https://github.com/alexmensch/starfield/releases) and
+[Releases page](https://github.com/alexmensch/stellata/releases) and
 are summarised in [`CHANGELOG.md`](./CHANGELOG.md). The cut-a-release
 runbook is in [`RELEASING.md`](./RELEASING.md).
 

@@ -1,4 +1,4 @@
-import type { Starfield } from './starfield';
+import type { Stellata } from './stellata';
 
 // Warp UI wiring. When a distance vector is drawn, the SVG distance label
 // itself doubles as the warp affordance — hovering reveals a "→ Warp"
@@ -6,12 +6,12 @@ import type { Starfield } from './starfield';
 // warp to offer "Skip", and it uses a muted ghost style so it doesn't fight
 // the rest of the chrome. Also toggles a body class while a warp is in
 // flight so overlays can hide themselves via CSS.
-export function bindWarpButton(starfield: Starfield) {
+export function bindWarpButton(stellata: Stellata) {
   const btn = document.getElementById('warp-btn') as HTMLButtonElement;
   const distUi = document.getElementById('dist-ui') as unknown as SVGGElement;
 
   const render = () => {
-    if (starfield.getWarpActive()) {
+    if (stellata.getWarpActive()) {
       btn.hidden = false;
       btn.textContent = 'Skip';
     } else {
@@ -20,7 +20,7 @@ export function bindWarpButton(starfield: Starfield) {
   };
 
   btn.addEventListener('click', () => {
-    if (starfield.getWarpActive()) starfield.skipWarp();
+    if (stellata.getWarpActive()) stellata.skipWarp();
     btn.blur();
   });
 
@@ -28,14 +28,14 @@ export function bindWarpButton(starfield: Starfield) {
   // active — at most one of (vectorTo, vectorToCloud) is set, so the
   // dispatch is unambiguous.
   const triggerWarp = () => {
-    const star = starfield.getVectorTo();
-    if (star !== null) { starfield.warpTo(star); return; }
-    const cloud = starfield.getVectorToCloud();
-    if (cloud !== null) starfield.warpToCloud(cloud);
+    const star = stellata.getVectorTo();
+    if (star !== null) { stellata.warpTo(star); return; }
+    const cloud = stellata.getVectorToCloud();
+    if (cloud !== null) stellata.warpToCloud(cloud);
   };
 
   distUi.addEventListener('click', () => {
-    if (starfield.getWarpActive()) return;
+    if (stellata.getWarpActive()) return;
     triggerWarp();
   });
 
@@ -43,20 +43,20 @@ export function bindWarpButton(starfield: Starfield) {
     // Ignore keys typed in search inputs so "w" doesn't trigger warp while
     // the user is typing a star name.
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-    if (starfield.getWarpActive()) {
+    if (stellata.getWarpActive()) {
       if (e.key === 'Escape' || e.key === ' ') {
         e.preventDefault();
-        starfield.skipWarp();
+        stellata.skipWarp();
       }
     } else if (e.key === 'w' || e.key === 'W') {
-      if (starfield.getVectorTo() !== null || starfield.getVectorToCloud() !== null) {
+      if (stellata.getVectorTo() !== null || stellata.getVectorToCloud() !== null) {
         e.preventDefault();
         triggerWarp();
       }
     }
   });
 
-  starfield.onWarpChange((active) => {
+  stellata.onWarpChange((active) => {
     document.body.classList.toggle('warping', active);
     render();
   });

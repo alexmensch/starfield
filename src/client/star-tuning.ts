@@ -1,4 +1,4 @@
-import type { Starfield } from './starfield';
+import type { Stellata } from './stellata';
 import { makeSection, makeSlider } from './debug-panel';
 
 // Dev-only tuning section for star-disc rendering. Each slider drives one
@@ -10,9 +10,9 @@ import { makeSection, makeSlider } from './debug-panel';
 // values that produce sensible visuals; nothing crashes outside them, but
 // extremes (e.g. lumBias < 0.3) start to look cartoony.
 
-export function buildStarSection(starfield: Starfield): HTMLDivElement {
+export function buildStarSection(stellata: Stellata): HTMLDivElement {
   const section = makeSection('Star disc');
-  const v = starfield.getStarRenderParams();
+  const v = stellata.getStarRenderParams();
 
   section.appendChild(makeSlider({
     label: 'visibleThreshold',
@@ -21,7 +21,7 @@ export function buildStarSection(starfield: Starfield): HTMLDivElement {
     step: 0.005,
     initial: v.visibleThreshold,
     format: (x) => x.toFixed(3),
-    onChange: (x) => starfield.setStarRenderParams({ visibleThreshold: x }),
+    onChange: (x) => stellata.setStarRenderParams({ visibleThreshold: x }),
   }));
 
   section.appendChild(makeSlider({
@@ -31,7 +31,7 @@ export function buildStarSection(starfield: Starfield): HTMLDivElement {
     step: 0.01,
     initial: v.coreThreshold,
     format: (x) => x.toFixed(2),
-    onChange: (x) => starfield.setStarRenderParams({ coreThreshold: x }),
+    onChange: (x) => stellata.setStarRenderParams({ coreThreshold: x }),
   }));
 
   section.appendChild(makeSlider({
@@ -41,7 +41,7 @@ export function buildStarSection(starfield: Starfield): HTMLDivElement {
     step: 0.005,
     initial: v.discardThreshold,
     format: (x) => x.toFixed(3),
-    onChange: (x) => starfield.setStarRenderParams({ discardThreshold: x }),
+    onChange: (x) => stellata.setStarRenderParams({ discardThreshold: x }),
   }));
 
   section.appendChild(makeSlider({
@@ -51,7 +51,7 @@ export function buildStarSection(starfield: Starfield): HTMLDivElement {
     step: 0.1,
     initial: v.distNMin,
     format: (x) => x.toFixed(1),
-    onChange: (x) => starfield.setStarRenderParams({ distNMin: x }),
+    onChange: (x) => stellata.setStarRenderParams({ distNMin: x }),
   }));
 
   section.appendChild(makeSlider({
@@ -61,7 +61,7 @@ export function buildStarSection(starfield: Starfield): HTMLDivElement {
     step: 0.1,
     initial: v.distNMax,
     format: (x) => x.toFixed(1),
-    onChange: (x) => starfield.setStarRenderParams({ distNMax: x }),
+    onChange: (x) => stellata.setStarRenderParams({ distNMax: x }),
   }));
 
   section.appendChild(makeSlider({
@@ -71,7 +71,7 @@ export function buildStarSection(starfield: Starfield): HTMLDivElement {
     step: 0.05,
     initial: v.lumBiasMin,
     format: (x) => x.toFixed(2),
-    onChange: (x) => starfield.setStarRenderParams({ lumBiasMin: x }),
+    onChange: (x) => stellata.setStarRenderParams({ lumBiasMin: x }),
   }));
 
   section.appendChild(makeSlider({
@@ -81,7 +81,7 @@ export function buildStarSection(starfield: Starfield): HTMLDivElement {
     step: 0.05,
     initial: v.lumBiasMax,
     format: (x) => x.toFixed(2),
-    onChange: (x) => starfield.setStarRenderParams({ lumBiasMax: x }),
+    onChange: (x) => stellata.setStarRenderParams({ lumBiasMax: x }),
   }));
 
   return section;

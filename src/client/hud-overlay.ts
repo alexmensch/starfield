@@ -65,7 +65,7 @@ export interface HudUpdateOpts {
   /** Steady-state camera mode. */
   cameraMode: 'navigate' | 'observe';
   /** Eased progress of the in-flight observe transition, or null. Driven
-   *  by Starfield.getObserveTransitionProgress(). */
+   *  by Stellata.getObserveTransitionProgress(). */
   transition: { f: number; kind: 'enter' | 'exit' } | null;
   /** Viewport size in CSS pixels. */
   w: number;

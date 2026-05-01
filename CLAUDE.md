@@ -1,4 +1,4 @@
-# Starfield — Claude project notes
+# Stellata — Claude project notes
 
 Project context and non-obvious constraints for future Claude Code sessions.
 Read this before editing.
@@ -50,7 +50,7 @@ src/
   worker.ts               Cloudflare Worker entry (just delegates to ASSETS)
   client/
     main.ts               bootstrap
-    starfield.ts          Three.js scene + state machine + event bus
+    stellata.ts          Three.js scene + state machine + event bus
     catalog-loader.ts     binary parse into typed arrays
     dust-loader.ts        progressive 3D-texture chunk loader + particle binary loader
     controls.ts           right-side panel widgets (with reverse-sync)

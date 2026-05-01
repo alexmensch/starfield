@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { Starfield } from './starfield';
+import type { Stellata } from './stellata';
 import type { ChartModeContext } from './chart-mode';
 import { mark as perfMark, measure as perfMeasure } from './perf-hud';
 
@@ -102,7 +102,7 @@ interface PooledLine {
 // `active` is the runtime gate read by the per-frame tick; the onFrame
 // handler is registered exactly once (the first time chart engages) and
 // short-circuits whenever active is false. Toggling chart on/off therefore
-// doesn't churn handlers on the starfield's onFrame list.
+// doesn't churn handlers on the stellata's onFrame list.
 let active = false;
 let registered = false;
 let layer: SVGGElement | null = null;
@@ -136,7 +136,7 @@ const tmpV3 = new THREE.Vector3();
 const projVec = new THREE.Vector3();
 
 export function startChartLabels(
-  starfield: Starfield,
+  stellata: Stellata,
   ctx: ChartModeContext,
 ): void {
   if (active) return;
@@ -147,9 +147,9 @@ export function startChartLabels(
   layer.style.display = '';
   glyphLayer.style.display = '';
 
-  if (!conStars) conStars = buildConstellationMembership(starfield);
+  if (!conStars) conStars = buildConstellationMembership(stellata);
   if (!variableIdxs || !binaryIdxs || !distSolCache) {
-    const cat = starfield.catalog;
+    const cat = stellata.catalog;
     const vs: number[] = [];
     const bs: number[] = [];
     const ds = new Float32Array(cat.count);
@@ -172,15 +172,15 @@ export function startChartLabels(
 
   if (!registered) {
     registered = true;
-    starfield.onFrame(() => {
+    stellata.onFrame(() => {
       if (!active || !layer || !glyphLayer || !conStars || !activeCtx) return;
-      tick(starfield, activeCtx, conStars);
+      tick(stellata, activeCtx, conStars);
     });
     // Filter changes invalidate both the centroid cache and the static
     // variable/binary eligibility lists. spectMask/distance/maxAppMag
     // don't all feed the centroid math, but bumping on any change is
     // cheap and avoids stale-cache bugs.
-    starfield.onFilterChange(() => {
+    stellata.onFilterChange(() => {
       centroidsVersion++;
       eligibleDirty = true;
     });
@@ -256,10 +256,10 @@ let lastTickFilterVersion = -1;
 let lastTickViewportW = 0;
 let lastTickViewportH = 0;
 
-function rebuildEligible(starfield: Starfield): void {
+function rebuildEligible(stellata: Stellata): void {
   if (!variableIdxs || !binaryIdxs || !distSolCache) return;
-  const f = starfield.getFilter();
-  const cat = starfield.catalog;
+  const f = stellata.getFilter();
+  const cat = stellata.catalog;
   const ds = distSolCache;
   const ve: number[] = [];
   for (const idx of variableIdxs) {
@@ -280,8 +280,8 @@ function rebuildEligible(starfield: Starfield): void {
   eligibleDirty = false;
 }
 
-function buildConstellationMembership(starfield: Starfield): Map<number, ConMembership> {
-  const cat = starfield.catalog;
+function buildConstellationMembership(stellata: Stellata): Map<number, ConMembership> {
+  const cat = stellata.catalog;
   const out = new Map<number, ConMembership>();
   for (let i = 0; i < cat.count; i++) {
     const conIdx = cat.constellation[i];
@@ -297,19 +297,19 @@ function buildConstellationMembership(starfield: Starfield): Map<number, ConMemb
 }
 
 function tick(
-  starfield: Starfield,
+  stellata: Stellata,
   ctx: ChartModeContext,
   conStars: Map<number, ConMembership>,
 ): void {
   if (!layer || !glyphLayer) return;
   const labelLayer = layer;
   const glyphs = glyphLayer;
-  const f = starfield.getFilter();
-  const camera = starfield.camera;
+  const f = stellata.getFilter();
+  const camera = stellata.camera;
   const w = window.innerWidth;
   const h = window.innerHeight;
-  const positions = starfield.localPositions;
-  const cat = starfield.catalog;
+  const positions = stellata.localPositions;
+  const cat = stellata.catalog;
 
   // Full-tick skip. Chart-mode SVG output is fully determined by camera
   // transform + filter version + viewport — none of which are changing
@@ -474,10 +474,10 @@ function tick(
   // 4) Molecular clouds — name labels at the cloud centroid. Cheap to
   // iterate (count is in the hundreds at most).
   perfMark('chart.clouds');
-  const clouds = starfield.getCloudCatalog();
+  const clouds = stellata.getCloudCatalog();
   if (clouds && f.showMolecularClouds) {
     for (let i = 0; i < clouds.clouds.length; i++) {
-      const local = starfield.cloudLocalPosition(i);
+      const local = stellata.cloudLocalPosition(i);
       if (!local) continue;
       const xy = projectVec(local, camera, w, h);
       if (!xy) continue;
@@ -561,7 +561,7 @@ function tick(
   // space the GPU disc renders. We mirror the chart-mode magnitude →
   // pixel formula (vertex shader's chart branch) here so the visual
   // matches the rendered disc exactly.
-  const discParams = starfield.getChartDiscParams();
+  const discParams = stellata.getChartDiscParams();
   const usedRings = new Set<number>();
   const usedWings = new Set<number>();
   const discPxFor = (appMag: number): number => {
@@ -578,7 +578,7 @@ function tick(
   // filter we don't replicate (per-star raymarch is too expensive on
   // CPU) — see BINARY_WING_MIN_EXTENSION_PX for the visual margin that
   // covers the resulting CPU/GPU disc-size mismatch.
-  if (eligibleDirty) rebuildEligible(starfield);
+  if (eligibleDirty) rebuildEligible(stellata);
   const absmag = cat.absmag;
 
   // Variable stars — outer ring at the max-brightness extreme of the

@@ -45,7 +45,7 @@ distance:
 
    Same on-screen disc size at parking for any star — supergiants land
    much further out than dwarfs. The single tunable is
-   `TARGET_APPROACH_DISC_PX` at the top of `starfield.ts` (currently
+   `TARGET_APPROACH_DISC_PX` at the top of `stellata.ts` (currently
    10 px). Binary companions still get a `Math.max(discDist, sep ×
    BINARY_MIN_DIST_FACTOR)` bump on top so both components stay inside
    the viewport half-angle (~25°) at parking — the binary requirement
@@ -80,7 +80,7 @@ muted ghost pill at top-center (shown only while warping), or `Esc` /
 `focusStar(idx)` for consistency with search-select (2 pc viewing
 distance, camera teleports along with the orbit target).
 
-Two- or three-phase animation in `starfield.ts updateWarp`, depending
+Two- or three-phase animation in `stellata.ts updateWarp`, depending
 on whether the warp re-enters OBSERVE on arrival:
 
 1. **Reorient** (`WARP_REORIENT_MS` = 2000). Camera position
@@ -230,7 +230,7 @@ vanishes before the camera arrives. `controls.enabled = false`;
   and the release is ≤ `MOMENTUM_MAX_RELEASE_GAP_MS` (80 ms — releases
   after a longer pause are deliberate stops, not flicks), we promote
   that to an angular velocity (`momentumAxis`, `momentumSpeed` in
-  rad/sec). `update()` runs every frame from Starfield's animate loop
+  rad/sec). `update()` runs every frame from Stellata's animate loop
   while in observe (and not in a transition / aim slerp): it applies
   `momentumSpeed · dt` of rotation around `momentumAxis` and decays
   `momentumSpeed` by `exp(-dt / MOMENTUM_TAU_SEC)` per step. `dt` is
@@ -346,7 +346,7 @@ in observe mode (see §URL state), encoded HIP-only at bit 19.
 
 ## Two-finger roll gesture (platform-split)
 
-`starfield.ts` adds a two-finger rotate gesture that rolls the view around
+`stellata.ts` adds a two-finger rotate gesture that rolls the view around
 the center of the screen by rotating `camera.up` around the forward vector
 (`target - position`). TrackballControls reads `camera.up` every `update()`,
 so the new orientation persists through subsequent orbit/zoom without

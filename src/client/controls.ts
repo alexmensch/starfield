@@ -1,4 +1,4 @@
-import { Starfield, ALL_SPECT_MASK, DEFAULT_FOV, MAG_PRESETS, type MagPresetName } from './starfield';
+import { Stellata, ALL_SPECT_MASK, DEFAULT_FOV, MAG_PRESETS, type MagPresetName } from './stellata';
 import { fmtDist, onUnitChange, getUnit } from './distance-util';
 import { bindConstellationTypeahead } from './constellation-typeahead';
 
@@ -33,7 +33,7 @@ export function distToSlider(pc: number, isMin: boolean): number {
   return Math.max(0, Math.min(SLIDER_STEPS, Math.round(v)));
 }
 
-export function bindControls(starfield: Starfield) {
+export function bindControls(stellata: Stellata) {
   const distMin = document.getElementById('dist-min') as HTMLInputElement;
   const distMax = document.getElementById('dist-max') as HTMLInputElement;
   const distReadout = document.getElementById('dist-readout')!;
@@ -62,7 +62,7 @@ export function bindControls(starfield: Starfield) {
   distMin.max = String(SLIDER_STEPS);
   distMax.max = String(SLIDER_STEPS);
 
-  bindConstellationTypeahead(starfield);
+  bindConstellationTypeahead(stellata);
 
   // Spectral chips (static).
   const chipEls: HTMLButtonElement[] = [];
@@ -74,19 +74,19 @@ export function bindControls(starfield: Starfield) {
     btn.dataset.bit = String(bit);
     btn.textContent = label;
     btn.addEventListener('click', () => {
-      const mask = starfield.getFilter().spectMask ^ (1 << bit);
-      starfield.setFilter({ spectMask: mask });
+      const mask = stellata.getFilter().spectMask ^ (1 << bit);
+      stellata.setFilter({ spectMask: mask });
     });
     chipEls.push(btn);
     chipsHost.appendChild(btn);
   }
   spectAllBtn.addEventListener('click', (e) => {
     e.preventDefault();
-    starfield.setFilter({ spectMask: ALL_SPECT_MASK });
+    stellata.setFilter({ spectMask: ALL_SPECT_MASK });
   });
   spectNoneBtn.addEventListener('click', (e) => {
     e.preventDefault();
-    starfield.setFilter({ spectMask: 0 });
+    stellata.setFilter({ spectMask: 0 });
   });
 
   // Slider → filter.
@@ -94,7 +94,7 @@ export function bindControls(starfield: Starfield) {
     let vMin = Number(distMin.value);
     let vMax = Number(distMax.value);
     if (vMin > vMax) { vMin = vMax; distMin.value = String(vMin); }
-    starfield.setFilter({
+    stellata.setFilter({
       minDistSol: sliderToDist(vMin, true),
       maxDistSol: sliderToDist(vMax, false),
     });
@@ -103,19 +103,19 @@ export function bindControls(starfield: Starfield) {
     let vMin = Number(distMin.value);
     let vMax = Number(distMax.value);
     if (vMax < vMin) { vMax = vMin; distMax.value = String(vMax); }
-    starfield.setFilter({
+    stellata.setFilter({
       minDistSol: sliderToDist(vMin, true),
       maxDistSol: sliderToDist(vMax, false),
     });
   });
   appMag.addEventListener('input', () => {
-    starfield.setFilter({ maxAppMag: Number(appMag.value) });
+    stellata.setFilter({ maxAppMag: Number(appMag.value) });
   });
   for (const btn of Array.from(magPresets)) {
     btn.addEventListener('click', () => {
       const preset = btn.dataset.preset as MagPresetName | undefined;
       if (preset === 'naked-eye' || preset === 'binoculars' || preset === 'all') {
-        starfield.applyMagnitudePreset(preset);
+        stellata.applyMagnitudePreset(preset);
       }
     });
   }
@@ -128,7 +128,7 @@ export function bindControls(starfield: Starfield) {
     let vMax = Number(sizeMax.value);
     const pushedMax = vMin > vMax;
     if (pushedMax) { vMax = vMin; sizeMax.value = String(vMax); }
-    starfield.setFilter({
+    stellata.setFilter({
       sizeMin: vMin, sizeMinOverridden: true,
       ...(pushedMax ? { sizeMax: vMax, sizeMaxOverridden: true } : {}),
     });
@@ -138,53 +138,53 @@ export function bindControls(starfield: Starfield) {
     let vMax = Number(sizeMax.value);
     const pushedMin = vMax < vMin;
     if (pushedMin) { vMin = vMax; sizeMin.value = String(vMin); }
-    starfield.setFilter({
+    stellata.setFilter({
       sizeMax: vMax, sizeMaxOverridden: true,
       ...(pushedMin ? { sizeMin: vMin, sizeMinOverridden: true } : {}),
     });
   });
   sizeSpan.addEventListener('input', () => {
-    starfield.setFilter({ sizeSpan: Number(sizeSpan.value), sizeSpanOverridden: true });
+    stellata.setFilter({ sizeSpan: Number(sizeSpan.value), sizeSpanOverridden: true });
   });
   showHud.addEventListener('change', () => {
-    starfield.setFilter({ showHud: showHud.checked });
+    stellata.setFilter({ showHud: showHud.checked });
   });
   showConstellation.addEventListener('change', () => {
-    starfield.setFilter({ showConstellation: showConstellation.checked });
+    stellata.setFilter({ showConstellation: showConstellation.checked });
   });
   showMilkyway.addEventListener('change', () => {
-    starfield.setFilter({ showMilkyway: showMilkyway.checked });
+    stellata.setFilter({ showMilkyway: showMilkyway.checked });
   });
   showGalacticGrid.addEventListener('change', () => {
-    starfield.setFilter({ showGalacticGrid: showGalacticGrid.checked });
+    stellata.setFilter({ showGalacticGrid: showGalacticGrid.checked });
   });
   showChart.addEventListener('change', () => {
-    starfield.setFilter({ chart: showChart.checked });
+    stellata.setFilter({ chart: showChart.checked });
   });
 
   document.getElementById('size-reset')!.addEventListener('click', () => {
-    starfield.clearSizeOverrides(['sizeMin', 'sizeMax']);
+    stellata.clearSizeOverrides(['sizeMin', 'sizeMax']);
   });
   document.getElementById('span-reset')!.addEventListener('click', () => {
-    starfield.clearSizeOverrides(['sizeSpan']);
+    stellata.clearSizeOverrides(['sizeSpan']);
   });
   fov.addEventListener('input', () => {
-    starfield.setCameraFov(Number(fov.value));
+    stellata.setCameraFov(Number(fov.value));
   });
   document.getElementById('fov-reset')!.addEventListener('click', () => {
-    starfield.setCameraFov(DEFAULT_FOV);
+    stellata.setCameraFov(DEFAULT_FOV);
   });
   exag.addEventListener('input', () => {
-    starfield.setStarExaggerationK(Number(exag.value));
+    stellata.setStarExaggerationK(Number(exag.value));
   });
   document.getElementById('exag-reset')!.addEventListener('click', () => {
-    starfield.setStarExaggerationK(starfield.getStarExaggerationKDefault());
+    stellata.setStarExaggerationK(stellata.getStarExaggerationKDefault());
   });
 
   // Reverse sync: any filter change (user input, URL restore, presets) updates
   // DOM to match. Writing to .value does not re-dispatch 'input', so no loop.
   const syncFromFilter = () => {
-    const f = starfield.getFilter();
+    const f = stellata.getFilter();
     const sMin = distToSlider(f.minDistSol, true);
     const sMax = distToSlider(f.maxDistSol, false);
     if (distMin.value !== String(sMin)) distMin.value = String(sMin);
@@ -243,7 +243,7 @@ export function bindControls(starfield: Starfield) {
     // Chart toggle is observe-gated. Disable when not in observe so the
     // user sees why it can't be enabled (the title attribute on the row
     // explains it).
-    const observeMode = starfield.getCameraMode() === 'observe';
+    const observeMode = stellata.getCameraMode() === 'observe';
     showChart.disabled = !observeMode;
     if (showChart.checked !== f.chart) showChart.checked = f.chart;
     // Galactic-glow checkbox is meaningless in chart mode (the volumetric
@@ -251,17 +251,17 @@ export function bindControls(starfield: Starfield) {
     // underlying filter value for restoration on chart-off.
     const chartActive = f.chart && observeMode;
     showMilkyway.disabled = chartActive;
-    const fovVal = starfield.getCameraFov();
+    const fovVal = stellata.getCameraFov();
     const fovStr = String(Math.round(fovVal));
     if (fov.value !== fovStr) fov.value = fovStr;
     fovReadout.textContent = `${Math.round(fovVal)}°`;
 
-    const kStr = starfield.getStarExaggerationK().toString();
+    const kStr = stellata.getStarExaggerationK().toString();
     if (exag.value !== kStr) exag.value = kStr;
   };
 
-  starfield.onFilterChange(syncFromFilter);
-  starfield.onCameraModeChange(syncFromFilter);
+  stellata.onFilterChange(syncFromFilter);
+  stellata.onCameraModeChange(syncFromFilter);
   onUnitChange(() => {
     if (distUnitLabel) distUnitLabel.textContent = getUnit();
     syncFromFilter();

@@ -1,6 +1,6 @@
 # Releasing
 
-Starfield uses [Semantic Versioning](https://semver.org/) and tracks
+Stellata uses [Semantic Versioning](https://semver.org/) and tracks
 every release in [`CHANGELOG.md`](./CHANGELOG.md). Releases are cut
 manually with `npm version` + `gh release create`. There is no CI
 release workflow; the steps below are run from a clean working tree on
@@ -57,7 +57,7 @@ release workflow; the steps below are run from a clean working tree on
 
 ## After the release
 
-- Verify `https://alxm.me/starfield/` serves the new version
+- Verify `https://alxm.me/stellata/` serves the new version
   (visible at the bottom-right of the About modal).
 - Add a placeholder `## [Unreleased]` section to `CHANGELOG.md` to
   collect the next set of changes.

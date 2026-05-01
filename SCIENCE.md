@@ -1,7 +1,7 @@
 # Science — sources, formulas, and modelling decisions
 
 This file is the canonical record of every external dataset that goes
-into Starfield, the physics that's applied to it at build and render
+into Stellata, the physics that's applied to it at build and render
 time, and the deliberate simplifications made along the way. It serves
 two audiences:
 
@@ -206,7 +206,7 @@ cost of strict angular fidelity in the secondary axis. Three.js's
 identical only for square viewports.
 
 Implementation: `src/client/shaders/star.{vert,frag}.glsl` (`sqrt`
-brightness curve + smoothstep taper) and `src/client/starfield.ts`
+brightness curve + smoothstep taper) and `src/client/stellata.ts`
 (`MAG_PRESETS`, `applyMagnitudePreset`, `computePresetPxSizes`).
 Live tuning via `debug.panel()` in the browser console.
 
@@ -228,7 +228,7 @@ skipped at build time — that excludes constant stars, supernovae, and
 irregular variables. Typical match rate: ~3.7k of 313k catalog stars.
 
 Implementation: `src/client/shaders/star.vert.glsl` and
-`src/client/starfield.ts` (CPU-side `renderedSizePx` mirror); see
+`src/client/stellata.ts` (CPU-side `renderedSizePx` mirror); see
 `docs/rendering.md` §Variable star rendering, and
 `docs/build-and-data.md` §GCVS variability cross-match for the
 build-time matching rules.

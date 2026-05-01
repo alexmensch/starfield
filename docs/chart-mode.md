@@ -185,7 +185,7 @@ the end of each tick.
 
 ## Picking under chart mode
 
-`pickStar` (`starfield.ts`) two fixes for the small-disc / variable
+`pickStar` (`stellata.ts`) two fixes for the small-disc / variable
 case:
 
 1. **Variable bright-extreme filter.** Filter check uses

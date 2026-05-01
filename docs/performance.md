@@ -33,12 +33,12 @@ after exiting chart mode (otherwise the average would lag forever).
 
 | Label                   | Where (`src/client/`)            | What it measures |
 | ----------------------- | -------------------------------- | ---------------- |
-| `frame.total`           | `starfield.ts` `animate()`       | Full frame body, the histogram source. |
-| `controls.update`       | `starfield.ts` `animate()`       | TrackballControls / observe-controls update branch. |
-| `pre-render`            | `starfield.ts` `animate()`       | Per-frame uniform writes + galactic + Milky Way reposition. |
-| `coreMask`              | `starfield.ts` `animate()`       | The binary-search `shouldEnableCoreMask()` (see below). |
-| `gpu.render`            | `starfield.ts` `animate()`       | The `renderer.render()` call — three-pass star draw + overlays. |
-| `onFrame.total`         | `starfield.ts` `animate()`       | The full `onFrameHandlers` loop (overlays, chart labels). |
+| `frame.total`           | `stellata.ts` `animate()`       | Full frame body, the histogram source. |
+| `controls.update`       | `stellata.ts` `animate()`       | TrackballControls / observe-controls update branch. |
+| `pre-render`            | `stellata.ts` `animate()`       | Per-frame uniform writes + galactic + Milky Way reposition. |
+| `coreMask`              | `stellata.ts` `animate()`       | The binary-search `shouldEnableCoreMask()` (see below). |
+| `gpu.render`            | `stellata.ts` `animate()`       | The `renderer.render()` call — three-pass star draw + overlays. |
+| `onFrame.total`         | `stellata.ts` `animate()`       | The full `onFrameHandlers` loop (overlays, chart labels). |
 | `chart.names`           | `chart-labels.ts` `tick()`       | Proper-name label projection + culling. |
 | `chart.bayer`           | `chart-labels.ts` `tick()`       | Bayer-letter Greek-glyph pass. |
 | `chart.constellations`  | `chart-labels.ts` `tick()`       | Constellation centroid recompute + label placement. |
@@ -61,13 +61,13 @@ Ordered by impact. Each item shipped as a separate commit.
 
 ### `shouldEnableCoreMask` — sorted-distance binary-search window
 
-`starfield.ts:2578`. The core depth-mask is only useful when a star
+`stellata.ts:2578`. The core depth-mask is only useful when a star
 is rendered close enough to the camera to occlude others, so the
 test is "any star within `dThresh` pc of the camera?" The original
 implementation scanned all 313k positions every frame in every
 mode.
 
-Build-time setup (`starfield.ts:546`): sort the indices by distance
+Build-time setup (`stellata.ts:546`): sort the indices by distance
 from Sol once; store the sorted index and parallel distances as
 `Uint32Array` + `Float32Array`. At query time, compute
 `camDistFromSol = (camera.position + worldOffset).length()` (the
@@ -104,7 +104,7 @@ Cache the centroids and recompute only when either condition fires:
 
 - Camera moved more than `√CENTROID_RECOMPUTE_DIST_SQ ≈ 0.5 pc`
   since the last recompute.
-- Filter version bumped (subscribed via `starfield.onFilterChange`).
+- Filter version bumped (subscribed via `stellata.onFilterChange`).
 
 The centroid is still re-projected to screen every frame (88 cheap
 matrix transforms) — it's the inner per-member loop that's elided.
@@ -122,7 +122,7 @@ list, applied the spectral-mask + min/max distance-from-Sol gates
 (static parts of `renderableAppMag`), then projected.
 
 Pre-bin into `variableEligible` / `binaryEligible` on filter change
-(via `starfield.onFilterChange`); the per-frame loops drop the
+(via `stellata.onFilterChange`); the per-frame loops drop the
 spectral + distance-from-Sol checks because eligibility already
 encodes them, and the cheap remaining work (magnitude gate +
 projection) only runs against the pruned set. Restrictive filters

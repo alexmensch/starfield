@@ -1,9 +1,9 @@
-import type { Starfield } from './starfield';
+import type { Stellata } from './stellata';
 import { fmtDist, niceRound, getUnit, LY_PER_PC } from './distance-util';
 
 const TARGET_BAR_PX = 140;
 
-export function createScaleBar(starfield: Starfield) {
+export function createScaleBar(stellata: Stellata) {
   const line = document.getElementById('scale-bar-line')!;
   const labelEl = document.getElementById('scale-bar-label')!;
   const host = document.getElementById('scale-bar')!;
@@ -12,13 +12,13 @@ export function createScaleBar(starfield: Starfield) {
   let lastBarPx = -1;
   let lastLabel = '';
 
-  starfield.onFrame(() => {
-    const camera = starfield.camera;
+  stellata.onFrame(() => {
+    const camera = stellata.camera;
 
     let barPx: number;
     let label: string;
 
-    if (starfield.getCameraMode() === 'observe') {
+    if (stellata.getCameraMode() === 'observe') {
       // No canonical focal depth in OBSERVE — the camera is fixed at the
       // focal star and the user is looking out into open space. Distance at
       // a depth would be misleading, so the bar represents angular extent of
@@ -29,7 +29,7 @@ export function createScaleBar(starfield: Starfield) {
       barPx = niceDeg * pxPerDeg;
       label = formatDegrees(niceDeg);
     } else {
-      const target = starfield.controls.target;
+      const target = stellata.controls.target;
       const dist = Math.max(camera.position.distanceTo(target), 1e-4);
       const fovRad = (camera.fov * Math.PI) / 180;
       const pxPerPc = window.innerHeight / (2 * dist * Math.tan(fovRad / 2));

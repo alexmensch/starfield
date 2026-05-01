@@ -1,5 +1,5 @@
 import Fuse from 'fuse.js';
-import type { Starfield } from './starfield';
+import type { Stellata } from './stellata';
 import type { Catalog } from './catalog-loader';
 import type { CloudCatalog } from './cloud-loader';
 
@@ -273,7 +273,7 @@ export function buildBayerMap(raw: SearchIndexEntry[]): Map<number, BayerInfo> {
 }
 
 export function bindSearch(
-  starfield: Starfield,
+  stellata: Stellata,
   catalog: Catalog,
   raw: SearchIndexEntry[],
   starLabels: Map<number, string>,
@@ -463,7 +463,7 @@ export function bindSearch(
   // runner because the distance vector accepts cloud destinations.
   const focusRunQuery = (q: string): FuzzyEntry[] => {
     const all = runQuery(q);
-    if (starfield.getCameraMode() === 'observe') {
+    if (stellata.getCameraMode() === 'observe') {
       return all.filter((e) => e.kind === 'star');
     }
     return all;
@@ -476,22 +476,22 @@ export function bindSearch(
     focusRunQuery,
     (entry) => {
       if (entry.kind === 'cloud') {
-        starfield.flyToCloud(entry.index);
-      } else if (starfield.getCameraMode() === 'observe') {
+        stellata.flyToCloud(entry.index);
+      } else if (stellata.getCameraMode() === 'observe') {
         // Re-route through warp so the camera flies from the current
         // observation anchor to the new one and re-enters observe on
         // arrival, instead of teleporting via focusStar.
-        starfield.warpTo(entry.index);
+        stellata.warpTo(entry.index);
       } else {
-        starfield.focusStar(entry.index);
+        stellata.focusStar(entry.index);
       }
     },
-    () => starfield.unfocus(),
+    () => stellata.unfocus(),
   );
 
   // Distance-vector destination — accepts both star and cloud entries.
   // The pick handler dispatches to the appropriate setter; the two
-  // mutually exclude in Starfield, so flipping between a star and a
+  // mutually exclude in Stellata, so flipping between a star and a
   // cloud destination clears the previous one.
   const toBox = new SearchBox(
     toInput,
@@ -499,17 +499,17 @@ export function bindSearch(
     resultsEl,
     runQuery,
     (entry) => {
-      if (entry.kind === 'cloud') starfield.setVectorToCloud(entry.index);
-      else starfield.setVectorTo(entry.index);
+      if (entry.kind === 'cloud') stellata.setVectorToCloud(entry.index);
+      else stellata.setVectorTo(entry.index);
     },
     () => {
-      starfield.setVectorTo(null);
-      starfield.setVectorToCloud(null);
+      stellata.setVectorTo(null);
+      stellata.setVectorToCloud(null);
     },
   );
 
   // Single sync for both star and cloud focus — the two are mutually
-  // exclusive (setting either clears the other in Starfield), so the
+  // exclusive (setting either clears the other in Stellata), so the
   // focus search box renders whichever one is set. The To (distance
   // vector) row is shown whenever a focus is held — clouds participate
   // in the same measurement / warp flow as stars now. OBSERVE mode hides
@@ -517,9 +517,9 @@ export function bindSearch(
   // a camera parked on its own anchor, and the underlying setters no-op
   // in that mode anyway.
   const syncFocusUI = () => {
-    const starIdx = starfield.getFocusedStar();
-    const cloudIdx = starfield.getFocusedCloud();
-    const observe = starfield.getCameraMode() === 'observe';
+    const starIdx = stellata.getFocusedStar();
+    const cloudIdx = stellata.getFocusedCloud();
+    const observe = stellata.getCameraMode() === 'observe';
     // OBSERVE makes the focus row read as "where you are observing from"
     // rather than "what you have selected", which is what FOCUS implies in
     // navigate mode. Same field, different mental model.
@@ -537,18 +537,18 @@ export function bindSearch(
     }
   };
   const syncVectorUI = () => {
-    const star = starfield.getVectorTo();
-    const cloudVec = starfield.getVectorToCloud();
+    const star = stellata.getVectorTo();
+    const cloudVec = stellata.getVectorToCloud();
     if (star !== null) toBox.setName(describe(star));
     else if (cloudVec !== null && clouds) toBox.setName(clouds.clouds[cloudVec].name);
     else toBox.setName('');
   };
 
-  starfield.onFocusChange(syncFocusUI);
-  starfield.onCloudFocusChange(syncFocusUI);
-  starfield.onCameraModeChange(syncFocusUI);
-  starfield.onVectorChange(syncVectorUI);
-  starfield.onVectorCloudChange(syncVectorUI);
+  stellata.onFocusChange(syncFocusUI);
+  stellata.onCloudFocusChange(syncFocusUI);
+  stellata.onCameraModeChange(syncFocusUI);
+  stellata.onVectorChange(syncVectorUI);
+  stellata.onVectorCloudChange(syncVectorUI);
 
   syncFocusUI();
   syncVectorUI();

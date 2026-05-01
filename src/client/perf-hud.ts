@@ -1,4 +1,4 @@
-import type { Starfield } from './starfield';
+import type { Stellata } from './stellata';
 
 // Lightweight always-callable instrumentation API. `mark`/`measure`/`frame`
 // are no-ops until `installPerfHud()` runs, so call sites can stay
@@ -78,7 +78,7 @@ export function mark(label: string): void { _mark(label); }
 export function measure(label: string): void { _measure(label); }
 export function frame(): void { _frame(); }
 
-export function installPerfHud(_starfield: Starfield): void {
+export function installPerfHud(_stellata: Stellata): void {
   if (installed) return;
   installed = true;
   _mark = realMark;

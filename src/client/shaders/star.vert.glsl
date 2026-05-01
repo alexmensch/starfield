@@ -83,7 +83,7 @@ in vec2 aCorner;
 // Per-instance: attributes that vary from star to star.
 // iPosition is in the renderer's local frame — which may be offset from
 // absolute catalog space via the CPU-side floating-origin mechanism (see
-// Starfield.recenterOrigin). Do NOT use length(iPosition) for any
+// Stellata.recenterOrigin). Do NOT use length(iPosition) for any
 // distance-from-Sol computation; use iDistSol instead.
 in vec3 iPosition;
 in float iAbsmag;

@@ -1,4 +1,4 @@
-# Starfield — next steps
+# Stellata — next steps
 
 A roadmap for the remaining ISM (interstellar medium) and post-ISM work.
 Each section is self-contained enough to drive a separate Claude Code
@@ -66,7 +66,7 @@ an observer at Sol would actually see.
    approach (80% density-weighted + 20% uniform-where-d>threshold) might
    be the right balance.
 4. **UX entry point** — currently console-only via
-   `starfield.setParticleStrength(x)`. Promoting to a user-facing toggle
+   `stellata.setParticleStrength(x)`. Promoting to a user-facing toggle
    needs UI design (probably a checkbox under "Display Settings" with a
    short label like "Show interstellar dust").
 
@@ -74,7 +74,7 @@ an observer at Sol would actually see.
 - `src/client/shaders/dust-particle.vert.glsl` — splat sizing, brightness
 - `src/client/shaders/dust-particle.frag.glsl` — falloff curve, blend mode
 - `scripts/build-dust.py` `sample_particles()` — importance-sampling
-- `src/client/starfield.ts` `attachDustParticles()` — blend mode if changing
+- `src/client/stellata.ts` `attachDustParticles()` — blend mode if changing
 
 **What NOT to change:** the per-star extinction layer is shipped and
 working. Don't tune it during particle work; it's the physical baseline.
@@ -246,7 +246,7 @@ high-fidelity data ends.
 
 **Files:**
 - Touch: `src/client/shaders/star.vert.glsl` (call the shared slab
-  function beyond AABB), `starfield.ts` (chip element + boundary
+  function beyond AABB), `stellata.ts` (chip element + boundary
   mesh), `index.html` (chip markup), `styles.css` (chip styling),
   `controls.ts` (boundary toggle), `url-state.ts` (boundary toggle).
 
@@ -329,7 +329,7 @@ Naturalistic exploration without steering — dense clusters pull the
 camera in, ridges deflect it.
 
 Two parts: (1) an offline precompute script that builds a
-`gravity.bin` asset, (2) runtime integration in `starfield.ts`
+`gravity.bin` asset, (2) runtime integration in `stellata.ts`
 following the warp pattern.
 
 ### Part 1: `scripts/build-gravity.ts`
@@ -408,7 +408,7 @@ Following `catalog-loader.ts` structure:
 Load in parallel with `catalog.bin` and `search-index.json` in
 `main.ts`.
 
-### Part 3: Wander state in `starfield.ts`
+### Part 3: Wander state in `stellata.ts`
 
 **State machine.** Add `'wander'` mode alongside warp. Same disable
 pattern: `controls.enabled = false`, `body.classList.toggle(
@@ -491,8 +491,8 @@ wander section. Comments must call out runtime vs build-baked:
 ### Files
 
 - New: `scripts/build-gravity.ts`, `src/client/gravity-loader.ts`.
-- Touch: `starfield.ts` (mode + state + `updateWander` + key
-  handler), `main.ts` (parallel load, pass loader to `Starfield`),
+- Touch: `stellata.ts` (mode + state + `updateWander` + key
+  handler), `main.ts` (parallel load, pass loader to `Stellata`),
   `package.json` (script + chain), `.gitignore`
   (`/public/gravity.bin`), `styles.css` (optional `body.wandering`
   style — e.g. cursor change or subtle vignette to signal "you are
@@ -523,7 +523,7 @@ wander section. Comments must call out runtime vs build-baked:
 
 1–1.5 days. Most of it is build-script worker setup plus tuning the
 nine levers to a feel that's neither stuck-on-Sol nor slingshot-out-
-of-the-catalog. The `starfield.ts` integration is small and follows
+of-the-catalog. The `stellata.ts` integration is small and follows
 the warp pattern.
 
 ### Deliberately excluded
@@ -693,7 +693,7 @@ export async function getExoplanetData(catalogIdx: number)
 Also expose `hasPlanet` on the per-record data exposed by
 `catalog-loader.ts` (parse from flag bit 3).
 
-### Part 3: Trigger + render wiring in `starfield.ts`
+### Part 3: Trigger + render wiring in `stellata.ts`
 
 **Trigger.** Lazy-load fires on `setFocus(idx)` when the focused
 star has `hasPlanet === true`. One fetch ever (cache is permanent
@@ -735,7 +735,7 @@ the visual choices to whoever implements. Constraints to honour:
   whatever rendering modules Part 3 ends up needing.
 - Touch: `scripts/build-catalog.ts` (parser + cross-match + flag +
   JSON emit + `isUpToDate`), `src/client/catalog-loader.ts`
-  (hard-require v4, expose `hasPlanet`), `starfield.ts` (focus
+  (hard-require v4, expose `hasPlanet`), `stellata.ts` (focus
   trigger + render integration), `main.ts` (no parallel load needed —
   loader is lazy), `.gitignore` (`/public/exoplanets.json`),
   `.gitattributes` (LFS pattern).
@@ -779,7 +779,7 @@ visuals get and how the null-radius indicator lands.
 - Search-by-planet-name. Star-centric UX only — planets are a
   visit-and-discover reward, not a search target. Avoids confusing
   planet names against star names in the dropdown.
-- Planet labels visible from the open starfield. Visible only when
+- Planet labels visible from the open stellata. Visible only when
   host is focused.
 - Cross-match against TIC / KIC / Gaia DR3 IDs to capture Kepler/TESS
   hosts. The catalog doesn't carry those designations, and adding a
@@ -808,7 +808,7 @@ cosmetic clock — `uTime` and the new `t` are orthogonal.
 
 ### The `t` time variable
 
-Unix-seconds, double precision. Lives on the starfield filter state
+Unix-seconds, double precision. Lives on the stellata filter state
 alongside other filter fields. Default is `Date.now() / 1000` evaluated
 at startup. URL state writes `t=<unix>` only when the user has scrubbed
 away from "now"; absence in URL = "live, defaults to current wall-clock
@@ -953,7 +953,7 @@ in the panel (default on).
   - `src/client/heliopause.ts` — static asymmetric mesh.
   - `src/client/time-scrubber.ts` — discreet UI in `.ui-bottom`.
 - Touch:
-  - `starfield.ts` — filter-state `t` field, Sol-focus `minDistance`
+  - `stellata.ts` — filter-state `t` field, Sol-focus `minDistance`
     swap, solar-system layer hookup.
   - `controls.ts` — possibly a panel toggle for orbits/rings.
   - `url-state.ts` — `t=` parameter (omit when "live").

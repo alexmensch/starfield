@@ -1,4 +1,4 @@
-import type { Starfield } from './starfield';
+import type { Stellata } from './stellata';
 
 // Typeahead replacement for the old `<select id="con-select">` constellation
 // picker. 88 entries, all known up-front — no fuzzy library needed; a
@@ -26,12 +26,12 @@ const MAX_RESULTS = 30;
 // constellation.
 const NONE_ENTRY: ConEntry = { idx: -1, name: 'None', code: '', search: '' };
 
-export function bindConstellationTypeahead(starfield: Starfield) {
+export function bindConstellationTypeahead(stellata: Stellata) {
   const input = document.getElementById('con-input') as HTMLInputElement;
   const resultsEl = document.getElementById('con-results') as HTMLUListElement;
   if (!input || !resultsEl) return;
 
-  const entries: ConEntry[] = starfield.catalog.constellations
+  const entries: ConEntry[] = stellata.catalog.constellations
     .map((c, idx) => ({
       idx,
       name: c.name,
@@ -47,7 +47,7 @@ export function bindConstellationTypeahead(starfield: Starfield) {
 
   const nameForIdx = (idx: number): string => {
     if (idx < 0) return '';
-    const c = starfield.catalog.constellations[idx];
+    const c = stellata.catalog.constellations[idx];
     return c ? c.name : '';
   };
 
@@ -82,10 +82,10 @@ export function bindConstellationTypeahead(starfield: Starfield) {
   const pick = (i: number) => {
     const e = results[i];
     if (!e) return;
-    starfield.setFilter({ highlightCon: e.idx });
+    stellata.setFilter({ highlightCon: e.idx });
     // The synthetic None entry has no constellation to aim at — picking
     // it just clears the highlight.
-    if (e.idx >= 0) starfield.aimAtConstellation(e.idx);
+    if (e.idx >= 0) stellata.aimAtConstellation(e.idx);
     resultsEl.hidden = true;
     input.blur();
   };
@@ -124,11 +124,11 @@ export function bindConstellationTypeahead(starfield: Starfield) {
 
   // Reverse-sync from filter state — URL restore, "None"-pick, etc.
   const syncFromFilter = () => {
-    const idx = starfield.getFilter().highlightCon;
+    const idx = stellata.getFilter().highlightCon;
     displayName = nameForIdx(idx);
     if (!focused) input.value = displayName;
   };
-  starfield.onFilterChange(syncFromFilter);
+  stellata.onFilterChange(syncFromFilter);
   syncFromFilter();
 }
 

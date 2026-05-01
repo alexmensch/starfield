@@ -1,4 +1,4 @@
-import { type Starfield, type MagPresetName, MAG_PRESETS, DEFAULT_FOV } from './starfield';
+import { type Stellata, type MagPresetName, MAG_PRESETS, DEFAULT_FOV } from './stellata';
 import { sliderToDist, distToSlider, SLIDER_STEPS } from './controls';
 import { applyUnit } from './unit-toggle';
 import { getUnit, onUnitChange } from './distance-util';
@@ -108,7 +108,7 @@ export interface DecodedView {
   focus?: 'cleared' | StarRef;
   /** Vector-to star (the chevron measurement line). */
   to?: StarRef;
-  /** Cloud focus (mutually exclusive with star focus in Starfield). */
+  /** Cloud focus (mutually exclusive with star focus in Stellata). */
   cloud?: number;
   /** Vector-to cloud (mutually exclusive with `to`). */
   toc?: number;
@@ -524,12 +524,12 @@ function fromBase64Url(blob: string): Uint8Array {
   return out;
 }
 
-// Build a DecodedView from current Starfield state. Default-equality is
+// Build a DecodedView from current Stellata state. Default-equality is
 // computed against canonical defaults (and the active preset for
 // preset-relative fields like `mag`) so omitted fields keep the blob
 // minimal.
-export function currentStateOf(starfield: Starfield, idMaps: IdMaps): DecodedView {
-  const f = starfield.getFilter();
+export function currentStateOf(stellata: Stellata, idMaps: IdMaps): DecodedView {
+  const f = stellata.getFilter();
   const view: DecodedView = {};
 
   const sMin = distToSlider(f.minDistSol, true);
@@ -552,16 +552,16 @@ export function currentStateOf(starfield: Starfield, idMaps: IdMaps): DecodedVie
   if (!f.showConstellation) view.showConstellation = false;
   if (!f.showMilkyway) view.showMilkyway = false;
 
-  const fov = starfield.getCameraFov();
+  const fov = stellata.getCameraFov();
   if (!approx(fov, DEFAULT_FOV)) view.fov = fov;
 
   if (getUnit() === 'ly') view.unit = 'ly';
 
-  // Star focus and cloud focus are mutually exclusive in Starfield, so at
+  // Star focus and cloud focus are mutually exclusive in Stellata, so at
   // most one is non-null. Sol focus is the default, encoded by *omitting*
   // both — so a fully-default state has no `?v=` at all.
-  const star = starfield.getFocusedStar();
-  const cloud = starfield.getFocusedCloud();
+  const star = stellata.getFocusedStar();
+  const cloud = stellata.getFocusedCloud();
   if (cloud !== null) {
     view.cloud = cloud;
   } else if (star === null) {
@@ -570,15 +570,15 @@ export function currentStateOf(starfield: Starfield, idMaps: IdMaps): DecodedVie
     view.focus = refFromIndex(star, idMaps);
   }
 
-  const to = starfield.getVectorTo();
-  const toCloud = starfield.getVectorToCloud();
+  const to = stellata.getVectorTo();
+  const toCloud = stellata.getVectorToCloud();
   if (to !== null) {
     view.to = refFromIndex(to, idMaps);
   } else if (toCloud !== null) {
     view.toc = toCloud;
   }
 
-  const mode = starfield.getCameraMode();
+  const mode = stellata.getCameraMode();
   if (mode !== 'navigate') view.mode = mode;
 
   // Chart on/off rides FLAG_CHART, gated to observe-only at pack time.
@@ -590,7 +590,7 @@ export function currentStateOf(starfield: Starfield, idMaps: IdMaps): DecodedVie
   // stars without HIP can't be pinned in the first place. Capped at
   // POI_MAX_COUNT defensively.
   if (mode === 'observe') {
-    const pois = starfield.getPois();
+    const pois = stellata.getPois();
     if (pois.length > 0) {
       const hipsOut: number[] = [];
       for (const idx of pois) {
@@ -602,9 +602,9 @@ export function currentStateOf(starfield: Starfield, idMaps: IdMaps): DecodedVie
     }
   }
 
-  const c = starfield.camera.position;
-  const t = starfield.controls.target;
-  const u = starfield.camera.up;
+  const c = stellata.camera.position;
+  const t = stellata.controls.target;
+  const u = stellata.camera.up;
   // Skip each independently. Under floating origin, a focused-orbit URL
   // has tgt=[0,0,0] (the focal star's local position), so omitting it
   // when at default trims ~16 base64url chars from nearly every URL.
@@ -634,7 +634,7 @@ function resolveStarRef(ref: StarRef, idMaps: IdMaps, fallback: number): number 
   return ref.id >= 0 && ref.id < idMaps.starCount ? ref.id : fallback;
 }
 
-// Apply a decoded view to Starfield. **The order here is load-bearing**:
+// Apply a decoded view to Stellata. **The order here is load-bearing**:
 //   - unit is applied first so any DOM sync triggered later reads it
 //   - preset before filter, so derived size defaults are populated before
 //     explicit overrides layer on top
@@ -644,13 +644,13 @@ function resolveStarRef(ref: StarRef, idMaps: IdMaps, fallback: number): number 
 //   - mode last, because the observe snap reads the camera quaternion
 //     just set by controls.update(position, target, up)
 export function applyDecodedView(
-  starfield: Starfield,
+  stellata: Stellata,
   view: DecodedView,
   idMaps: IdMaps,
 ): void {
   if (view.unit) applyUnit(view.unit);
 
-  if (view.preset) starfield.applyMagnitudePreset(view.preset);
+  if (view.preset) stellata.applyMagnitudePreset(view.preset);
 
   const patch: Record<string, number | boolean> = {};
   if (view.dmin !== undefined || view.dmax !== undefined) {
@@ -667,12 +667,12 @@ export function applyDecodedView(
   if (view.showHud !== undefined) patch.showHud = view.showHud;
   if (view.showConstellation !== undefined) patch.showConstellation = view.showConstellation;
   if (view.showMilkyway !== undefined) patch.showMilkyway = view.showMilkyway;
-  if (Object.keys(patch).length) starfield.setFilter(patch);
+  if (Object.keys(patch).length) stellata.setFilter(patch);
 
-  if (view.fov !== undefined && view.fov > 0) starfield.setCameraFov(view.fov);
+  if (view.fov !== undefined && view.fov > 0) stellata.setCameraFov(view.fov);
 
   if (view.up) {
-    starfield.camera.up.set(view.up[0], view.up[1], view.up[2]).normalize();
+    stellata.camera.up.set(view.up[0], view.up[1], view.up[2]).normalize();
   }
 
   const hasCam = view.cam !== undefined;
@@ -680,12 +680,12 @@ export function applyDecodedView(
 
   if (view.focus !== undefined) {
     if (view.focus === 'cleared') {
-      starfield.unfocus();
+      stellata.unfocus();
     } else {
       const idx = resolveStarRef(view.focus, idMaps, idMaps.solIndex);
       if (idx >= 0 && idx < idMaps.starCount) {
-        if (hasCam || hasTgt) starfield.setOrbitTarget(idx);
-        else starfield.focusStar(idx);
+        if (hasCam || hasTgt) stellata.setOrbitTarget(idx);
+        else stellata.focusStar(idx);
       }
     }
   }
@@ -693,50 +693,50 @@ export function applyDecodedView(
   // emits both — apply after `focus` so cloud wins on the off chance both
   // are present in a hand-crafted blob.
   if (view.cloud !== undefined && view.cloud >= 0) {
-    if (hasCam || hasTgt) starfield.setFocusedCloud(view.cloud);
-    else starfield.flyToCloud(view.cloud);
+    if (hasCam || hasTgt) stellata.setFocusedCloud(view.cloud);
+    else stellata.flyToCloud(view.cloud);
   }
-  if (view.toc !== undefined && view.toc >= 0) starfield.setVectorToCloud(view.toc);
+  if (view.toc !== undefined && view.toc >= 0) stellata.setVectorToCloud(view.toc);
   if (view.to) {
     const idx = resolveStarRef(view.to, idMaps, -1);
-    if (idx >= 0 && idx < idMaps.starCount) starfield.setVectorTo(idx);
+    if (idx >= 0 && idx < idMaps.starCount) stellata.setVectorTo(idx);
   }
 
   if (view.cam) {
-    starfield.camera.position.set(view.cam[0], view.cam[1], view.cam[2]);
+    stellata.camera.position.set(view.cam[0], view.cam[1], view.cam[2]);
   }
   if (view.tgt) {
-    starfield.controls.target.set(view.tgt[0], view.tgt[1], view.tgt[2]);
+    stellata.controls.target.set(view.tgt[0], view.tgt[1], view.tgt[2]);
   }
-  if (hasCam || hasTgt || view.up) starfield.controls.update();
+  if (hasCam || hasTgt || view.up) stellata.controls.update();
 
-  if (view.mode === 'observe' && starfield.getFocusedStar() !== null) {
-    starfield.setCameraMode('observe', { animate: false });
+  if (view.mode === 'observe' && stellata.getFocusedStar() !== null) {
+    stellata.setCameraMode('observe', { animate: false });
   }
 
   // Chart applies after observe mode is engaged so the chart-mode
   // orchestrator's observe-gate sees the right cameraMode on the
   // resulting filter-change event.
-  if (view.chart && starfield.getCameraMode() === 'observe') {
-    starfield.setFilter({ chart: true });
+  if (view.chart && stellata.getCameraMode() === 'observe') {
+    stellata.setFilter({ chart: true });
   }
 
   // POIs are observe-only — only restore them when the camera is parked
   // in observe (the encoder also gates emission on this). Resolve each
   // HIP through idMaps; HIPs that don't resolve in the current catalog
   // are silently dropped (graceful partial restore on a catalog rebuild).
-  if (Array.isArray(view.pois) && view.pois.length > 0 && starfield.getCameraMode() === 'observe') {
+  if (Array.isArray(view.pois) && view.pois.length > 0 && stellata.getCameraMode() === 'observe') {
     const resolved: number[] = [];
     for (const hip of view.pois) {
       const idx = idMaps.hipToIndex.get(hip);
       if (idx !== undefined) resolved.push(idx);
     }
-    if (resolved.length > 0) starfield.setPois(resolved);
+    if (resolved.length > 0) stellata.setPois(resolved);
   }
 }
 
-function writeUrl(starfield: Starfield, idMaps: IdMaps): void {
-  const view = currentStateOf(starfield, idMaps);
+function writeUrl(stellata: Stellata, idMaps: IdMaps): void {
+  const view = currentStateOf(stellata, idMaps);
   const mask = computePresence(view);
   const qs = mask === 0 ? '' : `${PARAM_NAME}=${encodeBlob(view)}`;
   const url = location.pathname + (qs ? '?' + qs : '');
@@ -745,7 +745,7 @@ function writeUrl(starfield: Starfield, idMaps: IdMaps): void {
   }
 }
 
-export function applyFromUrl(starfield: Starfield, idMaps: IdMaps): void {
+export function applyFromUrl(stellata: Stellata, idMaps: IdMaps): void {
   const params = new URLSearchParams(location.search);
   const blob = params.get(PARAM_NAME);
   if (!blob) return;
@@ -756,38 +756,38 @@ export function applyFromUrl(starfield: Starfield, idMaps: IdMaps): void {
     console.warn('Failed to decode ?v= URL state:', err);
     return;
   }
-  applyDecodedView(starfield, decoded.view, idMaps);
+  applyDecodedView(stellata, decoded.view, idMaps);
   // Auto-upgrade legacy URLs: after the same debounce we already use for
   // routine URL writes, re-encode the current state as the latest schema
   // so the address bar ends up with the smaller v2 form. Defers past
   // any state-change events triggered by the apply itself, which would
   // otherwise schedule their own write on top.
   if (decoded.version !== SCHEMA_VERSION) {
-    setTimeout(() => writeUrl(starfield, idMaps), DEBOUNCE_MS);
+    setTimeout(() => writeUrl(stellata, idMaps), DEBOUNCE_MS);
   }
 }
 
-export function startUrlSync(starfield: Starfield, idMaps: IdMaps): void {
+export function startUrlSync(stellata: Stellata, idMaps: IdMaps): void {
   let timer: number | undefined;
   let lastCamHash = '';
 
   const schedule = () => {
     if (timer !== undefined) clearTimeout(timer);
-    timer = window.setTimeout(() => writeUrl(starfield, idMaps), DEBOUNCE_MS);
+    timer = window.setTimeout(() => writeUrl(stellata, idMaps), DEBOUNCE_MS);
   };
 
-  starfield.onStateChange(schedule);
+  stellata.onStateChange(schedule);
   onUnitChange(schedule);
 
-  starfield.onFrame(() => {
+  stellata.onFrame(() => {
     // Skip URL writes while a warp or observe transition is in flight —
     // the camera mutates every frame and we don't want intermediate poses
     // in the URL. The end-of-animation events flush the final pose.
-    if (starfield.getWarpActive()) return;
-    if (starfield.isObserveTransitionActive()) return;
-    const c = starfield.camera.position;
-    const t = starfield.controls.target;
-    const u = starfield.camera.up;
+    if (stellata.getWarpActive()) return;
+    if (stellata.isObserveTransitionActive()) return;
+    const c = stellata.camera.position;
+    const t = stellata.controls.target;
+    const u = stellata.camera.up;
     const hash = `${c.x.toFixed(3)},${c.y.toFixed(3)},${c.z.toFixed(3)}|${t.x.toFixed(3)},${t.y.toFixed(3)},${t.z.toFixed(3)}|${u.x.toFixed(3)},${u.y.toFixed(3)},${u.z.toFixed(3)}`;
     if (hash !== lastCamHash) {
       lastCamHash = hash;

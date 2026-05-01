@@ -1,5 +1,5 @@
-import type { Starfield } from './starfield';
-import { DEFAULT_FOV } from './starfield';
+import type { Stellata } from './stellata';
+import { DEFAULT_FOV } from './stellata';
 import { bindHelpModal } from './help-modal';
 
 // Single global keydown listener with a small dispatch table. Every
@@ -12,7 +12,7 @@ const MAG_MIN = -2;
 const MAG_MAX = 15;
 const C_DOUBLE_TAP_MS = 200;
 
-export function bindKeyboardShortcuts(starfield: Starfield) {
+export function bindKeyboardShortcuts(stellata: Stellata) {
   const help = bindHelpModal();
 
   // The "go" picker reuses the topbar's existing `.search-wrap` widget —
@@ -69,11 +69,11 @@ export function bindKeyboardShortcuts(starfield: Starfield) {
       // so the cascade doesn't run AFTER the modal closes itself.
       if (anyVisibleSelector('.modal')) return;
       // Warp owns ESC via warp-button.ts.
-      if (starfield.getWarpActive()) return;
+      if (stellata.getWarpActive()) return;
       // Search/typeahead inputs handle ESC themselves (clear dropdown +
       // blur). Skip our cascade in that case.
       if (targetIsEditable(e.target)) return;
-      escCascade(starfield);
+      escCascade(stellata);
       return;
     }
 
@@ -83,7 +83,7 @@ export function bindKeyboardShortcuts(starfield: Starfield) {
 
     switch (e.key) {
       case 'r': case 'R':
-        resetCameraSection(starfield);
+        resetCameraSection(stellata);
         e.preventDefault();
         break;
       case 'g': case 'G':
@@ -99,25 +99,25 @@ export function bindKeyboardShortcuts(starfield: Starfield) {
         if (cTapTimer !== null) {
           clearTimeout(cTapTimer);
           cTapTimer = null;
-          starfield.setFilter({
-            showConstellation: !starfield.getFilter().showConstellation,
+          stellata.setFilter({
+            showConstellation: !stellata.getFilter().showConstellation,
           });
         } else {
           cTapTimer = window.setTimeout(() => {
             cTapTimer = null;
-            if (starfield.getFilter().showConstellation) {
+            if (stellata.getFilter().showConstellation) {
               conModal.open();
             }
           }, C_DOUBLE_TAP_MS);
         }
         break;
       case 'h': case 'H':
-        starfield.setFilter({ showHud: !starfield.getFilter().showHud });
+        stellata.setFilter({ showHud: !stellata.getFilter().showHud });
         e.preventDefault();
         break;
       case 's': case 'S':
-        starfield.setFilter({
-          showGalacticGrid: !starfield.getFilter().showGalacticGrid,
+        stellata.setFilter({
+          showGalacticGrid: !stellata.getFilter().showGalacticGrid,
         });
         e.preventDefault();
         break;
@@ -125,8 +125,8 @@ export function bindKeyboardShortcuts(starfield: Starfield) {
         // Mirror the panel's observe-button enable rule: only valid when
         // a star is focused. setCameraMode no-ops without focus anyway,
         // but bailing here keeps the key from feeling unresponsive.
-        if (starfield.getFocusedStar() !== null) {
-          starfield.setCameraMode('observe');
+        if (stellata.getFocusedStar() !== null) {
+          stellata.setCameraMode('observe');
           e.preventDefault();
         }
         break;
@@ -136,8 +136,8 @@ export function bindKeyboardShortcuts(starfield: Starfield) {
         // labels). No-op outside observe rather than auto-mode-switching:
         // the user should know they're entering observe before chart
         // engages on top.
-        if (starfield.getCameraMode() === 'observe') {
-          starfield.setFilter({ chart: !starfield.getFilter().chart });
+        if (stellata.getCameraMode() === 'observe') {
+          stellata.setFilter({ chart: !stellata.getFilter().chart });
           e.preventDefault();
         }
         break;
@@ -146,58 +146,58 @@ export function bindKeyboardShortcuts(starfield: Starfield) {
         e.preventDefault();
         break;
       case '+':
-        adjustMag(starfield, +MAG_STEP);
+        adjustMag(stellata, +MAG_STEP);
         e.preventDefault();
         break;
       case '-':
-        adjustMag(starfield, -MAG_STEP);
+        adjustMag(stellata, -MAG_STEP);
         e.preventDefault();
         break;
       case '=':
-        starfield.applyMagnitudePreset('naked-eye');
+        stellata.applyMagnitudePreset('naked-eye');
         e.preventDefault();
         break;
     }
   }, { capture: true });
 }
 
-function adjustMag(starfield: Starfield, delta: number) {
-  const cur = starfield.getFilter().maxAppMag;
+function adjustMag(stellata: Stellata, delta: number) {
+  const cur = stellata.getFilter().maxAppMag;
   const next = clamp(cur + delta, MAG_MIN, MAG_MAX);
-  starfield.setFilter({ maxAppMag: next });
+  stellata.setFilter({ maxAppMag: next });
 }
 
 // R: reset only the sliders living under the panel's "Camera" section —
 // star size min/max, dynamic range, FOV, exaggeration. Mirrors the
 // per-row "reset" buttons wired in controls.ts:159-176.
-function resetCameraSection(starfield: Starfield) {
-  starfield.clearSizeOverrides(['sizeMin', 'sizeMax']);
-  starfield.clearSizeOverrides(['sizeSpan']);
-  starfield.setCameraFov(DEFAULT_FOV);
-  starfield.setStarExaggerationK(starfield.getStarExaggerationKDefault());
+function resetCameraSection(stellata: Stellata) {
+  stellata.clearSizeOverrides(['sizeMin', 'sizeMax']);
+  stellata.clearSizeOverrides(['sizeSpan']);
+  stellata.setCameraFov(DEFAULT_FOV);
+  stellata.setStarExaggerationK(stellata.getStarExaggerationKDefault());
 }
 
 // ESC progression: observe→navigate (keep focus, animated exit), then
 // in navigate clear destination if any, else clear focus. A no-op if
 // neither is set.
-function escCascade(starfield: Starfield) {
-  if (starfield.getCameraMode() === 'observe') {
-    starfield.setCameraMode('navigate');
+function escCascade(stellata: Stellata) {
+  if (stellata.getCameraMode() === 'observe') {
+    stellata.setCameraMode('navigate');
     return;
   }
   if (
-    starfield.getVectorTo() !== null ||
-    starfield.getVectorToCloud() !== null
+    stellata.getVectorTo() !== null ||
+    stellata.getVectorToCloud() !== null
   ) {
-    starfield.setVectorTo(null);
-    starfield.setVectorToCloud(null);
+    stellata.setVectorTo(null);
+    stellata.setVectorToCloud(null);
     return;
   }
   if (
-    starfield.getFocusedStar() !== null ||
-    starfield.getFocusedCloud() !== null
+    stellata.getFocusedStar() !== null ||
+    stellata.getFocusedCloud() !== null
   ) {
-    starfield.unfocus();
+    stellata.unfocus();
   }
 }
 

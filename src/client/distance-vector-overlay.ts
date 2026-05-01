@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { Starfield } from './starfield';
+import type { Stellata } from './stellata';
 import { fmtDist } from './distance-util';
 import {
   buildArrowSvgPath,
@@ -17,7 +17,7 @@ const SOURCE_OFFSET_PX = 28;
 const MAX_OFFSCREEN_FACTOR = 1.5;
 
 export function createDistanceVectorOverlay(
-  starfield: Starfield,
+  stellata: Stellata,
   starLabels: Map<number, string>,
 ) {
   const line = document.getElementById('dist-line') as unknown as SVGPathElement;
@@ -46,34 +46,34 @@ export function createDistanceVectorOverlay(
     visible = false;
   };
 
-  starfield.onVectorChange(() => {
-    if (starfield.getVectorTo() === null && starfield.getVectorToCloud() === null) hide();
+  stellata.onVectorChange(() => {
+    if (stellata.getVectorTo() === null && stellata.getVectorToCloud() === null) hide();
   });
-  starfield.onVectorCloudChange(() => {
-    if (starfield.getVectorTo() === null && starfield.getVectorToCloud() === null) hide();
+  stellata.onVectorCloudChange(() => {
+    if (stellata.getVectorTo() === null && stellata.getVectorToCloud() === null) hide();
   });
 
-  starfield.onFrame(() => {
+  stellata.onFrame(() => {
     // Source: whichever is focused. Star wins when both are set (which
     // shouldn't happen — they're mutually exclusive — but be defensive).
-    const fromStar = starfield.getFocusedStar();
-    const fromCloud = starfield.getFocusedCloud();
-    const toStar = starfield.getVectorTo();
-    const toCloud = starfield.getVectorToCloud();
+    const fromStar = stellata.getFocusedStar();
+    const fromCloud = stellata.getFocusedCloud();
+    const toStar = stellata.getVectorTo();
+    const toCloud = stellata.getVectorToCloud();
     if ((fromStar === null && fromCloud === null) ||
         (toStar === null && toCloud === null)) { hide(); return; }
 
-    const camera = starfield.camera;
+    const camera = stellata.camera;
     // Local-frame positions — the camera and projection math operate in
-    // whatever frame the floating origin has set (see starfield.ts).
-    const positions = starfield.localPositions;
+    // whatever frame the floating origin has set (see stellata.ts).
+    const positions = stellata.localPositions;
     const w = window.innerWidth;
     const h = window.innerHeight;
 
     if (fromStar !== null) {
       tmpA.set(positions[fromStar * 3], positions[fromStar * 3 + 1], positions[fromStar * 3 + 2]);
     } else if (fromCloud !== null) {
-      const p = starfield.cloudLocalPosition(fromCloud);
+      const p = stellata.cloudLocalPosition(fromCloud);
       if (!p) { hide(); return; }
       tmpA.copy(p);
     }
@@ -82,10 +82,10 @@ export function createDistanceVectorOverlay(
       tmpB.set(positions[toStar * 3], positions[toStar * 3 + 1], positions[toStar * 3 + 2]);
       destLabel = starLabels.get(toStar) ?? `Unnamed #${toStar}`;
     } else if (toCloud !== null) {
-      const p = starfield.cloudLocalPosition(toCloud);
+      const p = stellata.cloudLocalPosition(toCloud);
       if (!p) { hide(); return; }
       tmpB.copy(p);
-      const cat = starfield.getCloudCatalog();
+      const cat = stellata.getCloudCatalog();
       destLabel = cat ? cat.clouds[toCloud].name : 'Cloud';
     }
 
@@ -97,7 +97,7 @@ export function createDistanceVectorOverlay(
     // the user's max-app-size (≈ disc radius, since sizeMax is a diameter)
     // so the tip clears the destination star's rendered disc without
     // overshooting.
-    const destOffsetPx = Math.max(starfield.getFilter().sizeMax, 0);
+    const destOffsetPx = Math.max(stellata.getFilter().sizeMax, 0);
     const dxPx = pB[0] - pA[0];
     const dyPx = pB[1] - pA[1];
     const lenPx = Math.hypot(dxPx, dyPx);

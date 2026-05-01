@@ -1,4 +1,4 @@
-const STORAGE_KEY = 'starfield.info-dismissed';
+const STORAGE_KEY = 'stellata.info-dismissed';
 
 export function maybeShowInfoModal(starCount: number) {
   if (localStorage.getItem(STORAGE_KEY) === '1') return;

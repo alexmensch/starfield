@@ -1,4 +1,4 @@
-import type { Starfield } from './starfield';
+import type { Stellata } from './stellata';
 import type { BayerInfo } from './search';
 import { applyTheme } from './theme-toggle';
 import { startChartLabels, stopChartLabels } from './chart-labels';
@@ -30,7 +30,7 @@ export interface ChartModeContext {
   starLabels: Map<number, string>;
 }
 
-export function bindChartMode(starfield: Starfield, ctx: ChartModeContext) {
+export function bindChartMode(stellata: Stellata, ctx: ChartModeContext) {
   // Track the active state separately from filter.chart so we can run
   // teardown only on real transitions (avoid flapping if filter changes
   // arrive in quick succession). The active state is derived from the
@@ -38,37 +38,37 @@ export function bindChartMode(starfield: Starfield, ctx: ChartModeContext) {
   let active = false;
 
   const sync = () => {
-    const f = starfield.getFilter();
-    const observed = starfield.getCameraMode() === 'observe';
+    const f = stellata.getFilter();
+    const observed = stellata.getCameraMode() === 'observe';
     const next = f.chart && observed;
     if (next === active) return;
     active = next;
     if (active) {
       document.body.classList.add('chart');
       applyTheme('mono');
-      starfield.setCloudsIsobar(true);
-      starfield.setMilkywayIsobar(true);
-      startChartLabels(starfield, ctx);
+      stellata.setCloudsIsobar(true);
+      stellata.setMilkywayIsobar(true);
+      startChartLabels(stellata, ctx);
     } else {
       document.body.classList.remove('chart');
       applyTheme('dark');
-      starfield.setCloudsIsobar(false);
-      starfield.setMilkywayIsobar(false);
+      stellata.setCloudsIsobar(false);
+      stellata.setMilkywayIsobar(false);
       stopChartLabels();
     }
   };
 
-  starfield.onCameraModeChange(() => {
+  stellata.onCameraModeChange(() => {
     // Leaving observe always deactivates chart — the camera state required
     // to interpret the chart goes away. Clear the user's `chart` flag so
     // the next observe session starts clean unless they re-enable it.
-    if (starfield.getCameraMode() !== 'observe' && starfield.getFilter().chart) {
-      starfield.setFilter({ chart: false });
+    if (stellata.getCameraMode() !== 'observe' && stellata.getFilter().chart) {
+      stellata.setFilter({ chart: false });
       return; // setFilter triggers sync via onFilterChange
     }
     sync();
   });
-  starfield.onFilterChange(sync);
+  stellata.onFilterChange(sync);
 
   // Initial reconciliation in case URL state restored chart=on before the
   // orchestrator was bound.

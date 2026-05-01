@@ -1,6 +1,6 @@
 // Generic dev tuning panel — provides the panel chrome (positioning,
 // styling, header) and the slider / colour-picker / section helpers that
-// every tool reuses. Each domain (Milky Way, Starfield, future tools)
+// every tool reuses. Each domain (Milky Way, Stellata, future tools)
 // builds a labelled section and appends it to the shared panel root.
 //
 // Intentionally unstyled beyond inline CSS — this exists for calibration

@@ -16,7 +16,7 @@ const SEGMENTS_LAT = 16;
 // already represents that physically; this overlay is the "where the dust
 // is" decoration mode the user explicitly chose, so additive warm tones
 // are the right stylization. Opacity tuned low (0.18) so even overlapping
-// large clouds don't washout the local starfield.
+// large clouds don't washout the local stellata.
 const DARK_COLOR_DEFAULT = 0xb87850;
 const DARK_OPACITY_DEFAULT = 0.18;
 
@@ -50,7 +50,7 @@ export class MolecularClouds {
   /** Mesh references in catalog order, for picking ray-ellipsoid analytically. */
   private meshes: THREE.Mesh[] = [];
 
-  // User-tunable from the dev console via `starfield.clouds.set*()`.
+  // User-tunable from the dev console via `stellata.clouds.set*()`.
   // Kept here rather than imported as constants so the live materials can
   // be re-pointed when values change without rebuilding the layer.
   private darkColor = new THREE.Color(DARK_COLOR_DEFAULT);
@@ -117,7 +117,7 @@ export class MolecularClouds {
   setIsobar(on: boolean, magnitudeUniform: { value: number }) {
     for (const mat of this.materials) {
       mat.uniforms.uChartIsobar.value = on ? 1 : 0;
-      // Reuse the starfield's shared uMaxAppMag uniform reference so the
+      // Reuse the stellata's shared uMaxAppMag uniform reference so the
       // isobar threshold tracks the slider live without per-frame writes.
       mat.uniforms.uMaxAppMag = magnitudeUniform;
       if (on) {
@@ -131,10 +131,10 @@ export class MolecularClouds {
   /**
    * Console-accessible debug levers. Live-update all cloud materials so
    * tweaking happens without restart. Examples:
-   *   starfield.clouds.setOpacity(0.5)         // make them obvious
-   *   starfield.clouds.setColor(0xff8844)      // hotter orange
-   *   starfield.clouds.setMonoOpacity(0.4)
-   *   starfield.clouds.setMonoColor(0x000000)
+   *   stellata.clouds.setOpacity(0.5)         // make them obvious
+   *   stellata.clouds.setColor(0xff8844)      // hotter orange
+   *   stellata.clouds.setMonoOpacity(0.4)
+   *   stellata.clouds.setMonoColor(0x000000)
    */
   setOpacity(x: number) {
     this.darkOpacity = Math.max(0, x);
@@ -173,7 +173,7 @@ export class MolecularClouds {
    * null if no cloud is hit. The renderer's depth-test means foreground
    * stars block clicks from reaching clouds behind them, but we don't
    * test against star geometry here — that's a star pick, handled by
-   * pickStar in starfield.ts. Caller should pick the star first and
+   * pickStar in stellata.ts. Caller should pick the star first and
    * fall back to a cloud pick when no star is hit.
    */
   raycast(raycaster: THREE.Raycaster): number | null {
@@ -208,7 +208,7 @@ export class MolecularClouds {
         uOpacity: { value: this.darkOpacity },
         uMonochrome: { value: 0 },
         // Isobar (chart-mode contour) pass. The shared uMaxAppMag uniform
-        // is wired in from the starfield material via setIsobar() — until
+        // is wired in from the stellata material via setIsobar() — until
         // then a placeholder is fine since uChartIsobar gates the branch.
         uChartIsobar: { value: 0 },
         uMaxAppMag: { value: 6.5 },

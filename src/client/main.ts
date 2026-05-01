@@ -1,7 +1,7 @@
 import { loadCatalog } from './catalog-loader';
 import { DustField, loadDustManifest, loadDustParticles } from './dust-loader';
 import { loadClouds } from './cloud-loader';
-import { Starfield } from './starfield';
+import { Stellata } from './stellata';
 import { bindControls } from './controls';
 import { bindSearch, buildStarLabels, buildSpectralMap, buildBayerMap, type SearchIndexEntry } from './search';
 import { createConstellationOverlay } from './constellation-overlay';
@@ -11,7 +11,7 @@ import { createFocusRingOverlay } from './focus-ring-overlay';
 import { createPoiOverlay } from './poi-overlay';
 import { createScaleBar } from './scale-bar';
 import { bindUnitToggle } from './unit-toggle';
-import { registerThemeStarfield } from './theme-toggle';
+import { registerThemeStellata } from './theme-toggle';
 import { bindChartMode } from './chart-mode';
 import { bindPanelLayout } from './panel-layout';
 import { bindWarpButton } from './warp-button';
@@ -67,12 +67,12 @@ async function main() {
     const spectralMap = buildSpectralMap(searchIndex);
     const bayerMap = buildBayerMap(searchIndex);
 
-    const starfield = new Starfield({ canvas, catalog });
-    // Dev-console access: `starfield.setExtinctionStrength(X)` etc. Handy for
+    const stellata = new Stellata({ canvas, catalog });
+    // Dev-console access: `stellata.setExtinctionStrength(X)` etc. Handy for
     // dust debugging and not worth gating behind an env check on a solo
     // project.
-    (window as unknown as { starfield: Starfield }).starfield = starfield;
-    if (cloudCatalog) starfield.attachClouds(cloudCatalog);
+    (window as unknown as { stellata: Stellata }).stellata = stellata;
+    if (cloudCatalog) stellata.attachClouds(cloudCatalog);
 
     // HIP → row-index lookup, used by url-state to encode/decode shared
     // links with stable star IDs that survive a future catalog reorder.
@@ -90,12 +90,12 @@ async function main() {
       solIndex: catalog.solIndex,
     };
 
-    setupDebug(starfield, idMaps);
+    setupDebug(stellata, idMaps);
 
     // Interstellar dust loads in the background — never blocks first paint.
     // Extinction fades in as each voxel chunk lands on the GPU. If the
     // manifest is missing (fresh clone without data/dust/, CI without the
-    // preprocessor, etc.) the starfield renders exactly as it did before
+    // preprocessor, etc.) the stellata renders exactly as it did before
     // dust was introduced.
     void (async () => {
       const dustBase = `${import.meta.env.BASE_URL}dust/`;
@@ -104,14 +104,14 @@ async function main() {
         console.info('dust manifest not found; skipping extinction layer');
         return;
       }
-      const dust = new DustField(starfield.renderer, dustBase, manifest);
-      starfield.attachDust(dust);
+      const dust = new DustField(stellata.renderer, dustBase, manifest);
+      stellata.attachDust(dust);
       // Particles load in parallel with chunks — they're tiny (~800 KiB)
       // and don't depend on the volumetric texture. The mesh stays
       // hidden (strength 0) until the user opts in via the console.
       if (manifest.particles) {
         loadDustParticles(dustBase, manifest.particles).then((particles) => {
-          if (particles) starfield.attachDustParticles(particles);
+          if (particles) stellata.attachDustParticles(particles);
         });
       }
       await dust.startLoading();
@@ -121,33 +121,33 @@ async function main() {
     })();
 
     bindUnitToggle();
-    registerThemeStarfield(starfield);
-    bindChartMode(starfield, { bayerMap, starLabels });
-    bindControls(starfield);
-    bindSearch(starfield, catalog, searchIndex, starLabels, cloudCatalog);
-    createDiscMask(starfield);
-    createConstellationOverlay(starfield);
-    createDistanceVectorOverlay(starfield, starLabels);
-    createFocusRingOverlay(starfield);
-    createPoiOverlay(starfield, starLabels);
-    createScaleBar(starfield);
-    bindWarpButton(starfield);
-    bindModeToggle(starfield);
+    registerThemeStellata(stellata);
+    bindChartMode(stellata, { bayerMap, starLabels });
+    bindControls(stellata);
+    bindSearch(stellata, catalog, searchIndex, starLabels, cloudCatalog);
+    createDiscMask(stellata);
+    createConstellationOverlay(stellata);
+    createDistanceVectorOverlay(stellata, starLabels);
+    createFocusRingOverlay(stellata);
+    createPoiOverlay(stellata, starLabels);
+    createScaleBar(stellata);
+    bindWarpButton(stellata);
+    bindModeToggle(stellata);
 
     // Apply any URL state before starting the URL writer so we don't echo
     // the same params back into history on load.
-    applyFromUrl(starfield, idMaps);
-    startUrlSync(starfield, idMaps);
+    applyFromUrl(stellata, idMaps);
+    startUrlSync(stellata, idMaps);
 
     const countLabel = `${catalog.count.toLocaleString()} stars`;
     const renderMeta = () => {
       // Two-line layout: focused name + classifier on top, total count
       // beneath. Distance from Sol used to live here but is now in the Sol
       // locator arrow's label, so it'd be redundant — skip it.
-      // Star and cloud focus are mutually exclusive in Starfield, so at
+      // Star and cloud focus are mutually exclusive in Stellata, so at
       // most one of these is non-null.
-      const starIdx = starfield.getFocusedStar();
-      const cloudIdx = starfield.getFocusedCloud();
+      const starIdx = stellata.getFocusedStar();
+      const cloudIdx = stellata.getFocusedCloud();
       let focusLine = '';
       if (starIdx !== null) {
         const name = starLabels.get(starIdx) ?? `Unnamed #${starIdx}`;
@@ -169,11 +169,11 @@ async function main() {
         `<div class="meta-count">${escapeHtml(countLabel)}</div>`;
     };
     renderMeta();
-    starfield.onFocusChange(renderMeta);
-    starfield.onCloudFocusChange(renderMeta);
+    stellata.onFocusChange(renderMeta);
+    stellata.onCloudFocusChange(renderMeta);
     onUnitChange(renderMeta);
 
-    bindHoverTooltip(canvas, tooltip, starfield, describeStarDetailed, describeCloud);
+    bindHoverTooltip(canvas, tooltip, stellata, describeStarDetailed, describeCloud);
 
     await new Promise((r) => requestAnimationFrame(r));
     loading.style.transition = 'opacity 0.4s ease';
@@ -186,14 +186,14 @@ async function main() {
       meta.hidden = false;
       bindPanelLayout();
       bindBrandModals();
-      bindKeyboardShortcuts(starfield);
+      bindKeyboardShortcuts(stellata);
       maybeShowInfoModal(catalog.count);
     }, 400);
 
     // Cloud hover description — shares the same {name, lines} shape as the
     // star tooltip so bindHoverTooltip can render either through one path.
     function describeCloud(idx: number): { name: string; lines: string[] } | null {
-      const cat = starfield.getCloudCatalog();
+      const cat = stellata.getCloudCatalog();
       if (!cat) return null;
       const c = cat.clouds[idx];
       if (!c) return null;
@@ -248,7 +248,7 @@ async function main() {
 function bindHoverTooltip(
   canvas: HTMLCanvasElement,
   tooltip: HTMLElement,
-  starfield: Starfield,
+  stellata: Stellata,
   detailedStar: (i: number) => { name: string; lines: string[] },
   detailedCloud: (i: number) => { name: string; lines: string[] } | null,
 ) {
@@ -278,12 +278,12 @@ function bindHoverTooltip(
       // Stars take priority — they're the primary interaction target. If
       // no star is under the cursor, fall back to a cloud hit so users
       // can identify Taurus / Orion / etc. by hovering.
-      const starIdx = starfield.pickStar(lastX, lastY, 14);
+      const starIdx = stellata.pickStar(lastX, lastY, 14);
       let payload: { name: string; lines: string[] } | null = null;
       if (starIdx >= 0) {
         payload = detailedStar(starIdx);
       } else {
-        const cloudIdx = starfield.pickCloud(lastX, lastY);
+        const cloudIdx = stellata.pickCloud(lastX, lastY);
         if (cloudIdx !== null) payload = detailedCloud(cloudIdx);
       }
       if (!payload) return;

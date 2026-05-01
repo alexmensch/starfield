@@ -65,7 +65,7 @@ export class GalacticGrid {
       worldUnits: false,
     });
     // Resolution must be set or the line renders at the wrong width.
-    // Starfield's onResize keeps this in sync with the canvas.
+    // Stellata's onResize keeps this in sync with the canvas.
     this.equatorMaterial.resolution.set(window.innerWidth, window.innerHeight);
     // depthWrite isn't on LineMaterial's typed constructor; assign directly.
     this.equatorMaterial.depthWrite = false;

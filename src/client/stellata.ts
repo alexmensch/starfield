@@ -65,7 +65,7 @@ export interface FilterState {
   chart: boolean;
 }
 
-export interface StarfieldOptions {
+export interface StellataOptions {
   canvas: HTMLCanvasElement;
   catalog: Catalog;
 }
@@ -89,7 +89,7 @@ const ALL_SPECT_MASK = 0b111111111;
 // stars and benefits from a smaller K to avoid the field becoming a
 // solid wash.
 //
-// Tunable at runtime via Starfield.setStarExaggerationK so the debug
+// Tunable at runtime via Stellata.setStarExaggerationK so the debug
 // panel can sweep the active preset's K visually. Higher = bolder, more
 // cartoonish stars; lower = more austere, nearer the literal physics.
 const STAR_PSF_ARCSEC = 30;
@@ -336,7 +336,7 @@ export const DEFAULT_FILTER: FilterState = {
   chart: false,
 };
 
-export class Starfield {
+export class Stellata {
   readonly catalog: Catalog;
   readonly renderer: THREE.WebGLRenderer;
   readonly camera: THREE.PerspectiveCamera;
@@ -462,7 +462,7 @@ export class Starfield {
   // pass renders into a private half-res RT each frame.
   private milkyway: MilkyWay;
 
-  constructor({ canvas, catalog }: StarfieldOptions) {
+  constructor({ canvas, catalog }: StellataOptions) {
     this.catalog = catalog;
 
     this.renderer = new THREE.WebGLRenderer({
@@ -682,7 +682,7 @@ export class Starfield {
     });
 
     // Glow pass: additive so overlapping distant stars accumulate brightness
-    // (dense starfield density preserved). No depth write, so multiple glows
+    // (dense stellata density preserved). No depth write, so multiple glows
     // at the same pixel all contribute. Depth *test* is on so glows behind
     // a disc drawn in the disc pass are correctly occluded.
     this.glowMaterial = new THREE.ShaderMaterial({
@@ -858,8 +858,8 @@ export class Starfield {
       this.firePoisChange();
       return;
     }
-    if (this.pois.length >= Starfield.POI_HARD_CAP) {
-      console.info(`[POI] cap reached (${Starfield.POI_HARD_CAP}); unpin one first.`);
+    if (this.pois.length >= Stellata.POI_HARD_CAP) {
+      console.info(`[POI] cap reached (${Stellata.POI_HARD_CAP}); unpin one first.`);
       return;
     }
     this.pois.push(idx);
@@ -873,7 +873,7 @@ export class Starfield {
   setPois(idxs: readonly number[]) {
     const next: number[] = [];
     for (const idx of idxs) {
-      if (next.length >= Starfield.POI_HARD_CAP) break;
+      if (next.length >= Stellata.POI_HARD_CAP) break;
       if (idx < 0 || idx >= this.catalog.count) continue;
       if (idx === this.catalog.solIndex) continue;
       if (this.catalog.hip[idx] === 0) continue;
@@ -1111,7 +1111,7 @@ export class Starfield {
   }
 
   // Wire a loaded DustField into the star shader. Safe to call after the
-  // Starfield is already rendering — uniforms flip atomically on the next
+  // Stellata is already rendering — uniforms flip atomically on the next
   // frame. Safe to call multiple times; the most recent dust wins. Pass
   // null to detach (e.g. to disable extinction for a mode toggle).
   attachDust(dust: DustField | null) {
@@ -1145,7 +1145,7 @@ export class Starfield {
   }
 
   /** Direct access to the Milky Way layer for dev-console tuning
-   *  (e.g. `starfield.milkywayLayer.setBrightness(0.4)`). */
+   *  (e.g. `stellata.milkywayLayer.setBrightness(0.4)`). */
   get milkywayLayer(): MilkyWay { return this.milkyway; }
 
   /** Wire the loaded molecular cloud catalog into the scene. Idempotent —
@@ -1169,7 +1169,7 @@ export class Starfield {
   }
 
   /** Direct access to the cloud render layer for dev-console tuning
-   *  (`starfield.cloudLayer.setOpacity(0.5)` etc.). null until
+   *  (`stellata.cloudLayer.setOpacity(0.5)` etc.). null until
    *  attachClouds runs. */
   get cloudLayer(): MolecularClouds | null { return this.clouds; }
 
@@ -1593,7 +1593,7 @@ export class Starfield {
   }
 
   /** Chart-mode isobar pass on/off for the molecular cloud layer.
-   *  Wires the shader's uMaxAppMag uniform to the starfield's shared
+   *  Wires the shader's uMaxAppMag uniform to the stellata's shared
    *  reference so the contour tracks the magnitude slider live. */
   setCloudsIsobar(on: boolean) {
     this.clouds?.setIsobar(on, this.material.uniforms.uMaxAppMag);
@@ -2444,7 +2444,7 @@ export class Starfield {
     if (pending) {
       const dx = x - pending.x;
       const dy = y - pending.y;
-      if (dx * dx + dy * dy <= Starfield.OBSERVE_DBL_CLICK_DIST_PX_SQ) {
+      if (dx * dx + dy * dy <= Stellata.OBSERVE_DBL_CLICK_DIST_PX_SQ) {
         // Second click close in time + space → double-click. Cancel the
         // pending single-click and slerp the camera instead.
         window.clearTimeout(pending.timer);
@@ -2462,7 +2462,7 @@ export class Starfield {
     const timer = window.setTimeout(() => {
       this.observePendingClick = null;
       this.observeSingleClick(x, y);
-    }, Starfield.OBSERVE_DBL_CLICK_MS);
+    }, Stellata.OBSERVE_DBL_CLICK_MS);
     this.observePendingClick = { x, y, timer };
   }
 
@@ -2579,7 +2579,7 @@ export class Starfield {
     const u = this.material.uniforms;
     const physMaxPx = u.uPhysMaxPx.value as number;
     const refDistPc = u.uRefDistPc.value as number;
-    const dThresh = (physMaxPx * refDistPc) / Starfield.CORE_MASK_MIN_PX;
+    const dThresh = (physMaxPx * refDistPc) / Stellata.CORE_MASK_MIN_PX;
     const dThreshSq = dThresh * dThresh;
 
     // Camera distance from Sol in absolute space (catalog frame).

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { Starfield } from './starfield';
+import type { Stellata } from './stellata';
 import { fmtDist } from './distance-util';
 import {
   buildArrowSvgPath,
@@ -10,18 +10,18 @@ import {
 import { ringRadiusPx } from './hud-overlay';
 
 // Point-of-interest overlay. Single-click on a star in OBSERVE pins it
-// (Starfield.togglePoi). The pin renders two ways:
+// (Stellata.togglePoi). The pin renders two ways:
 //   - **On screen** (POI projects inside the viewport, with a small
 //     pull-in margin so labels don't clip at the edge): a thin ring
 //     around the star + a text label `name · ConCode · distance`
 //     anchored at a fixed pixel offset from the ring rim. The fixed-px
 //     anchor keeps the label-to-star distance constant as FOV changes.
 //     Clicking either the ring's label or the star itself toggles the
-//     POI off (Starfield.togglePoi).
+//     POI off (Stellata.togglePoi).
 //   - **Off screen**: a chevron arrow on the HUD ring rim points toward
 //     the POI direction, with a name-only label by the chevron tip.
 //     Clicking that label slerps the camera so the POI lands at view
-//     centre (Starfield.aimAt) — same affordance the Sol/GC labels
+//     centre (Stellata.aimAt) — same affordance the Sol/GC labels
 //     give in the HUD.
 // Visibility is gated as a HUD widget — hidden when cameraMode !=
 // observe, when the HUD checkbox is off, during warp (CSS rule), and
@@ -52,7 +52,7 @@ interface Entry {
 }
 
 export function createPoiOverlay(
-  starfield: Starfield,
+  stellata: Stellata,
   starLabels: Map<number, string>,
 ): void {
   const arrowsGroup = document.getElementById('poi-arrows') as unknown as SVGGElement | null;
@@ -60,7 +60,7 @@ export function createPoiOverlay(
   const labelsGroup = document.getElementById('poi-labels') as unknown as SVGGElement | null;
   if (!arrowsGroup || !ringsGroup || !labelsGroup) return;
 
-  const catalog = starfield.catalog;
+  const catalog = stellata.catalog;
   const pool = new Map<number, Entry>();
 
   const tmpStarLocal = new THREE.Vector3();
@@ -96,15 +96,15 @@ export function createPoiOverlay(
     // arrow label slerps the camera toward the POI (it isn't visible so
     // "show me where it is" is the natural action). The ring itself
     // stays click-through — the star underneath is already a click
-    // target for togglePoi via Starfield.observeSingleClick, and putting
+    // target for togglePoi via Stellata.observeSingleClick, and putting
     // pointer-events on the ring would shadow that.
     onScreenLabel.addEventListener('click', () => {
-      starfield.togglePoi(idx);
+      stellata.togglePoi(idx);
     });
     arrowLabel.addEventListener('click', () => {
-      const lp = starfield.localPositions;
+      const lp = stellata.localPositions;
       tmpAim.set(lp[idx * 3], lp[idx * 3 + 1], lp[idx * 3 + 2]);
-      starfield.aimAt(tmpAim);
+      stellata.aimAt(tmpAim);
     });
 
     return { idx, arrowPath, arrowLabel, ring, onScreenLabel };
@@ -118,7 +118,7 @@ export function createPoiOverlay(
   }
 
   function syncPool() {
-    const pois = starfield.getPois();
+    const pois = stellata.getPois();
     const seen = new Set<number>(pois);
     for (const [idx, e] of pool) {
       if (!seen.has(idx)) {
@@ -159,20 +159,20 @@ export function createPoiOverlay(
     groupsVisible = true;
   }
 
-  starfield.onPoisChange(syncPool);
+  stellata.onPoisChange(syncPool);
   syncPool();
 
-  starfield.onFrame(() => {
-    const pois = starfield.getPois();
+  stellata.onFrame(() => {
+    const pois = stellata.getPois();
     if (pois.length === 0) {
       hideAll();
       return;
     }
 
-    const filter = starfield.getFilter();
-    const cameraMode = starfield.getCameraMode();
-    const transition = starfield.isObserveTransitionActive();
-    const anchorIdx = starfield.getFocusedStar();
+    const filter = stellata.getFilter();
+    const cameraMode = stellata.getCameraMode();
+    const transition = stellata.isObserveTransitionActive();
+    const anchorIdx = stellata.getFocusedStar();
 
     if (cameraMode !== 'observe' || !filter.showHud || transition || anchorIdx === null) {
       hideAll();
@@ -181,7 +181,7 @@ export function createPoiOverlay(
 
     showAll();
 
-    const camera = starfield.camera;
+    const camera = stellata.camera;
     const w = window.innerWidth;
     const h = window.innerHeight;
     const cx = w * 0.5;
@@ -210,7 +210,7 @@ export function createPoiOverlay(
     const ay = absPos[anchorIdx * 3 + 1];
     const az = absPos[anchorIdx * 3 + 2];
 
-    const localPositions = starfield.localPositions;
+    const localPositions = stellata.localPositions;
 
     for (const idx of pois) {
       const e = pool.get(idx);

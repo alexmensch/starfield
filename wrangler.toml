@@ -1,15 +1,15 @@
-name = "starfield"
+name = "stellata"
 main = "src/worker.ts"
 compatibility_date = "2026-04-22"
 placement = { mode = "smart" }
 
-# Route mounts the app at alxm.me/starfield. The Worker strips the /starfield
+# Route mounts the app at alxm.me/stellata. The Worker strips the /stellata
 # prefix before handing requests to the static-assets binding.
 # NOTE: `routes` must come before [assets] — TOML scopes subsequent keys to
 # whatever section precedes them.
 routes = [
-  { pattern = "alxm.me/starfield", zone_name = "alxm.me" },
-  { pattern = "alxm.me/starfield/*", zone_name = "alxm.me" },
+  { pattern = "alxm.me/stellata", zone_name = "alxm.me" },
+  { pattern = "alxm.me/stellata/*", zone_name = "alxm.me" },
 ]
 
 [assets]

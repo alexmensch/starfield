@@ -8,7 +8,7 @@ see `docs/camera-modes.md`.
 
 ## Brand box and About / Credits modals
 
-`.ui-top-left` is a fixed top-left container holding the "Starfield"
+`.ui-top-left` is a fixed top-left container holding the "Stellata"
 title plus a small `about · credits` link row (always visible — no
 hover affordance, since touch devices have no hover state). Both
 links open `<div class="modal">` cards that reuse the welcome-modal
@@ -120,9 +120,9 @@ Magnitude / focus / overlays / camera position are deliberately
 ## Per-group collapse in the settings panel
 
 Two layers of collapse: the panel as a whole (top-level, key
-`starfield.panel-collapsed`) and each `<section class="group"
+`stellata.panel-collapsed`) and each `<section class="group"
 data-group="...">` independently (key
-`starfield.group-collapsed.<name>`). Both default to expanded;
+`stellata.group-collapsed.<name>`). Both default to expanded;
 both persist to `localStorage`. Wired in `panel-layout.ts`. The
 group header is the click target — `<header class="group-header">`
 with an `<h3>` title and a chevron `<button class="group-toggle">`.
@@ -188,13 +188,13 @@ Two specific freezes use this:
 
 ## Reverse-sync in `controls.ts`
 
-Widgets subscribe to `starfield.onFilterChange` and write DOM from the filter
+Widgets subscribe to `stellata.onFilterChange` and write DOM from the filter
 state. This is how URL restores and `naked eye`/`all` presets update sliders
 and chip states. **Setting `.value` programmatically does NOT dispatch
 `input`**, so there's no feedback loop. If you add a filter field, remember
 to handle it in `syncFromFilter`.
 
-The FOV control reads `starfield.getCameraFov()` directly inside
+The FOV control reads `stellata.getCameraFov()` directly inside
 `syncFromFilter` rather than going through `FilterState` — FOV lives on
 the camera, not the filter — but otherwise behaves the same. `setCameraFov`
 fires the filter-change handlers so the slider re-syncs after a debug-panel
@@ -202,9 +202,9 @@ or URL-restore change.
 
 ## Magnitude presets and override flags
 
-Three magnitude presets live in `MAG_PRESETS` (`starfield.ts`): `naked-eye`,
+Three magnitude presets live in `MAG_PRESETS` (`stellata.ts`): `naked-eye`,
 `binoculars`, `all`. Buttons in the panel dispatch on `data-preset` →
-`starfield.applyMagnitudePreset(name)`. The preset is the canonical source
+`stellata.applyMagnitudePreset(name)`. The preset is the canonical source
 of `maxAppMag` and `sizeSpan`, plus angular sizeMin/Max which are converted
 to pixels per current viewport.
 
@@ -244,7 +244,7 @@ button that snaps to `DEFAULT_FOV` = 50°. `setCameraFov` updates
 
 `window.debug.panel()` toggles a free-floating tuning panel. As of the
 brand-rework it hosts a single section: Milky Way (brightness, density,
-palette, dust). The earlier Starfield section (FOV + exaggeration K)
+palette, dust). The earlier Stellata section (FOV + exaggeration K)
 was retired once both controls became user-facing in the settings
 panel. Generic chrome lives in `debug-panel.ts`; section builders are
 in `*-tuning.ts` files. Add a new tool by writing a `build*Section`
@@ -275,7 +275,7 @@ two and the other gets recomputed to a value that would invert.
 ## Theme
 
 Locked to dark in the live UI. The `setMonochrome` plumbing on
-`Starfield` and the `body.monochrome` palette in CSS are intentionally
+`Stellata` and the `body.monochrome` palette in CSS are intentionally
 retained — `applyTheme('mono')` from the console flips the chart-mode
 palette for future repurposing. There's no longer a UI toggle and the
 theme is not part of the URL `?v=` state.

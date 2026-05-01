@@ -39,7 +39,7 @@ meridians every 10°, radius 50 kpc.
   256 segments around the full loop; the small joint-wedge "ticks" you
   may notice are an inherent artefact of fat-line miters at non-trivial
   angles. `LineMaterial` requires its `resolution` uniform to track the
-  canvas, so `Starfield.onResize` calls `galacticGrid.setResolution(w, h)`.
+  canvas, so `Stellata.onResize` calls `galacticGrid.setResolution(w, h)`.
   Bumping segment count to 1024 hides the ticks but was rejected as
   visually similar; we kept 256.
 - **Latitude rings + meridians** are basic `LineLoop` / `Line` at 0.45
@@ -136,7 +136,7 @@ The reverse direction shrinks it back to 0. The focus ring
 0 on enter, back to 24 on exit — so the two circles morph through each
 other and the arrows feel continuously attached to whichever circle is
 dominant. The eased progress is exposed by
-`Starfield.getObserveTransitionProgress()`.
+`Stellata.getObserveTransitionProgress()`.
 
 **Shaft start radius (unified).** `hud-overlay.ts` computes a single
 `shaftStartPx` per frame as `activeRing + RING_HALO_GAP_PX` (4 px), where
@@ -163,7 +163,7 @@ SVG distance labels (`#sol-arrow-label`, `#gc-arrow-label`) sit at
 `tip + (LABEL_OFFSET_PX + ARROW_HEAD_DEPTH_PX, -LABEL_OFFSET_PX)` —
 same exact offsets as the distance vector's label. Labels are
 **clickable** (`pointer-events: auto` + cursor:pointer) — clicking
-either invokes `Starfield.aimAt(localPoint)` which slerps the camera
+either invokes `Stellata.aimAt(localPoint)` which slerps the camera
 around `controls.target` to centre the named object in view. Duration
 scales with rotation angle, capped at 2 s and floored at 250 ms;
 TrackballControls is disabled for the duration so its damping doesn't

@@ -24,7 +24,7 @@ import * as THREE from 'three';
 //     straight over NGP and out the far side without the camera
 //     getting stuck.
 //   - Roll-independent. A two-finger Safari twist rotates
-//     camera.quaternion via Starfield's rollCamera, which changes
+//     camera.quaternion via Stellata's rollCamera, which changes
 //     which world point is under each pixel — but pointer-down captures
 //     whatever's under the cursor at that instant and pointer-move
 //     keeps it there. So the user can rotate the screen image to match
@@ -125,7 +125,7 @@ export class ObserveControls {
   }
 
   /**
-   * Advance any post-release momentum. Called from Starfield's animate
+   * Advance any post-release momentum. Called from Stellata's animate
    * loop while in OBSERVE (and not in a transition / aim slerp). No-op
    * during an active drag — momentum only runs after the user has
    * released the pointer.

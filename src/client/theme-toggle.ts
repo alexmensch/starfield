@@ -1,4 +1,4 @@
-import type { Starfield } from './starfield';
+import type { Stellata } from './stellata';
 
 // Theme is locked to 'dark' in the live UI as of the brand-rework. The
 // 'mono' (chart) palette is intentionally retained as a programmatic API
@@ -10,16 +10,16 @@ import type { Starfield } from './starfield';
 export type ThemeMode = 'dark' | 'mono';
 
 let currentMode: ThemeMode = 'dark';
-let starfieldRef: Starfield | null = null;
+let stellataRef: Stellata | null = null;
 
-export function registerThemeStarfield(starfield: Starfield) {
-  starfieldRef = starfield;
+export function registerThemeStellata(stellata: Stellata) {
+  stellataRef = stellata;
 }
 
 export function applyTheme(mode: ThemeMode) {
   currentMode = mode;
   document.body.classList.toggle('monochrome', mode === 'mono');
-  starfieldRef?.setMonochrome(mode === 'mono');
+  stellataRef?.setMonochrome(mode === 'mono');
 }
 
 export function getTheme(): ThemeMode { return currentMode; }

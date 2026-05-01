@@ -59,7 +59,7 @@ instead of `minDistForStar`.
 
 **Picking + hover:** per-cloud `Mesh` objects participate in
 `THREE.Raycaster` intersection via the cloud `Group`.
-`Starfield.pickCloud` does the raycast; the click handler in
+`Stellata.pickCloud` does the raycast; the click handler in
 `onPointerUp` falls back to a cloud pick when no star is hit (stars take
 priority because they're the smaller, more precise target), and
 `bindHoverTooltip` does the same fallback so hovering over a cloud's
@@ -104,7 +104,7 @@ measurement vector respectively). The MC overlay disable flag also
 lives there (flags-byte bit 2, default-omitted since the layer is
 default-on).
 
-**Dev-console levers** under `starfield.cloudLayer.*`:
+**Dev-console levers** under `stellata.cloudLayer.*`:
 - `setOpacity(x)` / `setColor(0xRRGGBB)` — dark mode tuning
 - `setMonoOpacity(x)` / `setMonoColor(0xRRGGBB)` — chart mode tuning
 - `setDebugBoost(strength)` — force max-opacity (or `null` to restore);

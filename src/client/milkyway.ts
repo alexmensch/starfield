@@ -108,7 +108,7 @@ const GLOW_MAG_OFFSET = 15.0;
 
 // Default analytical-dust strength applied at construction. < 1 reads
 // as the (faintly under-extincted) disc band the user calibrated
-// against; the per-frame Starfield knob still overrides this.
+// against; the per-frame Stellata knob still overrides this.
 const DEFAULT_EXTINCTION_STRENGTH = 0.45;
 
 // Raymarch step count is fixed in the shader (32 steps). Performance

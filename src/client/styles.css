@@ -732,7 +732,7 @@ body.monochrome .gal-arrow.gc {
   stroke: rgba(7, 9, 18, 0.9);
   stroke-width: 3px;
   stroke-linejoin: round;
-  /* Click target — aimAt() in starfield.ts swings the camera so the
+  /* Click target — aimAt() in stellata.ts swings the camera so the
      named object lands at view centre. */
   pointer-events: auto;
   cursor: pointer;

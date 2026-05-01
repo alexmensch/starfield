@@ -9,7 +9,7 @@ for the surrounding context.
 ## Known UX knobs you may be asked to tweak
 
 - **Orbit feel** — `rotateSpeed` / `dynamicDampingFactor` in
-  `starfield.ts` constructor.
+  `stellata.ts` constructor.
 - **Right-click pan on/off** — `noPan` flag.
 - **Chevron density** — `CHEVRON_SPACING_PX` / `_HALF_WIDTH` / `_DEPTH` in
   `distance-vector-overlay.ts`.
@@ -27,17 +27,17 @@ for the surrounding context.
   ring in observe) and the start of the Sol/GC arrow shafts.
 - **Constellation polygon prominence** — `#con-polygon` stroke/fill in
   `styles.css` (currently deliberately subtle).
-- **Star size defaults** — `MAG_PRESETS` table in `starfield.ts`. Each
+- **Star size defaults** — `MAG_PRESETS` table in `stellata.ts`. Each
   entry is `(maxAppMag, sizeSpan)`; sizeMin/Max are derived from
   `STAR_PSF_ARCSEC × starExaggerationK[preset]` (with the √Δm factor
   for max).
 - **Star exaggeration constants** — `STAR_EXAGGERATION_K_DEFAULTS` in
-  `starfield.ts`, keyed per magnitude preset (naked-eye = 12,
+  `stellata.ts`, keyed per magnitude preset (naked-eye = 12,
   binoculars = 9, all = 5). Higher = bolder, more cartoonish stars;
   lower = more literal physics. Per-preset because wider catalogs need
   smaller K to avoid washing out. Live-tunable via the debug panel —
   the slider drives whichever preset is currently active.
-- **Default camera FOV** — `DEFAULT_FOV` (50°) in `starfield.ts`. Reset
+- **Default camera FOV** — `DEFAULT_FOV` (50°) in `stellata.ts`. Reset
   button on the FOV slider snaps back here.
 - **Max apparent magnitude presets** — `data-preset` attributes on
   `.mag-preset` buttons in `index.html` map to `MAG_PRESETS` keys
@@ -49,15 +49,15 @@ for the surrounding context.
 - **Star-gap radius around constellation lines** — `STAR_GAP_PX` in
   `constellation-overlay.ts`.
 - **Warp duration curve** — `WARP_T_MIN_MS`, `WARP_T_MAX_MS`,
-  `WARP_T_K_MS` (ms-per-log10-parsec slope) in `starfield.ts`. Also
+  `WARP_T_K_MS` (ms-per-log10-parsec slope) in `stellata.ts`. Also
   `WARP_REORIENT_MS`. Arrival offset is per-star via `minDistForStar`.
-- **Physical-size ceiling** — `computePhysMaxPx` in `starfield.ts`
+- **Physical-size ceiling** — `computePhysMaxPx` in `stellata.ts`
   returns 50% of the smaller viewport axis. Biggest catalog star at
   min orbit distance fills this much. Lower to reduce how dominant
   supergiants feel up close.
 - **Variability time compression** — `uSecondsPerDay = 0.2` (1 catalog
   day = 0.2 s real time) and `uMinPeriodSec = 4` (minimum effective
-  cycle length, prevents strobing) in `starfield.ts` shared-uniforms.
+  cycle length, prevents strobing) in `stellata.ts` shared-uniforms.
 - **Variability trough floor** — `VAR_TROUGH_FLOOR_FRACTION = 0.2` in
   the vertex shader (and mirrored in `renderedSizePx`). Trough won't
   shrink below 20% of the star's current baseline size.
@@ -65,13 +65,13 @@ for the surrounding context.
   glow falloff and `mix(0.48, 0.38, vSoftness)` for disc edge AA in
   `star.frag.glsl`. Widen the gaps for more dramatic differentiation.
 - **Binary-companion viewport margin** — `BINARY_VIEWPORT_HALF_ANGLE_RAD`
-  in `starfield.ts` (25°). Controls how much padding is left around a
+  in `stellata.ts` (25°). Controls how much padding is left around a
   system when focused. Smaller angle = more padding.
 - **Info-modal dismissal** — cleared by removing the
-  `starfield.info-dismissed` localStorage key.
+  `stellata.info-dismissed` localStorage key.
 - **Chart-mode disc size range** — `uChartDiscMaxPx` (16 px) and
   `uChartDiscMinPx` (1.5 px) defaults set in the shared-uniforms map
-  in `starfield.ts`; spread linearly across the visible magnitude
+  in `stellata.ts`; spread linearly across the visible magnitude
   range. `uChartMagBright` (−2.0) is the magnitude that maps to MAX.
 - **Variable-ring gap** — `VARIABLE_RING_MIN_GAP_PX` (1.0 px) in
   `chart-labels.ts`. Minimum radial gap between the outer ring and
@@ -83,10 +83,10 @@ for the surrounding context.
   `chart-labels.ts`. Distance from the disc centre to the label
   anchor, applied as `(x + offset, y - offset)` for a top-right read.
 - **Pick hit-radius floor** — `MIN_DISC_HIT_RADIUS_PX` (4 px) in
-  `pickStar` (`starfield.ts`). Floor on the prime-disc hit test so
+  `pickStar` (`stellata.ts`). Floor on the prime-disc hit test so
   tiny chart-mode discs stay hoverable. Raise for easier hover at the
   cost of foreground stars stealing picks from neighbours.
-- **Panel collapse default** — persisted under `starfield.panel-collapsed`
+- **Panel collapse default** — persisted under `stellata.panel-collapsed`
   (`'0'` = expanded, `'1'` = collapsed, missing = collapsed by default for
   first-time visitors). The default-collapsed check is phrased as
   `!== '0'` in `panel-layout.ts` so absence of the key means collapsed.

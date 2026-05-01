@@ -5,7 +5,7 @@ state machine for clicks, URL state restoration, and the floating-origin
 precision trick. Read this before changing focus/vector behavior, state
 mutation paths, or adding any code that reads star positions.
 
-## Event bus on `Starfield`
+## Event bus on `Stellata`
 
 - `onFocusChange(idx | null)` — focused star changed (from any source).
 - `onVectorChange(toIdx | null)` — distance-vector destination changed.
@@ -18,7 +18,7 @@ mutation paths, or adding any code that reads star positions.
   URL-sync module listens to. Don't fire it from `onFrame` for camera changes —
   the URL sync has its own frame hook with hash comparison for that.
 
-## Click-state machine (`starfield.ts onPointerUp`)
+## Click-state machine (`stellata.ts onPointerUp`)
 
 | condition | action |
 | --- | --- |
@@ -69,7 +69,7 @@ briefly render the disc from inside.
 
 ## Picking a constellation aims the camera
 
-`Starfield.aimAtConstellation(conIndex)` swings the camera so the chosen
+`Stellata.aimAtConstellation(conIndex)` swings the camera so the chosen
 constellation is centred in view, without moving `controls.target` or
 changing orbit radius — only the camera's position on the orbit sphere
 moves. The aim point is the brightness-weighted centroid of the top-8
@@ -158,7 +158,7 @@ writes.
 
 **Console helpers.** `window.debug.decodeView('AQAA…')` decodes a blob
 and `console.table`s the fields; `window.debug.encodeView()` returns
-the blob for the current Starfield state. Useful when debugging a
+the blob for the current Stellata state. Useful when debugging a
 shared URL that someone reports.
 
 ## Floating origin (large-world precision)
@@ -172,9 +172,9 @@ by a few pixels.
 Fix: the renderer runs in a **floating local frame** whose origin tracks
 the currently focused star.
 
-- `Starfield.worldOffset` is the absolute-space coordinate that
+- `Stellata.worldOffset` is the absolute-space coordinate that
   currently sits at the renderer's (0,0,0). Starts at Sol.
-- `Starfield._localPositions` (exposed via `starfield.localPositions`)
+- `Stellata._localPositions` (exposed via `stellata.localPositions`)
   is a `Float32Array` of `catalog.positions − worldOffset`. It's bound
   to the `iPosition` instance attribute and is what every overlay and
   pick path projects through.
@@ -191,7 +191,7 @@ kilo-parsec-scale values when the camera is far from the local origin
 (i.e. zoomed out, where pixel-level jitter is imperceptible anyway).
 
 Implications for code that reads positions:
-- **Rendering / projection math** must use `starfield.localPositions`
+- **Rendering / projection math** must use `stellata.localPositions`
   (same frame as `camera.position` and `controls.target`). The disc
   mask, focus ring, distance vector, constellation overlay, and all
   `pickStar` / `renderedSizePx` / `aimAtConstellation` paths do this.

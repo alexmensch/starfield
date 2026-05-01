@@ -1,4 +1,4 @@
-import type { Starfield } from './starfield';
+import type { Stellata } from './stellata';
 import { makeDebugPanel } from './debug-panel';
 import { buildMilkywaySection } from './milkyway-tuning';
 import { buildStarSection } from './star-tuning';
@@ -17,7 +17,7 @@ import {
 // once is the fast path during calibration.
 //
 // Add a new section: build it in its own *-tuning.ts module and append
-// it inside `togglePanel` below. (The Starfield section was retired
+// it inside `togglePanel` below. (The Stellata section was retired
 // once camera FOV and star-exaggeration K became user-facing controls
 // in the settings panel.)
 
@@ -28,13 +28,13 @@ export interface DebugTools {
   milkyway(): void;
   /** Decode a `?v=` blob (with or without the `v=` prefix) into a DecodedView. */
   decodeView(blob: string): DecodedView;
-  /** Encode the current Starfield state into a `?v=` blob string. */
+  /** Encode the current Stellata state into a `?v=` blob string. */
   encodeView(): string;
   /** Toggle the perf HUD (FPS + per-section frame timing). */
   perf(): void;
 }
 
-export function setupDebug(starfield: Starfield, idMaps: IdMaps): DebugTools {
+export function setupDebug(stellata: Stellata, idMaps: IdMaps): DebugTools {
   let panel: HTMLDivElement | null = null;
 
   const togglePanel = () => {
@@ -44,8 +44,8 @@ export function setupDebug(starfield: Starfield, idMaps: IdMaps): DebugTools {
       return;
     }
     panel = makeDebugPanel();
-    panel.appendChild(buildStarSection(starfield));
-    panel.appendChild(buildMilkywaySection(starfield.milkywayLayer));
+    panel.appendChild(buildStarSection(stellata));
+    panel.appendChild(buildMilkywaySection(stellata.milkywayLayer));
     document.body.appendChild(panel);
   };
 
@@ -59,9 +59,9 @@ export function setupDebug(starfield: Starfield, idMaps: IdMaps): DebugTools {
       console.table(view);
       return view;
     },
-    encodeView: () => encodeBlob(currentStateOf(starfield, idMaps)),
+    encodeView: () => encodeBlob(currentStateOf(stellata, idMaps)),
     perf: () => {
-      installPerfHud(starfield);
+      installPerfHud(stellata);
       togglePerfHud();
     },
   };

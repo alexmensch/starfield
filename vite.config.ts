@@ -11,10 +11,10 @@ const pkgVersion: string = JSON.parse(
 process.env.VITE_APP_VERSION = pkgVersion;
 
 // In dev we serve from the origin root for convenience; in production the
-// Worker mounts the app under /starfield, so generated asset URLs must be
-// prefixed with /starfield/ to resolve correctly.
+// Worker mounts the app under /stellata, so generated asset URLs must be
+// prefixed with /stellata/ to resolve correctly.
 export default defineConfig(({ command }) => ({
-  base: command === 'build' ? '/starfield/' : '/',
+  base: command === 'build' ? '/stellata/' : '/',
   root: resolve(__dirname, 'src/client'),
   publicDir: resolve(__dirname, 'public'),
   build: {

@@ -105,7 +105,7 @@ render as a sub-pixel speck and read as a hard cutoff anyway).
 
 ## Magnitude presets and angular-size calibration
 
-Three presets live in `MAG_PRESETS` in `starfield.ts`: `naked-eye`
+Three presets live in `MAG_PRESETS` in `stellata.ts`: `naked-eye`
 (m_lim = 6.5, span = 8 mag), `binoculars` (10.5, 12), and `all`
 (15, 17). Each carries `sizeMinArcsec` / `sizeMaxArcsec` — the *angular*
 size of the threshold disc and the saturation disc on the sky, derived
@@ -208,7 +208,7 @@ The disc pass adds two depth-handling rules on top of the shared profile:
 All seven knobs are live-tunable from the debug panel (`debug.panel()`)
 under "Star disc": `visibleThreshold`, `coreThreshold`, `discardThreshold`,
 `distN min/max`, `lumBias dwarf/hypergiant`. See `STAR_RENDER_DEFAULTS`
-in `starfield.ts` for shipping values; `setStarRenderParams(patch)` is
+in `stellata.ts` for shipping values; `setStarRenderParams(patch)` is
 the programmatic setter.
 
 ## Variable star rendering
@@ -236,7 +236,7 @@ keeps the sine smooth (no plateau clipping at the cap, no disappearing
 into a pixel at the trough) across the full amplitude range from
 Cepheid-sized swings to dramatic Miras.
 
-`renderedSizePx` in `starfield.ts` replicates this whole shader pipeline
+`renderedSizePx` in `stellata.ts` replicates this whole shader pipeline
 on the CPU so the SVG `disc-mask` and focus-ring overlays follow the
 pulsating disc size exactly frame-by-frame.
 
@@ -245,7 +245,7 @@ pulsating disc size exactly frame-by-frame.
 Per-star extinction reads the Edenhofer dust texture in `star.vert.glsl`,
 raymarches camera→star, and applies A_V to `appMag` (dimming) and
 E(B−V) = A_V/3.1 to `iCi` (reddening). Default strength = 1 (physical
-realism); user knob: `starfield.setExtinctionStrength(x)` from the dev
+realism); user knob: `stellata.setExtinctionStrength(x)` from the dev
 console. This is the canonical "view of the dust" in the app — looking
 through dust dims and reddens stars behind it, which is what you'd
 actually see.
