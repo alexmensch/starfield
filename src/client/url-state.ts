@@ -605,11 +605,13 @@ export function currentStateOf(starfield: Starfield, idMaps: IdMaps): DecodedVie
   const c = starfield.camera.position;
   const t = starfield.controls.target;
   const u = starfield.camera.up;
-  const camDefault =
-    approx(c.x, DEFAULT_CAM[0]) && approx(c.y, DEFAULT_CAM[1]) && approx(c.z, DEFAULT_CAM[2]) &&
-    approx(t.x, DEFAULT_TGT[0]) && approx(t.y, DEFAULT_TGT[1]) && approx(t.z, DEFAULT_TGT[2]);
-  if (!camDefault) {
+  // Skip each independently. Under floating origin, a focused-orbit URL
+  // has tgt=[0,0,0] (the focal star's local position), so omitting it
+  // when at default trims ~16 base64url chars from nearly every URL.
+  if (!approx(c.x, DEFAULT_CAM[0]) || !approx(c.y, DEFAULT_CAM[1]) || !approx(c.z, DEFAULT_CAM[2])) {
     view.cam = [c.x, c.y, c.z];
+  }
+  if (!approx(t.x, DEFAULT_TGT[0]) || !approx(t.y, DEFAULT_TGT[1]) || !approx(t.z, DEFAULT_TGT[2])) {
     view.tgt = [t.x, t.y, t.z];
   }
   if (!approx(u.x, DEFAULT_UP[0]) || !approx(u.y, DEFAULT_UP[1]) || !approx(u.z, DEFAULT_UP[2])) {
