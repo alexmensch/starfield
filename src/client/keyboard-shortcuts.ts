@@ -230,8 +230,16 @@ function bindRelocateModal(
       pendingClose = null;
     }
     if (openInput) {
+      // Detach the modal-specific blur handler before we explicitly blur
+      // the input below, so the synthetic blur doesn't re-enter close()
+      // through `onInputBlur`'s deferred timer.
       openInput.removeEventListener('blur', onInputBlur);
       openInput.removeEventListener('focus', onInputFocus);
+      // Synchronously blur the input so the SearchBox / typeahead
+      // restore-on-blur listener fires. Without this, the DOM move below
+      // can drop focus silently and the input keeps any half-typed value
+      // the user just abandoned with ESC.
+      openInput.blur();
       openInput = null;
     }
     backdrop.removeEventListener('click', close);
