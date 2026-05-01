@@ -151,9 +151,10 @@ Stack: TypeScript, Three.js (WebGL2), Vite, Cloudflare Workers.
 - **Keyboard shortcuts** for power users. `?` opens a help overlay
   listing the full set; highlights: `G` opens a centred picker that
   mirrors the topbar search (focus / destination / observe-location
-  depending on context), `C` does the same for constellations, `O`
-  switches to observe mode when a star is focused, `M` toggles chart
-  mode (observe only), `H` / `S` toggle
+  depending on context), `C` does the same for constellations (double-tap
+  to toggle the constellation lines on or off), `O` switches to observe
+  mode when a star is focused, `M` toggles chart mode (observe only),
+  `H` / `S` toggle
   the HUD and galactic-coordinate sphere, `+` / `-` / `=` step the
   magnitude limit by 0.5 or reset to naked-eye, `R` resets the camera
   sliders, and `Esc` steps back through observe → destination →

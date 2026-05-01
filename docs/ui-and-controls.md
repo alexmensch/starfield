@@ -34,7 +34,7 @@ behavioural changes propagate automatically.
 | `O` | Switch to observe mode (gated on `getFocusedStar() !== null`) |
 | `M` | Toggle chart mode (gated on `cameraMode === 'observe'`; auto-clears on observe→navigate) |
 | `W` | Trigger the warp animation (handled by `warp-button.ts`, not this module) |
-| `C` | Open the Constellation picker |
+| `C` | Open the Constellation picker (double-tap toggles `showConstellation`) |
 | `R` | Reset Camera-section sliders (size min/max, dynamic range, FOV, exaggeration) |
 | `H` | Toggle `showHud` |
 | `S` | Toggle `showGalacticGrid` |
@@ -152,10 +152,14 @@ checkbox at the top of the Overlays group gates the entire constellation
 overlay — both the highlighted-only-in-navigate and the all-at-once
 chart-mode pass, plus the chart-mode Latin-name labels. When off,
 `controls.ts` disables `#con-input` and adds `.disabled` to `#con-picker`
-(faded sub-label), and `keyboard-shortcuts.ts` makes the `C` shortcut a
-no-op. `highlightCon` is preserved while disabled, so re-enabling
-restores the prior selection. URL flag bit 7 (`FLAG_CON_DISABLED`)
-encodes the off state; default (on) is implicit.
+(faded sub-label), and a single `C` keypress is a no-op. A **double-tap
+on `C`** flips the master toggle in either direction — single taps are
+deferred by `C_DOUBLE_TAP_MS` (200 ms) so a second press inside the
+window can intercept the picker-open and switch to the toggle action.
+Key repeat (held key) is ignored so the flag doesn't oscillate.
+`highlightCon` is preserved while disabled, so re-enabling restores
+the prior selection. URL flag bit 7 (`FLAG_CON_DISABLED`) encodes the
+off state; default (on) is implicit.
 
 ## Disabled-control styling
 

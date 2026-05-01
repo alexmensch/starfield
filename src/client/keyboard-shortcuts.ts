@@ -10,6 +10,7 @@ import { bindHelpModal } from './help-modal';
 const MAG_STEP = 0.5;
 const MAG_MIN = -2;
 const MAG_MAX = 15;
+const C_DOUBLE_TAP_MS = 200;
 
 export function bindKeyboardShortcuts(starfield: Starfield) {
   const help = bindHelpModal();
@@ -36,6 +37,10 @@ export function bindKeyboardShortcuts(starfield: Starfield) {
     source: () => document.getElementById('con-picker'),
     focusTarget: () => document.getElementById('con-input') as HTMLInputElement | null,
   });
+
+  // Pending single-tap timer for the C shortcut — tracked across keydowns
+  // so a second C press inside the double-tap window can cancel it.
+  let cTapTimer: number | null = null;
 
   // Capture phase so we observe foreground-modal state BEFORE bubble-phase
   // handlers (brand-modal / info-modal / help-modal) flip `hidden=true` on
@@ -86,11 +91,24 @@ export function bindKeyboardShortcuts(starfield: Starfield) {
         e.preventDefault();
         break;
       case 'c': case 'C':
-        // Master toggle gates the picker UI — keep the shortcut quiet too
-        // so it doesn't pop a disabled input into a modal.
-        if (starfield.getFilter().showConstellation) {
-          conModal.open();
-          e.preventDefault();
+        // Single tap opens the picker; double tap toggles the master
+        // visibility. Defer the picker open by the double-tap window so a
+        // second press can intercept and switch to the toggle action.
+        if (e.repeat) break;
+        e.preventDefault();
+        if (cTapTimer !== null) {
+          clearTimeout(cTapTimer);
+          cTapTimer = null;
+          starfield.setFilter({
+            showConstellation: !starfield.getFilter().showConstellation,
+          });
+        } else {
+          cTapTimer = window.setTimeout(() => {
+            cTapTimer = null;
+            if (starfield.getFilter().showConstellation) {
+              conModal.open();
+            }
+          }, C_DOUBLE_TAP_MS);
         }
         break;
       case 'h': case 'H':
