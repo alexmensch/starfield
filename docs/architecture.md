@@ -92,12 +92,21 @@ path Sol/GC label clicks use.
 ## URL state
 
 All URL state lives in a single opaque param: `?v=<base64url>`. The blob
-is a binary, versioned envelope — version byte, 32-bit presence
-bitmask, then only the fields that diverge from canonical defaults. So
-a fully-default state has no `?v=` at all, a typical share lands at
-~30–50 chars, and worst-case (every field overridden) tops out around
-110 chars. See `src/client/url-state.ts` for the format and `FIELDS`
-table.
+is a binary, versioned envelope — `[1 byte version] [3 bytes LE
+presence bitmask] [payload]` — and only the fields that diverge from
+canonical defaults occupy bytes. A fully-default state has no `?v=`
+at all, a typical share lands at ~25–35 chars, and worst-case (every
+field overridden) tops out around 80 chars. See
+`src/client/url-state.ts` for the format and the `FIELDS_V2` table.
+
+Two wire formats coexist. **v2** (current) packs each narrow scalar
+(`fov`, `mag`, `smin`, `smax`, `span`) into 1 byte at the slider's
+native step; star refs and POI HIPs are 3 bytes (1 tag bit + 23-bit
+id, plenty for 313k catalog rows and 120k HIPs); cloud refs are 1
+byte. **v1** (legacy: 32-bit mask, float32 scalars, uint32 ids) is
+still decoded — old shared URLs auto-upgrade to v2 on load via
+`applyFromUrl`'s post-debounce rewrite, so the address bar silently
+shrinks without breaking anyone's bookmark.
 
 - `url-state.ts applyFromUrl` runs **before** `startUrlSync` subscribes, so
   applying the URL on load doesn't echo back into history.
@@ -136,12 +145,16 @@ table.
 Cloud-related state (cloud focus, cloud measurement vector, MC overlay
 toggle) lives in the same `?v=` blob — see `docs/molecular-clouds.md`.
 
-**Adding a field.** Claim the next free presence bit in `FIELDS`,
+**Adding a field.** Claim the next free presence bit in `FIELDS_V2`,
 declare its type and bytes, and add encode/decode logic in
 `currentStateOf` / `applyDecodedView`. Old shared URLs decode fine
 because their bit is 0 in the presence mask. Don't repurpose retired
 bits for ~6 months of deploy overlap. Breaking-shape changes (resizing
-existing fields, semantic shifts) bump `SCHEMA_VERSION`.
+existing fields, semantic shifts) need a new `SCHEMA_VERSION` and a
+parallel `FIELDS_V<n>` table; freeze the old one verbatim so its
+decoder stays correct, and `applyFromUrl` will auto-upgrade legacy
+URLs to the new schema after the same 300 ms debounce as routine URL
+writes.
 
 **Console helpers.** `window.debug.decodeView('AQAA…')` decodes a blob
 and `console.table`s the fields; `window.debug.encodeView()` returns

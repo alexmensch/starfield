@@ -4,16 +4,25 @@ import { applyUnit } from './unit-toggle';
 import { getUnit, onUnitChange } from './distance-util';
 
 // URL state lives in a single opaque param: `?v=<base64url>`. The blob
-// contains a version byte, a 32-bit presence bitmask, and only the fields
-// that diverge from the canonical defaults — so a fully-default state has
-// no `?v=` at all and a typical share lands at ~30–40 chars.
+// is `[1 byte version] [3 bytes LE presence mask] [variable payload]`
+// in the current schema. Only fields that diverge from canonical
+// defaults occupy bytes — a fully-default state has no `?v=` at all
+// and a typical share lands at ~30–40 chars.
 //
-// Adding a field: claim the next free presence bit, append a FieldSpec to
-// the FIELDS table, and add encoder/decoder logic in `currentStateOf` /
-// `applyDecodedView`. Old shared URLs still decode fine — their bit is 0
-// in the presence mask, so the decoder takes the default. Don't repurpose
-// retired bits for ~6 months of deploy overlap. Breaking-shape changes
-// (resizing existing fields, semantic shifts) bump SCHEMA_VERSION.
+// Two wire formats coexist. v2 (current) has a 24-bit presence mask,
+// 1-byte quantised scalars for fov/mag/smin/smax/span, and 3-byte
+// star/POI ids. v1 (legacy: 32-bit mask, float32 scalars, uint32 ids)
+// is still decoded — old shared URLs auto-upgrade to v2 on load via
+// `applyFromUrl`'s post-debounce rewrite.
+//
+// Adding a field: claim the next free presence bit, append a FieldSpec
+// to FIELDS_V2, and add encoder/decoder logic in `currentStateOf` /
+// `applyDecodedView`. Old URLs still decode fine — unknown bits are
+// zero in the presence mask, so the decoder takes the default. Don't
+// repurpose retired bits for ~6 months of deploy overlap. Breaking-
+// shape changes (resizing existing fields, semantic shifts) need a
+// new SCHEMA_VERSION and a parallel FIELDS_V<n> table; freeze the old
+// one verbatim so its decoder stays correct.
 //
 // Buffer order (FIELDS bit-index order) is independent of the dispatch
 // order in applyDecodedView. Both are load-bearing — see the comments
@@ -21,7 +30,8 @@ import { getUnit, onUnitChange } from './distance-util';
 
 const DEBOUNCE_MS = 300;
 const ALL_SPECT_MASK = 0b111111111;
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION_V1 = 1;
+const SCHEMA_VERSION = 2;
 const PARAM_NAME = 'v';
 const EPS = 1e-3;
 
@@ -36,6 +46,10 @@ const DEFAULT_UP: [number, number, number] = [0, 1, 0];
 // id value).
 const FOCUS_HIP_TAG = 0x80000000;
 const FOCUS_ID_MASK = 0x7fffffff;
+// v2 packs the same tag + id space into 3 bytes: 1 tag bit + 23-bit id
+// (covers row indices ≤ 313k and HIP ≤ ~120k with headroom).
+const FOCUS_HIP_TAG_V2 = 0x800000;
+const FOCUS_ID_MASK_V2 = 0x7fffff;
 
 const PRESET_TO_INDEX: Record<MagPresetName, number> = {
   'naked-eye': 0,
@@ -181,7 +195,75 @@ function starRefField(bit: number, key: 'focus' | 'to'): FieldSpec {
   };
 }
 
-const FIELDS: FieldSpec[] = [
+// 24-bit little-endian helpers for the v2 presence mask, 3-byte star
+// refs, and 3-byte POI HIP entries. DataView has no native u24, so we
+// compose from three byte ops.
+function readU24LE(dv: DataView, off: number): number {
+  return dv.getUint8(off) | (dv.getUint8(off + 1) << 8) | (dv.getUint8(off + 2) << 16);
+}
+function writeU24LE(dv: DataView, off: number, val: number): void {
+  dv.setUint8(off,     val         & 0xff);
+  dv.setUint8(off + 1, (val >>> 8)  & 0xff);
+  dv.setUint8(off + 2, (val >>> 16) & 0xff);
+}
+
+// Quantised uint8 field — replaces f32Field for fov/mag/smin/smax/span
+// in v2. The quant grid matches each slider's native (min, max, step) so
+// round-trips are exact at slider resolution. Encoder clamps to [0, max
+// byte] so a programmatic out-of-range setter saturates instead of
+// wrapping.
+function u8Field(
+  bit: number,
+  key: 'fov' | 'mag' | 'smin' | 'smax' | 'span',
+  q: { min: number; max: number; step: number },
+): FieldSpec {
+  const maxByte = Math.round((q.max - q.min) / q.step);
+  return {
+    bit, key, ...fixed(1),
+    isPresent: v => v[key] !== undefined,
+    encode: (v, dv, o) => {
+      const raw = Math.round((v[key]! - q.min) / q.step);
+      const u = Math.max(0, Math.min(maxByte, raw));
+      dv.setUint8(o, u);
+    },
+    decode: (v, dv, o) => {
+      v[key] = q.min + dv.getUint8(o) * q.step;
+    },
+  };
+}
+
+// 3-byte star ref — same tag-bit + id semantics as v1 but in 24 bits.
+function starRefFieldU24(bit: number, key: 'focus' | 'to'): FieldSpec {
+  return {
+    bit, key, ...fixed(3),
+    isPresent: v => typeof v[key] === 'object' && v[key] !== null,
+    encode: (v, dv, o) => {
+      const ref = v[key] as StarRef;
+      const tagged = ref.kind === 'hip'
+        ? ((ref.id & FOCUS_ID_MASK_V2) | FOCUS_HIP_TAG_V2)
+        : (ref.id & FOCUS_ID_MASK_V2);
+      writeU24LE(dv, o, tagged >>> 0);
+    },
+    decode: (v, dv, o) => {
+      const raw = readU24LE(dv, o);
+      v[key] = (raw & FOCUS_HIP_TAG_V2)
+        ? { kind: 'hip', id: raw & FOCUS_ID_MASK_V2 }
+        : { kind: 'index', id: raw & FOCUS_ID_MASK_V2 };
+    },
+  };
+}
+
+// 1-byte cloud index — the cloud catalog has < 256 entries.
+function u8CloudField(bit: number, key: 'cloud' | 'toc'): FieldSpec {
+  return {
+    bit, key, ...fixed(1),
+    isPresent: v => v[key] !== undefined,
+    encode: (v, dv, o) => { dv.setUint8(o, v[key]! & 0xff); },
+    decode: (v, dv, o) => { v[key] = dv.getUint8(o); },
+  };
+}
+
+const FIELDS_V1: FieldSpec[] = [
   vec3Field(0, 'cam'),
   vec3Field(1, 'tgt'),
   vec3Field(2, 'up'),
@@ -254,6 +336,80 @@ const FIELDS: FieldSpec[] = [
   },
 ];
 
+// v2 schema: same 20 bits / 20 fields as v1, but with quantised 1-byte
+// scalars (fov/mag/smin/smax/span), 3-byte star refs (focus/to), 1-byte
+// cloud refs, 3-byte POI HIP entries, and a 24-bit presence mask in the
+// frame. Each field's bit number is identical to v1 so the FIELDS_V1
+// table stays a frozen reference for legacy decode.
+const FIELDS_V2: FieldSpec[] = [
+  vec3Field(0, 'cam'),
+  vec3Field(1, 'tgt'),
+  vec3Field(2, 'up'),
+  u8Field(3,  'fov',  { min: 10, max: 120, step: 1   }),
+  u8Field(4,  'mag',  { min: -2, max: 15,  step: 0.1 }),
+  u16Field(5, 'dmin'),
+  u16Field(6, 'dmax'),
+  u16Field(7, 'spect'),
+  {
+    bit: 8, key: 'preset', ...fixed(1),
+    isPresent: v => v.preset !== undefined,
+    encode: (v, dv, o) => { dv.setUint8(o, PRESET_TO_INDEX[v.preset!]); },
+    decode: (v, dv, o) => {
+      const idx = dv.getUint8(o);
+      v.preset = INDEX_TO_PRESET[idx] ?? 'naked-eye';
+    },
+  },
+  {
+    bit: 9, key: 'con', ...fixed(1),
+    isPresent: v => v.con !== undefined,
+    encode: (v, dv, o) => { dv.setInt8(o, v.con!); },
+    decode: (v, dv, o) => { v.con = dv.getInt8(o); },
+  },
+  u8Field(10, 'smin', { min: 1, max: 6,  step: 0.1 }),
+  u8Field(11, 'smax', { min: 2, max: 32, step: 0.5 }),
+  u8Field(12, 'span', { min: 2, max: 20, step: 0.5 }),
+  {
+    bit: 13, key: 'flags', ...fixed(1),
+    isPresent: v => packFlags(v) !== 0,
+    encode: (v, dv, o) => { dv.setUint8(o, packFlags(v)); },
+    decode: (v, dv, o) => { unpackFlags(v, dv.getUint8(o)); },
+  },
+  starRefFieldU24(14, 'focus'),
+  starRefFieldU24(15, 'to'),
+  u8CloudField(16, 'cloud'),
+  u8CloudField(17, 'toc'),
+  {
+    bit: 18, key: 'focusCleared', ...fixed(0),
+    isPresent: v => v.focus === 'cleared',
+    encode: () => {},
+    decode: v => { v.focus = 'cleared'; },
+  },
+  {
+    // Variable-length: 1-byte count + count × 3-byte HIP IDs (HIP space
+    // is < 2^17 so 24 bits is plenty). Hard-capped at POI_MAX_COUNT both
+    // at encode time and at decode time to bound the blob.
+    bit: 19, key: 'pois',
+    encodeBytes: v => 1 + 3 * Math.min(v.pois?.length ?? 0, POI_MAX_COUNT),
+    decodeBytes: (dv, off) => 1 + 3 * Math.min(dv.getUint8(off), POI_MAX_COUNT),
+    isPresent: v => Array.isArray(v.pois) && v.pois.length > 0,
+    encode: (v, dv, o) => {
+      const list = (v.pois ?? []).slice(0, POI_MAX_COUNT);
+      dv.setUint8(o, list.length);
+      for (let i = 0; i < list.length; i++) {
+        writeU24LE(dv, o + 1 + i * 3, list[i] >>> 0);
+      }
+    },
+    decode: (v, dv, o) => {
+      const n = Math.min(dv.getUint8(o), POI_MAX_COUNT);
+      const out: number[] = [];
+      for (let i = 0; i < n; i++) {
+        out.push(readU24LE(dv, o + 1 + i * 3));
+      }
+      v.pois = out;
+    },
+  },
+];
+
 function packFlags(v: DecodedView): number {
   let f = 0;
   if (v.showGalacticGrid) f |= FLAG_GRID;
@@ -281,7 +437,7 @@ function unpackFlags(v: DecodedView, f: number): void {
 
 function computePresence(view: DecodedView): number {
   let mask = 0;
-  for (const f of FIELDS) {
+  for (const f of FIELDS_V2) {
     if (f.isPresent(view)) mask |= (1 << f.bit);
   }
   return mask;
@@ -289,16 +445,16 @@ function computePresence(view: DecodedView): number {
 
 export function encodeBlob(view: DecodedView): string {
   const mask = computePresence(view);
-  let total = 5; // version + presence
-  for (const f of FIELDS) {
+  let total = 4; // 1 version + 3 presence
+  for (const f of FIELDS_V2) {
     if (mask & (1 << f.bit)) total += f.encodeBytes(view);
   }
   const ab = new ArrayBuffer(total);
   const dv = new DataView(ab);
   dv.setUint8(0, SCHEMA_VERSION);
-  dv.setUint32(1, mask >>> 0, true);
-  let off = 5;
-  for (const f of FIELDS) {
+  writeU24LE(dv, 1, mask >>> 0);
+  let off = 4;
+  for (const f of FIELDS_V2) {
     if (mask & (1 << f.bit)) {
       f.encode(view, dv, off);
       off += f.encodeBytes(view);
@@ -307,18 +463,43 @@ export function encodeBlob(view: DecodedView): string {
   return toBase64Url(new Uint8Array(ab));
 }
 
-export function decodeBlob(blob: string): DecodedView {
+export interface DecodedBlob {
+  view: DecodedView;
+  /** Schema version the blob was written in. Lets callers detect legacy
+   *  blobs and trigger an upgrade rewrite. */
+  version: number;
+}
+
+export function decodeBlob(blob: string): DecodedBlob {
   const bytes = fromBase64Url(blob);
-  if (bytes.length < 5) throw new Error(`Blob too short: ${bytes.length} bytes`);
+  if (bytes.length < 1) throw new Error(`Blob too short: ${bytes.length} bytes`);
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const version = dv.getUint8(0);
-  if (version !== SCHEMA_VERSION) {
-    throw new Error(`Unsupported view version: ${version} (expected ${SCHEMA_VERSION})`);
-  }
+  if (version === SCHEMA_VERSION_V1) return { view: decodeV1(dv), version };
+  if (version === SCHEMA_VERSION)    return { view: decodeV2(dv), version };
+  throw new Error(`Unsupported view version: ${version}`);
+}
+
+function decodeV1(dv: DataView): DecodedView {
+  if (dv.byteLength < 5) throw new Error(`v1 blob too short: ${dv.byteLength} bytes`);
   const mask = dv.getUint32(1, true);
   const view: DecodedView = {};
   let off = 5;
-  for (const f of FIELDS) {
+  for (const f of FIELDS_V1) {
+    if (mask & (1 << f.bit)) {
+      f.decode(view, dv, off);
+      off += f.decodeBytes(dv, off);
+    }
+  }
+  return view;
+}
+
+function decodeV2(dv: DataView): DecodedView {
+  if (dv.byteLength < 4) throw new Error(`v2 blob too short: ${dv.byteLength} bytes`);
+  const mask = readU24LE(dv, 1);
+  const view: DecodedView = {};
+  let off = 4;
+  for (const f of FIELDS_V2) {
     if (mask & (1 << f.bit)) {
       f.decode(view, dv, off);
       off += f.decodeBytes(dv, off);
@@ -552,37 +733,45 @@ export function applyDecodedView(
   }
 }
 
+function writeUrl(starfield: Starfield, idMaps: IdMaps): void {
+  const view = currentStateOf(starfield, idMaps);
+  const mask = computePresence(view);
+  const qs = mask === 0 ? '' : `${PARAM_NAME}=${encodeBlob(view)}`;
+  const url = location.pathname + (qs ? '?' + qs : '');
+  if (url !== location.pathname + location.search) {
+    history.replaceState(null, '', url);
+  }
+}
+
 export function applyFromUrl(starfield: Starfield, idMaps: IdMaps): void {
   const params = new URLSearchParams(location.search);
   const blob = params.get(PARAM_NAME);
   if (!blob) return;
-  let view: DecodedView;
+  let decoded: DecodedBlob;
   try {
-    view = decodeBlob(blob);
+    decoded = decodeBlob(blob);
   } catch (err) {
     console.warn('Failed to decode ?v= URL state:', err);
     return;
   }
-  applyDecodedView(starfield, view, idMaps);
+  applyDecodedView(starfield, decoded.view, idMaps);
+  // Auto-upgrade legacy URLs: after the same debounce we already use for
+  // routine URL writes, re-encode the current state as the latest schema
+  // so the address bar ends up with the smaller v2 form. Defers past
+  // any state-change events triggered by the apply itself, which would
+  // otherwise schedule their own write on top.
+  if (decoded.version !== SCHEMA_VERSION) {
+    setTimeout(() => writeUrl(starfield, idMaps), DEBOUNCE_MS);
+  }
 }
 
 export function startUrlSync(starfield: Starfield, idMaps: IdMaps): void {
   let timer: number | undefined;
   let lastCamHash = '';
 
-  const write = () => {
-    const view = currentStateOf(starfield, idMaps);
-    const mask = computePresence(view);
-    const qs = mask === 0 ? '' : `${PARAM_NAME}=${encodeBlob(view)}`;
-    const url = location.pathname + (qs ? '?' + qs : '');
-    if (url !== location.pathname + location.search) {
-      history.replaceState(null, '', url);
-    }
-  };
-
   const schedule = () => {
     if (timer !== undefined) clearTimeout(timer);
-    timer = window.setTimeout(write, DEBOUNCE_MS);
+    timer = window.setTimeout(() => writeUrl(starfield, idMaps), DEBOUNCE_MS);
   };
 
   starfield.onStateChange(schedule);

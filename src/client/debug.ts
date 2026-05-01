@@ -52,7 +52,7 @@ export function setupDebug(starfield: Starfield, idMaps: IdMaps): DebugTools {
     decodeView: (blob) => {
       // Tolerate full URLs and `v=...` prefixes for paste-in convenience.
       const stripped = blob.includes('v=') ? blob.split('v=').pop()! : blob;
-      const view = decodeBlob(stripped);
+      const { view } = decodeBlob(stripped);
       console.table(view);
       return view;
     },
