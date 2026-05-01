@@ -214,13 +214,16 @@ vanishes before the camera arrives. `controls.enabled = false`;
   motion. Shortest-path rotations are well-defined through ±90°, so a
   vertical drag passes straight over NGP and out the far side without
   the camera getting stuck.
-- **Roll-independent.** A two-finger Safari twist mutates only
-  `camera.quaternion` (`rollCamera` skips the `camera.up` update in
-  observe — direct manipulation doesn't read it). The twist changes
-  which world point is under each pixel, but pointer-down captures
-  whatever's under the cursor at that moment and pointer-move keeps it
-  there. So the user can rotate the screen image to match the sky
-  overhead and dragging still drags the world along intuitively.
+- **Roll-independent.** A two-finger Safari twist mutates
+  `camera.quaternion` (the live image roll) **and** `camera.up`. The
+  direct-manipulation controller doesn't read `camera.up`, but the URL
+  encoder does — leaving `up` stale would lose the roll on every
+  reload, since URL restore rebuilds the quaternion from cam/tgt/up
+  before observe is engaged. The twist changes which world point is
+  under each pixel, but pointer-down captures whatever's under the
+  cursor at that moment and pointer-move keeps it there. So the user
+  can rotate the screen image to match the sky overhead and dragging
+  still drags the world along intuitively.
 - **Release momentum.** On `pointermove` we extract the per-event
   rotation as axis-angle (`lastRotAxis`, `lastRotAngle`,
   `lastMoveTimeMs`). On `pointerup`, if the gap between the last move
@@ -247,9 +250,11 @@ vanishes before the camera arrives. `controls.enabled = false`;
 - Wheel adjusts `camera.fov` (1.5° per notch, clamped 10–120°) instead
   of camera distance. Distance has no meaning when the camera is
   parked.
-- In navigate-mode, `rollCamera` keeps its old behaviour (mutates
-  `camera.up` so TrackballControls picks up the rolled vertical on
-  every `update()`).
+- In navigate-mode, `rollCamera` mutates only `camera.up`
+  (TrackballControls picks up the rolled vertical on every `update()`
+  and rebuilds the quaternion from it). In observe-mode `rollCamera`
+  rotates both `camera.up` and `camera.quaternion` — `up` solely for
+  URL persistence, `quaternion` for the actual rendered roll.
 
 **HUD locators:** Sol and Galactic-Centre arrows are part of the HUD
 (`hud-overlay.ts`, gated by `filter.showHud`). In observe their anchor

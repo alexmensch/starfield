@@ -2514,22 +2514,21 @@ export class Starfield {
   // and the orbit math needs the rolled vertical to persist through
   // subsequent orbit/zoom.
   //
-  // OBSERVE: rotate camera.quaternion only, leave camera.up alone. The
-  // direct-manipulation look-around in observe-controls.ts doesn't read
-  // camera.up at all (rotations are derived purely from the cursor's
-  // unprojected ray + the live quaternion), so mutating it would do
-  // nothing useful. Twisting just rolls the visible image; subsequent
-  // drags continue to grab whatever world point is under the cursor.
+  // OBSERVE: rotate camera.quaternion to actually roll the rendered image.
+  // Also rotate camera.up by the same angle even though observe-controls.ts
+  // doesn't read it: the URL state encodes camera.up, so leaving it stale
+  // would lose the roll on round-trip (observe entry rebuilds the
+  // quaternion from cam/tgt/up, dropping any roll baked into the
+  // quaternion alone).
   private rollCamera(angle: number) {
     const forward = new THREE.Vector3()
       .subVectors(this.controls.target, this.camera.position);
     if (forward.lengthSq() === 0) return;
     forward.normalize();
+    this.camera.up.applyAxisAngle(forward, angle).normalize();
     if (this.cameraMode === 'observe') {
       const q = new THREE.Quaternion().setFromAxisAngle(forward, angle);
       this.camera.quaternion.premultiply(q).normalize();
-    } else {
-      this.camera.up.applyAxisAngle(forward, angle).normalize();
     }
   }
 
