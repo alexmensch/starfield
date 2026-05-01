@@ -18,12 +18,14 @@ export function onUnitChange(h: (u: DistanceUnit) => void) { handlers.push(h); }
 export function fmtDist(pc: number): string {
   const v = currentUnit === 'ly' ? pc * LY_PER_PC : pc;
   const unit = currentUnit === 'ly' ? 'ly' : 'pc';
-  const kunit = currentUnit === 'ly' ? 'kly' : 'kpc';
-  if (v < 0.01) return v.toFixed(4) + unit;
-  if (v < 1) return v.toFixed(3) + unit;
-  if (v < 100) return v.toFixed(1) + unit;
-  if (v < 10_000) return Math.round(v).toString() + unit;
-  return (v / 1000).toFixed(1) + kunit;
+  if (v < 0.01) return `${v.toFixed(4)} ${unit}`;
+  if (v < 1) return `${v.toFixed(3)} ${unit}`;
+  if (v < 100) return `${v.toFixed(1)} ${unit}`;
+  if (v < 10_000) return `${Math.round(v)} ${unit}`;
+  // Thousands: "k" stays glued to the number ("10k pc"); strip trailing
+  // ".0" so round values read cleanly.
+  const kStr = (v / 1000).toFixed(1).replace(/\.0$/, '');
+  return `${kStr}k ${unit}`;
 }
 
 // Round a positive value up to the nearest 1, 2, or 5 × 10^N.
