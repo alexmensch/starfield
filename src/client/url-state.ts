@@ -606,9 +606,13 @@ export function currentStateOf(stellata: Stellata, idMaps: IdMaps): DecodedView 
   const t = stellata.controls.target;
   const u = stellata.camera.up;
   // Skip each independently. Under floating origin, a focused-orbit URL
-  // has tgt=[0,0,0] (the focal star's local position), so omitting it
-  // when at default trims ~16 base64url chars from nearly every URL.
-  if (!approx(c.x, DEFAULT_CAM[0]) || !approx(c.y, DEFAULT_CAM[1]) || !approx(c.z, DEFAULT_CAM[2])) {
+  // has tgt=[0,0,0] (the focal star's local position) and observe-mode
+  // has cam=[0,0,0] (camera is parked *at* the focal star), so omitting
+  // them when at default trims ~16 base64url chars from nearly every
+  // URL. Cam's default depends on mode — receiver re-snaps cam to
+  // origin via setCameraMode('observe', { animate: false }) on apply.
+  const camDefault = mode === 'observe' ? [0, 0, 0] : DEFAULT_CAM;
+  if (!approx(c.x, camDefault[0]) || !approx(c.y, camDefault[1]) || !approx(c.z, camDefault[2])) {
     view.cam = [c.x, c.y, c.z];
   }
   if (!approx(t.x, DEFAULT_TGT[0]) || !approx(t.y, DEFAULT_TGT[1]) || !approx(t.z, DEFAULT_TGT[2])) {
@@ -708,9 +712,18 @@ export function applyDecodedView(
   if (view.tgt) {
     stellata.controls.target.set(view.tgt[0], view.tgt[1], view.tgt[2]);
   }
-  if (hasCam || hasTgt || view.up) stellata.controls.update();
+  // Mirror the encoder's observe-mode cam omission: pre-snap the camera
+  // to the focal-star origin *before* controls.update so that lookAt
+  // computes the right quaternion from (0,0,0)→tgt rather than from
+  // focusStar's orbit position. setCameraMode('observe', animate:false)
+  // below preserves that quaternion when it pins position again.
+  const willEnterObserve = view.mode === 'observe' && stellata.getFocusedStar() !== null;
+  if (willEnterObserve && !hasCam) {
+    stellata.camera.position.set(0, 0, 0);
+  }
+  if (hasCam || hasTgt || view.up || willEnterObserve) stellata.controls.update();
 
-  if (view.mode === 'observe' && stellata.getFocusedStar() !== null) {
+  if (willEnterObserve) {
     stellata.setCameraMode('observe', { animate: false });
   }
 
