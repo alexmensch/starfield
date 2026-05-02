@@ -9,7 +9,6 @@ import type { Stellata } from './stellata';
 
 export type ThemeMode = 'dark' | 'mono';
 
-let currentMode: ThemeMode = 'dark';
 let stellataRef: Stellata | null = null;
 
 export function registerThemeStellata(stellata: Stellata) {
@@ -17,9 +16,6 @@ export function registerThemeStellata(stellata: Stellata) {
 }
 
 export function applyTheme(mode: ThemeMode) {
-  currentMode = mode;
   document.body.classList.toggle('monochrome', mode === 'mono');
   stellataRef?.setMonochrome(mode === 'mono');
 }
-
-export function getTheme(): ThemeMode { return currentMode; }

@@ -117,8 +117,7 @@ const DEFAULT_EXTINCTION_STRENGTH = 0.45;
 
 // --- Frame transform constants ----------------------------------------
 
-const GAL_TO_ICRS_M3 = new THREE.Matrix3().setFromMatrix4(GAL_TO_ICRS);
-const ICRS_TO_GAL_M3 = GAL_TO_ICRS_M3.clone().transpose();
+const ICRS_TO_GAL_M3 = new THREE.Matrix3().setFromMatrix4(GAL_TO_ICRS).transpose();
 const GAL_QUAT = new THREE.Quaternion().setFromRotationMatrix(GAL_TO_ICRS);
 
 /** Uniforms shared with the star shader. The MilkyWay layer references
