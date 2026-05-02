@@ -199,6 +199,8 @@ CSV has changed) and starts Vite on <http://localhost:5173>.
 | `npm run build:dust-sync`| Mirror `data/dust/` voxel chunks to `public/dust/`    |
 | `npm run build`          | Full production build into `dist/`                    |
 | `npm run typecheck`      | `tsc --noEmit` over everything                        |
+| `npm test`               | Run the vitest regression suite                       |
+| `npm run test:coverage`  | Vitest run with v8 coverage report                    |
 | `npm run deploy`         | `wrangler deploy` (requires Cloudflare auth)          |
 
 ## Deploying to Cloudflare Workers

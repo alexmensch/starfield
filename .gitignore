@@ -5,6 +5,7 @@ dist/
 .claude/
 .DS_Store
 *.log
+coverage/
 
 # Generated catalog artifacts (regenerated from source CSV)
 public/catalog.bin

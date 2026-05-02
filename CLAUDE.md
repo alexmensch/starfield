@@ -25,6 +25,8 @@ scripts/
   build-dust.py           Edenhofer dust resampler + particle sampler (Python; LFS outputs)
   sync-dust.ts            mirror data/dust → public/dust on every dev/build
   verify-catalog.ts       sanity-check tool for the generated binary
+  catalog-pure.ts         pure helpers (parseSpectral, physicalRadius, GCVS parsers, inferBinaries)
+  catalog-pure.test.ts    vitest tests for catalog-pure
 data/                                All large catalogs tracked via Git LFS.
   athyg_33_classic_ids.csv           AT-HYG source CSV (~64 MB, LFS)
   gcvs5.txt                          GCVS main catalogue (~14 MB, LFS)
@@ -96,6 +98,9 @@ npm run build:catalog   # regenerate binary (idempotent)
 npm run dev             # preprocess + Vite dev server
 npm run build           # full production build
 npm run typecheck       # tsc --noEmit over src/ and scripts/
+npm test                # vitest run (regression-prevention suite)
+npm run test:watch      # vitest in watch mode
+npm run test:coverage   # vitest run with v8 coverage
 npm run deploy          # wrangler deploy (requires auth)
 npx tsx scripts/verify-catalog.ts   # dump header + spot-check records
 ```

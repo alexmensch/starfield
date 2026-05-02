@@ -52,7 +52,7 @@ const BINARY_WING_MIN_EXTENSION_PX = 1.5;
 // that's a deliberate trade so the glyph stays legible.
 const VARIABLE_RING_MIN_GAP_PX = 1.0;
 
-interface Candidate {
+export interface Candidate {
   kind: 'name' | 'bayer' | 'con' | 'cloud';
   text: string;
   // Screen-space anchor (top-left of the projected bbox), already
@@ -260,24 +260,36 @@ function rebuildEligible(stellata: Stellata): void {
   if (!variableIdxs || !binaryIdxs || !distSolCache) return;
   const f = stellata.getFilter();
   const cat = stellata.catalog;
-  const ds = distSolCache;
-  const ve: number[] = [];
-  for (const idx of variableIdxs) {
-    const dSol = ds[idx];
-    if (dSol < f.minDistSol || dSol > f.maxDistSol) continue;
-    if ((f.spectMask & (1 << cat.spectClass[idx])) === 0) continue;
-    ve.push(idx);
-  }
-  const be: number[] = [];
-  for (const idx of binaryIdxs) {
-    const dSol = ds[idx];
-    if (dSol < f.minDistSol || dSol > f.maxDistSol) continue;
-    if ((f.spectMask & (1 << cat.spectClass[idx])) === 0) continue;
-    be.push(idx);
-  }
-  variableEligible = ve;
-  binaryEligible = be;
+  variableEligible = filterByDistAndSpect(
+    variableIdxs, distSolCache, cat.spectClass, f.minDistSol, f.maxDistSol, f.spectMask,
+  );
+  binaryEligible = filterByDistAndSpect(
+    binaryIdxs, distSolCache, cat.spectClass, f.minDistSol, f.maxDistSol, f.spectMask,
+  );
   eligibleDirty = false;
+}
+
+// Pure: keeps only the indices whose Sol-distance is within [minDist,
+// maxDist] AND whose spectral class bit is set in `spectMask`. Used by
+// `rebuildEligible` to derive variable/binary subsets at filter-change
+// time so the per-frame glyph loops walk the smallest possible list.
+export function filterByDistAndSpect(
+  idxs: ArrayLike<number>,
+  distSol: ArrayLike<number>,
+  spectClass: ArrayLike<number>,
+  minDist: number,
+  maxDist: number,
+  spectMask: number,
+): number[] {
+  const out: number[] = [];
+  for (let k = 0; k < idxs.length; k++) {
+    const idx = idxs[k];
+    const d = distSol[idx];
+    if (d < minDist || d > maxDist) continue;
+    if ((spectMask & (1 << spectClass[idx])) === 0) continue;
+    out.push(idx);
+  }
+  return out;
 }
 
 function buildConstellationMembership(stellata: Stellata): Map<number, ConMembership> {
@@ -721,7 +733,7 @@ function projectStar(
   return projectVec(tmpV3, camera, w, h);
 }
 
-function projectVec(
+export function projectVec(
   p: THREE.Vector3,
   camera: THREE.PerspectiveCamera,
   w: number,
@@ -747,10 +759,10 @@ function projectVec(
 // the slider, not to simulate). Position is in local frame (renderer
 // coords); since the camera also operates in local frame the resulting
 // distance is what the viewer sees.
-function computeAppMag(
+export function computeAppMag(
   idx: number,
-  positions: Float32Array,
-  absmag: Float32Array,
+  positions: ArrayLike<number>,
+  absmag: ArrayLike<number>,
 ): number {
   const x = positions[idx * 3];
   const y = positions[idx * 3 + 1];
@@ -764,7 +776,7 @@ function computeAppMag(
 // getBBox forces a layout flush, so we estimate via character count first
 // (cheap) and only fall back to the real measurement if needed for
 // collision tightness — not yet, but flagging the spot.
-function measureCandidate(c: Candidate): void {
+export function measureCandidate(c: Candidate): void {
   // Approximation: 6.5 px per char @ 11 px font with letter-spacing 0.05em.
   // Good enough for collision; the constellation labels use a heavier
   // weight, so widen them slightly.
@@ -773,7 +785,7 @@ function measureCandidate(c: Candidate): void {
   c.height = 14;
 }
 
-function collides(c: Candidate, others: Candidate[]): boolean {
+export function collides(c: Candidate, others: Candidate[]): boolean {
   // Convert (x, y) anchor into a centred AABB. text-anchor is 'middle'
   // for con labels (centre-anchored), 'start' for the rest (left-anchored).
   const left = c.kind === 'con' ? c.x - c.width / 2 : c.x;

@@ -11,7 +11,7 @@ import type { Stellata } from './stellata';
 // closes. Selecting fires both `setFilter({ highlightCon })` and
 // `aimAtConstellation`, matching the prior `<select>`'s behaviour.
 
-interface ConEntry {
+export interface ConEntry {
   idx: number;  // -1 for the synthetic "None" entry that clears the highlight
   name: string;
   code: string;
@@ -25,6 +25,18 @@ const MAX_RESULTS = 30;
 // after Cmd+A → Delete → Enter, mirroring the way they pick any other
 // constellation.
 const NONE_ENTRY: ConEntry = { idx: -1, name: 'None', code: '', search: '' };
+
+// Substring filter on lowercased "name code". Empty query returns
+// [None, ...first MAX_RESULTS-1 entries] so the dropdown opens with
+// the clear-highlight option pinned and the alphabetical list under it.
+// Non-empty query filters and caps at MAX_RESULTS without prepending
+// None — picking None for a constellation that doesn't match is not
+// meaningful.
+export function filterConstellations(entries: ConEntry[], query: string): ConEntry[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [NONE_ENTRY, ...entries.slice(0, MAX_RESULTS - 1)];
+  return entries.filter((e) => e.search.includes(q)).slice(0, MAX_RESULTS);
+}
 
 export function bindConstellationTypeahead(stellata: Stellata) {
   const input = document.getElementById('con-input') as HTMLInputElement;
@@ -51,11 +63,7 @@ export function bindConstellationTypeahead(stellata: Stellata) {
     return c ? c.name : '';
   };
 
-  const filter = (query: string): ConEntry[] => {
-    const q = query.trim().toLowerCase();
-    if (!q) return [NONE_ENTRY, ...entries.slice(0, MAX_RESULTS - 1)];
-    return entries.filter((e) => e.search.includes(q)).slice(0, MAX_RESULTS);
-  };
+  const filter = (query: string): ConEntry[] => filterConstellations(entries, query);
 
   const renderDom = () => {
     resultsEl.innerHTML = '';

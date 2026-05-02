@@ -28,16 +28,22 @@ export function fmtDist(pc: number): string {
   return `${kStr}k ${unit}`;
 }
 
-// Round a positive value up to the nearest 1, 2, or 5 × 10^N.
+// Round a positive value to the nearest 1, 2, 5, or 10 × 10^N. Used by
+// the scale bar to pick a clean tick value close to a target pixel width.
 export function niceRound(value: number): number {
   if (value <= 0) return 0;
   const exp = Math.floor(Math.log10(value));
   const base = Math.pow(10, exp);
   const norm = value / base;
+  // Thresholds offset by a tiny epsilon so values that are mathematically
+  // *at* the boundary (e.g. 0.15 / 0.1 = 1.4999999999999998 in IEEE-754)
+  // snap to the upper side. Without this, decade-scale symmetry breaks:
+  // niceRound(1.5) → 2 but niceRound(0.15) → 0.1.
+  const eps = 1e-9;
   let nice: number;
-  if (norm < 1.5) nice = 1;
-  else if (norm < 3.5) nice = 2;
-  else if (norm < 7.5) nice = 5;
+  if (norm < 1.5 - eps) nice = 1;
+  else if (norm < 3.5 - eps) nice = 2;
+  else if (norm < 7.5 - eps) nice = 5;
   else nice = 10;
   return nice * base;
 }

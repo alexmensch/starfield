@@ -83,7 +83,7 @@ async function fetchBinary(
   return out.buffer;
 }
 
-function parseBinary(ab: ArrayBuffer, constellations: Constellation[]): Catalog {
+export function parseBinary(ab: ArrayBuffer, constellations: Constellation[]): Catalog {
   const view = new DataView(ab);
   const magic = new TextDecoder().decode(new Uint8Array(ab, 0, 4));
   if (magic !== EXPECTED_MAGIC) throw new Error(`Bad magic: ${magic}`);
