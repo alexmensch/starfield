@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "stellata",
+  "project_id": "78c95aed-318f-4509-9f4a-d0d7d8c8bc66"
+}
