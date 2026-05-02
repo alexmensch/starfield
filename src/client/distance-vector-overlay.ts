@@ -151,7 +151,7 @@ export function createDistanceVectorOverlay(
   });
 }
 
-function projectWithNearClip(
+export function projectWithNearClip(
   worldA: THREE.Vector3,
   worldB: THREE.Vector3,
   camera: THREE.PerspectiveCamera,
@@ -212,7 +212,7 @@ function projectWithNearClip(
 // "use (bx,by) as-is." Handles the case where (ax,ay) is also off-screen
 // (extreme camera drag) by intersecting both ends of the segment with the
 // rect; the meaningful t for label placement is the one nearest b.
-function viewportSegmentExit(
+export function viewportSegmentExit(
   ax: number, ay: number, bx: number, by: number,
   w: number, h: number,
 ): [number, number] | null {
