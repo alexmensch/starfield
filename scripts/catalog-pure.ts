@@ -68,7 +68,9 @@ export function parseSpectral(raw: string): SpectralInfo {
   const classIdx = spectClassIndex(firstChar);
 
   // Subclass digit (0-9), optionally with a decimal — take the integer part.
-  const subMatch = s.substring(1).match(/^(\d)/);
+  // The full match includes the decimal portion so afterPrefix skips past it,
+  // letting the luminosity-class regex see "Iab" rather than ".5Iab".
+  const subMatch = s.substring(1).match(/^(\d)(?:\.\d)?/);
   const subclass = subMatch ? Number(subMatch[1]) : 5;
 
   // Luminosity Roman numeral — order from most specific to least so we don't
