@@ -1,5 +1,8 @@
 precision highp float;
 
+#include <common>
+#include <logdepthbuf_pars_vertex>
+
 // Phase 5 (rev 4) — volumetric raymarch through proxy meshes.
 //
 // Each mesh (disc + bulge) is a unit sphere scaled non-uniformly into
@@ -25,4 +28,6 @@ void main() {
   vec4 wp = modelMatrix * vec4(position, 1.0);
   vWorldPos = wp.xyz;
   gl_Position = projectionMatrix * viewMatrix * wp;
+
+  #include <logdepthbuf_vertex>
 }

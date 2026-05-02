@@ -470,6 +470,7 @@ export class Stellata {
       antialias: false,
       alpha: true,
       powerPreference: 'high-performance',
+      logarithmicDepthBuffer: true,
     });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(window.innerWidth, window.innerHeight, false);
@@ -483,7 +484,7 @@ export class Stellata {
     this.camera = new THREE.PerspectiveCamera(
       DEFAULT_FOV,
       window.innerWidth / window.innerHeight,
-      0.001,
+      1e-10,
       200_000,
     );
     this.camera.position.set(0, 0, 30);
