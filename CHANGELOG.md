@@ -4,16 +4,38 @@ All notable changes to Stellata are documented in this file. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.1] — 2026-05-01
+## [Unreleased]
+
+## [1.0.2] — 2026-05-02
+
+### Changed
+
+- Enable `logarithmicDepthBuffer` on the WebGL renderer and drop
+  `camera.near` to `1e-10`. Standard `<logdepthbuf>` chunks added to
+  all four custom GLSL3 shader pairs (star, cloud, dust-particle,
+  milkyway). Prerequisite for upcoming physical-scale star sizing,
+  where `d_min` for Sol-class stars drops to ~5×10⁻⁸ pc — well past
+  the precision of standard z-buffers.
 
 ### Fixed
 
-- Drop the redundant `cam=[0,0,0]` block from `?v=` URLs in observe mode
-  (the camera is parked at the focal star's local origin, so the 12 zero
-  bytes — ~16 base64url chars of `A`s — were noise). Receiver re-snaps
-  cam to origin before `controls.update()` so the camera quaternion is
-  computed correctly from the observe-mode look direction. No wire-
-  format change; legacy URLs still decode.
+- Drop the redundant `cam=[0,0,0]` block from `?v=` URLs in observe
+  mode (the camera is parked at the focal star's local origin, so the
+  12 zero bytes — ~16 base64url chars of `A`s — were noise). Receiver
+  re-snaps cam to origin before `controls.update()` so the camera
+  quaternion is computed correctly from the observe-mode look
+  direction. No wire-format change; legacy URLs still decode.
+
+### Internal
+
+- Vitest foundation with 244 regression tests covering catalog
+  parsing, URL state, search, chart labels, distance overlays, and
+  controls.
+- Adopt `bd` (beads) for issue tracking; migrated outstanding work
+  from `NEXT_STEPS.md`.
+- Code-review trivial cleanups in `chart-labels.ts`, `chart-mode.ts`,
+  `molecular-clouds.ts`, `milkyway.ts`, and `theme-toggle.ts`
+  (const-correctness, `??` over ternary, drop unused exports).
 
 ## [1.0.0] — 2026-05-01
 
