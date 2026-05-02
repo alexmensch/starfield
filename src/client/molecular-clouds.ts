@@ -180,8 +180,7 @@ export class MolecularClouds {
     const hits = raycaster.intersectObjects(this.meshes, false);
     if (hits.length === 0) return null;
     // intersectObjects sorts by distance ascending, so first hit wins.
-    const idx = this.meshIndex.get(hits[0].object.uuid);
-    return idx !== undefined ? idx : null;
+    return this.meshIndex.get(hits[0].object.uuid) ?? null;
   }
 
   dispose() {

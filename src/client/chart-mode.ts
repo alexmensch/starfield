@@ -30,7 +30,7 @@ export interface ChartModeContext {
   starLabels: Map<number, string>;
 }
 
-export function bindChartMode(stellata: Stellata, ctx: ChartModeContext) {
+export function bindChartMode(stellata: Stellata, ctx: ChartModeContext): void {
   // Track the active state separately from filter.chart so we can run
   // teardown only on real transitions (avoid flapping if filter changes
   // arrive in quick succession). The active state is derived from the

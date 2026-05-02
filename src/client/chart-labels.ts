@@ -237,7 +237,7 @@ interface ConMembership {
 //   - camera moved more than CENTROID_RECOMPUTE_DIST (~0.5 pc), OR
 //   - filter changed (spectMask doesn't actually feed the centroid pass,
 //     but a single bump on any filter change is conservative and cheap)
-let lastCentroidCamPos = new THREE.Vector3(NaN, NaN, NaN);
+const lastCentroidCamPos = new THREE.Vector3(NaN, NaN, NaN);
 let centroidsVersion = 0;
 let lastCentroidsVersion = -1;
 const CENTROID_RECOMPUTE_DIST_SQ = 0.25; // 0.5 pc squared
