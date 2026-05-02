@@ -15,10 +15,7 @@
 html, body {
   margin: 0;
   padding: 0;
-  /* `100dvh` tracks the visible viewport on iOS Safari as the URL bar
-     shows/hides — `100%` resolves to the static layout viewport, leaving
-     the canvas stretched and the bottom UI hidden under the URL bar. */
-  height: 100dvh;
+  height: 100%;
   overflow: hidden;
   /* Pure black behind the canvas — the canvas's WebGL clear is already
      transparent black, so this becomes the visible "no light reaches us"
@@ -36,14 +33,15 @@ html, body {
 #scene {
   position: fixed;
   inset: 0;
-  /* `position: fixed`'s containing block is the layout viewport (the large
-     viewport with `viewport-fit=cover` on iOS) — so `width: 100%` would
-     paint into the URL-bar zone while the GL buffer is sized to
-     `window.innerHeight` (the visual viewport), stretching the canvas.
-     Dynamic viewport units track the visual viewport so the CSS rect
-     stays aligned with the renderer's drawing buffer. */
-  width: 100dvw;
-  height: 100dvh;
+  /* With `viewport-fit=cover` the layout viewport (= position:fixed's
+     containing block) equals the full device screen, so `100%` here paints
+     edge-to-edge — the URL bar overlays the canvas as a translucent strip
+     rather than carving out a cream-coloured chrome band. The GL buffer is
+     sized to `document.documentElement.clientWidth/clientHeight` (also the
+     layout viewport — see `viewportPx()` in stellata.ts) so the rendered
+     pixels match the CSS rect with no stretching. */
+  width: 100%;
+  height: 100%;
   display: block;
   touch-action: none;
 }
@@ -94,12 +92,17 @@ html, body {
  *
  * `max(<n>px, env(safe-area-inset-*))` keeps the existing desktop spacing
  * while pushing the stack inward on iPhones with a notch / dynamic island
- * (landscape) or home indicator (portrait, applies to .ui-bottom). */
+ * (landscape) or home indicator (portrait, applies to .ui-bottom).
+ *
+ * `100vh - 100dvh` adds the iOS Safari URL-bar height when it's expanded
+ * (zero on desktop / when URL bar is collapsed) so the panel's bottom edge
+ * stays above the URL bar instead of sliding behind it — the canvas itself
+ * is still full-bleed under the URL bar by design. */
 .ui-top {
   position: fixed;
   top: max(10px, env(safe-area-inset-top));
   right: max(14px, env(safe-area-inset-right));
-  bottom: calc(56px + env(safe-area-inset-bottom));
+  bottom: calc(56px + env(safe-area-inset-bottom) + (100vh - 100dvh));
   width: 280px;
   max-width: calc(100vw - 28px - env(safe-area-inset-right));
   display: flex;
@@ -155,7 +158,9 @@ html, body {
   position: fixed;
   left: max(14px, env(safe-area-inset-left));
   right: max(14px, env(safe-area-inset-right));
-  bottom: calc(16px + env(safe-area-inset-bottom));
+  /* `100vh - 100dvh` lifts the scale-bar + meta over the iOS URL bar
+     (see .ui-top for full rationale). */
+  bottom: calc(16px + env(safe-area-inset-bottom) + (100vh - 100dvh));
   z-index: 7;
   display: flex;
   flex-wrap: wrap;
@@ -647,11 +652,11 @@ input[type="range"]::-moz-range-thumb {
   inset: 0;
   pointer-events: none;
   z-index: 5;
-  /* Dynamic viewport units track the iOS URL-bar transition, keeping the
-     SVG overlay aligned with the GL canvas (which sizes to innerWidth ×
-     innerHeight on resize). */
-  width: 100dvw;
-  height: 100dvh;
+  /* Layout viewport (= full screen with viewport-fit=cover on iOS), so the
+     SVG drawing area matches the canvas. HUD/distance/POI overlays project
+     world points using the same dimensions stellata.ts feeds the renderer. */
+  width: 100vw;
+  height: 100vh;
 }
 /* Rose/pink to contrast with the warm-yellow Sol arrow (#fde68a) and the
    cyan GC arrow (#9ad7e0). Three distinct colours read as three distinct

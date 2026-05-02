@@ -16,6 +16,17 @@ import { MilkyWay } from './milkyway';
 import { ObserveControls } from './observe-controls';
 import { mark as perfMark, measure as perfMeasure, frame as perfFrame } from './perf-hud';
 
+// Layout viewport (= full screen on iOS Safari with viewport-fit=cover, =
+// inner viewport elsewhere). Sized from `document.documentElement` rather
+// than `window.innerWidth/Height` because the latter is the visual
+// viewport on iOS — it shrinks while the URL bar is expanded, which would
+// stretch the GL buffer relative to the canvas's CSS rect (sized to the
+// layout viewport via `inset: 0` + viewport-fit=cover).
+function viewportPx(): { w: number; h: number } {
+  const root = document.documentElement;
+  return { w: root.clientWidth, h: root.clientHeight };
+}
+
 export type MagPresetName = 'naked-eye' | 'binoculars' | 'all';
 
 export interface FilterState {
@@ -472,7 +483,10 @@ export class Stellata {
       powerPreference: 'high-performance',
     });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.setSize(window.innerWidth, window.innerHeight, false);
+    {
+      const { w, h } = viewportPx();
+      this.renderer.setSize(w, h, false);
+    }
     this.renderer.setClearColor(0x000000, 0);
 
     this.scene = new THREE.Scene();
@@ -480,9 +494,10 @@ export class Stellata {
     // Near plane must be strictly smaller than controls.minDistance,
     // otherwise a maximally-zoomed-in star lands on the clip plane and
     // disappears at the closest zoom.
+    const initVp = viewportPx();
     this.camera = new THREE.PerspectiveCamera(
       DEFAULT_FOV,
-      window.innerWidth / window.innerHeight,
+      initVp.w / initVp.h,
       0.001,
       200_000,
     );
@@ -613,7 +628,7 @@ export class Stellata {
       uPhysMinPx: { value: 2.0 },
       uPhysMaxPx: { value: physMaxPx },
       uRefDistPc: { value: DEFAULT_MIN_DIST_PC },
-      uViewport: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+      uViewport: { value: new THREE.Vector2(initVp.w, initVp.h) },
       // Variability time. uTime advances in real seconds; uSecondsPerDay is
       // the compression factor — lower values make catalog periods cycle
       // faster on-screen. uMinPeriodSec clamps the shortest cycle so sub-day
@@ -1458,7 +1473,8 @@ export class Stellata {
   // invert below the threshold disc.)
   private computePresetPxSizes(name: MagPresetName) {
     const p = MAG_PRESETS[name];
-    const refDim = Math.max(window.innerWidth, window.innerHeight);
+    const vp = viewportPx();
+    const refDim = Math.max(vp.w, vp.h);
     const arcsecPerPx = (this.camera.fov * 3600) / refDim;
     const minPx = Math.max(1.0, p.sizeMinArcsec / arcsecPerPx);
     return {
@@ -2200,8 +2216,7 @@ export class Stellata {
   }
 
   private onResize = () => {
-    const w = window.innerWidth;
-    const h = window.innerHeight;
+    const { w, h } = viewportPx();
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h, false);
@@ -2225,7 +2240,8 @@ export class Stellata {
   // the smaller viewport axis (in CSS pixels) — dominant but not stuffed
   // edge-to-edge. Tune here if you want supergiants to feel bigger/smaller.
   private computePhysMaxPx(): number {
-    return 0.5 * Math.min(window.innerWidth, window.innerHeight);
+    const { w, h } = viewportPx();
+    return 0.5 * Math.min(w, h);
   }
 
   // Rendered pixel size (final gl_PointSize-equivalent diameter) for a star
@@ -2484,8 +2500,7 @@ export class Stellata {
     // Build a far point along the ray and feed it to aimAt — that path
     // already handles the quaternion slerp, the duration ramp, and
     // disabling observeControls for the duration.
-    const w = window.innerWidth;
-    const h = window.innerHeight;
+    const { w, h } = viewportPx();
     this.dblClickRay.set((x / w) * 2 - 1, -(y / h) * 2 + 1, 0.5);
     this.dblClickRay.unproject(this.camera);
     this.dblClickRay.sub(this.camera.position).normalize();
@@ -2722,6 +2737,7 @@ export class Stellata {
       this.focusedStar !== null ? this.starLocalPosition(this.focusedStar) : null;
     const isSolFocus =
       this.focusedStar !== null && this.focusedStar === this.catalog.solIndex;
+    const hudVp = viewportPx();
     this.hudOverlay.update({
       enabled: this.filter.showHud,
       camera: this.camera,
@@ -2732,8 +2748,8 @@ export class Stellata {
       sizeMaxPx: this.filter.sizeMax,
       cameraMode: this.cameraMode,
       transition: this.getObserveTransitionProgress(),
-      w: window.innerWidth,
-      h: window.innerHeight,
+      w: hudVp.w,
+      h: hudVp.h,
     });
 
     this.clouds?.update(this.worldOffset, this.filter.showMolecularClouds);
