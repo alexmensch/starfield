@@ -1,10 +1,11 @@
 # Releasing
 
-Stellata uses [Semantic Versioning](https://semver.org/) and tracks
-every release in [`CHANGELOG.md`](./CHANGELOG.md). Releases are cut
-manually with `npm version` + `gh release create`. There is no CI
-release workflow; the steps below are run from a clean working tree on
-`main`.
+Stellata uses [Semantic Versioning](https://semver.org/). Each tagged
+release is its own changelog — the GitHub release page collects the
+PR titles auto-generated from the diff since the previous tag, and
+each PR's body has the detail. There is no separate `CHANGELOG.md`
+and no CI release workflow; the steps below are run manually from a
+clean working tree on `main`.
 
 ## Version policy
 
@@ -16,48 +17,45 @@ release workflow; the steps below are run from a clean working tree on
 - **Patch** — bug fixes, copy tweaks, dependency bumps with no
   user-visible behaviour change.
 
+Bump `package.json` on every PR so the version on `main` is always
+the *next* release. Cutting a release is then just tagging — no
+version bump dance required at release time.
+
 ## Cutting a release
 
 1. **Make sure `main` is clean and green.**
    ```sh
    git status
    npm run typecheck
+   npm test
    ```
 
-2. **Update `CHANGELOG.md`** — add a new section at the top following
-   the format of the previous release. Include the date.
-
-3. **Bump the version.** This edits `package.json` and creates an
-   annotated `vX.Y.Z` git tag.
-   ```sh
-   npm version <patch|minor|major>
-   ```
-
-4. **Push commits and the new tag.**
-   ```sh
-   git push origin main --follow-tags
-   ```
-
-5. **Create the GitHub release** from the tag, sourcing notes from the
-   matching `CHANGELOG.md` section.
+2. **Tag the current `main` with the version already in `package.json`.**
    ```sh
    VERSION=$(node -p "require('./package.json').version")
+   git tag -a "v$VERSION" -m "v$VERSION"
+   ```
+
+3. **Push the tag.**
+   ```sh
+   git push origin "v$VERSION"
+   ```
+
+4. **Create the GitHub release with auto-generated notes.**
+   ```sh
    gh release create "v$VERSION" \
      --title "v$VERSION" \
-     --notes-file CHANGELOG.md \
-     --draft
+     --generate-notes
    ```
-   Trim the changelog body in the GitHub UI to just the new
-   release's section, then publish.
 
-6. **Deploy.**
+5. **Deploy.**
    ```sh
    npm run deploy
    ```
 
 ## After the release
 
-- Verify `https://alxm.me/stellata/` serves the new version
-  (visible at the bottom-right of the About modal).
-- Add a placeholder `## [Unreleased]` section to `CHANGELOG.md` to
-  collect the next set of changes.
+- Verify `https://stellata.xyz` serves the new version (visible at
+  the bottom-right of the About modal).
+- Bump `package.json` on the next PR to the version that release will
+  carry.

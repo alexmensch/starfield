@@ -339,9 +339,9 @@ pan) works the same everywhere.
 ## Releases
 
 Tagged releases live on the
-[Releases page](https://github.com/alexmensch/stellata/releases) and
-are summarised in [`CHANGELOG.md`](./CHANGELOG.md). The cut-a-release
-runbook is in [`RELEASING.md`](./RELEASING.md).
+[Releases page](https://github.com/alexmensch/stellata/releases); each
+release page is the canonical changelog (auto-generated from merged
+PRs). The cut-a-release runbook is in [`RELEASING.md`](./RELEASING.md).
 
 ## Licence
 
