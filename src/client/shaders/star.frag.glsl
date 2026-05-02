@@ -1,5 +1,8 @@
 precision highp float;
 
+#include <common>
+#include <logdepthbuf_pars_fragment>
+
 uniform float uMonochrome; // 0 = colour, 1 = ink-on-paper (multiply)
 // Render mode:
 //   0 = glow pass (additive, distant unresolved points)
@@ -73,7 +76,10 @@ void main() {
 
     // Default: write our actual depth. The disc pass overrides this for
     // halo fragments so they don't occlude background stars drawn later.
+    // The logdepthbuf chunk overrides this with the log-encoded depth
+    // when the renderer's logarithmicDepthBuffer is enabled.
     gl_FragDepth = gl_FragCoord.z;
+    #include <logdepthbuf_fragment>
 
     // Chart mode: flatten everything. Stars render as solid hard-edged
     // discs filling the inscribed circle of the calibrated quad, against

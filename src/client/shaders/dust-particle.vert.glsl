@@ -1,5 +1,8 @@
 precision highp float;
 
+#include <common>
+#include <logdepthbuf_pars_vertex>
+
 // Dust-particle vertex shader. Each particle is one instance of a unit
 // quad expanded into a screen-space billboard sized by the particle's
 // density (denser cores → larger sprites, so dense cloud regions show up
@@ -62,4 +65,6 @@ void main() {
     vec2 ndcOffset = pixelOffset / (uViewport * uPixelRatio) * 2.0;
     gl_Position = centerClip + vec4(ndcOffset * centerClip.w, 0.0, 0.0);
     vUv = aCorner;
+
+    #include <logdepthbuf_vertex>
 }

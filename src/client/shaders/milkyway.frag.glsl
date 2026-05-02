@@ -1,5 +1,8 @@
 precision highp float;
 
+#include <common>
+#include <logdepthbuf_pars_fragment>
+
 // Phase 5 (rev 4) — bounded volumetric raymarch through proxy meshes.
 //
 // Two proxy meshes (a flattened disc, an oblate bulge) define
@@ -124,6 +127,8 @@ float analyticalDustDensity(float R, float zVal) {
 // --- Main -----------------------------------------------------------
 
 void main() {
+  #include <logdepthbuf_fragment>
+
   // --- Camera in mesh-local (unit sphere) frame -----------------------
   // Renderer-local → galactocentric ICRS → galactocentric galactic →
   // mesh-local (component-wise divide by half-axes).

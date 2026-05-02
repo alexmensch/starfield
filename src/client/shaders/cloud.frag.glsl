@@ -1,5 +1,8 @@
 precision highp float;
 
+#include <common>
+#include <logdepthbuf_pars_fragment>
+
 uniform vec3 uColor;
 uniform vec3 uMonoColor;
 uniform float uOpacity;
@@ -17,6 +20,8 @@ in vec3 vNormalView;
 out vec4 outColor;
 
 void main() {
+  #include <logdepthbuf_fragment>
+
   // Approximate "thickness through the ellipsoid" along the view ray. A
   // surface point whose normal aligns with the view axis (|n·v| ≈ 1) sits
   // in the middle of the projected disc — the ray traverses the most
