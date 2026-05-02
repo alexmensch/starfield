@@ -3,6 +3,13 @@ import { writeFile } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'csv-parse';
+import {
+  parseSpectral,
+  physicalRadius,
+  normalizeGcvsName,
+  parseGcvsNumber,
+  inferBinaries,
+} from './catalog-pure';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -19,11 +26,6 @@ const OUT_SEARCH = resolve(ROOT, 'public/search-index.json');
 
 const MAX_DIST_PC = 50_000;
 const DEFAULT_CI = 0.65;
-// Pairs within this 3D distance are flagged as a physical binary/multiple system.
-// 0.005 pc ≈ 1030 AU — wide-binary territory. Gaia resolves most bound pairs
-// wider than ~0.5 arcsec so this captures the visually-renderable cases.
-const BINARY_MAX_SEP_PC = 0.005;
-
 const HEADER_SIZE = 32;
 const RECORD_SIZE = 44;
 const BINARY_VERSION = 4;
@@ -151,181 +153,6 @@ const KNOWN_VISUAL_DOUBLES: Map<number, string> = new Map([
   [104217, '61 Cyg B — companion of 61 Cyg A (HIP 104214)'],
 ]);
 
-function spectClassIndex(firstChar: string): number {
-  switch (firstChar) {
-    case 'O': return 0;
-    case 'B': return 1;
-    case 'A': return 2;
-    case 'F': return 3;
-    case 'G': return 4;
-    case 'K': return 5;
-    case 'M': return 6;
-    case 'C': case 'S': case 'W': case 'N': case 'R': return 7;
-    default: return 8;
-  }
-}
-
-interface SpectralInfo {
-  classIdx: number;     // 0-8 per spectClassIndex
-  subclass: number;     // 0-9, defaults to 5 when missing
-  lumClass: number;     // 0-9 (see table below), 255 if unknown
-  isWhiteDwarf: boolean;
-  wdSubclass: number;   // only valid if isWhiteDwarf (the digit after D)
-}
-
-// Luminosity class encoding — used by the renderer to size/colour by star type.
-//   0 = VII / D  (white dwarf)
-//   1 = VI / sd  (subdwarf)
-//   2 = V        (main sequence dwarf)
-//   3 = IV       (subgiant)
-//   4 = III      (giant)
-//   5 = II       (bright giant)
-//   6 = Ib       (less-luminous supergiant)
-//   7 = Iab      (intermediate supergiant)
-//   8 = Ia       (luminous supergiant)
-//   9 = Ia+ / 0  (hypergiant)
-// 255 = unknown / not parseable
-function parseSpectral(raw: string): SpectralInfo {
-  // Strip leading junk colons and quotes; collapse spaces.
-  const s = raw.replace(/^["':\s]+/, '').replace(/\s+/g, '').toUpperCase();
-  if (!s) {
-    return { classIdx: 8, subclass: 5, lumClass: 255, isWhiteDwarf: false, wdSubclass: 0 };
-  }
-
-  // White dwarf: starts with "D" followed by another letter (DA, DB, DC, DO,
-  // DZ, DQ, DX) and an optional digit. Plain "D" alone (rare) also counts.
-  if (s[0] === 'D' && (s.length === 1 || /[A-Z]/.test(s[1]))) {
-    const m = s.match(/^D[A-Z]*(\d(?:\.\d)?)?/);
-    const wdSub = m && m[1] ? Math.round(Number(m[1])) : 5;
-    return {
-      classIdx: 8, subclass: 5, lumClass: 0, isWhiteDwarf: true,
-      wdSubclass: Math.max(0, Math.min(9, wdSub)),
-    };
-  }
-
-  // Subdwarf prefix: "sdB", "sdO", etc. — lumClass=1, classIdx from the letter.
-  if (s.startsWith('SD')) {
-    const letter = s.charAt(2);
-    const cls = spectClassIndex(letter);
-    const subMatch = s.substring(3).match(/^(\d)/);
-    const sub = subMatch ? Number(subMatch[1]) : 5;
-    return { classIdx: cls, subclass: sub, lumClass: 1, isWhiteDwarf: false, wdSubclass: 0 };
-  }
-
-  // Leading letter is the primary spectral class.
-  const firstChar = s.charAt(0);
-  const classIdx = spectClassIndex(firstChar);
-
-  // Subclass digit (0-9), optionally with a decimal — take the integer part.
-  const subMatch = s.substring(1).match(/^(\d)/);
-  const subclass = subMatch ? Number(subMatch[1]) : 5;
-
-  // Luminosity Roman numeral — order from most specific to least so we don't
-  // mis-match "II" as "I" etc. Matched anywhere after the first 2-3 chars.
-  const afterPrefix = s.substring(1 + (subMatch ? subMatch[0].length : 0));
-  let lumClass = 255;
-  if (/^(IA\+|0)/.test(afterPrefix)) lumClass = 9;
-  else if (/^IAB/.test(afterPrefix)) lumClass = 7;
-  else if (/^IA/.test(afterPrefix)) lumClass = 8;
-  else if (/^IB/.test(afterPrefix)) lumClass = 6;
-  else if (/^III/.test(afterPrefix)) lumClass = 4;
-  else if (/^II(?!I)/.test(afterPrefix)) lumClass = 5;
-  else if (/^IV/.test(afterPrefix)) lumClass = 3;
-  else if (/^VII/.test(afterPrefix)) lumClass = 0;
-  else if (/^VI(?!I)/.test(afterPrefix)) lumClass = 1;
-  else if (/^V/.test(afterPrefix)) lumClass = 2;
-  else if (/^I(?![IV])/.test(afterPrefix)) lumClass = 7; // bare "I" — treat as Iab
-
-  return { classIdx, subclass, lumClass, isWhiteDwarf: false, wdSubclass: 0 };
-}
-
-// Effective temperature (Kelvin) by spectral class + subclass for main-sequence
-// stars. Giants and supergiants of the same letter+digit run ~10-15% cooler;
-// the physical-radius calculation below rides mostly on the *relative* scaling,
-// so the MS table is close enough. White dwarfs are handled separately.
-const T_TABLE: Record<number, [number, number][]> = {
-  0: [[0, 50000], [5, 42000], [9, 34000]],             // O
-  1: [[0, 30000], [5, 15200], [9, 10500]],             // B
-  2: [[0,  9790], [5,  8180], [9,  7600]],             // A
-  3: [[0,  7300], [5,  6650], [9,  6050]],             // F
-  4: [[0,  5940], [5,  5560], [9,  5310]],             // G
-  5: [[0,  5150], [5,  4410], [9,  3900]],             // K
-  6: [[0,  3840], [5,  3170], [9,  2500]],             // M
-  7: [[0,  4000], [5,  3000], [9,  2500]],             // C/S/W (cool carbon) — rough
-  8: [[0,  5000], [5,  5000], [9,  5000]],             // unknown — neutral default
-};
-
-function interpolate(table: [number, number][], key: number): number {
-  for (let i = 1; i < table.length; i++) {
-    const [k0, v0] = table[i - 1];
-    const [k1, v1] = table[i];
-    if (key <= k1) {
-      const t = (key - k0) / (k1 - k0);
-      return v0 + (v1 - v0) * t;
-    }
-  }
-  return table[table.length - 1][1];
-}
-
-function tempKelvin(info: SpectralInfo): number {
-  if (info.isWhiteDwarf) {
-    // WD spectral number is T_eff / 50400 × 10 (inverted from Sion et al.);
-    // so T_eff ≈ 50400 / N for N=1..9. N=2 → 25200 K, N=5 → 10080 K, etc.
-    const n = Math.max(1, info.wdSubclass);
-    return 50400 / n;
-  }
-  return interpolate(T_TABLE[info.classIdx] ?? T_TABLE[8], info.subclass);
-}
-
-// Bolometric correction by spectral class + subclass. Mostly negligible for
-// solar-type stars; large negatives for O/B (lots of UV) and M (lots of IR).
-const BC_TABLE: Record<number, [number, number][]> = {
-  0: [[0, -4.9], [5, -4.4], [9, -3.3]],
-  1: [[0, -3.16], [5, -1.46], [9, -0.51]],
-  2: [[0, -0.30], [5, -0.15], [9, -0.10]],
-  3: [[0, -0.09], [5, -0.14], [9, -0.16]],
-  4: [[0, -0.18], [5, -0.21], [9, -0.31]],
-  5: [[0, -0.31], [5, -0.72], [9, -1.20]],
-  6: [[0, -1.38], [5, -2.73], [9, -4.10]],
-  7: [[0, -2.00], [5, -3.00], [9, -4.00]],
-  8: [[0,  0.00], [5,  0.00], [9,  0.00]],
-};
-
-function boloCorr(info: SpectralInfo): number {
-  if (info.isWhiteDwarf) {
-    // WDs have large BCs that depend strongly on T; a single value is a lie
-    // but good enough for display sizing. Hot DA ≈ -2, cool ≈ 0.
-    const T = tempKelvin(info);
-    if (T > 30000) return -2.5;
-    if (T > 15000) return -1.0;
-    if (T > 8000) return -0.2;
-    return 0.3;
-  }
-  return interpolate(BC_TABLE[info.classIdx] ?? BC_TABLE[8], info.subclass);
-}
-
-// Compute physical radius in solar radii from absolute magnitude + spectral
-// info via Stefan-Boltzmann. Clamped to sane bounds so odd catalog entries
-// don't produce absurd values.
-const T_SUN = 5778;
-const MBOL_SUN = 4.74;
-function physicalRadius(absmag: number, info: SpectralInfo): number {
-  if (info.isWhiteDwarf) {
-    // White dwarfs cluster tightly around 0.01 R☉; slight mass-dependence
-    // but absmag doesn't translate reliably into a radius here.
-    return 0.013;
-  }
-  const T = tempKelvin(info);
-  const BC = boloCorr(info);
-  const Mbol = absmag + BC;
-  const L = Math.pow(10, (MBOL_SUN - Mbol) / 2.5); // L/L☉
-  if (!Number.isFinite(L) || L <= 0) return 1.0;
-  const R = Math.sqrt(L) * (T_SUN / T) * (T_SUN / T);
-  // Clamp to the empirical stellar range: red dwarfs bottom around 0.08 R☉,
-  // extreme supergiants top around ~2000 R☉. Beyond these is bad catalog data.
-  return Math.max(0.08, Math.min(2500, R));
-}
-
 function isUpToDate(): boolean {
   if (!existsSync(OUT_BIN) || !existsSync(OUT_CON) || !existsSync(OUT_SEARCH)) return false;
   const binMtime = statSync(OUT_BIN).mtimeMs;
@@ -360,25 +187,6 @@ function isUpToDate(): boolean {
 interface VarStarData {
   periodDays: number;
   amplitudeMag: number;
-}
-
-// GCVS designations in both files are space-padded fixed-width, e.g.
-// "R     And *" or "Z     Peg". Trailing asterisk is an indicator that we
-// don't need; collapse internal whitespace to a single space.
-function normalizeGcvsName(raw: string): string {
-  return raw
-    .replace(/\*+$/, '')
-    .trim()
-    .replace(/\s+/g, ' ');
-}
-
-// Parse a possibly-annotated GCVS number field: entries may carry "<", ">",
-// ":", "()" uncertainty markers or trailing "*"; strip them before parsing.
-function parseGcvsNumber(s: string): number | null {
-  const t = s.trim().replace(/[<>():;*]/g, '').trim();
-  if (!t) return null;
-  const v = parseFloat(t);
-  return Number.isFinite(v) ? v : null;
 }
 
 function parseGcvsMain(): Map<string, VarStarData> {
@@ -709,82 +517,6 @@ function applyVariability(
     matched++;
   }
   return { matched };
-}
-
-// Spatial-grid nearest-neighbour pass. For each star, find its nearest
-// neighbour within BINARY_MAX_SEP_PC; if any is within range, record it as
-// this star's companion. Mutual: A→B and B→A pointing at each other (or both
-// at a common brightest in a triple) is what we want.
-function inferBinaries(stars: Star[]): { pairs: number; primaries: number } {
-  const cell = BINARY_MAX_SEP_PC;
-  const cellInv = 1 / cell;
-  const grid = new Map<number, number[]>(); // hash → star indices
-  const n = stars.length;
-
-  const hashKey = (ix: number, iy: number, iz: number): number =>
-    // 21 bits per axis → fits in a safe int. Signed range ~±1 million cells
-    // (stars are within ~50_000 pc / 0.005 pc = ±10M cells, so this overflows
-    // mathematically but TS number is 53-bit mantissa so still unique).
-    ix * 73856093 + iy * 19349663 + iz * 83492791;
-
-  for (let i = 0; i < n; i++) {
-    const s = stars[i];
-    const ix = Math.floor(s.x * cellInv);
-    const iy = Math.floor(s.y * cellInv);
-    const iz = Math.floor(s.z * cellInv);
-    const key = hashKey(ix, iy, iz);
-    const bucket = grid.get(key);
-    if (bucket) bucket.push(i);
-    else grid.set(key, [i]);
-  }
-
-  const sepSq = BINARY_MAX_SEP_PC * BINARY_MAX_SEP_PC;
-  let pairCount = 0;
-  const primaries = new Set<number>();
-
-  for (let i = 0; i < n; i++) {
-    const s = stars[i];
-    const ix = Math.floor(s.x * cellInv);
-    const iy = Math.floor(s.y * cellInv);
-    const iz = Math.floor(s.z * cellInv);
-    let bestIdx = -1;
-    let bestSq = sepSq;
-    for (let dx = -1; dx <= 1; dx++) {
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dz = -1; dz <= 1; dz++) {
-          const bucket = grid.get(hashKey(ix + dx, iy + dy, iz + dz));
-          if (!bucket) continue;
-          for (const j of bucket) {
-            if (j === i) continue;
-            const t = stars[j];
-            const dxv = t.x - s.x;
-            const dyv = t.y - s.y;
-            const dzv = t.z - s.z;
-            const d2 = dxv * dxv + dyv * dyv + dzv * dzv;
-            if (d2 < bestSq) {
-              bestSq = d2;
-              bestIdx = j;
-            }
-          }
-        }
-      }
-    }
-    if (bestIdx !== -1) {
-      stars[i].companionIdx = bestIdx;
-      // Primary = brighter of the pair (lower absmag).
-      const primary = stars[i].absmag <= stars[bestIdx].absmag ? i : bestIdx;
-      primaries.add(primary);
-      pairCount++;
-    }
-  }
-
-  // Flag primaries in the flags byte (bit 4) so the renderer can quickly
-  // identify the "anchor" of each system.
-  for (const idx of primaries) {
-    stars[idx].flags |= 0x10;
-  }
-
-  return { pairs: pairCount, primaries: primaries.size };
 }
 
 // Extracts classical stick-figure lines per IAU constellation from
