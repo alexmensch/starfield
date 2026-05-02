@@ -1,5 +1,8 @@
 precision highp float;
 
+#include <common>
+#include <logdepthbuf_pars_fragment>
+
 // Soft additive sprite — radial falloff centred on the quad. Many of these
 // overlapping in dense regions accumulate via the additive blend mode to
 // produce a visually smooth dust glow; in diffuse regions they appear as
@@ -13,6 +16,8 @@ out vec4 outColor;
 const vec3 DUST_TINT = vec3(0.70, 0.55, 0.38);
 
 void main() {
+    #include <logdepthbuf_fragment>
+
     float r = length(vUv);
     if (r > 0.5) discard;
     // Quadratic radial falloff so particle edges fade smoothly into the

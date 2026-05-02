@@ -1,5 +1,8 @@
 precision highp float;
 
+#include <common>
+#include <logdepthbuf_pars_vertex>
+
 uniform vec3 uCameraPos;
 uniform float uMaxAppMag;
 uniform float uMinDistSol;
@@ -313,4 +316,6 @@ void main() {
     vec2 pixelOffset = aCorner * pxSize * uPixelRatio;
     vec2 ndcOffset = pixelOffset / (uViewport * uPixelRatio) * 2.0;
     gl_Position = centreClip + vec4(ndcOffset * centreClip.w, 0.0, 0.0);
+
+    #include <logdepthbuf_vertex>
 }
