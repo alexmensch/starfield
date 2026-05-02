@@ -24,3 +24,8 @@ data/dust/.voxels.npy
 # Python venv for scripts/build-dust.py
 .venv/
 
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
