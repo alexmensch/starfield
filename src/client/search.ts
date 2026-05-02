@@ -151,7 +151,7 @@ const BAYER_GREEK: Record<string, string> = {
 
 // Returns { letter3, suffix } for a Bayer string like "Alp" or "Alp-2".
 // Unknown letter returns null.
-function splitBayer(bayer: string): { letter3: string; suffix: string } | null {
+export function splitBayer(bayer: string): { letter3: string; suffix: string } | null {
   const m = bayer.match(/^([A-Za-z]+)(?:-(\d))?$/);
   if (!m) return null;
   const letter3 = m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
@@ -160,7 +160,7 @@ function splitBayer(bayer: string): { letter3: string; suffix: string } | null {
 }
 
 // Human-facing Bayer display string, e.g. "α¹ Cen".
-function formatBayerDisplay(bayer: string, conCode: string): string {
+export function formatBayerDisplay(bayer: string, conCode: string): string {
   const split = splitBayer(bayer);
   if (!split) return `${bayer} ${conCode}`;
   const greek = BAYER_GREEK[split.letter3];
@@ -168,7 +168,7 @@ function formatBayerDisplay(bayer: string, conCode: string): string {
   return `${greek}${sup} ${conCode}`;
 }
 
-function superscript(digit: string): string {
+export function superscript(digit: string): string {
   const map: Record<string, string> = { '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴', '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹' };
   return digit.split('').map((d) => map[d] ?? d).join('');
 }
@@ -180,7 +180,7 @@ function superscript(digit: string): string {
 // "Alpha Cen" to mean the system, not "Alpha 1 Cen". Both A and B stars emit
 // the same labels and will both appear in the results, letting the user pick.
 // The superscript DOES show in the display form ("α¹ Cen") to disambiguate.
-function buildBayerLabels(
+export function buildBayerLabels(
   bayer: string,
   conCode: string,
   conName: string,
