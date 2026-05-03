@@ -188,6 +188,13 @@ const TARGET_PARK_FRACTION = 0.10;
 // reset button snaps back to this value.
 export const DEFAULT_FOV = 50;
 
+// One solar radius in parsecs. catalog.physicalRadius (and therefore
+// iLogRadius) is in solar radii; the angular-diameter formula needs
+// physical radius in pc to match the camera-distance units. Used both
+// in stellata.ts and in the star vertex shader (uRSunPc).
+//   1 R_sun = 6.957e8 m, 1 pc = 3.0857e16 m  →  R_sun = 2.2543e-8 pc
+const R_SUN_PC = 2.2543e-8;
+
 // When a focused star has a binary companion, minDistance is set so the
 // companion subtends at most this half-angle from the camera axis — gives
 // the system a bit of viewport padding. tan(25°) ≈ 0.466; we store 1/tan.
@@ -543,7 +550,7 @@ export class Stellata {
       const z = catalog.positions[i * 3 + 2];
       distSol[i] = Math.sqrt(x * x + y * y + z * z);
     }
-    this.maxPhysicalRadiusPc = maxPhysicalRadius;
+    this.maxPhysicalRadiusPc = maxPhysicalRadius * R_SUN_PC;
     // Local-frame position buffer — starts identical to catalog.positions
     // since worldOffset is (0,0,0) at construction. Recenter rewrites this
     // in place.
@@ -619,6 +626,10 @@ export class Stellata {
       // setCameraFov runs. The shader needs it to convert a star's angular
       // diameter (2·atan(R/d)) into pixels.
       uFovYRad: { value: (this.camera.fov * Math.PI) / 180 },
+      // Solar-radii → parsecs conversion for the physical-size formula.
+      // catalog.physicalRadius is in solar radii; iLogRadius decodes back
+      // to solar radii via pow(10, x); multiply by uRSunPc to get pc.
+      uRSunPc: { value: R_SUN_PC },
       uViewport: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
       // Variability time. uTime advances in real seconds; uSecondsPerDay is
       // the compression factor — lower values make catalog periods cycle
@@ -2258,7 +2269,7 @@ export class Stellata {
     const fovYRad = u.uFovYRad.value as number;
     const viewport = u.uViewport.value as THREE.Vector2;
     const angularToPx = viewport.y / Math.max(fovYRad, 1e-9);
-    const R = Math.max(physicalRadius[idx], 1e-6);
+    const R = Math.max(physicalRadius[idx], 1e-6) * R_SUN_PC;
     const baseSize = 2 * Math.atan(R / dCam) * angularToPx;
     const maxPhysSize = ZOOM_FLOOR_FRACTION * Math.min(viewport.x, viewport.y);
 
@@ -2319,7 +2330,7 @@ export class Stellata {
   // frame.
   private minOrbitDistForStar(idx: number): number {
     const fovMinor = this.fovMinorRad();
-    const R = Math.max(this.catalog.physicalRadius[idx], 1e-9);
+    const R = Math.max(this.catalog.physicalRadius[idx], 1e-9) * R_SUN_PC;
     const base = R / Math.tan((ZOOM_FLOOR_FRACTION * fovMinor) / 2);
 
     const comp = this.catalog.companion[idx];
@@ -2342,7 +2353,7 @@ export class Stellata {
   // is bumped so the companion stays within the viewport half-angle.
   minDistForStar(idx: number): number {
     const fovMinor = this.fovMinorRad();
-    const R = Math.max(this.catalog.physicalRadius[idx], 1e-9);
+    const R = Math.max(this.catalog.physicalRadius[idx], 1e-9) * R_SUN_PC;
     const dPark = R / Math.tan((TARGET_PARK_FRACTION * fovMinor) / 2);
     const dMin = R / Math.tan((ZOOM_FLOOR_FRACTION * fovMinor) / 2);
     const parkFloored = Math.max(dPark, 2 * dMin);

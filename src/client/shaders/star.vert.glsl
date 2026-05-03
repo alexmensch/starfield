@@ -32,11 +32,13 @@ uniform float uMonochrome;       // 0 = colour mode, 1 = chart mode (shared with
 // Physical-size rendering term. A star's rendered pixel diameter equals
 // its true angular diameter through the camera's projection:
 //   pxSize = 2·atan(R · radiusFactor / d) · viewport.y / fov_y_rad
-// where R is the per-star physical radius in pc (decoded from
-// iLogRadius), d is the camera distance in pc, and radiusFactor is the
-// variability radius modulation. Falls off as 1/d in the small-angle
-// regime and saturates as d → R (disc fills the frame).
+// R is the per-star physical radius in pc — iLogRadius is in solar
+// radii (matching catalog.physicalRadius), so we multiply through by
+// uRSunPc (≈ 2.2543e-8 pc/R_sun) to land in pc-relative-to-d.
+// radiusFactor is the variability modulation. Falls off as 1/d in the
+// small-angle regime and saturates as d → R (disc fills the frame).
 uniform float uFovYRad;   // camera vertical FOV in radians
+uniform float uRSunPc;    // 1 R_sun in parsecs (≈ 2.2543e-8)
 uniform vec2 uViewport;   // viewport size in CSS pixels (for quad expansion)
 
 // Variability. uTime is real elapsed seconds. Per-star period is in days
@@ -190,7 +192,7 @@ void main() {
     // peak ≤ MAX_PHYS_PX, trough ≥ VAR_TROUGH_FLOOR_FRACTION × baseSize.
     // Keeps the sine smooth (no plateau at peak, no disappearing at trough)
     // even for extreme-amplitude variables like Mira.
-    float R_pc = pow(10.0, iLogRadius);
+    float R_pc = pow(10.0, iLogRadius) * uRSunPc;
     float angularToPx = uViewport.y / max(uFovYRad, 1e-9);
     float radiusFactor = 1.0;
     float magMod = 0.0;
