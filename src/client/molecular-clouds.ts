@@ -58,6 +58,12 @@ export class MolecularClouds {
   private darkOpacity = DARK_OPACITY_DEFAULT;
   private monoOpacity = MONO_OPACITY_DEFAULT;
 
+  // The shared uMaxAppMag uniform reference last bound by setIsobar. Cached
+  // so repeated isobar toggles don't replace the wrapper on every call (which
+  // would silently abandon any prior binding the caller may have expected to
+  // remain live).
+  private boundMagUniform: { value: number } | null = null;
+
   constructor(catalog: CloudCatalog) {
     this.clouds = catalog.clouds;
     this.group = new THREE.Group();
@@ -115,17 +121,24 @@ export class MolecularClouds {
    * mono palette state.
    */
   setIsobar(on: boolean, magnitudeUniform: { value: number }) {
+    const rebind = this.boundMagUniform !== magnitudeUniform;
     for (const mat of this.materials) {
       mat.uniforms.uChartIsobar.value = on ? 1 : 0;
       // Reuse the stellata's shared uMaxAppMag uniform reference so the
       // isobar threshold tracks the slider live without per-frame writes.
-      mat.uniforms.uMaxAppMag = magnitudeUniform;
-      if (on) {
-        // Outline ink — opaque-over against the chart palette.
-        mat.blending = THREE.NormalBlending;
-      }
+      // Only rebind on first call or if the caller swapped to a different
+      // shared reference — repeated rebinds with the same wrapper silently
+      // abandon prior bindings.
+      if (rebind) mat.uniforms.uMaxAppMag = magnitudeUniform;
+      // Outline ink is opaque-over against the chart palette; restore the
+      // per-mode default when toggled off so the layer doesn't get stranded
+      // in NormalBlending after chart-mode exits (matches setMonochrome).
+      mat.blending = on
+        ? THREE.NormalBlending
+        : (this.mono ? THREE.NormalBlending : THREE.AdditiveBlending);
       mat.needsUpdate = true;
     }
+    this.boundMagUniform = magnitudeUniform;
   }
 
   /**

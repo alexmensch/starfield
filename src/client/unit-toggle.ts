@@ -1,20 +1,15 @@
 import { setUnit, getUnit, onUnitChange, type DistanceUnit } from './distance-util';
 
-let buttons: NodeListOf<HTMLButtonElement> | null = null;
-
 export function bindUnitToggle() {
   const host = document.getElementById('unit-toggle')!;
-  buttons = host.querySelectorAll<HTMLButtonElement>('button[data-unit]');
+  const buttons = host.querySelectorAll<HTMLButtonElement>('button[data-unit]');
+  const sync = () => {
+    const u = getUnit();
+    buttons.forEach((btn) => btn.classList.toggle('on', btn.dataset.unit === u));
+  };
   for (const btn of Array.from(buttons)) {
-    btn.addEventListener('click', () => applyUnit(btn.dataset.unit as DistanceUnit));
+    btn.addEventListener('click', () => setUnit(btn.dataset.unit as DistanceUnit));
   }
-  onUnitChange(syncButtons);
-  syncButtons();
-}
-
-export function applyUnit(u: DistanceUnit) { setUnit(u); }
-
-function syncButtons() {
-  const u = getUnit();
-  buttons?.forEach((btn) => btn.classList.toggle('on', btn.dataset.unit === u));
+  onUnitChange(sync);
+  sync();
 }
