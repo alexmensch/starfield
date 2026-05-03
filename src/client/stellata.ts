@@ -2909,9 +2909,20 @@ export class Stellata {
     canvas.removeEventListener('gesturestart', this.onGestureStart as EventListener);
     canvas.removeEventListener('gesturechange', this.onGestureChange as EventListener);
     this.controls.dispose();
+    // Star pipeline: one shared InstancedBufferGeometry feeds the disc, glow,
+    // and core-mask passes, so it's disposed once. Each pass has its own
+    // ShaderMaterial.
     this.geometry.dispose();
     this.material.dispose();
     this.glowMaterial.dispose();
+    this.coreMaskMaterial.dispose();
+    if (this.particleMesh) {
+      this.particleMesh.geometry.dispose();
+      this.particleMaterial?.dispose();
+    }
+    this.clouds?.dispose();
+    this.galacticDisc.dispose();
+    this.galacticGrid.dispose();
     this.milkyway.dispose();
     this.renderer.dispose();
   }
