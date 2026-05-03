@@ -224,13 +224,26 @@ export interface BinaryStar {
 }
 
 // Spatial-grid nearest-neighbour pass. For each star, find its nearest
-// neighbour within BINARY_MAX_SEP_PC; if any is within range, record it as
-// this star's companion and flag the brighter of the pair as the primary
-// (bit 4 of `flags`). Mutates `stars[i].companionIdx` and `stars[i].flags`
-// in place. Returns counts for the build-time log line.
+// neighbour within BINARY_MAX_SEP_PC and record it as `companionIdx`.
+// `companionIdx` is the **directed** nearest neighbour (A's nearest may
+// be B while B's nearest is some third star C); the renderer reads it
+// as "the partner to keep in frame," which is well-defined even when
+// the relationship is one-way.
+//
+// The `0x10` flag is stricter: set only on the brighter member of a
+// **mutual** pair (A's nearest is B AND B's nearest is A). The chart-
+// mode wings glyph is anchored on `0x10`, so mutual-only avoids
+// over-flagging in dense clusters where one star's nearest happens to
+// be a third star that's actually paired with someone else.
+//
+// Mutates `stars[i].companionIdx` and `stars[i].flags` in place.
+// Returns counts for the build-time log line:
+//   pairs        — total directed companion assignments
+//   mutualPairs  — undirected mutual pairs (each counted once)
+//   primaries    — stars marked with 0x10 (== mutualPairs)
 export function inferBinaries(
   stars: BinaryStar[],
-): { pairs: number; primaries: number } {
+): { pairs: number; mutualPairs: number; primaries: number } {
   const cell = BINARY_MAX_SEP_PC;
   const cellInv = 1 / cell;
   const grid = new Map<number, number[]>();
@@ -251,8 +264,7 @@ export function inferBinaries(
   }
 
   const sepSq = BINARY_MAX_SEP_PC * BINARY_MAX_SEP_PC;
-  let pairCount = 0;
-  const primaries = new Set<number>();
+  let pairs = 0;
 
   for (let i = 0; i < n; i++) {
     const s = stars[i];
@@ -283,16 +295,22 @@ export function inferBinaries(
     }
     if (bestIdx !== -1) {
       stars[i].companionIdx = bestIdx;
-      // Primary = brighter of the pair (lower absmag).
-      const primary = stars[i].absmag <= stars[bestIdx].absmag ? i : bestIdx;
-      primaries.add(primary);
-      pairCount++;
+      pairs++;
     }
   }
 
-  for (const idx of primaries) {
-    stars[idx].flags |= 0x10;
+  // Second pass: identify mutual pairs (A↔B where each is the other's
+  // directed nearest) and flag the brighter member as primary. Iterate
+  // i < j to count each pair exactly once.
+  let mutualPairs = 0;
+  for (let i = 0; i < n; i++) {
+    const j = stars[i].companionIdx;
+    if (j < 0 || j <= i) continue;
+    if (stars[j].companionIdx !== i) continue;
+    mutualPairs++;
+    const primary = stars[i].absmag <= stars[j].absmag ? i : j;
+    stars[primary].flags |= 0x10;
   }
 
-  return { pairs: pairCount, primaries: primaries.size };
+  return { pairs, mutualPairs, primaries: mutualPairs };
 }
