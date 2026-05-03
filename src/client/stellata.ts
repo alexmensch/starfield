@@ -2879,6 +2879,12 @@ export class Stellata {
       // in the unfocus path it pointed at Sol and TrackballControls.update()'s
       // lookAt(target) would whip the camera around to face Sol.
       this.controls.target.copy(state.fromPos);
+      // Align camera.up with the camera's current local +Y. Without this,
+      // lookAt(target) inside controls.update() would re-resolve roll
+      // against world (0,1,0) and snap any pitch the user accumulated in
+      // observe back through the horizontal plane — visible as a jump
+      // proportional to how much they looked around.
+      this.camera.up.set(0, 1, 0).applyQuaternion(this.camera.quaternion);
       this.controls.update();
       this.controls.enabled = true;
       if (state.clearFocusOnExit) this.setFocus(null);
