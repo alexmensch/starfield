@@ -107,6 +107,7 @@ export class ObserveControls {
     this.enabled = true;
     this.canvas.addEventListener('pointerdown', this.onPointerDown);
     window.addEventListener('pointerup', this.onPointerUp);
+    window.addEventListener('pointercancel', this.onPointerCancel);
     window.addEventListener('pointermove', this.onPointerMove);
     this.canvas.addEventListener('wheel', this.onWheel, { passive: false });
   }
@@ -116,6 +117,7 @@ export class ObserveControls {
     this.enabled = false;
     this.canvas.removeEventListener('pointerdown', this.onPointerDown);
     window.removeEventListener('pointerup', this.onPointerUp);
+    window.removeEventListener('pointercancel', this.onPointerCancel);
     window.removeEventListener('pointermove', this.onPointerMove);
     this.canvas.removeEventListener('wheel', this.onWheel);
     this.dragging = false;
@@ -185,6 +187,19 @@ export class ObserveControls {
     } else {
       this.momentumSpeed = 0;
     }
+  };
+
+  // Mirrors onPointerUp's drag teardown but never promotes momentum: a
+  // cancelled drag (incoming call, system gesture stealing the pointer,
+  // browser-side touch cancellation) is not a deliberate release, so it
+  // shouldn't feel like a flick. Without this, the next pointermove would
+  // continue the drag from a stale activePointerId / dragging=true.
+  private onPointerCancel = (e: PointerEvent) => {
+    if (this.activePointerId !== null && e.pointerId !== this.activePointerId) return;
+    this.dragging = false;
+    this.activePointerId = null;
+    this.momentumSpeed = 0;
+    this.lastRotAngle = 0;
   };
 
   private onPointerMove = (e: PointerEvent) => {
