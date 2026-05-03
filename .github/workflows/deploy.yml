@@ -1,0 +1,101 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: deploy-cloudflare
+  cancel-in-progress: false
+
+# Triggered on every push to main (i.e. PR merge), but the deploy job
+# only runs when package.json#version changed vs the previous commit.
+# This pairs with version-guard.yml on PRs: PRs that touch shipped code
+# must bump the version, and that bump is what fires the deploy.
+# Pure-metadata PRs (skip-version-bump label) leave the version alone
+# and therefore don't redeploy.
+#
+# A successful deploy also tags v<version> and publishes a GitHub
+# release with auto-generated notes, replacing the manual sequence in
+# RELEASING.md.
+
+jobs:
+  detect-version-change:
+    runs-on: ubuntu-latest
+    outputs:
+      should_deploy: ${{ steps.check.outputs.should_deploy }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - id: check
+        run: |
+          set -euo pipefail
+          new=$(jq -r .version package.json)
+          if git rev-parse HEAD~1 >/dev/null 2>&1; then
+            old=$(git show HEAD~1:package.json | jq -r .version)
+          else
+            old=""
+          fi
+          echo "version=$new" >> "$GITHUB_OUTPUT"
+          echo "Current version: $new"
+          echo "Previous version: ${old:-<none>}"
+          if [ "$new" = "$old" ]; then
+            echo "Version unchanged — skipping deploy."
+            echo "should_deploy=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Version changed — deploying."
+            echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  deploy:
+    needs: detect-version-change
+    if: needs.detect-version-change.outputs.should_deploy == 'true'
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.detect-version-change.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - run: npm ci
+
+      - run: npm run build
+
+      - name: Deploy to Cloudflare
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Tag and release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="v${VERSION}"
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            echo "Tag ${tag} already exists — skipping tag/release."
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git tag -a "${tag}" -m "${tag}"
+          git push origin "${tag}"
+          gh release create "${tag}" --title "${tag}" --generate-notes
