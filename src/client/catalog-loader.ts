@@ -16,7 +16,12 @@ export interface Catalog {
   luminosityClass: Uint8Array;   // length = count, 255 = unknown
   physicalRadius: Float32Array;  // length = count, in solar radii
   constellation: Float32Array;   // length = count (as float for vertex attrib)
-  flags: Uint8Array;             // length = count (bit 0 has_name, 1 is_sol, 2 has_bayer, 4 is_binary_primary)
+  // bit 0 has_name, 1 is_sol, 2 has_bayer, 4 is_binary_primary.
+  // is_binary_primary is set on at most one component per system —
+  // the brighter member of a mutual geometric pair, or the brightest
+  // catalog component of a CCDM-grouped Hipparcos double — so each
+  // binary system gets exactly one chart-mode wings glyph.
+  flags: Uint8Array;             // length = count
   companion: Int32Array;         // length = count, -1 = no companion
   periodDays: Float32Array;      // length = count, 0 = not variable
   amplitudeMag: Float32Array;    // length = count, 0 = not variable

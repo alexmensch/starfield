@@ -295,6 +295,7 @@ describe('catalog-pure / inferBinaries', () => {
     ];
     const stats = inferBinaries(stars);
     expect(stats.pairs).toBe(2); // both record the other as companion
+    expect(stats.mutualPairs).toBe(1);
     expect(stats.primaries).toBe(1);
     expect(stars[0].companionIdx).toBe(1);
     expect(stars[1].companionIdx).toBe(0);
@@ -355,16 +356,71 @@ describe('catalog-pure / inferBinaries', () => {
       makeStar({ x: 0.001,  y: 0, z: 0, absmag: 5 }),    // B
       makeStar({ x: 0.0009, y: 0, z: 0, absmag: 6 }),    // C
     ];
-    inferBinaries(stars);
+    const stats = inferBinaries(stars);
     // Distances: A-B=0.001, A-C=0.0009, B-C=0.0001.
     //   A's nearest is C (0.0009). C's nearest is B (0.0001). B's nearest is C.
+    // Only B↔C is mutual; A→C is one-way (C points back to B).
     expect(stars[0].companionIdx).toBe(2);
     expect(stars[1].companionIdx).toBe(2);
     expect(stars[2].companionIdx).toBe(1);
+    expect(stats.mutualPairs).toBe(1);
+    // Primary = brighter of mutual pair B↔C → B (absmag=5 < C's 6).
+    expect(stars[1].flags & 0x10).toBeTruthy();
+    // A is not part of any mutual pair, so it is NOT flagged primary
+    // even though it is the brightest of the three.
+    expect(stars[0].flags & 0x10).toBeFalsy();
+    expect(stars[2].flags & 0x10).toBeFalsy();
+  });
+
+  it('does not flag stars in non-mutual chains as primary', () => {
+    // 1D chain A-B-C-D where the inner B-C gap is the tightest, so
+    // A→B and D→C (the outer stars point inward) but neither A nor D
+    // is the nearest of anyone — they're chain ends. Only B↔C is
+    // mutual.
+    //   A=0, B=0.0030, C=0.0040, D=0.0070
+    //   distances: A-B=0.0030, B-C=0.0010, C-D=0.0030,
+    //              A-C=0.0040, A-D=0.0070 (above cutoff), B-D=0.0040.
+    //   A→B (closer than C), B→C (0.0010 beats A's 0.0030),
+    //   C→B (0.0010 beats D's 0.0030), D→C (closer than B).
+    const stars: BinaryStar[] = [
+      makeStar({ x: 0,      y: 0, z: 0, absmag: 3 }),
+      makeStar({ x: 0.0030, y: 0, z: 0, absmag: 4 }),
+      makeStar({ x: 0.0040, y: 0, z: 0, absmag: 5 }),
+      makeStar({ x: 0.0070, y: 0, z: 0, absmag: 6 }),
+    ];
+    const stats = inferBinaries(stars);
+    expect(stars[0].companionIdx).toBe(1);
+    expect(stars[1].companionIdx).toBe(2);
+    expect(stars[2].companionIdx).toBe(1);
+    expect(stars[3].companionIdx).toBe(2);
+    expect(stats.mutualPairs).toBe(1);
+    expect(stats.primaries).toBe(1);
+    // Primary = brighter of B↔C → B (absmag=4).
+    expect(stars[1].flags & 0x10).toBeTruthy();
+    expect(stars[0].flags & 0x10).toBeFalsy();
+    expect(stars[2].flags & 0x10).toBeFalsy();
+    expect(stars[3].flags & 0x10).toBeFalsy();
+  });
+
+  it('flags one primary per mutual pair when there are several', () => {
+    // Two well-separated mutual pairs.
+    const stars: BinaryStar[] = [
+      makeStar({ x: 0,         y: 0, z: 0, absmag: 4 }),  // pair 1
+      makeStar({ x: 0.001,     y: 0, z: 0, absmag: 5 }),
+      makeStar({ x: 100,       y: 0, z: 0, absmag: 3 }),  // pair 2 (brightest in catalog)
+      makeStar({ x: 100.001,   y: 0, z: 0, absmag: 6 }),
+    ];
+    const stats = inferBinaries(stars);
+    expect(stats.mutualPairs).toBe(2);
+    expect(stats.primaries).toBe(2);
+    expect(stars[0].flags & 0x10).toBeTruthy(); // pair 1 brighter
+    expect(stars[1].flags & 0x10).toBeFalsy();
+    expect(stars[2].flags & 0x10).toBeTruthy(); // pair 2 brighter
+    expect(stars[3].flags & 0x10).toBeFalsy();
   });
 
   it('returns zero counts for an empty input', () => {
-    expect(inferBinaries([])).toEqual({ pairs: 0, primaries: 0 });
+    expect(inferBinaries([])).toEqual({ pairs: 0, mutualPairs: 0, primaries: 0 });
   });
 
   it('uses 3D distance, not 2D', () => {
