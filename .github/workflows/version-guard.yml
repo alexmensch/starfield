@@ -1,0 +1,47 @@
+name: version-guard
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Asserts the PR's `package.json#version` is strictly greater than the
+# base branch's version (per RELEASING.md's per-PR bump policy) and is
+# not already a released tag. Catches the case where two concurrent PRs
+# both bump from N to N+1: whichever merges second fails this check until
+# rebased + re-bumped to N+2. Pure metadata PRs (no shipped code, no
+# bump expected) can attach the `skip-version-bump` label to opt out.
+
+jobs:
+  check:
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-version-bump') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compare PR version against base + tags
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          pr_version=$(jq -r .version package.json)
+          base_version=$(git show "origin/${BASE_REF}:package.json" | jq -r .version)
+          echo "PR version:   $pr_version"
+          echo "Base version: $base_version  (origin/${BASE_REF})"
+
+          if ! npx --yes semver --range ">${base_version}" "${pr_version}" >/dev/null; then
+            echo "::error file=package.json::PR version ${pr_version} must be strictly greater than ${base_version} on ${BASE_REF} (semver). Rebase and re-bump."
+            exit 1
+          fi
+
+          if git rev-parse -q --verify "refs/tags/v${pr_version}" >/dev/null 2>&1 \
+             || git rev-parse -q --verify "refs/tags/${pr_version}" >/dev/null 2>&1; then
+            echo "::error file=package.json::Tag for ${pr_version} already exists; pick a higher version."
+            exit 1
+          fi
+
+          echo "OK: ${pr_version} > ${base_version} and no existing tag."

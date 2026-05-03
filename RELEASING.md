@@ -21,6 +21,18 @@ Bump `package.json` on every PR so the version on `main` is always
 the *next* release. Cutting a release is then just tagging — no
 version bump dance required at release time.
 
+The `version-guard` workflow (`.github/workflows/version-guard.yml`)
+runs on every PR and asserts:
+
+1. `package.json#version` is strictly greater (per semver) than the
+   base branch's version.
+2. The new version is not already a published git tag.
+
+Concurrent PRs can't silently both claim the same bump: whichever
+merges second fails the guard until rebased and re-bumped. Pure
+metadata PRs (e.g. `bd` issue-sync, no shipped code) can attach the
+`skip-version-bump` label to opt out — use sparingly.
+
 ## Cutting a release
 
 1. **Make sure `main` is clean and green.**
