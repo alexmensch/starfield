@@ -73,6 +73,17 @@ export async function loadDustParticles(
     if (count !== meta.count) {
       console.warn(`dust particles: count mismatch (manifest ${meta.count}, file ${count})`);
     }
+    // Validate file size against the file-derived count rather than trusting
+    // the manifest: a truncated/corrupt particles.bin would otherwise either
+    // throw inside the Float32Array constructor (non-multiple-of-4 byteLength)
+    // or hand us an out-of-bounds view that reads garbage past the buffer.
+    const expectedBytes = 16 + count * 16;
+    if (ab.byteLength !== expectedBytes) {
+      console.warn(
+        `dust particles: bad file size (got ${ab.byteLength}, expected ${expectedBytes} for count=${count})`,
+      );
+      return null;
+    }
     // Records start at byte 16. 4 floats per record (xyz + density),
     // interleaved. Split into separate xyz and density typed arrays so
     // the GPU instance attributes can bind directly.
