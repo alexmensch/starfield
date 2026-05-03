@@ -175,7 +175,11 @@ void main() {
     vec3 worldPos = iPosition;
     float distCam = distance(worldPos, uCameraPos);
 
-    float dPc = max(distCam, 0.001);
+    // Floor at 1e-30 only to keep log(dPc) finite in the appMag calc;
+    // small enough that the per-star physical orbit floor (down to ~5e-8
+    // pc for Sol-class) never hits it, so physSize = 2·atan(R/d) can
+    // grow all the way to fill the viewport at the manual-zoom limit.
+    float dPc = max(distCam, 1e-30);
     float appMag = iAbsmag + 5.0 * (log(dPc) / LOG10 - 1.0);
 
     // Variability. The same magnitude modulation drives two visual effects:

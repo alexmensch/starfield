@@ -1942,7 +1942,7 @@ export class Stellata {
       const dx = positions[i * 3] - t.x;
       const dy = positions[i * 3 + 1] - t.y;
       const dz = positions[i * 3 + 2] - t.z;
-      const dist = Math.max(Math.sqrt(dx * dx + dy * dy + dz * dz), 0.001);
+      const dist = Math.max(Math.sqrt(dx * dx + dy * dy + dz * dz), 1e-30);
       const appMag = absmag[i] + 5 * (Math.log10(dist) - 1);
       scored.push({ idx: i, appMag });
     }
@@ -2167,7 +2167,7 @@ export class Stellata {
       const dx = x - camPos.x;
       const dy = y - camPos.y;
       const dz = z - camPos.z;
-      const dCam = Math.max(Math.sqrt(dx * dx + dy * dy + dz * dz), 0.001);
+      const dCam = Math.max(Math.sqrt(dx * dx + dy * dy + dz * dz), 1e-30);
       const appMag = absmag[i] + 5 * (Math.log10(dCam) - 1);
       // For variables, use the bright-extreme appMag so a star whose
       // disc is only visible at peak phase remains pickable across the
@@ -2263,7 +2263,9 @@ export class Stellata {
     const dx = positions[idx * 3] - camPos.x;
     const dy = positions[idx * 3 + 1] - camPos.y;
     const dz = positions[idx * 3 + 2] - camPos.z;
-    const dCam = Math.max(Math.sqrt(dx * dx + dy * dy + dz * dz), 0.001);
+    // 1e-30 floor on dCam: keeps log10(dCam) finite in the appMag calc
+    // without clamping the angular-diameter atan(R/d) at close approach.
+    const dCam = Math.max(Math.sqrt(dx * dx + dy * dy + dz * dz), 1e-30);
     let appMag = absmag[idx] + 5 * (Math.log10(dCam) - 1);
 
     const fovYRad = u.uFovYRad.value as number;
