@@ -165,9 +165,18 @@ almost all famous named visual binaries (α Cen A/B, Alula Australis,
 Struve 2398, etc.). Reaching thousands of pairs would require the fuller
 `reduced_m10` subset, which has a different selection profile.
 
-Each side of a pair stores the other's index in `companionIdx`. The
-**brighter** of the two (lower absmag) is flagged as primary via flag
-bit 4, so the renderer can quickly identify system anchors.
+Each star records its **directed** nearest in `companionIdx`: A's
+nearest may be B while B's nearest is some third star C. The
+relation is one-way. The renderer reads this as "the partner to keep
+in frame" (zoom-fit, disc-mask), which is well-defined even when
+asymmetric.
+
+Flag bit 4 (`0x10`) is stricter: set only on the **brighter member of
+a mutual pair** — A↔B where each is the other's directed nearest.
+Mutual-only avoids over-flagging in dense clusters where a star's
+directed nearest happens to be a third star already paired with
+someone else, and ensures the chart-mode wings glyph appears once
+per system on the canonical anchor.
 
 ## GCVS variability cross-match
 
@@ -233,11 +242,17 @@ binary Hipparcos itself confirmed.
 A handful of canonical visual doubles fall through the gate
 because Hipparcos modelled them as single stars (`Ncomp=1`,
 blank `MultFlag`) — typically wide pairs where the secondary is
-faint or angularly outside what Hipparcos resolved. **`KNOWN_VISUAL_DOUBLES`** in `build-catalog.ts` recovers them
-unconditionally. Each entry must include a justification.
-Current list: Polaris (sep 18″ Polaris B), ε¹ Lyr (inner pair
-2.4″), 61 Cyg A and B (the famous nearby K-dwarf pair). Visual
-review of new chart-mode renders may surface more — extend
+faint or angularly outside what Hipparcos resolved.
+**`KNOWN_VISUAL_DOUBLES`** in `build-catalog.ts` recovers them
+unconditionally. The structure is a list of `{components, reason}`
+systems — each entry is one physical system whose `components`
+array is the HIPs known to belong to it (one or more) plus a
+human-readable justification. The same primary-only flagging that
+applies to real CCDM groups applies here, so 61 Cyg A and B share
+one entry rather than two and only the brighter (A) gets the
+wings glyph. Current list: Polaris (sep 18″ Polaris B), ε¹ Lyr
+(inner pair 2.4″), 61 Cyg A+B (the famous nearby K-dwarf pair).
+Visual review of new chart-mode renders may surface more — extend
 conservatively.
 
 Why this and not TDSC or WDS directly:
@@ -262,12 +277,18 @@ No separation gate at the per-row level (CCDM and Hipparcos's
 wings glyph is iconic rather than a depiction of resolved pair
 geometry, so even Sirius B at ΔV ≈ 10 earns wings on Sirius A.
 
-`applyDoublesFlag` then walks the post-sort catalog and ORs `0x10`
-onto every star whose HIP appears in the flagged set. No
-`companionIdx` write — the secondary often isn't in the AT-HYG
-classic_ids subset, and the renderer's zoom-fit code at
-`stellata.ts` already guards on `companion ≥ 0`, so a
-flagged-but-unpaired primary is fine.
+`parseHipCcdm` returns systems grouped by `CCDM_ID` (real CCDM
+strings for file-driven entries, synthetic `OVERRIDE-N` keys for
+the `KNOWN_VISUAL_DOUBLES` list). `applyDoublesFlag` then walks
+each group, picks the **brightest** catalog member (lowest
+`absmag`), and ORs `0x10` onto only that one — so each Hipparcos-
+resolved system contributes exactly one chart-mode wings glyph,
+matching the geometric pass's mutual-primary semantics. Stars that
+are CCDM secondaries do not get the bit; they remain in the
+catalog with their other flags intact. No `companionIdx` write —
+the secondary often isn't in the AT-HYG classic_ids subset, and
+the renderer's zoom-fit code at `stellata.ts` already guards on
+`companion ≥ 0`, so a flagged-but-unpaired primary is fine.
 
 If the CCDM file is absent the build logs and continues — the
 geometric pass still runs and chart mode still works, just with the
