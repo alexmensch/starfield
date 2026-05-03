@@ -1,5 +1,5 @@
 import { createReadStream, statSync, existsSync, readFileSync } from 'node:fs';
-import { writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'csv-parse';
@@ -803,6 +803,7 @@ async function main() {
     throw new Error(`Size mismatch: wrote ${off}, expected ${totalLength}`);
   }
 
+  await mkdir(dirname(OUT_BIN), { recursive: true });
   await writeFile(OUT_BIN, Buffer.from(out));
 
   // Constellations JSON (unchanged from v1 format).
