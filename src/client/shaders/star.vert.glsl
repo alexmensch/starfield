@@ -29,19 +29,14 @@ uniform float uChartDiscMinPx;   // faintest end (e.g. 1.5 px)
 uniform float uChartMagBright;   // magnitude that maps to MAX (e.g. -2.0)
 uniform float uMonochrome;       // 0 = colour mode, 1 = chart mode (shared with frag)
 
-// Physical-size rendering term. At the reference camera distance uRefDistPc
-// (= the default controls.minDistance), a star's rendered pixel size is a
-// linear mapping of log10(radius) into [uPhysMinPx, uPhysMaxPx]. The
-// effective size scales as uRefDistPc/dPc so the term falls off with 1/d
-// and is effectively invisible beyond a few pc — at that range the
-// brightness-based apparent-magnitude term dominates, which is what
-// `max(appSize, physSize)` at the end of main() preserves.
-uniform float uLogRMin;   // log10 of smallest physicalRadius in catalog
-uniform float uLogRMax;   // log10 of largest  physicalRadius in catalog
-uniform float uPhysMinPx; // pixel size floor at ref distance (e.g. 2 px)
-uniform float uPhysMaxPx; // pixel size ceiling at ref distance — typically
-                          // 50% of min viewport axis, updated on resize
-uniform float uRefDistPc; // the distance at which uPhysMaxPx applies
+// Physical-size rendering term. A star's rendered pixel diameter equals
+// its true angular diameter through the camera's projection:
+//   pxSize = 2·atan(R · radiusFactor / d) · viewport.y / fov_y_rad
+// where R is the per-star physical radius in pc (decoded from
+// iLogRadius), d is the camera distance in pc, and radiusFactor is the
+// variability radius modulation. Falls off as 1/d in the small-angle
+// regime and saturates as d → R (disc fills the frame).
+uniform float uFovYRad;   // camera vertical FOV in radians
 uniform vec2 uViewport;   // viewport size in CSS pixels (for quad expansion)
 
 // Variability. uTime is real elapsed seconds. Per-star period is in days
@@ -192,24 +187,27 @@ void main() {
     //
     // The effective amplitude is compressed per-frame so that at the star's
     // current baseSize the pulse stays within a sensible display range —
-    // peak ≤ uPhysMaxPx, trough ≥ VAR_TROUGH_FLOOR_FRACTION × baseSize.
+    // peak ≤ MAX_PHYS_PX, trough ≥ VAR_TROUGH_FLOOR_FRACTION × baseSize.
     // Keeps the sine smooth (no plateau at peak, no disappearing at trough)
     // even for extreme-amplitude variables like Mira.
+    float R_pc = pow(10.0, iLogRadius);
+    float angularToPx = uViewport.y / max(uFovYRad, 1e-9);
     float radiusFactor = 1.0;
     float magMod = 0.0;
     if (iPeriodDays > 0.0 && iAmplitudeMag > 0.0) {
         float periodSec = max(iPeriodDays * uSecondsPerDay, uMinPeriodSec);
         float phase = uTime / periodSec;
 
-        // Precompute base (un-modulated) physSize to know how much headroom
-        // we have in each direction.
-        float logSpan0 = max(uLogRMax - uLogRMin, 0.001);
-        float logRatio0 = clamp((iLogRadius - uLogRMin) / logSpan0, 0.0, 1.0);
-        float sizeAtRef0 = mix(uPhysMinPx, uPhysMaxPx, logRatio0);
-        float baseSize0 = sizeAtRef0 * (uRefDistPc / dPc);
+        // Precompute base (un-modulated) physSize to size the headroom.
+        float baseSize0 = 2.0 * atan(R_pc / dPc) * angularToPx;
+        // Cap the peak at the same fraction of the viewport's minor axis
+        // that ZOOM_FLOOR_FRACTION uses for the manual zoom floor — once
+        // the disc is filling 90% of the frame at the closest approach,
+        // a variable's pulse can't usefully grow it any further.
+        float maxPhysSize = 0.9 * min(uViewport.x, uViewport.y);
 
         const float VAR_TROUGH_FLOOR_FRACTION = 0.2;
-        float maxUpLog10 = log(max(uPhysMaxPx / max(baseSize0, 1.0), 1.0)) / LOG10;
+        float maxUpLog10 = log(max(maxPhysSize / max(baseSize0, 1.0), 1.0)) / LOG10;
         float maxDownLog10 = -log(VAR_TROUGH_FLOOR_FRACTION) / LOG10; // ≈ 0.699
         float ampLimitMag = 10.0 * min(maxUpLog10, maxDownLog10);
         float ampEff = min(iAmplitudeMag, max(0.0, ampLimitMag));
@@ -287,14 +285,11 @@ void main() {
         float brightness = clamp((uMaxAppMag - appMag) / max(uSizeSpan, 0.001), 0.0, 1.0);
         float appSize = mix(uSizeMin, uSizeMax, sqrt(brightness));
 
-        // Physical-size term. Log-map the star's radius into the size
-        // range, then scale by ref/distance so the curve falls off with
-        // distance. radiusFactor is the already-compressed variability
-        // modulation above.
-        float logSpan = max(uLogRMax - uLogRMin, 0.001);
-        float logRatio = clamp((iLogRadius - uLogRMin) / logSpan, 0.0, 1.0);
-        float sizeAtRef = mix(uPhysMinPx, uPhysMaxPx, logRatio);
-        float physSize = sizeAtRef * (uRefDistPc / dPc) * radiusFactor;
+        // Physical-size term. True angular diameter projected to pixels:
+        // 2·atan(R/d) is the angle the disc subtends at the camera,
+        // multiplied by viewport.y/fov_y to convert radians to pixels.
+        // radiusFactor is the already-compressed variability modulation.
+        float physSize = 2.0 * atan(R_pc * radiusFactor / dPc) * angularToPx;
 
         pxSize = max(appSize, physSize);
         vPhysRatio = clamp(physSize / max(pxSize, 0.001), 0.0, 1.0);

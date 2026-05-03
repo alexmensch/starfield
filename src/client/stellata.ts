@@ -164,20 +164,25 @@ function computeMagPresets(): Record<MagPresetName, MagPreset> {
 // MAG_PRESETS see the latest values after a K tweak.
 export let MAG_PRESETS: Record<MagPresetName, MagPreset> = computeMagPresets();
 
-// Fallback near-star distance, used when no focus exists yet (controls'
-// minDistance before a star is ever focused). Per-star approach distance is
-// otherwise computed by `minDistForStar` from the star's rendered disc size,
-// so the camera lands on a uniform on-screen size regardless of stellar
-// luminosity class — see TARGET_APPROACH_DISC_PX.
-const DEFAULT_MIN_DIST_PC = 0.005;
+// Fallback orbit-controls floor when no star is focused. Tiny enough not
+// to constrain the unfocused view at Sol's origin; per-star floors are
+// computed from physical disc-fill geometry by `minOrbitDistForStar`.
+const GLOBAL_MIN_DIST_PC = 1e-9;
 
-// Target rendered disc diameter, in CSS pixels, when the camera parks at
-// `minDistForStar`. Same on-screen size for any star → distance scales with
-// the star's physical radius. Tune here to make every "land near a star"
-// transition (observe-exit, warp source departure, warp arrival, orbit
-// minDistance clamp) place the camera closer (larger value) or further
-// (smaller value).
-const TARGET_APPROACH_DISC_PX = 10;
+// Fraction of the viewport's minor axis that the focused star's disc
+// fills at the manual-zoom orbit floor. 0.9 means a maximally-zoomed
+// camera lands with the star covering 90% of the smaller viewport
+// dimension — leaves a small ring of background visible. Both the
+// vertex shader (variability headroom) and minOrbitDistForStar use
+// this constant; keep them in sync.
+const ZOOM_FLOOR_FRACTION = 0.9;
+
+// Fraction of the viewport's minor axis that a destination star fills
+// when the camera auto-parks at it (warp arrival, observe-exit landing,
+// search-select teleport). 0.10 = the disc reads as a clear feature
+// without dominating the frame, leaving room to see the surrounding
+// star field. Drives minDistForStar.
+const TARGET_PARK_FRACTION = 0.10;
 
 // Default vertical FOV (degrees). User-tunable via the FOV slider; the
 // reset button snaps back to this value.
@@ -242,8 +247,6 @@ interface ObserveTransitionState {
   // unfocusing.
   clearFocusOnExit?: boolean;
 }
-
-export { DEFAULT_MIN_DIST_PC };
 
 interface AimState {
   startTimeMs: number;
@@ -386,6 +389,12 @@ export class Stellata {
   private sortedDistFromSol!: Float32Array;
   private sortedByDistFromSol!: Uint32Array;
 
+  // Largest physicalRadius in the catalog, in pc. Drives shouldEnableCoreMask:
+  // the core depth-mask only matters when at least one star's angular disc
+  // crosses the visibility threshold, and the largest star at the closest
+  // approach is the worst case.
+  private maxPhysicalRadiusPc!: number;
+
   private filter: FilterState = { ...DEFAULT_FILTER };
 
   private disposed = false;
@@ -499,7 +508,7 @@ export class Stellata {
     this.controls.noPan = false;
     this.controls.staticMoving = false;
     this.controls.dynamicDampingFactor = 0.15;
-    this.controls.minDistance = DEFAULT_MIN_DIST_PC;
+    this.controls.minDistance = GLOBAL_MIN_DIST_PC;
     this.controls.maxDistance = 100_000;
     this.controls.target.set(0, 0, 0);
 
@@ -513,29 +522,28 @@ export class Stellata {
       () => this.camera.fov,
     );
 
-    // Precompute log10(physicalRadius) per star for the shader, and the
-    // catalog-wide min/max for uniform bounds. Done once at load so the
-    // vertex shader can just do a linear mix. Luminosity class is
-    // converted from Uint8 to Float32 since the vertex attribute is a
-    // float; 255 (unknown) survives the conversion and is handled inside
-    // the shader.
+    // Precompute log10(physicalRadius) per star for the shader (vertex
+    // attribute decode: pow(10, iLogRadius) → physical radius in pc),
+    // and track the catalog-wide max so shouldEnableCoreMask can reason
+    // about the largest disc that could appear at close range.
+    // Luminosity class is converted from Uint8 to Float32 since the
+    // vertex attribute is a float; 255 (unknown) survives the conversion
+    // and is handled inside the shader.
     const logRadii = new Float32Array(catalog.count);
     const lumClassF32 = new Float32Array(catalog.count);
     const distSol = new Float32Array(catalog.count);
-    let logRMin = Infinity;
-    let logRMax = -Infinity;
+    let maxPhysicalRadius = 0;
     for (let i = 0; i < catalog.count; i++) {
       const r = Math.max(catalog.physicalRadius[i], 1e-6);
-      const lr = Math.log10(r);
-      logRadii[i] = lr;
-      if (lr < logRMin) logRMin = lr;
-      if (lr > logRMax) logRMax = lr;
+      logRadii[i] = Math.log10(r);
+      if (r > maxPhysicalRadius) maxPhysicalRadius = r;
       lumClassF32[i] = catalog.luminosityClass[i];
       const x = catalog.positions[i * 3];
       const y = catalog.positions[i * 3 + 1];
       const z = catalog.positions[i * 3 + 2];
       distSol[i] = Math.sqrt(x * x + y * y + z * z);
     }
+    this.maxPhysicalRadiusPc = maxPhysicalRadius;
     // Local-frame position buffer — starts identical to catalog.positions
     // since worldOffset is (0,0,0) at construction. Recenter rewrites this
     // in place.
@@ -551,13 +559,11 @@ export class Stellata {
     for (let i = 0; i < catalog.count; i++) {
       this.sortedDistFromSol[i] = distSol[this.sortedByDistFromSol[i]];
     }
-    const physMaxPx = this.computePhysMaxPx();
-
     // Instanced quads: one unit square per star, expanded in screen space in
     // the vertex shader. This replaces the earlier THREE.Points approach,
     // which was capped by the driver-defined gl_PointSize maximum (often
-    // 64–255 px) — too small for the physical-size rendering to reach the
-    // 50%-viewport ceiling we want for supergiants at close range.
+    // 64–255 px) — too small for the angular-diameter rendering to reach
+    // the viewport-filling sizes we want for supergiants at close range.
     this.geometry = new THREE.InstancedBufferGeometry();
     this.geometry.setAttribute(
       'aCorner',
@@ -609,11 +615,10 @@ export class Stellata {
       uChartDiscMaxPx: { value: 16.0 },
       uChartDiscMinPx: { value: 1.5 },
       uChartMagBright: { value: -2.0 },
-      uLogRMin: { value: logRMin },
-      uLogRMax: { value: logRMax },
-      uPhysMinPx: { value: 2.0 },
-      uPhysMaxPx: { value: physMaxPx },
-      uRefDistPc: { value: DEFAULT_MIN_DIST_PC },
+      // Camera vertical FOV in radians, mirrored from camera.fov whenever
+      // setCameraFov runs. The shader needs it to convert a star's angular
+      // diameter (2·atan(R/d)) into pixels.
+      uFovYRad: { value: (this.camera.fov * Math.PI) / 180 },
       uViewport: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
       // Variability time. uTime advances in real seconds; uSecondsPerDay is
       // the compression factor — lower values make catalog periods cycle
@@ -1043,7 +1048,7 @@ export class Stellata {
     } else {
       this.recenterOrigin(this.tmpRecenter.set(0, 0, 0));
     }
-    this.controls.minDistance = idx !== null ? this.minOrbitDistForStar(idx) : DEFAULT_MIN_DIST_PC;
+    this.controls.minDistance = idx !== null ? this.minOrbitDistForStar(idx) : GLOBAL_MIN_DIST_PC;
     for (const h of this.onFocusHandlers) h(idx);
     this.fireStateChange();
   }
@@ -1468,13 +1473,19 @@ export class Stellata {
     };
   }
 
-  // Camera FOV setter. Updates the projection matrix, rebases
+  // Camera FOV setter. Updates the projection matrix, mirrors the new FOV
+  // into uFovYRad (drives the angular-diameter shader formula), recomputes
+  // the focused star's orbit floor (which depends on FOV), rebases
   // non-overridden pixel sizes (arcsec/px depends on FOV), and fires a
   // state change so URL sync picks up the new value.
   setCameraFov(fov: number) {
     if (this.camera.fov === fov) return;
     this.camera.fov = fov;
     this.camera.updateProjectionMatrix();
+    this.material.uniforms.uFovYRad.value = (fov * Math.PI) / 180;
+    if (this.focusedStar !== null) {
+      this.controls.minDistance = this.minOrbitDistForStar(this.focusedStar);
+    }
     this.recomputePresetPxSizes();
     for (const h of this.onFilterHandlers) h(this.filter);
     this.fireStateChange();
@@ -2207,8 +2218,13 @@ export class Stellata {
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h, false);
     this.material.uniforms.uPixelRatio.value = this.renderer.getPixelRatio();
-    this.material.uniforms.uPhysMaxPx.value = this.computePhysMaxPx();
     this.material.uniforms.uViewport.value.set(w, h);
+    // Aspect change → fov_minor moves → orbit floor needs a refresh while
+    // a star is focused. (FOV-only changes go through setCameraFov, which
+    // does its own recompute.)
+    if (this.focusedStar !== null) {
+      this.controls.minDistance = this.minOrbitDistForStar(this.focusedStar);
+    }
     // Line2 needs the canvas resolution for its screen-space line width.
     this.galacticGrid.setResolution(w, h);
     // The Milky Way layer renders at native resolution via the main scene
@@ -2221,19 +2237,11 @@ export class Stellata {
     this.recomputePresetPxSizes();
   };
 
-  // The physical-size ceiling: the biggest star in the catalog renders at
-  // this pixel size when the camera is at the reference distance. 50% of
-  // the smaller viewport axis (in CSS pixels) — dominant but not stuffed
-  // edge-to-edge. Tune here if you want supergiants to feel bigger/smaller.
-  private computePhysMaxPx(): number {
-    return 0.5 * Math.min(window.innerWidth, window.innerHeight);
-  }
-
-  // Rendered pixel size (final gl_PointSize-equivalent diameter) for a star
-  // from the current camera. Mirrors the vertex-shader math exactly —
-  // callers include the focus-ring overlay, the disc mask, and pickStar.
-  // Variability modulation + the uPhysMaxPx clamp are replicated here so
-  // the mask shrinks in sync with the disc (no gap as a variable pulses).
+  // Rendered pixel diameter for a star from the current camera. Mirrors
+  // the vertex-shader angular-diameter formula exactly — callers include
+  // the focus-ring overlay, the disc mask, and pickStar. Variability
+  // modulation is replicated with the same headroom-compression rule so
+  // the mask tracks the rendered disc through a pulse.
   // Keep in sync with star.vert.glsl if the shader size computation changes.
   renderedSizePx(idx: number): number {
     const positions = this._localPositions;
@@ -2247,19 +2255,15 @@ export class Stellata {
     const dCam = Math.max(Math.sqrt(dx * dx + dy * dy + dz * dz), 0.001);
     let appMag = absmag[idx] + 5 * (Math.log10(dCam) - 1);
 
-    const logRMin = u.uLogRMin.value as number;
-    const logRMax = u.uLogRMax.value as number;
-    const physMinPx = u.uPhysMinPx.value as number;
-    const physMaxPx = u.uPhysMaxPx.value as number;
-    const refDistPc = u.uRefDistPc.value as number;
-    const logSpan = Math.max(logRMax - logRMin, 0.001);
-    const logR = Math.log10(Math.max(physicalRadius[idx], 1e-6));
-    const logRatio = Math.max(0, Math.min(1, (logR - logRMin) / logSpan));
-    const sizeAtRef = physMinPx + logRatio * (physMaxPx - physMinPx);
-    const baseSize = sizeAtRef * (refDistPc / dCam);
+    const fovYRad = u.uFovYRad.value as number;
+    const viewport = u.uViewport.value as THREE.Vector2;
+    const angularToPx = viewport.y / Math.max(fovYRad, 1e-9);
+    const R = Math.max(physicalRadius[idx], 1e-6);
+    const baseSize = 2 * Math.atan(R / dCam) * angularToPx;
+    const maxPhysSize = ZOOM_FLOOR_FRACTION * Math.min(viewport.x, viewport.y);
 
     // Variability — same compression rule as the shader: effective
-    // amplitude is clamped so peak ≤ physMaxPx and trough ≥ 20% of
+    // amplitude is clamped so peak ≤ maxPhysSize and trough ≥ 20% of
     // baseSize, keeping the sinusoidal pulse smooth at both ends.
     let radiusFactor = 1;
     const period = periodDays[idx];
@@ -2272,7 +2276,7 @@ export class Stellata {
       const phase = (u.uTime.value as number) / periodSec;
 
       const VAR_TROUGH_FLOOR_FRACTION = 0.2;
-      const maxUpLog10 = Math.log10(Math.max(physMaxPx / Math.max(baseSize, 1), 1));
+      const maxUpLog10 = Math.log10(Math.max(maxPhysSize / Math.max(baseSize, 1), 1));
       const maxDownLog10 = -Math.log10(VAR_TROUGH_FLOOR_FRACTION);
       const ampLimitMag = 10 * Math.min(maxUpLog10, maxDownLog10);
       const ampEff = Math.min(amp, Math.max(0, ampLimitMag));
@@ -2292,20 +2296,32 @@ export class Stellata {
     );
     const appSize = f.sizeMin + Math.sqrt(brightness) * (f.sizeMax - f.sizeMin);
 
-    const physSize = baseSize * radiusFactor;
+    const physSize = 2 * Math.atan((R * radiusFactor) / dCam) * angularToPx;
 
     return Math.max(appSize, physSize);
   }
 
-  // Manual-zoom floor for TrackballControls when a star is focused.
-  // Distinct from `minDistForStar` (auto-park target): the user can
-  // orbit past the parking distance, all the way down to
-  // DEFAULT_MIN_DIST_PC, so the largest stars can fill ~50% of the
-  // smaller viewport dimension at max zoom — needed for inspecting
-  // stellar discs and (future) close-in planets. Binary companions
-  // still get the half-angle bump so the partner stays in frame.
+  // Smaller of the camera's vertical and horizontal FOV in radians. The
+  // disc-fill geometry uses the minor axis so the target fraction reads
+  // consistently in both portrait and landscape viewports.
+  private fovMinorRad(): number {
+    const fovY = (this.camera.fov * Math.PI) / 180;
+    const fovX = 2 * Math.atan(Math.tan(fovY / 2) * this.camera.aspect);
+    return Math.min(fovX, fovY);
+  }
+
+  // Manual-zoom floor for TrackballControls when a star is focused. The
+  // camera can orbit down to where the focused star's true angular disc
+  // fills ZOOM_FLOOR_FRACTION of the viewport's minor axis — same on-
+  // screen coverage for any star, regardless of physical radius. Solves
+  // for d in `2·atan(R/d) = ZOOM_FLOOR_FRACTION · fov_minor`. Binary
+  // companions still get the half-angle bump so the partner stays in
+  // frame.
   private minOrbitDistForStar(idx: number): number {
-    const base = DEFAULT_MIN_DIST_PC;
+    const fovMinor = this.fovMinorRad();
+    const R = Math.max(this.catalog.physicalRadius[idx], 1e-9);
+    const base = R / Math.tan((ZOOM_FLOOR_FRACTION * fovMinor) / 2);
+
     const comp = this.catalog.companion[idx];
     if (comp < 0) return base;
     const p = this.catalog.positions;
@@ -2317,37 +2333,28 @@ export class Stellata {
   }
 
   // Auto-park target — used by observe-exit landing, warp source
-  // departure, and warp arrival.
-  //
-  // Distance is chosen so the star renders at TARGET_APPROACH_DISC_PX in
-  // CSS pixels: this gives every star the same on-screen disc size at
-  // approach, with the physical distance scaling with the star's physical
-  // radius (supergiants land further out than dwarfs). Mirrors the disc
-  // term of `renderedSizePx` (physSize = sizeAtRef × refDistPc / dist).
-  //
-  // For binary stars the result is bumped so the companion still fits
-  // within the viewport half-angle, keeping the whole system in frame.
+  // departure, and warp arrival. Distance solves `2·atan(R/d) =
+  // TARGET_PARK_FRACTION · fov_minor`, so every star fills the same
+  // fraction of the viewport on arrival regardless of physical radius
+  // (supergiants land much further out than dwarfs in absolute parsecs).
+  // Floored at twice the orbit floor so the parking distance always
+  // sits clearly above the manual-zoom limit. For binaries the result
+  // is bumped so the companion stays within the viewport half-angle.
   minDistForStar(idx: number): number {
-    const u = this.material.uniforms;
-    const physMinPx = u.uPhysMinPx.value as number;
-    const physMaxPx = u.uPhysMaxPx.value as number;
-    const refDistPc = u.uRefDistPc.value as number;
-    const logRMin = u.uLogRMin.value as number;
-    const logRMax = u.uLogRMax.value as number;
-    const logSpan = Math.max(logRMax - logRMin, 0.001);
-    const logR = Math.log10(Math.max(this.catalog.physicalRadius[idx], 1e-6));
-    const logRatio = Math.max(0, Math.min(1, (logR - logRMin) / logSpan));
-    const sizeAtRef = physMinPx + logRatio * (physMaxPx - physMinPx);
-    const discDist = (sizeAtRef * refDistPc) / TARGET_APPROACH_DISC_PX;
+    const fovMinor = this.fovMinorRad();
+    const R = Math.max(this.catalog.physicalRadius[idx], 1e-9);
+    const dPark = R / Math.tan((TARGET_PARK_FRACTION * fovMinor) / 2);
+    const dMin = R / Math.tan((ZOOM_FLOOR_FRACTION * fovMinor) / 2);
+    const parkFloored = Math.max(dPark, 2 * dMin);
 
     const comp = this.catalog.companion[idx];
-    if (comp < 0) return discDist;
+    if (comp < 0) return parkFloored;
     const p = this.catalog.positions;
     const dx = p[comp * 3] - p[idx * 3];
     const dy = p[comp * 3 + 1] - p[idx * 3 + 1];
     const dz = p[comp * 3 + 2] - p[idx * 3 + 2];
     const sep = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    return Math.max(discDist, sep * BINARY_MIN_DIST_FACTOR);
+    return Math.max(parkFloored, sep * BINARY_MIN_DIST_FACTOR);
   }
 
   private onPointerDown = (e: PointerEvent) => {
@@ -2577,10 +2584,15 @@ export class Stellata {
   // candidates) and only do the squared-distance check on those. Replaces
   // a full 313k-element linear scan that ran every frame in every mode.
   private shouldEnableCoreMask(): boolean {
+    // Largest catalog star at distance d subtends 2·atan(R_max/d) radians,
+    // which is CORE_MASK_MIN_PX × fov_y / viewport.y radians at the
+    // threshold. Solve for d → R_max / tan(half-angle).
     const u = this.material.uniforms;
-    const physMaxPx = u.uPhysMaxPx.value as number;
-    const refDistPc = u.uRefDistPc.value as number;
-    const dThresh = (physMaxPx * refDistPc) / Stellata.CORE_MASK_MIN_PX;
+    const fovYRad = u.uFovYRad.value as number;
+    const viewport = u.uViewport.value as THREE.Vector2;
+    const halfAngle = (Stellata.CORE_MASK_MIN_PX * fovYRad)
+      / (Math.max(viewport.y, 1) * 2);
+    const dThresh = this.maxPhysicalRadiusPc / Math.max(Math.tan(halfAngle), 1e-30);
     const dThreshSq = dThresh * dThresh;
 
     // Camera distance from Sol in absolute space (catalog frame).
