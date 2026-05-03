@@ -847,6 +847,20 @@ export class Stellata {
 
   getCameraMode(): CameraMode { return this.cameraMode; }
   isObserveTransitionActive(): boolean { return this.observeTransition !== null; }
+  /** Whether the focused-star pin (uPinFocusToCenter) would engage right
+   *  now, mirroring the per-frame guard in animate(). Read by the pin
+   *  debug HUD (`debug.pin()`) to display live state. */
+  isPinEngaged(): boolean {
+    return (
+      this.focusedStar !== null &&
+      this.cameraMode === 'navigate' &&
+      !this.warpState && !this.aimState &&
+      this.controls.target.lengthSq() < 1e-12
+    );
+  }
+  /** True while an aim animation is in flight. Mirror of getWarpActive
+   *  for the camera's other interpolated transition. */
+  isAimActive(): boolean { return this.aimState !== null; }
 
   // Eased progress of the in-flight observe-mode camera translate, or null
   // if no transition is active. `f` matches the easing inside
