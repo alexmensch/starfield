@@ -140,18 +140,41 @@ const KNOWN_MISSING_HIPS: Map<number, string> = new Map([
   [89341, 'μ Sagittarii (Polis) — HYG lacks parallax; upstream data gap'],
 ]);
 
-// Curated HIPs of canonical visual doubles that the CCDM+MultFlag filter
-// (see parseHipCcdm) drops because Hipparcos's main catalogue modelled
-// them as single stars (`MultFlag` blank, `Ncomp=1`). Each entry must
-// include a justification. Visual review of new chart-mode renders may
-// surface more — extend conservatively, only for systems where the pair
-// is canonical enough to expect wings on the chart.
-const KNOWN_VISUAL_DOUBLES: Map<number, string> = new Map([
-  [11767, 'Polaris (α UMi) — Polaris B at sep ≈ 18″ is a real companion; Hipparcos modelled as Ncomp=1'],
-  [91971, 'ε¹ Lyr — inner pair Aa+Ab at sep ≈ 2.4″; ε² Lyr (HIP 91926) carries MultFlag=C as the analogue'],
-  [104214, '61 Cyg A — famous nearby K-dwarf pair at sep ≈ 30″ from 61 Cyg B (HIP 104217)'],
-  [104217, '61 Cyg B — companion of 61 Cyg A (HIP 104214)'],
-]);
+// Curated visual-double systems that the CCDM+MultFlag filter (see
+// parseHipCcdm) drops because Hipparcos's main catalogue modelled
+// them as single stars (`MultFlag` blank, `Ncomp=1`). Each entry is a
+// system: a list of HIPs (one or more components found in this
+// catalog) plus a justification. parseHipCcdm groups these as
+// synthetic CCDM systems so the primary-only flagging in
+// applyDoublesFlag picks exactly one component per system.
+//
+// Visual review of new chart-mode renders may surface more — extend
+// conservatively, only for systems where the pair is canonical enough
+// to expect wings on the chart.
+interface VisualDoubleSystem {
+  components: number[]; // HIPs of components present in our catalog
+  reason: string;
+}
+const KNOWN_VISUAL_DOUBLES: VisualDoubleSystem[] = [
+  {
+    components: [11767],
+    reason: 'Polaris (α UMi) — Polaris B at sep ≈ 18″ is a real companion; Hipparcos modelled as Ncomp=1',
+  },
+  {
+    components: [91971],
+    reason: 'ε¹ Lyr — inner pair Aa+Ab at sep ≈ 2.4″; ε² Lyr (HIP 91926) carries MultFlag=C as the analogue',
+  },
+  {
+    components: [104214, 104217],
+    reason: '61 Cyg A/B — famous nearby K-dwarf pair at sep ≈ 30″ between HIP 104214 (A) and HIP 104217 (B)',
+  },
+];
+
+// HIPs that appear anywhere in KNOWN_VISUAL_DOUBLES; pre-built once
+// for fast membership checks during the CCDM file scan.
+const KNOWN_VISUAL_DOUBLE_HIPS: Set<number> = new Set(
+  KNOWN_VISUAL_DOUBLES.flatMap((s) => s.components),
+);
 
 function isUpToDate(): boolean {
   if (!existsSync(OUT_BIN) || !existsSync(OUT_CON) || !existsSync(OUT_SEARCH)) return false;
@@ -279,14 +302,22 @@ function parseGcvsCrossref(): VarStarXref {
 // The parser tolerates VizieR's preamble (`#` comments, header row,
 // dash-separator row, then data).
 
-function parseHipCcdm(): Set<number> {
-  const flagged = new Set<number>();
-  // Curated overrides flag unconditionally — these stars don't need to
-  // appear in the CCDM file, and if they do appear, the override path
-  // reaches the same answer.
-  for (const hip of KNOWN_VISUAL_DOUBLES.keys()) flagged.add(hip);
+// Returns a map from system identifier → list of component HIPs.
+// Real CCDM systems use the CCDM_ID as the key; curated overrides use
+// synthetic keys (`OVERRIDE-N`) so they sit in the same flat map.
+// Components in the same group are siblings of one system —
+// applyDoublesFlag picks the brightest as the primary.
+function parseHipCcdm(): Map<string, number[]> {
+  const groups = new Map<string, number[]>();
 
-  if (!existsSync(SRC_HIP_CCDM)) return flagged;
+  // Curated overrides flag unconditionally — these systems don't need
+  // to appear in the CCDM file, and if any of their HIPs do, the file
+  // path skips them so each HIP lives in exactly one group.
+  for (let i = 0; i < KNOWN_VISUAL_DOUBLES.length; i++) {
+    groups.set(`OVERRIDE-${i}`, [...KNOWN_VISUAL_DOUBLES[i].components]);
+  }
+
+  if (!existsSync(SRC_HIP_CCDM)) return groups;
 
   const text = readFileSync(SRC_HIP_CCDM, 'utf8');
   const rawLines = text.split(/\r?\n/);
@@ -329,9 +360,9 @@ function parseHipCcdm(): Set<number> {
     const hip = parseInt(hipStr, 10);
     if (!Number.isFinite(hip) || hip <= 0) { droppedNoHip++; continue; }
 
-    if (KNOWN_VISUAL_DOUBLES.has(hip)) {
+    if (KNOWN_VISUAL_DOUBLE_HIPS.has(hip)) {
       viaOverride++;
-      continue; // already added above
+      continue; // already in an OVERRIDE-* group
     }
 
     const ccdm = (cols[ccdmIdx] ?? '').trim();
@@ -343,29 +374,59 @@ function parseHipCcdm(): Set<number> {
       continue;
     }
 
-    flagged.add(hip);
+    const list = groups.get(ccdm);
+    if (list) list.push(hip);
+    else groups.set(ccdm, [hip]);
     kept++;
   }
 
   console.log(
-    `  ${kept} HIPs via CCDM+MultFlag(C/G/O), ${KNOWN_VISUAL_DOUBLES.size} via override; ` +
+    `  ${kept} HIPs via CCDM+MultFlag(C/G/O), ${KNOWN_VISUAL_DOUBLE_HIPS.size} via override; ` +
+      `${groups.size} systems total; ` +
       `${scanned} scanned, dropped ${droppedNoHip} no-HIP, ${droppedNoCcdm} blank CCDM, ${droppedMultFlag} unconfirmed MultFlag, ${viaOverride} duplicate(override)`,
   );
-  return flagged;
+  return groups;
 }
 
-// OR `flags |= 0x10` onto every catalog star whose HIP appears in the
-// flagged set. Coexists with the geometric inference: both sources hit the
-// same bit, and stars without a matching companion in AT-HYG keep
-// `companionIdx = -1` (the renderer's zoom-fit guards on companion ≥ 0).
-function applyDoublesFlag(stars: Star[], hipSet: Set<number>): number {
-  let flagged = 0;
-  for (const s of stars) {
-    if (s.hip === null || !hipSet.has(s.hip)) continue;
-    s.flags |= 0x10;
-    flagged++;
+// For each CCDM system, OR `flags |= 0x10` onto exactly one catalog
+// star — the brightest (lowest absmag) component present in our
+// catalog. This matches the semantics inferBinaries uses for the
+// geometric pass (primary = brighter member), so the renderer's
+// chart-mode wings glyph appears once per identified system regardless
+// of which writer flagged it. If the same star is also flagged by
+// inferBinaries the OR is idempotent. Stars without a matching
+// companion in AT-HYG keep `companionIdx = -1` (the renderer's
+// zoom-fit guards on companion ≥ 0).
+function applyDoublesFlag(
+  stars: Star[],
+  groups: Map<string, number[]>,
+): { systems: number; flagged: number } {
+  const hipToIndex = new Map<number, number>();
+  for (let i = 0; i < stars.length; i++) {
+    const h = stars[i].hip;
+    if (h !== null && h > 0) hipToIndex.set(h, i);
   }
-  return flagged;
+
+  let systems = 0;
+  let flagged = 0;
+  for (const hips of groups.values()) {
+    let bestIdx = -1;
+    let bestMag = Infinity;
+    for (const h of hips) {
+      const idx = hipToIndex.get(h);
+      if (idx === undefined) continue;
+      const m = stars[idx].absmag;
+      if (m < bestMag) {
+        bestMag = m;
+        bestIdx = idx;
+      }
+    }
+    if (bestIdx < 0) continue;
+    systems++;
+    if ((stars[bestIdx].flags & 0x10) === 0) flagged++;
+    stars[bestIdx].flags |= 0x10;
+  }
+  return { systems, flagged };
 }
 
 interface Star {
@@ -614,7 +675,7 @@ async function main() {
   const tBin = Date.now();
   const binStats = inferBinaries(stars);
   console.log(
-    `  ${binStats.pairs} companion assignments (${binStats.primaries} primaries) in ${Date.now() - tBin}ms`,
+    `  ${binStats.pairs} companion assignments, ${binStats.mutualPairs} mutual pairs (${binStats.primaries} primaries) in ${Date.now() - tBin}ms`,
   );
 
   // GCVS variable-star cross-match. Optional — if the files aren't present
@@ -633,15 +694,16 @@ async function main() {
   }
 
   // Hipparcos CCDM double-star cross-match. Optional. ORs onto the same
-  // 0x10 flag bit the geometric pass uses, so chart-mode wings surface both
-  // sources without renderer-side changes.
+  // 0x10 flag bit the geometric pass uses, picking exactly one primary
+  // per CCDM system so chart-mode wings surface both sources without
+  // double-flagging components of the same system.
   if (existsSync(SRC_HIP_CCDM)) {
     console.log('Parsing Hipparcos CCDM double-star cross-reference...');
     const tCcdm = Date.now();
-    const flaggedHips = parseHipCcdm();
-    const flagged = applyDoublesFlag(stars, flaggedHips);
+    const ccdmGroups = parseHipCcdm();
+    const { systems, flagged } = applyDoublesFlag(stars, ccdmGroups);
     console.log(
-      `  ${flaggedHips.size} CCDM-tagged HIPs → ${flagged} catalog stars flagged in ${Date.now() - tCcdm}ms`,
+      `  ${ccdmGroups.size} CCDM systems → ${systems} resolved in catalog, ${flagged} new primaries flagged in ${Date.now() - tCcdm}ms`,
     );
   } else {
     console.log('Hipparcos CCDM file not found; skipping double-star cross-match.');
