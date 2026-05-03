@@ -15,7 +15,7 @@ permissions:
 # bump expected) can attach the `skip-version-bump` label to opt out.
 
 jobs:
-  check:
+  version-guard:
     if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-version-bump') }}
     runs-on: ubuntu-latest
     steps:
