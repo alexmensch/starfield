@@ -164,10 +164,14 @@ function computeMagPresets(): Record<MagPresetName, MagPreset> {
 // MAG_PRESETS see the latest values after a K tweak.
 export let MAG_PRESETS: Record<MagPresetName, MagPreset> = computeMagPresets();
 
-// Fallback orbit-controls floor when no star is focused. Tiny enough not
-// to constrain the unfocused view at Sol's origin; per-star floors are
-// computed from physical disc-fill geometry by `minOrbitDistForStar`.
-const GLOBAL_MIN_DIST_PC = 1e-9;
+// Fallback orbit-controls floor when no star is focused. Sized to keep
+// the camera comfortably outside any single star's physical envelope
+// (Sol's photosphere at 2.25×10⁻⁸ pc, Earth's orbit at 4.85×10⁻⁶ pc) so
+// approaching origin without an explicit focus anchor doesn't enter the
+// extreme-close-range regime where float32 matrix cancellation drifts
+// the projected center off-screen. To get closer than this, focus a
+// star — `minOrbitDistForStar` then returns the per-star physical floor.
+const GLOBAL_MIN_DIST_PC = 5e-3;
 
 // Fraction of the viewport's minor axis that the focused star's disc
 // fills at the manual-zoom orbit floor. 0.9 means a maximally-zoomed
@@ -679,6 +683,16 @@ export class Stellata {
       // three star passes (disc, glow, core mask) share these uniforms so
       // the suppression fires uniformly.
       uHideFocusIdx: { value: -1 },
+      // Force-center the focused star at NDC (0,0). At the close-approach
+      // orbit floor (~5×10⁻⁸ pc for Sol-class stars), float32 cancellation
+      // in projectionMatrix * modelViewMatrix * (0,0,0,1) can drift the
+      // projected center by visible pixels even though the star is
+      // mathematically at view-origin (controls.target = star, lookAt
+      // aligns -Z with target). This uniform names the instance to pin;
+      // the shader replaces its centreClip with projectionMatrix *
+      // (0, 0, -distCam, 1) to bypass the cancellation. -1 disables.
+      // Updated each frame in animate() since pan can move target away.
+      uPinFocusToCenter: { value: -1 },
     };
 
     // Disc pass: opaque-over (premultiplied alpha) so close stars fully
@@ -2682,6 +2696,18 @@ export class Stellata {
     perfMeasure('controls.update');
     perfMark('pre-render');
     this.material.uniforms.uCameraPos.value.copy(this.camera.position);
+    // Pin the focused star at NDC (0,0) only when the geometric
+    // invariant holds: navigate mode, no warp/aim animation, and the
+    // user hasn't panned the camera target away from the focused star
+    // (target ≈ local origin). Pan moves target away from the star and
+    // we want it to render at its actual projected position again.
+    const pinTarget = (
+      this.focusedStar !== null &&
+      this.cameraMode === 'navigate' &&
+      !this.warpState && !this.aimState &&
+      this.controls.target.lengthSq() < 1e-12
+    ) ? this.focusedStar : -1;
+    this.material.uniforms.uPinFocusToCenter.value = pinTarget;
     // Advance variability clock (seconds since start). Shared with glow
     // material via sharedUniforms so both passes see the same time.
     this.material.uniforms.uTime.value = (performance.now() - this.animateStartMs) / 1000;

@@ -14,6 +14,14 @@ uniform uint uSpectMask;
 // every other mode disables the suppression by construction (gl_InstanceID
 // is non-negative).
 uniform int uHideFocusIdx;
+// Force-center the focused star at NDC (0,0). At extreme close approach
+// (~5×10⁻⁸ pc for Sol-class stars), float32 cancellation in the matrix
+// chain can drift the projected centre by visible pixels even though
+// `controls.target = focused star + lookAt` puts it mathematically at
+// view-origin. JS-side stellata sets this to the focused-star index
+// when the camera-target alignment holds; -1 means use the default
+// projection path.
+uniform int uPinFocusToCenter;
 uniform float uPixelRatio;
 uniform float uSizeMin;
 uniform float uSizeMax;
@@ -314,6 +322,13 @@ void main() {
     // by centreClip.w makes it perspective-correct (so the quad stays the
     // same pixel size regardless of depth).
     vec4 centreClip = projectionMatrix * modelViewMatrix * vec4(worldPos, 1.0);
+    if (gl_InstanceID == uPinFocusToCenter) {
+        // Bypass float32 cancellation in the matrix chain at extreme
+        // close approach. The focused star is mathematically at view
+        // (0, 0, -distCam) since controls.target = star and lookAt()
+        // aligns -Z with target; substitute the canonical projection.
+        centreClip = projectionMatrix * vec4(0.0, 0.0, -dPc, 1.0);
+    }
     vec2 pixelOffset = aCorner * pxSize * uPixelRatio;
     vec2 ndcOffset = pixelOffset / (uViewport * uPixelRatio) * 2.0;
     gl_Position = centreClip + vec4(ndcOffset * centreClip.w, 0.0, 0.0);
