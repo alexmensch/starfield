@@ -665,9 +665,15 @@ export class Stellata {
       uHideFocusIdx: { value: -1 },
     };
 
-    // Disc pass: opaque-over (premultiplied alpha) so close stars fully
-    // occlude anything behind. Rendered first with depth write on so the
-    // glow pass can depth-test against the disc silhouettes.
+    // Disc pass: per-channel max so overlapping discs / halos don't sum.
+    // The shader writes premultiplied colour `(C·α, α)`; MaxEquation gives
+    // `dst = max(src, dst)` per channel (blend factors are ignored under
+    // GL_MAX). Two close-binary cores no longer fight via depth-test for
+    // the lens of intersection, two halos no longer pile up at their
+    // contact point, and a halo over the Milky Way no longer additively
+    // lifts the background — the brighter source wins each pixel. (See
+    // stellata-dx7.) Depth write stays on so the glow pass can depth-test
+    // against the disc silhouettes.
     this.material = new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3,
       uniforms: { ...sharedUniforms, uRenderMode: { value: 1 } },
@@ -678,8 +684,8 @@ export class Stellata {
       depthTest: true,
       blending: THREE.CustomBlending,
       blendSrc: THREE.OneFactor,
-      blendDst: THREE.OneMinusSrcAlphaFactor,
-      blendEquation: THREE.AddEquation,
+      blendDst: THREE.OneFactor,
+      blendEquation: THREE.MaxEquation,
     });
 
     // Glow pass: additive so overlapping distant stars accumulate brightness
@@ -1571,8 +1577,8 @@ export class Stellata {
     } else {
       this.material.blending = THREE.CustomBlending;
       this.material.blendSrc = THREE.OneFactor;
-      this.material.blendDst = THREE.OneMinusSrcAlphaFactor;
-      this.material.blendEquation = THREE.AddEquation;
+      this.material.blendDst = THREE.OneFactor;
+      this.material.blendEquation = THREE.MaxEquation;
       this.material.depthWrite = true;
       this.material.depthTest = true;
       this.glowMaterial.blending = THREE.AdditiveBlending;
