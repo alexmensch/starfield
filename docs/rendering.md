@@ -35,9 +35,10 @@ Rendering is **three passes over the same instanced geometry**:
   behind close-range disc cores rather than bleeding through. Mesh
   `visible` is gated CPU-side: each frame, a tight `Float32Array` loop
   over `_localPositions` returns `true` on the first star within
-  `dThresh = uPhysMaxPx × uRefDistPc / CORE_MASK_MIN_PX` (≈ 0.5 pc with
-  default settings). When no star is that close, the entire draw call is
-  skipped.
+  `dThresh = maxPhysicalRadiusPc / tan(CORE_MASK_MIN_PX × fov_y / 2 / viewport.y)`
+  (the camera distance at which the catalog's largest star subtends
+  `CORE_MASK_MIN_PX` pixels). When no star is that close, the entire
+  draw call is skipped.
 - **Disc pass** (`renderOrder = 0`). Stars where `vPhysRatio ≥ 0.5` —
   i.e. the physical-size term dominates the final `max(appSize,
   physSize)`. Premultiplied-alpha blend + `depthTest` + `depthWrite`.
@@ -89,12 +90,15 @@ in the vertex shader:
   endpoints `uSizeMin/Max` are derived per-frame from the active
   magnitude preset's angular targets converted to pixels (see
   §Magnitude presets and angular-size calibration below).
-- `physSize = sizeAtRef × (uRefDistPc / dPc)` where `sizeAtRef` linearly
-  maps `log10(physicalRadius)` between catalog min and max into
-  `[uPhysMinPx, uPhysMaxPx]`. At the reference distance
-  (`uRefDistPc = controls.minDistance = 0.005 pc`), the biggest star in
-  the catalog renders at `uPhysMaxPx` pixels; smallest at `uPhysMinPx`.
-  Dominates at close range, falls off as `1/d`.
+- `physSize = 2·atan(R · radiusFactor / dPc) · viewport.y / uFovYRad`
+  is the star's true angular diameter projected to pixels. `R` is the
+  per-star physical radius in pc (decoded from the `iLogRadius` vertex
+  attribute via `pow(10, iLogRadius)`); `radiusFactor` is the variability
+  modulation. Falls off as `1/d` in the small-angle regime; saturates as
+  `d → R` (disc fills the frame). This drops every artificial reference-
+  distance + log-mapped-pixel-range knob in favour of pure geometry, so
+  the on-screen disc ratio between any two stars at equal `d/R` matches
+  their physical radius ratio.
 
 A **soft taper** runs in the fragment shader's glow pass: stars within
 +0.5 mag of `uMaxAppMag` survive vertex culling and fade in glow
@@ -142,15 +146,19 @@ manual tweaks survive preset switches and viewport resizes.
 **Camera FOV** defaults to `DEFAULT_FOV` = 50° vertical and is
 user-tunable via the FOV slider in the panel (`#fov`, range 10°–120°).
 `setCameraFov(fov)` updates `camera.fov`, calls
-`updateProjectionMatrix()`, and triggers `recomputePresetPxSizes()`
+`updateProjectionMatrix()`, mirrors the new value into `uFovYRad` (the
+shader's angular-diameter scale), recomputes the focused star's orbit
+floor (which depends on FOV), and triggers `recomputePresetPxSizes()`
 so non-overridden star sizes scale appropriately. URL `fov=` carries
 the value when diverged from default.
 
-`uPhysMaxPx = 0.5 × min(viewportW, viewportH)` in CSS pixels — the
-biggest catalog star at min orbit distance therefore fills 50% of the
-smaller viewport axis. Updated on resize.
-
-`uPhysMinPx = 2 px` — smallest stars at min orbit don't disappear.
+`uFovYRad` is the only viewport-derived shader uniform that drives
+`physSize`. There is no per-pixel-range cap — a max-radius supergiant at
+the orbit floor fills `ZOOM_FLOOR_FRACTION` (= 0.9) of the viewport's
+minor axis purely because `minOrbitDistForStar` solves for that distance.
+Smaller stars land closer to fill the same 90%; the camera near plane
+(`1e-10`) gives several orders of magnitude of headroom even for white
+dwarfs and Sirius B-class radii.
 
 A varying `vPhysRatio = physSize / max(pxSize, 0.001)` is passed to the
 fragment shader to drive the pass split (above) and the luminosity-class
@@ -231,7 +239,8 @@ radius factor** to the physical-size term:
 `ampEff` is the per-frame *compressed* amplitude:
 `min(iAmplitudeMag, 10 × min(log10(cap / baseSize), log10(1 / 0.2)))`.
 Translating: effective amp is reduced so the pulse's peak at most hits
-`uPhysMaxPx` and its trough at most 20% of the current baseline. This
+`0.9 × min(viewportW, viewportH)` (the same fraction used for the
+zoom-floor) and its trough at most 20% of the current baseline. This
 keeps the sine smooth (no plateau clipping at the cap, no disappearing
 into a pixel at the trough) across the full amplitude range from
 Cepheid-sized swings to dramatic Miras.

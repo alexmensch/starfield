@@ -8,24 +8,34 @@ for the steady-state HUD widgets (Sol/GC arrows, the OBSERVE ring) see
 
 ## Camera near plane vs controls minDistance
 
-`camera.near = 0.001`, `controls.minDistance` (when no star is focused)
-= `DEFAULT_MIN_DIST_PC = 0.005` pc. The near plane must stay **strictly
+`camera.near = 1e-10`, `controls.minDistance` (when no star is focused)
+= `GLOBAL_MIN_DIST_PC = 1e-9` pc. The near plane must stay **strictly
 less** than the closest orbit distance, otherwise a centered star lands
-on the clip plane at max zoom and gets culled. If adjusting, keep that
-invariant. Earlier attempts to zoom closer than 0.005 pc hit float32
-precision jitter when the destination star is far from the world origin.
+on the clip plane at max zoom and gets culled. The log depth buffer
+(Phase 0, `logarithmicDepthBuffer: true` on the WebGL renderer) gives
+this configuration uniform precision in `log(z)`, so the multi-decade
+range from sub-AU close approach to 100 kpc background renders without
+z-fighting.
 
 When a star is focused, two distinct distances are in play —
 deliberately decoupled so manual zoom can push past the auto-park
-distance:
+distance. Both come from the **true angular geometry** of the star's
+disc through the camera lens — `θ = 2·atan(R / d)`:
 
 1. **Manual-zoom floor** — `controls.minDistance =
-   minOrbitDistForStar(idx)`: `DEFAULT_MIN_DIST_PC` for solo stars,
-   `Math.max(DEFAULT_MIN_DIST_PC, sep × BINARY_MIN_DIST_FACTOR)` for
-   binaries. This lets the user orbit close enough that the largest
-   stars fill ~50% of the smaller viewport dimension at max zoom, with
-   smaller stars scaling proportionally — needed for inspecting
-   stellar discs and (future) close-in planets.
+   minOrbitDistForStar(idx)`. Solves for `d` such that the disc fills
+   `ZOOM_FLOOR_FRACTION` (= 0.9) of the viewport's minor axis:
+   ```
+   d_min = R / tan(ZOOM_FLOOR_FRACTION × fov_minor / 2)
+   ```
+   `fov_minor = min(fov_x, fov_y)` so the 90% target reads consistently
+   across portrait + landscape viewports. Binary companions get an
+   additional `Math.max(d_min, sep × BINARY_MIN_DIST_FACTOR)` bump so
+   the partner stays in frame. This lets the user orbit close enough
+   that any star fills 90% of the smaller viewport axis at max zoom,
+   with `d_min` scaling linearly with the star's physical radius —
+   inspecting a Sol-class star vs Betelgeuse vs Sirius B looks the same
+   on screen.
 
 2. **Auto-park target** — `minDistForStar(idx)`: where the camera
    automatically lands. Used by:
@@ -36,23 +46,21 @@ distance:
    - Warp source departure (`pStart = A + dirBack × minDistForStar(destIdx)`).
    - Warp arrival (`pEnd = B − forward × minDistForStar(destIdx)`).
 
-   Computed from a per-star disc-size formula:
-
+   Same geometric solve at a smaller fraction so the disc reads as a
+   clear feature without dominating the frame:
    ```
-   sizeAtRef = mix(uPhysMinPx, uPhysMaxPx, logRatio(physicalRadius))
-   discDist  = sizeAtRef × uRefDistPc / TARGET_APPROACH_DISC_PX
+   d_park = R / tan(TARGET_PARK_FRACTION × fov_minor / 2)
    ```
+   `TARGET_PARK_FRACTION` = 0.10. Floored at `2 × d_min` so the parking
+   distance always sits clearly above the manual-zoom limit (only
+   matters at extreme aspect ratios; for reasonable viewports
+   `d_park ≈ 9 × d_min` naturally). Binary companions get the same
+   half-angle bump on top.
 
-   Same on-screen disc size at parking for any star — supergiants land
-   much further out than dwarfs. The single tunable is
-   `TARGET_APPROACH_DISC_PX` at the top of `stellata.ts` (currently
-   10 px). Binary companions still get a `Math.max(discDist, sep ×
-   BINARY_MIN_DIST_FACTOR)` bump on top so both components stay inside
-   the viewport half-angle (~25°) at parking — the binary requirement
-   is additive, not a replacement.
-
-   Mirrors the disc term of `renderedSizePx` exactly. Keep the two in
-   sync if the shader's physical-size math changes.
+   Mirrors `renderedSizePx`'s physical-size term exactly. Both
+   `minOrbitDistForStar` and `minDistForStar` re-evaluate on focus
+   change, FOV change (via `setCameraFov`), and viewport resize (since
+   aspect changes shift `fov_minor`).
 
 ## TrackballControls tuning
 
@@ -68,7 +76,8 @@ Current settings:
   `enableDamping`/`dampingFactor` like OrbitControls)
 - `staticMoving = false` (keeps damping on)
 - `noPan = false` (right-click pans; set `true` to disable)
-- `minDistance = 0.005`, `maxDistance = 100_000`
+- `minDistance = 1e-9` (when no star is focused; per-star
+  `minOrbitDistForStar` overrides on focus). `maxDistance = 100_000`.
 
 ## Warp animation
 
