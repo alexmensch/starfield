@@ -1891,8 +1891,22 @@ export class Stellata {
       // navigate-mode arrival. Source-star hide expires with the warp; the
       // destination star (if any) renders normally.
       this.material.uniforms.uHideFocusIdx.value = -1;
-      if (state.destKind === 'star') this.setFocus(state.destIdx);
-      else this.setFocusedCloud(state.destIdx);
+      if (state.destKind === 'star') {
+        this.setFocus(state.destIdx);
+        // Re-anchor camera and target in the clean dest-local frame after
+        // setFocus's recenterOrigin runs. The earlier writes used B from
+        // _localPositions (Float32) while recenterOrigin's dx is computed
+        // fresh in float64 — the difference leaves controls.target offset
+        // by a ~|AB|·1e-7 residual, which on long warps to small stars
+        // disengages the pin guard (lengthSq < 1e-12) and lands the dest
+        // visibly off-centre. Snapping to clean values here avoids that.
+        const forward = new THREE.Vector3().subVectors(B, state.pStart).normalize();
+        this.controls.target.set(0, 0, 0);
+        this.camera.position.copy(forward).multiplyScalar(-state.endOffset);
+        this.camera.lookAt(this.controls.target);
+      } else {
+        this.setFocusedCloud(state.destIdx);
+      }
       this.controls.enabled = true;
       this.controls.update();
     }
