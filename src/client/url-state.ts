@@ -1,6 +1,6 @@
-import { type Stellata, type MagPresetName, MAG_PRESETS, DEFAULT_FOV } from './stellata';
+import { type FilterState, type Stellata, type MagPresetName, MAG_PRESETS, DEFAULT_FOV } from './stellata';
 import { sliderToDist, distToSlider, SLIDER_STEPS } from './controls';
-import { applyUnit } from './unit-toggle';
+import { setUnit } from './distance-util';
 import { getUnit, onUnitChange } from './distance-util';
 
 // URL state lives in a single opaque param: `?v=<base64url>`. The blob
@@ -652,11 +652,11 @@ export function applyDecodedView(
   view: DecodedView,
   idMaps: IdMaps,
 ): void {
-  if (view.unit) applyUnit(view.unit);
+  if (view.unit) setUnit(view.unit);
 
   if (view.preset) stellata.applyMagnitudePreset(view.preset);
 
-  const patch: Record<string, number | boolean> = {};
+  const patch: Partial<FilterState> = {};
   if (view.dmin !== undefined || view.dmax !== undefined) {
     patch.minDistSol = sliderToDist(view.dmin ?? 0, true);
     patch.maxDistSol = sliderToDist(view.dmax ?? SLIDER_STEPS, false);

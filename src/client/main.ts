@@ -71,7 +71,7 @@ async function main() {
     // Dev-console access: `stellata.setExtinctionStrength(X)` etc. Handy for
     // dust debugging and not worth gating behind an env check on a solo
     // project.
-    (window as unknown as { stellata: Stellata }).stellata = stellata;
+    window.stellata = stellata;
     if (cloudCatalog) stellata.attachClouds(cloudCatalog);
 
     // HIP → row-index lookup, used by url-state to encode/decode shared
