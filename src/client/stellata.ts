@@ -799,8 +799,17 @@ export class Stellata {
     });
     this.scene.add(this.milkyway.group);
 
-    // Seed focus on Sol if it exists so measurement works from the start.
-    if (catalog.solIndex >= 0) this.focusedStar = catalog.solIndex;
+    // Engage focus on Sol if it exists so measurement and per-star zoom
+    // work from the start. setFocus (rather than raw field assignment)
+    // wires up controls.minDistance to the per-star orbit floor and
+    // snaps controls.target to local (0,0,0) — without this, the
+    // unfocused GLOBAL_MIN_DIST_PC clamp set above stays in place AND
+    // the pin guard fails because Sol's catalog position is
+    // (5e-6, 0, 0) pc (not exactly zero), so recenterOrigin shifts
+    // target by 5e-6 and breaks the lengthSq < 1e-12 invariant. Safe
+    // at this point in the constructor: handlers aren't subscribed yet
+    // and camera/aspect are already initialised.
+    if (catalog.solIndex >= 0) this.setFocus(catalog.solIndex);
 
     // Compute initial pixel sizes for the active preset against the real
     // viewport. DEFAULT_FILTER carries placeholder pixel values; this call
@@ -1070,6 +1079,20 @@ export class Stellata {
       this.recenterOrigin(this.tmpRecenter.set(
         p[idx * 3], p[idx * 3 + 1], p[idx * 3 + 2],
       ));
+      // After recenterOrigin, the focused star is at local (0,0,0). Snap
+      // controls.target to (0,0,0) and shift camera by the same delta so
+      // the camera-to-target relationship is preserved — the user-visible
+      // pose doesn't change. Without this, target lands at -dx (where dx
+      // is whatever recenterOrigin shifted by) and the per-frame pin guard
+      // (target.lengthSq < 1e-12) silently disengages whenever Sol's
+      // catalog offset (5e-6 pc) or a long warp's |AB|·1e-7 Float32
+      // residual leaks through. Every call site that sets target+camera
+      // before setFocus relies on this snap to land cleanly.
+      const t = this.controls.target;
+      this.camera.position.x -= t.x;
+      this.camera.position.y -= t.y;
+      this.camera.position.z -= t.z;
+      t.set(0, 0, 0);
     } else {
       this.recenterOrigin(this.tmpRecenter.set(0, 0, 0));
     }
