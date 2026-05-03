@@ -4,6 +4,9 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 # Asserts the PR's `package.json#version` is strictly greater than the
 # base branch's version (per RELEASING.md's per-PR bump policy) and is
 # not already a released tag. Catches the case where two concurrent PRs
