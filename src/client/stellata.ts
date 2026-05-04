@@ -117,6 +117,12 @@ export interface StarRenderParams {
   distNMax: number;
   lumBiasMin: number;
   lumBiasMax: number;
+  // Soft-knee saturation extent (magnitudes) for the Gaussian-PSF disc
+  // size formula. See uSizeKnee comment in star.vert.glsl. 0 = hard cap
+  // (legacy behaviour); larger values let bright stars keep growing
+  // before saturating. 16 lands ~43% size advantage for Sol over Sirius
+  // when standing at the unfocused floor inside the solar system.
+  sizeKnee: number;
 }
 export const STAR_RENDER_DEFAULTS: StarRenderParams = {
   visibleThreshold: 0.2,
@@ -126,6 +132,7 @@ export const STAR_RENDER_DEFAULTS: StarRenderParams = {
   distNMax: 10.0,
   lumBiasMin: 1.0,
   lumBiasMax: 0.6,
+  sizeKnee: 16,
 };
 
 interface MagPreset {
@@ -656,6 +663,7 @@ export class Stellata {
       uDistNMax: { value: STAR_RENDER_DEFAULTS.distNMax },
       uLumBiasMin: { value: STAR_RENDER_DEFAULTS.lumBiasMin },
       uLumBiasMax: { value: STAR_RENDER_DEFAULTS.lumBiasMax },
+      uSizeKnee: { value: STAR_RENDER_DEFAULTS.sizeKnee },
 
       // Interstellar-dust extinction. Off by default (uDustEnabled = 0) —
       // attachDust() wires in the Data3DTexture progressively as chunks
@@ -1596,6 +1604,7 @@ export class Stellata {
     if (patch.distNMax !== undefined) u.uDistNMax.value = patch.distNMax;
     if (patch.lumBiasMin !== undefined) u.uLumBiasMin.value = patch.lumBiasMin;
     if (patch.lumBiasMax !== undefined) u.uLumBiasMax.value = patch.lumBiasMax;
+    if (patch.sizeKnee !== undefined) u.uSizeKnee.value = patch.sizeKnee;
   }
   getStarRenderParams(): StarRenderParams {
     const u = this.material.uniforms;
@@ -1607,6 +1616,7 @@ export class Stellata {
       distNMax: u.uDistNMax.value,
       lumBiasMin: u.uLumBiasMin.value,
       lumBiasMax: u.uLumBiasMax.value,
+      sizeKnee: u.uSizeKnee.value,
     };
   }
 

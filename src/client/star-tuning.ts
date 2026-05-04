@@ -84,5 +84,20 @@ export function buildStarSection(stellata: Stellata): HTMLDivElement {
     onChange: (x) => stellata.setStarRenderParams({ lumBiasMax: x }),
   }));
 
+  // Soft-knee saturation extent (magnitudes). 0 = hard cap on appSize at
+  // Δm = uSizeSpan (legacy); higher values stretch the curve so very
+  // bright stars (Sol from inside its own neighborhood, focused-star
+  // close approach) keep growing before saturating. See uSizeKnee in
+  // star.vert.glsl for the exact formula.
+  section.appendChild(makeSlider({
+    label: 'sizeKnee (sat. extent, mag)',
+    min: 0,
+    max: 48,
+    step: 1,
+    initial: v.sizeKnee,
+    format: (x) => x.toFixed(0),
+    onChange: (x) => stellata.setStarRenderParams({ sizeKnee: x }),
+  }));
+
   return section;
 }
