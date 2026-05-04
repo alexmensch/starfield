@@ -64,7 +64,7 @@ entirely in screen space:
    — the OBSERVE steady state, where the camera sits at the focal star —
    fall back to screen centre. Same fallback applies for the rare frames
    near a transition endpoint where the focal-star projection collapses.
-2. Derive the projected arrow direction in 2D. Two paths, picked by which
+2. Derive the projected arrow direction in 2D. Three paths, picked by which
    one is well-defined this frame: (a) project an auxiliary point a small
    step along the 3D direction from `origin` and take the screen-space
    delta — gets perspective right when `origin` ≠ camera; (b) fall back
@@ -72,7 +72,11 @@ entirely in screen space:
    the aux-step collapses when `origin` sits at the camera (OBSERVE
    steady state, where the camera is parked at the focal star), and a
    target-projection from the screen-centre anchor gives the right
-   angular direction since camera == origin in that case.
+   angular direction since camera == origin in that case; (c) view-space
+   fallback (`viewSpaceScreenDir` in `arrow-path.ts`) when the target is
+   behind the camera — both perspective-projection paths return null
+   because `v.z >= -near`, but the camera-local `(x, -y)` of the world
+   direction still tells us which way the user must rotate.
 3. Build `shaftStart = originScreen + shaftStartPx × screenDir` and `tip =
    shaftStart + shaftLengthPx × screenDir`, both in pixels. The shared
    `buildArrowSvgPath` helper emits the chevron arrowhead perpendicular
@@ -103,10 +107,10 @@ target's rendered disc when zoomed in close. `sizeMax` is the
 camera-panel "Max" pixel size. Below 8 px of remaining shaft we hide
 rather than draw a stub.
 
-Arrow hidden when the projected direction is < 1 px long (camera is
-looking exactly along the arrow's 3D direction); rare and there's no
-useful 2D direction to draw. Sol arrow also hidden when focused on Sol —
-pointing at yourself adds nothing.
+Arrow hidden when the camera is looking exactly along the arrow's 3D
+direction — all three derivation paths agree there's no preferred
+rotation, since rotating in any direction is equally close. Sol arrow
+also hidden when focused on Sol — pointing at yourself adds nothing.
 
 **HUD ring.** A translucent screen-centred circle drawn in OBSERVE mode
 (and during the navigate↔observe transition) when `showHud` is on. The
