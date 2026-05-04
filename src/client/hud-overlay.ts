@@ -3,6 +3,7 @@ import { GALACTIC_CENTRE_PC } from './galactic-coords';
 import { fmtDist } from './distance-util';
 import {
   buildArrowSvgPath,
+  viewSpaceScreenDir,
   ARROW_HEAD_DEPTH_PX,
   ARROW_LABEL_OFFSET_PX,
   ARROW_LABEL_PADDING_PX,
@@ -269,10 +270,20 @@ export class HudOverlay {
       }
     }
     if (!dirOk) {
-      // Both derivations degenerate: target is behind the camera AND the
-      // origin's near-camera position killed the aux step, OR the user is
-      // looking exactly at / exactly along the target direction (no useful
-      // 2D arrow direction).
+      // Target behind camera kills both perspective-projection-based
+      // derivations (aux-step and target-projection). View-space (x, y)
+      // of the world-space direction sidesteps the projection divide and
+      // tells us which way to rotate to recover the target.
+      const vsDir = viewSpaceScreenDir(dir, camera, this.tmpAux);
+      if (vsDir) {
+        sux = vsDir[0];
+        suy = vsDir[1];
+        dirOk = true;
+      }
+    }
+    if (!dirOk) {
+      // Direction is exactly along the camera axis — no preferred
+      // rotation brings the target into view.
       this.hideArrow(path, bg, label);
       return;
     }

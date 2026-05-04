@@ -1,3 +1,5 @@
+import type * as THREE from 'three';
+
 // Shared arrow shape used by the distance-vector overlay and the Sol/GC
 // locator arrows. Both render in screen space as solid shaft + chevron
 // arrowhead so all on-screen arrows in the app share one silhouette.
@@ -6,6 +8,40 @@
 // settled on this proportion as visually appealing.
 export const ARROW_HEAD_DEPTH_PX = 5;
 export const ARROW_HEAD_HALF_WIDTH_PX = 4;
+
+/**
+ * Screen-space unit direction from screen centre to a world-space
+ * direction vector, robust to behind-camera targets. Used by the HUD's
+ * Sol/GC arrows and the POI arrows as the third-tier fallback after
+ * aux-step and direct target projection both fail.
+ *
+ * Both perspective-projection-based derivations used elsewhere (project
+ * two world points and take the screen delta, or project the target
+ * directly) collapse when the target is behind the camera: the
+ * projection chain divides by z and sign-flips. View-space arithmetic
+ * sidesteps that — the camera-local (x, y) of a direction is the
+ * screen-plane offset regardless of front or behind, so a target the
+ * user must turn 180° to see still yields a useful arrow direction.
+ *
+ * Browser screen y is inverted vs. view-space y (down-positive vs.
+ * up-positive), hence the y flip.
+ *
+ * Returns null only when the direction is exactly along the camera axis
+ * (view-space x and y both ≈ 0) — no rotation brings such a target into
+ * view in any preferred direction.
+ */
+export function viewSpaceScreenDir(
+  worldDir: THREE.Vector3,
+  camera: THREE.Camera,
+  scratch: THREE.Vector3,
+): [number, number] | null {
+  scratch.copy(worldDir).transformDirection(camera.matrixWorldInverse);
+  const sx = scratch.x;
+  const sy = -scratch.y;
+  const len = Math.hypot(sx, sy);
+  if (len < 1e-6) return null;
+  return [sx / len, sy / len];
+}
 
 // Label placement constants — shared so the distance vector and Sol/GC
 // arrows position their labels identically next to the chevron tip.
