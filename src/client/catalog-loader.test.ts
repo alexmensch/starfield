@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { parseBinary, type Constellation } from './catalog-loader';
+import {
+  FLAG_HAS_NAME,
+  FLAG_IS_SOL,
+  FLAG_HAS_BAYER,
+  FLAG_BINARY_PRIMARY,
+} from '../../scripts/catalog-pure';
 
 interface StarRecord {
   pos: [number, number, number];
@@ -219,17 +225,17 @@ describe('catalog-loader / parseBinary', () => {
   });
 
   describe('flags and solIndex', () => {
-    it('sets solIndex when flag bit 0x02 is present', () => {
+    it('sets solIndex when FLAG_IS_SOL is present', () => {
       const cat = parseBinary(
         buildCatalog([
           { ...baseStar },
-          { ...baseStar, flags: 0x02 },
+          { ...baseStar, flags: FLAG_IS_SOL },
           { ...baseStar },
         ]),
         blankConstellations,
       );
       expect(cat.solIndex).toBe(1);
-      expect(cat.flags[1] & 0x02).toBeTruthy();
+      expect(cat.flags[1] & FLAG_IS_SOL).toBeTruthy();
     });
 
     it('solIndex stays -1 when no star carries the bit', () => {
@@ -240,12 +246,13 @@ describe('catalog-loader / parseBinary', () => {
       expect(cat.solIndex).toBe(-1);
     });
 
-    it('preserves combined flag bits (has_name | is_sol | binary_primary)', () => {
+    it('preserves combined flag bits (has_name | is_sol | has_bayer | binary_primary)', () => {
+      const allFlags = FLAG_HAS_NAME | FLAG_IS_SOL | FLAG_HAS_BAYER | FLAG_BINARY_PRIMARY;
       const cat = parseBinary(
-        buildCatalog([{ ...baseStar, flags: 0x01 | 0x02 | 0x04 | 0x10 }]),
+        buildCatalog([{ ...baseStar, flags: allFlags }]),
         blankConstellations,
       );
-      expect(cat.flags[0]).toBe(0x01 | 0x02 | 0x04 | 0x10);
+      expect(cat.flags[0]).toBe(allFlags);
     });
   });
 
@@ -290,7 +297,7 @@ describe('catalog-loader / parseBinary', () => {
       const offsets = nameTableOffsets(names);
       const star: StarRecord = {
         ...baseStar,
-        flags: 0x01, // has_name
+        flags: FLAG_HAS_NAME, // has_name
         nameOffset: offsets[0],
       };
       const cat = parseBinary(
@@ -306,7 +313,7 @@ describe('catalog-loader / parseBinary', () => {
       const offsets = nameTableOffsets(names);
       const records = names.map((_, i) => ({
         ...baseStar,
-        flags: 0x01,
+        flags: FLAG_HAS_NAME,
         nameOffset: offsets[i],
       }));
       const cat = parseBinary(
@@ -323,7 +330,7 @@ describe('catalog-loader / parseBinary', () => {
       const offsets = nameTableOffsets(names);
       const star: StarRecord = {
         ...baseStar,
-        flags: 0, // intentionally NOT 0x01
+        flags: 0, // intentionally NOT FLAG_HAS_NAME
         nameOffset: offsets[0],
       };
       const cat = parseBinary(
@@ -338,7 +345,7 @@ describe('catalog-loader / parseBinary', () => {
       const offsets = nameTableOffsets(names);
       const records = names.map((_, i) => ({
         ...baseStar,
-        flags: 0x01,
+        flags: FLAG_HAS_NAME,
         nameOffset: offsets[i],
       }));
       const cat = parseBinary(

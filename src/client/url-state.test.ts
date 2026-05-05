@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { encodeBlob, decodeBlob, type DecodedView, type StarRef } from './url-state';
+import {
+  encodeBlob,
+  decodeBlob,
+  currentStateOf,
+  type DecodedView,
+  type StarRef,
+  type IdMaps,
+} from './url-state';
+import { DEFAULT_FILTER, DEFAULT_FOV, type Stellata } from './stellata';
 
 // Round-trips the view through the wire format and returns the decoded
 // view + version. Anything the encoder omits (e.g. default values) reads
@@ -470,6 +478,90 @@ describe('url-state', () => {
       const blob = buildV1Blob(1 << 19, payload);
       const { view } = decodeBlob(blob);
       expect(view.pois).toHaveLength(16);
+    });
+  });
+
+  describe('currentStateOf cam-omission', () => {
+    // Minimal mock — currentStateOf only reads getters and the camera /
+    // controls vec3-shaped fields. Anything not exercised by these tests
+    // returns the "default" sentinel so encoder skips that field.
+    function makeMockStellata(opts: {
+      mode?: 'navigate' | 'observe';
+      camPos?: [number, number, number];
+      target?: [number, number, number];
+      up?: [number, number, number];
+      focusedStar?: number | null;
+    } = {}): Stellata {
+      const mode = opts.mode ?? 'navigate';
+      const camPos = opts.camPos ?? [0, 0, 30];
+      const tgt = opts.target ?? [0, 0, 0];
+      const up = opts.up ?? [0, 1, 0];
+      const stub: Partial<Stellata> = {
+        getFilter: () => ({ ...DEFAULT_FILTER }),
+        getCameraFov: () => DEFAULT_FOV,
+        getFocusedStar: () => opts.focusedStar ?? null,
+        getFocusedCloud: () => null,
+        getVectorTo: () => null,
+        getVectorToCloud: () => null,
+        getCameraMode: () => mode,
+        getPois: () => [],
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        camera: {
+          position: { x: camPos[0], y: camPos[1], z: camPos[2] },
+          up: { x: up[0], y: up[1], z: up[2] },
+        } as any,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        controls: {
+          target: { x: tgt[0], y: tgt[1], z: tgt[2] },
+        } as any,
+      };
+      return stub as Stellata;
+    }
+
+    const idMaps: IdMaps = {
+      hipToIndex: new Map(),
+      indexToHip: new Uint32Array(1),
+      starCount: 1,
+      solIndex: 0,
+    };
+
+    it('omits cam when observe-mode camera is parked at the focal-star origin', () => {
+      // PR #1's optimisation: cam=[0,0,0] is the floating-origin local
+      // position of the focal star, so it shouldn't roundtrip through the
+      // URL. Regression: a future change that points camDefault elsewhere
+      // for observe would silently re-introduce the 16 chars.
+      const view = currentStateOf(
+        makeMockStellata({ mode: 'observe', camPos: [0, 0, 0], focusedStar: 5 }),
+        idMaps,
+      );
+      expect(view.cam).toBeUndefined();
+      expect(view.mode).toBe('observe');
+    });
+
+    it('emits cam when observe-mode camera is *not* at the focal origin', () => {
+      const view = currentStateOf(
+        makeMockStellata({ mode: 'observe', camPos: [1, 2, 3], focusedStar: 5 }),
+        idMaps,
+      );
+      expect(view.cam).toEqual([1, 2, 3]);
+    });
+
+    it('emits cam when navigate-mode camera is at [0,0,0] (not its default)', () => {
+      // Navigate-mode default is [0, 0, 30]; [0, 0, 0] is meaningfully
+      // off-default and must round-trip.
+      const view = currentStateOf(
+        makeMockStellata({ mode: 'navigate', camPos: [0, 0, 0] }),
+        idMaps,
+      );
+      expect(view.cam).toEqual([0, 0, 0]);
+    });
+
+    it('omits cam when navigate-mode camera is at the navigate default', () => {
+      const view = currentStateOf(
+        makeMockStellata({ mode: 'navigate', camPos: [0, 0, 30] }),
+        idMaps,
+      );
+      expect(view.cam).toBeUndefined();
     });
   });
 

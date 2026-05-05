@@ -295,9 +295,10 @@ describe('chart-labels / projectVec', () => {
     return cam;
   }
 
-  it('returns null for a point at the near plane', () => {
+  it('returns null for a point closer than OVERLAY_NEAR_CLIP_PC', () => {
     const cam = makeCamera();
-    const p = new THREE.Vector3(0, 0, -0.005); // closer than near=0.01
+    // OVERLAY_NEAR_CLIP_PC = 1e-3; a point at z=-5e-4 is inside that.
+    const p = new THREE.Vector3(0, 0, -5e-4);
     expect(projectVec(p, cam, 800, 600)).toBeNull();
   });
 

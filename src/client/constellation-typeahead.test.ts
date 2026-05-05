@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { filterConstellations, type ConEntry } from './constellation-typeahead';
+import { TYPEAHEAD_MAX_RESULTS } from './typeahead-util';
 
 // Build a representative subset of constellation entries (in alphabetical
 // order, matching the binding's sort step) that exercises the filter.
@@ -51,8 +52,8 @@ describe('constellation-typeahead / filterConstellations', () => {
         search: `con${i} c${i}`,
       }));
       const out = filterConstellations(many, '');
-      // None + 9 entries = 10 total
-      expect(out).toHaveLength(10);
+      // None + (TYPEAHEAD_MAX_RESULTS - 1) entries.
+      expect(out).toHaveLength(TYPEAHEAD_MAX_RESULTS);
       expect(out[0].idx).toBe(-1);
     });
   });
@@ -98,7 +99,7 @@ describe('constellation-typeahead / filterConstellations', () => {
         search: `match${i} m${i}`,
       }));
       const out = filterConstellations(many, 'match');
-      expect(out).toHaveLength(10);
+      expect(out).toHaveLength(TYPEAHEAD_MAX_RESULTS);
     });
 
     it('preserves entry order from the input', () => {

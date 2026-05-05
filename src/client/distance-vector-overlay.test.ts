@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { projectWithNearClip, viewportSegmentExit } from './distance-vector-overlay';
+import { OVERLAY_NEAR_CLIP_PC } from './arrow-path';
 
 // Set up a perspective camera at the origin looking down -Z, mirroring the
 // canonical Stellata camera. matrixWorldInverse and projectionMatrix must
@@ -34,12 +35,12 @@ describe('distance-vector-overlay / projectWithNearClip', () => {
     expect(projectWithNearClip(a, b, cam, W, H)).toBeNull();
   });
 
-  it('returns null when source point is exactly at the near plane', () => {
-    const cam = makeCamera({ near: 0.5 });
-    // Source view-space z must be strictly < -near (i.e., further than the
-    // near plane), not equal. The threshold is half-open to avoid a
-    // degenerate projection.
-    const a = new THREE.Vector3(0, 0, -0.5);
+  it('returns null when source point is exactly at OVERLAY_NEAR_CLIP_PC', () => {
+    const cam = makeCamera();
+    // Source view-space z must be strictly < -OVERLAY_NEAR_CLIP_PC (i.e.,
+    // further than the overlay near-clip), not equal. The threshold is
+    // half-open to avoid a degenerate projection.
+    const a = new THREE.Vector3(0, 0, -OVERLAY_NEAR_CLIP_PC);
     const b = new THREE.Vector3(0, 0, -10);
     expect(projectWithNearClip(a, b, cam, W, H)).toBeNull();
   });
@@ -78,7 +79,7 @@ describe('distance-vector-overlay / projectWithNearClip', () => {
   });
 
   it('clips destination to the near plane when only it is behind the camera', () => {
-    const cam = makeCamera({ near: 0.1 });
+    const cam = makeCamera();
     // Source slightly in front; destination behind the camera, off-axis.
     const a = new THREE.Vector3(1, 0, -1);
     const b = new THREE.Vector3(1, 0, 1);
@@ -89,12 +90,12 @@ describe('distance-vector-overlay / projectWithNearClip', () => {
   });
 
   it('returns null when destination is on the near plane and segment cannot cross', () => {
-    const cam = makeCamera({ near: 0.1 });
+    const cam = makeCamera();
     // Both source and dest at the threshold plane → degenerate segment.
     // Source at threshold returns null on the source check before getting
     // to the destination clip.
-    const a = new THREE.Vector3(0, 0, -0.1);
-    const b = new THREE.Vector3(0, 0, -0.1);
+    const a = new THREE.Vector3(0, 0, -OVERLAY_NEAR_CLIP_PC);
+    const b = new THREE.Vector3(0, 0, -OVERLAY_NEAR_CLIP_PC);
     expect(projectWithNearClip(a, b, cam, W, H)).toBeNull();
   });
 
