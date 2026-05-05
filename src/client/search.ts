@@ -26,6 +26,13 @@ interface FuzzyEntry {
   displayCon: string;   // shown in dropdown secondary line
 }
 
+// Shared cap for both typeahead dropdowns (this file's SearchBox and the
+// constellation typeahead). Sized so the wraparound point matches what the
+// 320px max-height + ~30px row height actually shows on screen, so users
+// don't arrow-nav past invisible rows. Revisit per stellata-9kz if we
+// decide scroll-to-find-more is preferable to type-to-narrow.
+export const TYPEAHEAD_MAX_RESULTS = 10;
+
 let activeBox: SearchBox | null = null;
 
 class SearchBox {
@@ -444,7 +451,7 @@ export function bindSearch(
       if (seen.has(key)) continue;
       seen.add(key);
       out.push(r.item);
-      if (out.length >= 12) break;
+      if (out.length >= TYPEAHEAD_MAX_RESULTS) break;
     }
     return out;
   };
