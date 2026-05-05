@@ -43,7 +43,7 @@ describe('constellation-typeahead / filterConstellations', () => {
       expect(out[0].idx).toBe(-1);
     });
 
-    it('caps total length at MAX_RESULTS even with None included', () => {
+    it('caps total length at TYPEAHEAD_MAX_RESULTS even with None included', () => {
       const many: ConEntry[] = Array.from({ length: 100 }, (_, i) => ({
         idx: i,
         name: `Con${i}`,
@@ -51,8 +51,8 @@ describe('constellation-typeahead / filterConstellations', () => {
         search: `con${i} c${i}`,
       }));
       const out = filterConstellations(many, '');
-      // None + 29 entries = 30 total
-      expect(out).toHaveLength(30);
+      // None + 9 entries = 10 total
+      expect(out).toHaveLength(10);
       expect(out[0].idx).toBe(-1);
     });
   });
@@ -90,7 +90,7 @@ describe('constellation-typeahead / filterConstellations', () => {
       expect(out.find(e => e.idx === -1)).toBeUndefined();
     });
 
-    it('caps results at MAX_RESULTS', () => {
+    it('caps results at TYPEAHEAD_MAX_RESULTS', () => {
       const many: ConEntry[] = Array.from({ length: 100 }, (_, i) => ({
         idx: i,
         name: `Match${i}`,
@@ -98,7 +98,7 @@ describe('constellation-typeahead / filterConstellations', () => {
         search: `match${i} m${i}`,
       }));
       const out = filterConstellations(many, 'match');
-      expect(out).toHaveLength(30);
+      expect(out).toHaveLength(10);
     });
 
     it('preserves entry order from the input', () => {

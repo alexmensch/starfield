@@ -22,6 +22,7 @@ import { bindKeyboardShortcuts } from './keyboard-shortcuts';
 import { applyFromUrl, startUrlSync, type IdMaps } from './url-state';
 import { fmtDist, onUnitChange } from './distance-util';
 import { setupDebug } from './debug';
+import { escapeHtml } from './dom-util';
 
 const HOVER_DELAY_MS = 280;
 
@@ -299,14 +300,6 @@ function bindHoverTooltip(
       tooltip.hidden = false;
     }, HOVER_DELAY_MS);
   });
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
 }
 
 main();
