@@ -1,5 +1,6 @@
 import type { Stellata } from './stellata';
-import { TYPEAHEAD_MAX_RESULTS } from './search';
+import { applyHoverClass, TYPEAHEAD_MAX_RESULTS } from './typeahead-util';
+import { escapeHtml } from './dom-util';
 
 // Typeahead replacement for the old `<select id="con-select">` constellation
 // picker. 88 entries, all known up-front — no fuzzy library needed; a
@@ -79,23 +80,9 @@ export function bindConstellationTypeahead(stellata: Stellata) {
     }
   };
 
-  // Arrow-nav path: swap the .active class in place rather than rebuilding
-  // the whole list. With 88 constellations the rebuild per keypress was
-  // visibly janky. Also scroll the new row into view so wrap-around past
-  // the dropdown's max-height stays visible.
   const setHover = (newIdx: number) => {
-    if (newIdx === hoverIdx) return;
-    const prev = hoverIdx;
+    applyHoverClass(resultsEl, hoverIdx, newIdx);
     hoverIdx = newIdx;
-    const children = resultsEl.children;
-    if (prev >= 0 && prev < children.length) {
-      (children[prev] as HTMLElement).classList.remove('active');
-    }
-    if (newIdx >= 0 && newIdx < children.length) {
-      const next = children[newIdx] as HTMLElement;
-      next.classList.add('active');
-      next.scrollIntoView({ block: 'nearest' });
-    }
   };
 
   const renderQuery = (query: string) => {
@@ -154,12 +141,4 @@ export function bindConstellationTypeahead(stellata: Stellata) {
   };
   stellata.onFilterChange(syncFromFilter);
   syncFromFilter();
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
 }

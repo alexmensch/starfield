@@ -2,6 +2,8 @@ import Fuse from 'fuse.js';
 import type { Stellata } from './stellata';
 import type { Catalog } from './catalog-loader';
 import type { CloudCatalog } from './cloud-loader';
+import { applyHoverClass, TYPEAHEAD_MAX_RESULTS } from './typeahead-util';
+import { escapeHtml } from './dom-util';
 
 export interface SearchIndexEntry {
   i: number;
@@ -25,13 +27,6 @@ interface FuzzyEntry {
   primary: string;      // shown in dropdown primary line
   displayCon: string;   // shown in dropdown secondary line
 }
-
-// Shared cap for both typeahead dropdowns (this file's SearchBox and the
-// constellation typeahead). Sized so the wraparound point matches what the
-// 320px max-height + ~30px row height actually shows on screen, so users
-// don't arrow-nav past invisible rows. Revisit per stellata-9kz if we
-// decide scroll-to-find-more is preferable to type-to-narrow.
-export const TYPEAHEAD_MAX_RESULTS = 10;
 
 let activeBox: SearchBox | null = null;
 
@@ -112,23 +107,9 @@ class SearchBox {
     }
   }
 
-  // Arrow-nav path: only the active row changes, so swap classes in place
-  // rather than tearing down and rebuilding every <li>. The full rebuild
-  // was visibly janky on long result lists. Also scroll the new row into
-  // view so wrap-around past the dropdown's max-height stays visible.
   private setHover(newIdx: number) {
-    const prev = this.hoverIdx;
-    if (prev === newIdx) return;
+    applyHoverClass(this.resultsEl, this.hoverIdx, newIdx);
     this.hoverIdx = newIdx;
-    const children = this.resultsEl.children;
-    if (prev >= 0 && prev < children.length) {
-      (children[prev] as HTMLElement).classList.remove('active');
-    }
-    if (newIdx >= 0 && newIdx < children.length) {
-      const next = children[newIdx] as HTMLElement;
-      next.classList.add('active');
-      next.scrollIntoView({ block: 'nearest' });
-    }
   }
 
   private pick(i: number) {
@@ -576,12 +557,4 @@ export function bindSearch(
 
   syncFocusUI();
   syncVectorUI();
-}
-
-function escapeHtml(s: string) {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
 }
