@@ -181,8 +181,14 @@ the currently focused star.
 - `recenterOrigin(newOrigin)` rewrites the local-positions buffer using
   JS Number (= float64) subtraction and shifts `camera.position` and
   `controls.target` by the same delta so the user sees no jump.
-- `setFocus(idx)` calls `recenterOrigin` automatically — focusing a star
-  pins the frame to it, unfocusing snaps the origin back to Sol.
+- `setFocus(idx)` calls `recenterOrigin` automatically when focusing a
+  star — the floating origin pins to that star. **Unfocusing does not
+  recentre** (since a7d.2.11): `worldOffset` stays at the former focal
+  object so the projection chain remains float32-clean across the
+  focus → unfocus transition. URL serialisation rides this along via a
+  free `worldOffset` Float32 vec3 field, so close-orbit unfocus poses
+  round-trip exactly. The anchor concept is type-agnostic — future
+  object kinds (clouds, planets, probes) plug into the same mechanism.
 
 The key precision win: the big `absolute − offset` subtractions happen
 in JS float64 on the CPU, producing small float32 deltas near zero with

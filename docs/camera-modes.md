@@ -313,13 +313,13 @@ frame is current). Two reasons:
   distance — `TrackballControls.update()`'s built-in `lookAt(target)`
   is therefore a no-op for orientation, and the user keeps facing
   whatever they were observing.
-- Setting `target = (0,0,0)` instead would point at Sol once
-  `setFocus(null)` recentred the origin, and the lookAt would whip
-  the camera around to face Sol. Using `fromPos` works for both the
-  unfocus path (`fromPos` = star's Sol-centric position) and the
-  focus-retained path (`fromPos` = `(0,0,0)` = the focused star
-  before the recenter that wasn't called), since both paths capture
-  `fromPos` from the camera position right before the lerp begins.
+- Setting `target = (0,0,0)` instead would point at the local-frame
+  origin (where the focal star sat) and the lookAt would whip the
+  camera around to face it. Using `fromPos` works for both the
+  unfocus path and the focus-retained path because each captures
+  `fromPos` from the camera position right before the lerp begins —
+  whatever frame the camera is in, `fromPos` is along the forward
+  ray at minDist, which is what we want lookAt to be a no-op against.
 
 **URL state:** the OBSERVE-mode flag round-trips through the `?v=`
 blob (flags-byte bit 5), applied after camera params +

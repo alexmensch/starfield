@@ -55,6 +55,28 @@ describe('url-state', () => {
       expect(out.up![0]).toBeCloseTo(0.7071, 4);
       expect(out.up![2]).toBeCloseTo(0.7071, 4);
     });
+
+    it('round-trips worldOffset alongside small local-frame cam/tgt', () => {
+      // The close-orbit unfocus case (stellata-a7d.2.11): worldOffset
+      // sits at a far-from-Sol focal star, cam/tgt are sub-µpc local
+      // values. Float32 preserves both magnitudes cleanly when stored
+      // in their natural frames (worldOffset absolute, cam/tgt local),
+      // whereas combining them into Sol-absolute floats would round
+      // the µpc separation to zero.
+      const view: DecodedView = {
+        worldOffset: [51.6, 257, -37.7],
+        cam: [1.85e-6, -2.61e-6, 3.95e-5],
+        tgt: [0, 0, 0],
+      };
+      const { view: out } = roundtrip(view);
+      expect(out.worldOffset![0]).toBeCloseTo(51.6, 3);
+      expect(out.worldOffset![1]).toBeCloseTo(257, 3);
+      expect(out.worldOffset![2]).toBeCloseTo(-37.7, 3);
+      // Local-frame cam preserved at sub-µpc precision because float32
+      // ULP at these magnitudes is ~1e-13.
+      expect(out.cam![0]).toBeCloseTo(1.85e-6, 9);
+      expect(out.cam![2]).toBeCloseTo(3.95e-5, 9);
+    });
   });
 
   describe('quantised u8 fields (v2)', () => {

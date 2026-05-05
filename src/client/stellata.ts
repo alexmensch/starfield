@@ -869,6 +869,21 @@ export class Stellata {
 
   getFocusedStar(): number | null { return this.focusedStar; }
   getFocusedCloud(): number | null { return this.focusedCloud; }
+  /** Absolute-space coordinate of the renderer's current local origin.
+   *  Read-only snapshot; callers must not mutate. URL serialisation
+   *  emits this so close-orbit unfocus poses (where worldOffset sits at
+   *  the former focal star, not Sol — see stellata-a7d.2.11) round-trip
+   *  exactly through the float32 cam/tgt fields. */
+  getWorldOffset(): Readonly<THREE.Vector3> { return this.worldOffset; }
+  /** Shift the floating origin to a new absolute position. Star instance
+   *  positions, camera, and controls.target are translated to preserve
+   *  the user-visible pose; subsequent rendering operates in the new
+   *  local frame. URL loading uses this to restore a saved worldOffset
+   *  before applying cam/tgt (which then overwrite the camera/target
+   *  translations the recentre produced). */
+  setWorldOffset(absX: number, absY: number, absZ: number): void {
+    this.recenterOrigin(this.tmpRecenter.set(absX, absY, absZ));
+  }
   getVectorTo(): number | null { return this.vectorTo; }
   getVectorToCloud(): number | null { return this.vectorToCloud; }
   getMonochrome(): boolean { return this.monochrome; }
@@ -1112,11 +1127,21 @@ export class Stellata {
       for (const h of this.onCameraModeHandlers) h(this.cameraMode);
     }
     this.focusedStar = idx;
-    // Recenter the floating origin on every focus change. Focused: origin
-    // snaps to the focused star's absolute position, so close-range rendering
-    // happens with tiny coordinate values. Unfocused: origin snaps back to
-    // Sol (0,0,0) so the URL-serialised camera pose is in absolute space
-    // whenever no focus anchor is in play.
+    // Recenter the floating origin only when *focusing* a star. The new
+    // origin snaps to the focal star's absolute position, so close-range
+    // rendering happens with tiny coordinate values and the projection
+    // chain stays float32-clean. On *unfocus* (idx === null) we leave
+    // worldOffset alone — the camera is wherever it was, and continuing
+    // to render in the (former focal star's) local frame keeps every
+    // close-orbit precision invariant intact across the focus → unfocus
+    // transition (stellata-a7d.2.11). worldOffset only ever changes on
+    // focus, so the URL contract is "cam/tgt are in worldOffset-local
+    // frame; worldOffset itself rides along when it differs from Sol"
+    // (see url-state.ts FIELDS_V2 bit 20 + the loader's worldOffset
+    // application). Earlier behaviour recentred to Sol on every unfocus
+    // for URL simplicity, but that re-introduced kpc-scale subtractions
+    // in the projection chain and visibly bumped the focal star on
+    // screen at the moment of unfocus.
     if (idx !== null) {
       const p = this.catalog.positions;
       this.recenterOrigin(this.tmpRecenter.set(
@@ -1136,9 +1161,8 @@ export class Stellata {
       this.camera.position.y -= t.y;
       this.camera.position.z -= t.z;
       t.set(0, 0, 0);
-    } else {
-      this.recenterOrigin(this.tmpRecenter.set(0, 0, 0));
     }
+    // else: no recentre — see comment above.
     if (idx !== null) {
       this.controls.minDistance = this.minOrbitDistForStar(idx);
     } else {
@@ -1309,10 +1333,12 @@ export class Stellata {
     if (!cloud) return;
     if (this.warpState) return;
 
-    // Drop any star focus first. setFocus(null) recenters the floating
-    // origin to Sol, putting both camera and target back into absolute
-    // ICRS space — so we can place the new view directly using the
-    // cloud's absolute centroid, without subtracting worldOffset.
+    // Drop any star focus first. Since a7d.2.11, setFocus(null) leaves
+    // worldOffset at the former focal star (so the projection chain
+    // stays float32-clean across unfocus); we therefore can't assume
+    // the local frame is Sol-relative here. Subtract worldOffset
+    // explicitly when placing camera/target so the cloud's absolute
+    // centroid translates correctly into the current local frame.
     if (this.focusedStar !== null) this.setFocus(null);
     this.setVectorTo(null);
     this.setVectorToCloud(null);
@@ -1322,8 +1348,8 @@ export class Stellata {
     if (dir.lengthSq() < 1e-6) dir.set(0, 0, 1);
     dir.normalize().multiplyScalar(offsetDist);
 
-    this.controls.target.copy(cloud.centerAbs);
-    this.camera.position.copy(cloud.centerAbs).add(dir);
+    this.controls.target.copy(cloud.centerAbs).sub(this.worldOffset);
+    this.camera.position.copy(this.controls.target).add(dir);
     this.controls.update();
     this.setFocusedCloud(idx);
   }
@@ -1451,14 +1477,16 @@ export class Stellata {
     this.setVectorToCloud(null);
     // X-out from OBSERVE: clear focus FIRST so the search box empties as
     // soon as the user clicks (via onFocusChange → syncFocusUI), then
-    // animate the same zoom-out the navigate-mode toggle uses. The
-    // animation runs in the post-recenter (Sol-centric) frame because
-    // setFocus(null) recentres the floating origin.
+    // animate the same zoom-out the navigate-mode toggle uses. Since
+    // a7d.2.11 setFocus(null) doesn't recentre, so the animation runs
+    // in the (former focal star's) local frame — fromPos/toPos below
+    // are captured in that same frame.
     if (this.cameraMode === 'observe' && this.focusedStar !== null) {
       const focalIdx = this.focusedStar;
       const minDist = this.minDistForStar(focalIdx);
-      // Quaternion → forward is frame-invariant, so capture before the
-      // recenter rebases coordinates.
+      // Quaternion → forward is frame-invariant — capturing here is
+      // historical (a7d.2.11 made setFocus(null) below frame-preserving
+      // too) but harmless and self-documenting.
       const forward = new THREE.Vector3(0, 0, -1)
         .applyQuaternion(this.camera.quaternion);
 
@@ -1468,10 +1496,10 @@ export class Stellata {
       this.observeControls.disable();
       this.observeAimState = null;
 
-      // setFocus(null) recentres origin → camera.position translates;
-      // search box clears via the onFocusChange handler. cameraMode is
-      // already 'navigate' so the observe-cleanup branch inside setFocus
-      // is skipped.
+      // Clear the star focus; search box clears via the onFocusChange
+      // handler. cameraMode is already 'navigate' so the observe-cleanup
+      // branch inside setFocus is skipped. Since a7d.2.11, setFocus(null)
+      // leaves worldOffset alone — camera.position stays put.
       this.setFocus(null);
 
       const fromPos = this.camera.position.clone();
@@ -1771,11 +1799,13 @@ export class Stellata {
     if (!this.clouds) return;
     const cloud = this.clouds.clouds[cloudIdx];
     if (!cloud) return;
-    // setFocusedCloud clears any star focus first, which recenters the
-    // floating origin to Sol — so the cloud's absolute centroid IS its
-    // local-frame coordinate after that.
+    // setFocusedCloud clears any star focus first. Since a7d.2.11,
+    // that doesn't recentre worldOffset back to Sol — the floating
+    // origin stays at the former focal star — so subtract worldOffset
+    // to translate the cloud's absolute centroid into the current
+    // local frame before assigning it as controls.target.
     this.setFocusedCloud(cloudIdx);
-    this.controls.target.copy(cloud.centerAbs);
+    this.controls.target.copy(cloud.centerAbs).sub(this.worldOffset);
     this.controls.update();
   }
 
@@ -3155,15 +3185,14 @@ export class Stellata {
       // and gives the user a sensible orbit pivot (the star they just left)
       // for any subsequent drag.
       //
-      // Origin frame at this point depends on the caller:
-      //   - setCameraMode → startObserveExit (focus retained): origin still
-      //     on the focused star, fromPos = (0,0,0) = the focused star.
-      //   - unfocus (focus cleared via setFocus(null) before the lerp):
-      //     origin recentered to Sol, fromPos = the star's Sol-centric
-      //     absolute position.
-      // Setting target = (0,0,0) here was correct only for the first case;
-      // in the unfocus path it pointed at Sol and TrackballControls.update()'s
-      // lookAt(target) would whip the camera around to face Sol.
+      // Origin frame at this point: since a7d.2.11, both branches
+      // (focus-retained exit and unfocus exit) leave worldOffset on
+      // the (former) focal star — setFocus(null) no longer recentres
+      // — so fromPos is the captured camera position in *that* local
+      // frame regardless of which path the user took. Setting
+      // target = (0,0,0) would point at the focal star's local origin
+      // and lookAt(target) would whip the camera around to face it;
+      // setting target = fromPos keeps lookAt a no-op.
       this.controls.target.copy(state.fromPos);
       // Align camera.up with the camera's current local +Y. Without this,
       // lookAt(target) inside controls.update() would re-resolve roll
