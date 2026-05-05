@@ -735,7 +735,11 @@ export function applyDecodedView(
 
   if (view.focus !== undefined) {
     if (view.focus === 'cleared') {
-      stellata.unfocus();
+      // URL restore — bypass the close-zoom unfocus animation (a7d.2.6).
+      // cam/tgt below would overwrite camera.position mid-lerp, leaving
+      // the transition state to silently drag the camera away from the
+      // restored pose on the next frame.
+      stellata.unfocus({ animate: false });
     } else {
       const idx = resolveStarRef(view.focus, idMaps, idMaps.solIndex);
       if (idx >= 0 && idx < idMaps.starCount) {
@@ -863,11 +867,11 @@ export function startUrlSync(stellata: Stellata, idMaps: IdMaps): void {
   onUnitChange(schedule);
 
   stellata.onFrame(() => {
-    // Skip URL writes while a warp or observe transition is in flight —
+    // Skip URL writes while any camera-position lerp is in flight (warp,
+    // observe enter/exit, or navigate-mode unfocus zoom-out a7d.2.6) —
     // the camera mutates every frame and we don't want intermediate poses
     // in the URL. The end-of-animation events flush the final pose.
-    if (stellata.getWarpActive()) return;
-    if (stellata.isObserveTransitionActive()) return;
+    if (stellata.isCameraTransitionActive()) return;
     const c = stellata.camera.position;
     const t = stellata.controls.target;
     const u = stellata.camera.up;

@@ -299,7 +299,26 @@ direction from the new vantage — see §Warp animation phase 3.
 focused-star and immediately clears focus *before* starting the
 zoom-out animation. The search box empties via `onFocusChange` on the
 click, then the camera pulls back to `minDistForStar(formerFocal)`
-along its current view direction over `OBSERVE_TRANSITION_MS`. Capturing
+along its current view direction over `OBSERVE_TRANSITION_MS`.
+
+**Navigate-mode close-zoom unfocus** (a7d.2.6) takes the same shape:
+when the user hits Esc / clicks the focused star / clicks the X while
+already in navigate, and the camera sits closer than
+`minDistForStar(focal)`, `unfocus()` lerps the camera outward along
+its view direction to `minDistForStar` over `OBSERVE_TRANSITION_MS`
+instead of teleporting. Reuses `observeTransition` with a third
+`kind: 'unfocus'`. `setFocus(null)` runs at lerp start so UI clears
+immediately; `controls.minDistance` is tightened to `minDistForStar`
+on landing so manual zoom-in is bounded by the same parking distance.
+Skipped (snap) when already at or beyond the floor; cancelled cleanly
+by any new camera-changing action via `cancelUnfocusLerp` calls at
+the entry points (`focusStar`, `startWarp`, `aimAt`,
+`aimAtConstellation`, `onPointerUp`). `controls.enabled` is **not**
+toggled during the lerp — the `animate()` dispatcher routes to the
+lerp tick instead of `controls.update()`, so user input accumulates
+inside TrackballControls but doesn't apply visually. Disabling
+explicitly would race the click-to-unfocus event chain and leave
+TrackballControls' `_state` stuck at `ROTATE`. Capturing
 `forward` from the camera quaternion before the recenter (frame-
 invariant) keeps the animation aimed correctly even though
 `setFocus(null)` translates camera position into Sol-centric coords
@@ -325,7 +344,11 @@ frame is current). Two reasons:
 blob (flags-byte bit 5), applied after camera params +
 `controls.update()` so the saved pose lands first. The URL writer's
 debounced frame hook skips writes during
-`isObserveTransitionActive()` (mirrors the warp guard).
+`isCameraTransitionActive()` — covers warp, observe enter/exit, and
+the navigate-mode unfocus lerp (a7d.2.6) so transient mid-lerp poses
+don't get serialised. URL apply for `focus: 'cleared'` calls
+`unfocus({ animate: false })` so a state restore doesn't fight a
+following `view.cam` write.
 
 **Click dispatch in OBSERVE.** Canvas clicks have their own dispatcher
 distinct from navigate's click-state machine. `onPointerUp` defers
