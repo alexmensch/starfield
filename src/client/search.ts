@@ -107,7 +107,8 @@ class SearchBox {
 
   // Arrow-nav path: only the active row changes, so swap classes in place
   // rather than tearing down and rebuilding every <li>. The full rebuild
-  // was visibly janky on long result lists.
+  // was visibly janky on long result lists. Also scroll the new row into
+  // view so wrap-around past the dropdown's max-height stays visible.
   private setHover(newIdx: number) {
     const prev = this.hoverIdx;
     if (prev === newIdx) return;
@@ -117,7 +118,9 @@ class SearchBox {
       (children[prev] as HTMLElement).classList.remove('active');
     }
     if (newIdx >= 0 && newIdx < children.length) {
-      (children[newIdx] as HTMLElement).classList.add('active');
+      const next = children[newIdx] as HTMLElement;
+      next.classList.add('active');
+      next.scrollIntoView({ block: 'nearest' });
     }
   }
 

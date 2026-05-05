@@ -82,7 +82,8 @@ export function bindConstellationTypeahead(stellata: Stellata) {
 
   // Arrow-nav path: swap the .active class in place rather than rebuilding
   // the whole list. With 88 constellations the rebuild per keypress was
-  // visibly janky.
+  // visibly janky. Also scroll the new row into view so wrap-around past
+  // the dropdown's max-height stays visible.
   const setHover = (newIdx: number) => {
     if (newIdx === hoverIdx) return;
     const prev = hoverIdx;
@@ -92,7 +93,9 @@ export function bindConstellationTypeahead(stellata: Stellata) {
       (children[prev] as HTMLElement).classList.remove('active');
     }
     if (newIdx >= 0 && newIdx < children.length) {
-      (children[newIdx] as HTMLElement).classList.add('active');
+      const next = children[newIdx] as HTMLElement;
+      next.classList.add('active');
+      next.scrollIntoView({ block: 'nearest' });
     }
   };
 
