@@ -1,7 +1,6 @@
 import { type FilterState, type Stellata, type MagPresetName, MAG_PRESETS, DEFAULT_FOV } from './stellata';
 import { sliderToDist, distToSlider, SLIDER_STEPS } from './controls';
-import { setUnit } from './distance-util';
-import { getUnit, onUnitChange } from './distance-util';
+import { setUnit, getUnit, onUnitChange } from './distance-util';
 
 // URL state lives in a single opaque param: `?v=<base64url>`. The blob
 // is `[1 byte version] [3 bytes LE presence mask] [variable payload]`
@@ -39,6 +38,12 @@ const EPS = 1e-3;
 const DEFAULT_CAM: [number, number, number] = [0, 0, 30];
 const DEFAULT_TGT: [number, number, number] = [0, 0, 0];
 const DEFAULT_UP: [number, number, number] = [0, 1, 0];
+
+// Observe-mode camera default in the focal-star-local frame: the camera
+// sits *at* the focused star, so its local position is the origin. This
+// is semantically distinct from DEFAULT_TGT (target at origin in
+// navigate-mode absolute coords); naming it separately keeps grep honest.
+const OBSERVE_CAM_LOCAL: [number, number, number] = [0, 0, 0];
 
 // Focus-tag-bit semantics: high bit set = HIP-resolved ID, clear = raw
 // row index. The 0xFFFFFFFF sentinel is reserved (won't naturally appear
@@ -611,7 +616,7 @@ export function currentStateOf(stellata: Stellata, idMaps: IdMaps): DecodedView 
   // them when at default trims ~16 base64url chars from nearly every
   // URL. Cam's default depends on mode — receiver re-snaps cam to
   // origin via setCameraMode('observe', { animate: false }) on apply.
-  const camDefault = mode === 'observe' ? [0, 0, 0] : DEFAULT_CAM;
+  const camDefault = mode === 'observe' ? OBSERVE_CAM_LOCAL : DEFAULT_CAM;
   if (!approx(c.x, camDefault[0]) || !approx(c.y, camDefault[1]) || !approx(c.z, camDefault[2])) {
     view.cam = [c.x, c.y, c.z];
   }
@@ -719,7 +724,7 @@ export function applyDecodedView(
   // below preserves that quaternion when it pins position again.
   const willEnterObserve = view.mode === 'observe' && stellata.getFocusedStar() !== null;
   if (willEnterObserve && !hasCam) {
-    stellata.camera.position.set(0, 0, 0);
+    stellata.camera.position.set(...OBSERVE_CAM_LOCAL);
   }
   if (hasCam || hasTgt || view.up || willEnterObserve) stellata.controls.update();
 

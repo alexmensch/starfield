@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import type { Stellata } from './stellata';
 import type { ChartModeContext } from './chart-mode';
 import { mark as perfMark, measure as perfMeasure } from './perf-hud';
+import { FLAG_BINARY_PRIMARY } from '../../scripts/catalog-pure';
+import { OVERLAY_NEAR_CLIP_PC } from './arrow-path';
 
 // Phase 8 — chart-mode label engine. Per-frame, projects every candidate
 // label (proper-named star, Bayer-letter star, constellation Latin name,
@@ -156,10 +158,9 @@ export function startChartLabels(
     const pos = cat.positions;
     for (let i = 0; i < cat.count; i++) {
       if (cat.periodDays[i] > 0 && cat.amplitudeMag[i] > 0) vs.push(i);
-      // Bit 4 (0x10) = isBinaryPrimary per the catalog flag schema. We
-      // use the primary-only set so each system gets one wings glyph
-      // anchored on the brighter component.
-      if ((cat.flags[i] & 0x10) !== 0) bs.push(i);
+      // Primary-only set so each system gets one wings glyph anchored on
+      // the brighter component.
+      if ((cat.flags[i] & FLAG_BINARY_PRIMARY) !== 0) bs.push(i);
       const x = pos[i * 3];
       const y = pos[i * 3 + 1];
       const z = pos[i * 3 + 2];
@@ -745,7 +746,7 @@ export function projectVec(
   // frame and the GC pressure from clone() showed up directly in 1%-low
   // FPS during long observe sessions.
   projVec.copy(p).applyMatrix4(camera.matrixWorldInverse);
-  if (projVec.z >= -camera.near) return null;
+  if (projVec.z >= -OVERLAY_NEAR_CLIP_PC) return null;
   projVec.applyMatrix4(camera.projectionMatrix);
   const x = (projVec.x + 1) * 0.5 * w;
   const y = (1 - projVec.y) * 0.5 * h;

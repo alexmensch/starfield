@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { Stellata } from './stellata';
+import { OVERLAY_NEAR_CLIP_PC } from './arrow-path';
 
 const RADIUS_PX = 24;
 
@@ -63,7 +64,7 @@ export function createFocusRingOverlay(stellata: Stellata) {
     v.set(positions[idx * 3], positions[idx * 3 + 1], positions[idx * 3 + 2]);
     v.applyMatrix4(camera.matrixWorldInverse);
     let sx: number, sy: number;
-    if (v.z > -camera.near) {
+    if (v.z > -OVERLAY_NEAR_CLIP_PC) {
       if (!transition) { hide(); return; }
       sx = window.innerWidth * 0.5;
       sy = window.innerHeight * 0.5;

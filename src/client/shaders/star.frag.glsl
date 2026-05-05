@@ -74,11 +74,10 @@ void main() {
     float r = length(vUv);
     if (r > 0.5) discard;
 
-    // Default: write our actual depth. The disc pass overrides this for
-    // halo fragments so they don't occlude background stars drawn later.
-    // The logdepthbuf chunk overrides this with the log-encoded depth
-    // when the renderer's logarithmicDepthBuffer is enabled.
-    gl_FragDepth = gl_FragCoord.z;
+    // Log-depth chunk writes gl_FragDepth from vFragDepth. The halo
+    // override below pushes haloed disc-pass fragments to the far plane
+    // (1.0 reads correctly under any depth encoding) so they don't
+    // occlude background stars drawn later.
     #include <logdepthbuf_fragment>
 
     // Chart mode: flatten everything. Stars render as solid hard-edged

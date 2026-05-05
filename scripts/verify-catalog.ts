@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { FLAG_HAS_NAME } from './catalog-pure';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
@@ -47,7 +48,7 @@ function readRecord(i: number) {
   const off = HEADER_SIZE + i * RECORD_SIZE;
   const flags = view.getUint8(off + 35);
   const nameOffset = view.getUint32(off + 28, true);
-  const name = flags & 0x01 ? nameAt.get(nameOffset) : null;
+  const name = flags & FLAG_HAS_NAME ? nameAt.get(nameOffset) : null;
   const comp = view.getUint32(off + 24, true);
   const conIdx = view.getUint8(off + 34);
   const hip = view.getUint32(off + 40, true);

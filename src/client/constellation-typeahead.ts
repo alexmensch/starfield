@@ -1,5 +1,5 @@
 import type { Stellata } from './stellata';
-import { applyHoverClass, TYPEAHEAD_MAX_RESULTS } from './typeahead-util';
+import { applyHoverClass, TYPEAHEAD_ACTIVE_CLASS, TYPEAHEAD_MAX_RESULTS } from './typeahead-util';
 import { escapeHtml } from './dom-util';
 
 // Typeahead replacement for the old `<select id="con-select">` constellation
@@ -70,7 +70,7 @@ export function bindConstellationTypeahead(stellata: Stellata) {
     for (let i = 0; i < results.length; i++) {
       const e = results[i];
       const li = document.createElement('li');
-      li.className = i === hoverIdx ? 'active' : '';
+      li.className = i === hoverIdx ? TYPEAHEAD_ACTIVE_CLASS : '';
       li.innerHTML = `<span>${escapeHtml(e.name)}</span><span class="sub">${escapeHtml(e.code)}</span>`;
       li.addEventListener('mousedown', (ev) => {
         ev.preventDefault();

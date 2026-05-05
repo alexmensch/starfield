@@ -2,7 +2,7 @@ import Fuse from 'fuse.js';
 import type { Stellata } from './stellata';
 import type { Catalog } from './catalog-loader';
 import type { CloudCatalog } from './cloud-loader';
-import { applyHoverClass, TYPEAHEAD_MAX_RESULTS } from './typeahead-util';
+import { applyHoverClass, TYPEAHEAD_ACTIVE_CLASS, TYPEAHEAD_MAX_RESULTS } from './typeahead-util';
 import { escapeHtml } from './dom-util';
 
 export interface SearchIndexEntry {
@@ -97,7 +97,7 @@ class SearchBox {
     for (let i = 0; i < this.results.length; i++) {
       const e = this.results[i];
       const li = document.createElement('li');
-      li.className = i === this.hoverIdx ? 'active' : '';
+      li.className = i === this.hoverIdx ? TYPEAHEAD_ACTIVE_CLASS : '';
       li.innerHTML = `<span>${escapeHtml(e.primary)}</span><span class="sub">${escapeHtml(e.displayCon || '—')}</span>`;
       li.addEventListener('mousedown', (ev) => {
         ev.preventDefault();
@@ -305,7 +305,7 @@ export function bindSearch(
       if (norm) glMap.set(norm, entry.i);
     }
 
-    const conIdx = entry.c !== undefined ? entry.c : 255;
+    const conIdx = entry.c ?? 255;
     const con = conIdx !== 255 ? conByIdx[conIdx] : null;
     const conCode = con?.code ?? '';
     const conName = con?.name ?? '';

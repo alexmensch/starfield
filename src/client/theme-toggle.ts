@@ -11,11 +11,11 @@ export type ThemeMode = 'dark' | 'mono';
 
 let stellataRef: Stellata | null = null;
 
-export function registerThemeStellata(stellata: Stellata) {
+export function registerThemeStellata(stellata: Stellata): void {
   stellataRef = stellata;
 }
 
-export function applyTheme(mode: ThemeMode) {
+export function applyTheme(mode: ThemeMode): void {
   document.body.classList.toggle('monochrome', mode === 'mono');
   stellataRef?.setMonochrome(mode === 'mono');
 }

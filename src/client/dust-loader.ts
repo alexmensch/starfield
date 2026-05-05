@@ -181,6 +181,14 @@ export class DustField {
     this.listeners.push(h);
   }
 
+  // Release the ~128 MiB Data3DTexture and drop progress listeners.
+  // Idempotent — three.js .dispose() on an already-disposed texture is a
+  // no-op.
+  dispose() {
+    this.texture.dispose();
+    this.listeners.length = 0;
+  }
+
   /** Kick off background downloads. Resolves when every chunk has been
    *  fetched + uploaded, but callers typically fire-and-forget — the
    *  texture is usable the whole time; it just gets denser as chunks land. */

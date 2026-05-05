@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { Stellata } from './stellata';
+import { OVERLAY_NEAR_CLIP_PC } from './arrow-path';
 
 // Pixel radius left blank around every figure-star so lines don't obscure
 // the star glyph.
@@ -55,7 +56,7 @@ export function createConstellationOverlay(stellata: Stellata) {
         const projected: Array<[number, number] | null> = polyline.map((i) => {
           v.set(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
           v.applyMatrix4(camera.matrixWorldInverse);
-          if (v.z > -camera.near) return null;
+          if (v.z > -OVERLAY_NEAR_CLIP_PC) return null;
           v.applyMatrix4(camera.projectionMatrix);
           return [(v.x + 1) * 0.5 * w, (1 - v.y) * 0.5 * h];
         });

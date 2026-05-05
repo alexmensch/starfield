@@ -1,4 +1,4 @@
-import type * as THREE from 'three';
+import * as THREE from 'three';
 
 // Shared arrow shape used by the distance-vector overlay and the Sol/GC
 // locator arrows. Both render in screen space as solid shaft + chevron
@@ -47,6 +47,87 @@ export function viewSpaceScreenDir(
 // arrows position their labels identically next to the chevron tip.
 export const ARROW_LABEL_OFFSET_PX = 12;
 export const ARROW_LABEL_PADDING_PX = 50;
+
+// CPU-side near-plane clip threshold for screen-space overlay projection.
+// Decoupled from camera.near because PR #7 dropped camera.near to 1e-10 pc
+// to give the GPU log-depth buffer headroom — that's a precision floor,
+// not a perceptual "object is in front of the camera" cutoff. Overlays use
+// this constant so anything within the orbit floor (~5e-3 pc) still
+// projects sensibly without each overlay re-deriving its own threshold.
+export const OVERLAY_NEAR_CLIP_PC = 1e-3;
+
+/**
+ * Three-tier cascade for resolving an arrow's screen-space unit direction.
+ * Used identically by the HUD and POI overlays — both face the same problem
+ * (anchor → direction → 2D unit vector) with the same edge cases.
+ *
+ *   1. **Aux-step** (preferred when origin ≠ camera): project a tiny step
+ *      along `dir` from `auxStepFrom` and take the screen-space delta from
+ *      `(cx, cy)`. Gets perspective right.
+ *   2. **Target-projection** (preferred when origin == camera, e.g. observe
+ *      steady state): if a pre-projected target is available, use the screen
+ *      vector from anchor to that point.
+ *   3. **View-space** (target behind camera): both projection-based
+ *      derivations divide by z and collapse when the target is behind the
+ *      camera; view-space (x, y) of `dir` sidesteps the projection divide.
+ *
+ * Each tier returns null when its result is too short to normalise (<1 px
+ * for tiers 1-2, view-space ≈ 0 for tier 3). Final null only when all three
+ * tiers fail — i.e. the direction is exactly along the camera axis.
+ *
+ * `scratch` is consumed (tier 1 writes the aux point into it; tier 3 writes
+ * the view-space vector into it). Callers must not depend on its value.
+ */
+export function screenDirFromCascade(
+  auxStepFrom: THREE.Vector3,
+  dir: THREE.Vector3,
+  auxStepW: number,
+  targetScreen: [number, number] | null,
+  cx: number,
+  cy: number,
+  camera: THREE.PerspectiveCamera,
+  w: number,
+  h: number,
+  scratch: THREE.Vector3,
+): [number, number] | null {
+  scratch.copy(auxStepFrom).addScaledVector(dir, auxStepW);
+  const auxScreen = projectToScreen(scratch, camera, w, h);
+  if (auxScreen) {
+    const sdx = auxScreen[0] - cx;
+    const sdy = auxScreen[1] - cy;
+    const slen = Math.hypot(sdx, sdy);
+    if (slen >= 1) return [sdx / slen, sdy / slen];
+  }
+  if (targetScreen) {
+    const tdx = targetScreen[0] - cx;
+    const tdy = targetScreen[1] - cy;
+    const tlen = Math.hypot(tdx, tdy);
+    if (tlen >= 1) return [tdx / tlen, tdy / tlen];
+  }
+  return viewSpaceScreenDir(dir, camera, scratch);
+}
+
+/**
+ * Project a local-frame world-space point to CSS pixel coordinates. Returns
+ * null when the point is at or behind the near plane — the projection
+ * matrix is degenerate there and downstream code must fall back to a
+ * direction-based arrow.
+ *
+ * The clone() guards the input from mutation; callers in hot paths pass
+ * scratch vectors anyway, but the cost is one Vector3 alloc per call. If
+ * that ever shows up in a profile, thread an out-vector arg through.
+ */
+export function projectToScreen(
+  p: THREE.Vector3,
+  camera: THREE.PerspectiveCamera,
+  w: number,
+  h: number,
+): [number, number] | null {
+  const v = p.clone().applyMatrix4(camera.matrixWorldInverse);
+  if (v.z >= -OVERLAY_NEAR_CLIP_PC) return null;
+  const ndc = v.applyMatrix4(camera.projectionMatrix);
+  return [(ndc.x + 1) * 0.5 * w, (1 - ndc.y) * 0.5 * h];
+}
 
 /**
  * Build an SVG path for a single arrow given the shaft's start and the

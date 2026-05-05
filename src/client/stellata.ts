@@ -312,6 +312,20 @@ function sameTarget(a: Target | null, b: Target | null): boolean {
   return a.kind === b.kind && a.idx === b.idx;
 }
 
+// Disc-pass blending state. Applied at material construction and re-applied
+// on chart-mode -> colour-mode swap-back, since chart mode swaps the disc
+// material to MultiplyBlending. Single source of truth for the four
+// CustomBlending fields plus the depth flags so a future tweak (e.g. the
+// AddEquation -> MaxEquation switch in PR #25) only needs to touch one site.
+function applyDiscBlendDefaults(m: THREE.ShaderMaterial) {
+  m.blending = THREE.CustomBlending;
+  m.blendSrc = THREE.OneFactor;
+  m.blendDst = THREE.OneFactor;
+  m.blendEquation = THREE.MaxEquation;
+  m.depthWrite = true;
+  m.depthTest = true;
+}
+
 export const DEFAULT_FILTER: FilterState = {
   minDistSol: 0,
   maxDistSol: 50_000,
@@ -461,6 +475,11 @@ export class Stellata {
   // renderOrder = -2 so it draws behind everything; the analytic raymarch
   // pass renders into a private half-res RT each frame.
   private milkyway: MilkyWay;
+
+  // Reference to the most recently attached DustField — kept solely so
+  // dispose() can release the ~128 MiB Data3DTexture. attachDust(null)
+  // clears it.
+  private dust: DustField | null = null;
 
   constructor({ canvas, catalog }: StellataOptions) {
     this.catalog = catalog;
@@ -680,13 +699,8 @@ export class Stellata {
       vertexShader,
       fragmentShader,
       transparent: true,
-      depthWrite: true,
-      depthTest: true,
-      blending: THREE.CustomBlending,
-      blendSrc: THREE.OneFactor,
-      blendDst: THREE.OneFactor,
-      blendEquation: THREE.MaxEquation,
     });
+    applyDiscBlendDefaults(this.material);
 
     // Glow pass: additive so overlapping distant stars accumulate brightness
     // (dense stellata density preserved). No depth write, so multiple glows
@@ -749,19 +763,15 @@ export class Stellata {
     const gcBg = document.getElementById('gc-arrow-bg') as unknown as SVGPathElement;
     const solLabel = document.getElementById('sol-arrow-label') as unknown as SVGTextElement;
     const gcLabel = document.getElementById('gc-arrow-label') as unknown as SVGTextElement;
-    this.hudOverlay = new HudOverlay(hudRing, solPath, solBg, gcPath, gcBg, solLabel, gcLabel);
-
     // Clicking either label aims the camera at the named object. Sol's
     // local-frame position is just `-worldOffset` (Sol is the catalog
-    // origin); GC sits at GALACTIC_CENTRE_PC in absolute space.
-    solLabel.addEventListener('click', () => {
-      this.aimAt(this.tmpVec3b.copy(this.worldOffset).negate());
-    });
-    gcLabel.addEventListener('click', () => {
-      this.aimAt(
-        this.tmpVec3b.copy(GALACTIC_CENTRE_PC).sub(this.worldOffset),
-      );
-    });
+    // origin); GC sits at GALACTIC_CENTRE_PC in absolute space. Handlers are
+    // owned by HudOverlay so its dispose() can detach them.
+    this.hudOverlay = new HudOverlay(
+      hudRing, solPath, solBg, gcPath, gcBg, solLabel, gcLabel,
+      () => this.aimAt(this.tmpVec3b.copy(this.worldOffset).negate()),
+      () => this.aimAt(this.tmpVec3b.copy(GALACTIC_CENTRE_PC).sub(this.worldOffset)),
+    );
 
     // Milky Way volumetric disc. A flattened ellipsoid mesh anchored at
     // the galactic centre; the fragment shader does a bounded raymarch
@@ -985,6 +995,7 @@ export class Stellata {
       // origin (or world origin when unfocused) and TrackballControls
       // re-enables.
       this.controls.target.set(0, 0, 0);
+      this.alignCameraUpToQuaternion();
       this.controls.update();
       this.controls.enabled = true;
       if (opts.clearFocusOnExit) this.setFocus(null);
@@ -1032,6 +1043,7 @@ export class Stellata {
       this.cameraMode = 'navigate';
       this.material.uniforms.uHideFocusIdx.value = -1;
       this.observeControls.disable();
+      this.alignCameraUpToQuaternion();
       this.controls.enabled = true;
       for (const h of this.onCameraModeHandlers) h(this.cameraMode);
     }
@@ -1123,6 +1135,7 @@ export class Stellata {
   // null to detach (e.g. to disable extinction for a mode toggle).
   attachDust(dust: DustField | null) {
     const u = this.material.uniforms;
+    this.dust = dust;
     if (dust === null) {
       u.uDustTexture.value = null;
       u.uDustEnabled.value = 0;
@@ -1575,12 +1588,7 @@ export class Stellata {
       this.glowMaterial.blending = THREE.MultiplyBlending;
       this.glowMaterial.depthTest = false;
     } else {
-      this.material.blending = THREE.CustomBlending;
-      this.material.blendSrc = THREE.OneFactor;
-      this.material.blendDst = THREE.OneFactor;
-      this.material.blendEquation = THREE.MaxEquation;
-      this.material.depthWrite = true;
-      this.material.depthTest = true;
+      applyDiscBlendDefaults(this.material);
       this.glowMaterial.blending = THREE.AdditiveBlending;
       this.glowMaterial.depthTest = true;
     }
@@ -2195,6 +2203,12 @@ export class Stellata {
     const canvas = this.renderer.domElement;
     canvas.addEventListener('pointerdown', this.onPointerDown);
     canvas.addEventListener('pointerup', this.onPointerUp);
+    // pointercancel partner for pointerdown/pointerup. Without it an
+    // OS-cancelled touch (phone-call interrupt, system gesture preempt)
+    // leaves pointerDownAt set, and the next genuine pointerup may satisfy
+    // the click gates against a stale 'down' from a different gesture and
+    // fire a phantom click.
+    canvas.addEventListener('pointercancel', this.onPointerCancel);
     // Two-finger roll. Touch events for mobile; gesture* events for Safari
     // desktop trackpad. Chrome/Firefox desktop don't expose a rotate gesture,
     // so roll is unavailable there by design.
@@ -2359,6 +2373,10 @@ export class Stellata {
   private onPointerDown = (e: PointerEvent) => {
     if (e.button !== 0) return;
     this.pointerDownAt = { x: e.clientX, y: e.clientY, t: performance.now() };
+  };
+
+  private onPointerCancel = () => {
+    this.pointerDownAt = null;
   };
 
   private onPointerUp = (e: PointerEvent) => {
@@ -2885,17 +2903,22 @@ export class Stellata {
       // in the unfocus path it pointed at Sol and TrackballControls.update()'s
       // lookAt(target) would whip the camera around to face Sol.
       this.controls.target.copy(state.fromPos);
-      // Align camera.up with the camera's current local +Y. Without this,
-      // lookAt(target) inside controls.update() would re-resolve roll
-      // against world (0,1,0) and snap any pitch the user accumulated in
-      // observe back through the horizontal plane — visible as a jump
-      // proportional to how much they looked around.
-      this.camera.up.set(0, 1, 0).applyQuaternion(this.camera.quaternion);
+      this.alignCameraUpToQuaternion();
       this.controls.update();
       this.controls.enabled = true;
       if (state.clearFocusOnExit) this.setFocus(null);
     }
     this.fireStateChange();
+  }
+
+  // Re-anchor camera.up to the camera's current local +Y. Required before any
+  // lookAt(target) (i.e. before TrackballControls re-engages) on the observe→
+  // navigate seam. Without this, lookAt re-resolves roll against world (0,1,0)
+  // and snaps any pitch the user accumulated in observe back through the
+  // horizontal plane — visible as a jump proportional to how much they looked
+  // around.
+  private alignCameraUpToQuaternion() {
+    this.camera.up.set(0, 1, 0).applyQuaternion(this.camera.quaternion);
   }
 
   private observeTmpFwd = new THREE.Vector3();
@@ -2914,12 +2937,17 @@ export class Stellata {
     const canvas = this.renderer.domElement;
     canvas.removeEventListener('pointerdown', this.onPointerDown);
     canvas.removeEventListener('pointerup', this.onPointerUp);
+    canvas.removeEventListener('pointercancel', this.onPointerCancel);
     canvas.removeEventListener('touchstart', this.onTouchStart);
     canvas.removeEventListener('touchmove', this.onTouchMove);
     canvas.removeEventListener('touchend', this.onTouchEnd);
     canvas.removeEventListener('touchcancel', this.onTouchEnd);
     canvas.removeEventListener('gesturestart', this.onGestureStart as EventListener);
     canvas.removeEventListener('gesturechange', this.onGestureChange as EventListener);
+    // observeControls owns its own pointer + wheel listeners; disable() is
+    // idempotent so it's safe regardless of current mode.
+    this.observeControls.disable();
+    this.hudOverlay.dispose();
     this.controls.dispose();
     // Star pipeline: one shared InstancedBufferGeometry feeds the disc, glow,
     // and core-mask passes, so it's disposed once. Each pass has its own
@@ -2936,6 +2964,11 @@ export class Stellata {
     this.galacticDisc.dispose();
     this.galacticGrid.dispose();
     this.milkyway.dispose();
+    // The dust voxel grid is the largest single GPU allocation in the app
+    // (~128 MiB Data3DTexture). MilkyWay shares the same texture handle but
+    // doesn't own it.
+    this.dust?.dispose();
+    this.dust = null;
     this.renderer.dispose();
   }
 }

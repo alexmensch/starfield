@@ -3,7 +3,8 @@ import { GALACTIC_CENTRE_PC } from './galactic-coords';
 import { fmtDist } from './distance-util';
 import {
   buildArrowSvgPath,
-  viewSpaceScreenDir,
+  projectToScreen,
+  screenDirFromCascade,
   ARROW_HEAD_DEPTH_PX,
   ARROW_LABEL_OFFSET_PX,
   ARROW_LABEL_PADDING_PX,
@@ -104,6 +105,11 @@ export class HudOverlay {
   private tmpSolLocal = new THREE.Vector3();
   private tmpGcLocal = new THREE.Vector3();
 
+  // Click handlers — owned here so dispose() can remove them and let the SVG
+  // labels release their references back to the Stellata closure.
+  private onSolLabelClick: (() => void) | null = null;
+  private onGcLabelClick: (() => void) | null = null;
+
   constructor(
     ring: SVGCircleElement,
     solPath: SVGPathElement,
@@ -112,6 +118,8 @@ export class HudOverlay {
     gcBg: SVGPathElement,
     solLabel: SVGTextElement,
     gcLabel: SVGTextElement,
+    onSolClick: () => void,
+    onGcClick: () => void,
   ) {
     this.ring = ring;
     this.solPath = solPath;
@@ -120,7 +128,22 @@ export class HudOverlay {
     this.gcBg = gcBg;
     this.solLabel = solLabel;
     this.gcLabel = gcLabel;
+    this.onSolLabelClick = onSolClick;
+    this.onGcLabelClick = onGcClick;
+    this.solLabel.addEventListener('click', this.onSolLabelClick);
+    this.gcLabel.addEventListener('click', this.onGcLabelClick);
     this.hideAll();
+  }
+
+  dispose() {
+    if (this.onSolLabelClick) {
+      this.solLabel.removeEventListener('click', this.onSolLabelClick);
+      this.onSolLabelClick = null;
+    }
+    if (this.onGcLabelClick) {
+      this.gcLabel.removeEventListener('click', this.onGcLabelClick);
+      this.onGcLabelClick = null;
+    }
   }
 
   /** Per-frame update. */
@@ -234,59 +257,16 @@ export class HudOverlay {
 
     const targetScreen = projectToScreen(targetLocal, camera, w, h);
 
-    // Direction in screen space. Two derivations, picked by which one is
-    // well-defined this frame:
-    //   1. Aux-step (primary, navigate-mode-friendly): project a tiny step
-    //      along `dir` from `origin` and take the screen-space delta. Gets
-    //      perspective right when `origin` ≠ camera.
-    //   2. Target-projection fallback (observe-mode-friendly): use the
-    //      direct screen vector from anchor to projected target. Aux-step
-    //      collapses when `origin` sits at the camera (observe steady
-    //      state) — the aux point projects to the same degenerate point —
-    //      so we fall back to projecting the target itself, which gives
-    //      the correct angular direction since camera == origin.
-    let sux = 0, suy = 0;
-    let dirOk = false;
-    this.tmpAux.copy(origin).addScaledVector(dir, auxStepW);
-    const auxScreen = projectToScreen(this.tmpAux, camera, w, h);
-    if (auxScreen) {
-      const sdx = auxScreen[0] - cx;
-      const sdy = auxScreen[1] - cy;
-      const slen = Math.hypot(sdx, sdy);
-      if (slen >= 1) {
-        sux = sdx / slen;
-        suy = sdy / slen;
-        dirOk = true;
-      }
-    }
-    if (!dirOk && targetScreen) {
-      const tdx = targetScreen[0] - cx;
-      const tdy = targetScreen[1] - cy;
-      const tlen = Math.hypot(tdx, tdy);
-      if (tlen >= 1) {
-        sux = tdx / tlen;
-        suy = tdy / tlen;
-        dirOk = true;
-      }
-    }
-    if (!dirOk) {
-      // Target behind camera kills both perspective-projection-based
-      // derivations (aux-step and target-projection). View-space (x, y)
-      // of the world-space direction sidesteps the projection divide and
-      // tells us which way to rotate to recover the target.
-      const vsDir = viewSpaceScreenDir(dir, camera, this.tmpAux);
-      if (vsDir) {
-        sux = vsDir[0];
-        suy = vsDir[1];
-        dirOk = true;
-      }
-    }
-    if (!dirOk) {
+    const screenDir = screenDirFromCascade(
+      origin, dir, auxStepW, targetScreen, cx, cy, camera, w, h, this.tmpAux,
+    );
+    if (!screenDir) {
       // Direction is exactly along the camera axis — no preferred
       // rotation brings the target into view.
       this.hideArrow(path, bg, label);
       return;
     }
+    const [sux, suy] = screenDir;
 
     // Shaft endpoints + chevron tip in screen pixels. Default length
     // ARROW_PIXEL_LENGTH; shrunk so the tip stays `targetMarginPx` short of
@@ -402,14 +382,3 @@ function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
 }
 
-function projectToScreen(
-  p: THREE.Vector3,
-  camera: THREE.PerspectiveCamera,
-  w: number,
-  h: number,
-): [number, number] | null {
-  const v = p.clone().applyMatrix4(camera.matrixWorldInverse);
-  if (v.z >= -camera.near) return null;
-  const ndc = v.applyMatrix4(camera.projectionMatrix);
-  return [(ndc.x + 1) * 0.5 * w, (1 - ndc.y) * 0.5 * h];
-}

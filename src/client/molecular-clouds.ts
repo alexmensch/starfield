@@ -45,6 +45,7 @@ export class MolecularClouds {
   private materials: THREE.ShaderMaterial[] = [];
   private geometry: THREE.SphereGeometry;
   private mono = false;
+  private isobar = false;
   /** Map from THREE.Mesh.uuid → cloud index, so raycasts resolve to clouds. */
   private meshIndex = new Map<string, number>();
   /** Mesh references in catalog order, for picking ray-ellipsoid analytically. */
@@ -101,27 +102,19 @@ export class MolecularClouds {
     for (const mat of this.materials) {
       mat.uniforms.uMonochrome.value = on ? 1 : 0;
       mat.uniforms.uOpacity.value = on ? this.monoOpacity : this.darkOpacity;
-      // Mono = alpha-over (paper); colour = additive (glow). Both branches
-      // rely on `premultipliedAlpha = true` — the shader bakes intensity
-      // into rgb so additive becomes a clean (ONE, ONE) sum and normal
-      // becomes a clean (ONE, ONE-α) over-blend. Without that, src.a
-      // multiplies into rgb a second time and the cloud comes out ~30×
-      // too dim to see.
-      mat.blending = on ? THREE.NormalBlending : THREE.AdditiveBlending;
-      mat.needsUpdate = true;
     }
+    this.applyBlending();
   }
 
   /**
    * Chart-mode isobar pass. When on, each cloud's fragment shader emits
    * only a thin outline at the density iso-line driven by uMaxAppMag — a
    * topographic-contour treatment that follows the user's "minimally
-   * visible magnitude" slider. The outline is opaque-over, so the shader
-   * always uses NormalBlending while in isobar mode regardless of the
-   * mono palette state.
+   * visible magnitude" slider.
    */
   setIsobar(on: boolean, magnitudeUniform: { value: number }) {
     const rebind = this.boundMagUniform !== magnitudeUniform;
+    this.isobar = on;
     for (const mat of this.materials) {
       mat.uniforms.uChartIsobar.value = on ? 1 : 0;
       // Reuse the stellata's shared uMaxAppMag uniform reference so the
@@ -130,15 +123,27 @@ export class MolecularClouds {
       // shared reference — repeated rebinds with the same wrapper silently
       // abandon prior bindings.
       if (rebind) mat.uniforms.uMaxAppMag = magnitudeUniform;
-      // Outline ink is opaque-over against the chart palette; restore the
-      // per-mode default when toggled off so the layer doesn't get stranded
-      // in NormalBlending after chart-mode exits (matches setMonochrome).
-      mat.blending = on
-        ? THREE.NormalBlending
-        : (this.mono ? THREE.NormalBlending : THREE.AdditiveBlending);
-      mat.needsUpdate = true;
     }
     this.boundMagUniform = magnitudeUniform;
+    this.applyBlending();
+  }
+
+  // Single source of truth for blend mode, derived from (mono, isobar).
+  // Isobar wins when on (opaque outline ink); mono = alpha-over (paper);
+  // colour = additive (glow). Both non-isobar branches rely on
+  // `premultipliedAlpha = true` — the shader bakes intensity into rgb so
+  // additive becomes a clean (ONE, ONE) sum and normal becomes a clean
+  // (ONE, ONE-α) over-blend. Without that, src.a multiplies into rgb a
+  // second time and the cloud comes out ~30× too dim to see.
+  private applyBlending() {
+    const blending = this.isobar || this.mono
+      ? THREE.NormalBlending
+      : THREE.AdditiveBlending;
+    for (const mat of this.materials) {
+      if (mat.blending === blending) continue;
+      mat.blending = blending;
+      mat.needsUpdate = true;
+    }
   }
 
   /**

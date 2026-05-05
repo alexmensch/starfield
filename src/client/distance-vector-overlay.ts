@@ -6,6 +6,7 @@ import {
   ARROW_HEAD_DEPTH_PX,
   ARROW_LABEL_OFFSET_PX,
   ARROW_LABEL_PADDING_PX,
+  OVERLAY_NEAR_CLIP_PC,
 } from './arrow-path';
 
 // Source-end offset — shaft starts past the focus ring (radius 24 px) so it
@@ -160,7 +161,7 @@ export function projectWithNearClip(
 ): { pA: [number, number]; pB: [number, number] } | null {
   const vA = worldA.clone().applyMatrix4(camera.matrixWorldInverse);
   const vB = worldB.clone().applyMatrix4(camera.matrixWorldInverse);
-  const threshold = -camera.near;
+  const threshold = -OVERLAY_NEAR_CLIP_PC;
 
   // If the focus star itself is behind the camera, we can't draw a
   // meaningful origin — bail out.

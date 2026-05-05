@@ -3,7 +3,8 @@ import type { Stellata } from './stellata';
 import { fmtDist } from './distance-util';
 import {
   buildArrowSvgPath,
-  viewSpaceScreenDir,
+  projectToScreen,
+  screenDirFromCascade,
   ARROW_HEAD_DEPTH_PX,
   ARROW_LABEL_OFFSET_PX,
   ARROW_LABEL_PADDING_PX,
@@ -291,48 +292,14 @@ export function createPoiOverlay(
       }
       tmpDir.multiplyScalar(1 / Math.sqrt(dirLenSq));
 
-      let sux = 0;
-      let suy = 0;
-      let dirOk = false;
-
-      tmpAux.copy(camPos).addScaledVector(tmpDir, auxStepW);
-      const auxScreen = projectToScreen(tmpAux, camera, w, h);
-      if (auxScreen) {
-        const sdx = auxScreen[0] - cx;
-        const sdy = auxScreen[1] - cy;
-        const slen = Math.hypot(sdx, sdy);
-        if (slen >= 1) {
-          sux = sdx / slen;
-          suy = sdy / slen;
-          dirOk = true;
-        }
-      }
-      if (!dirOk && projected) {
-        const tdx = projected[0] - cx;
-        const tdy = projected[1] - cy;
-        const tlen = Math.hypot(tdx, tdy);
-        if (tlen >= 1) {
-          sux = tdx / tlen;
-          suy = tdy / tlen;
-          dirOk = true;
-        }
-      }
-      if (!dirOk) {
-        // Target behind camera kills both perspective-projection-based
-        // derivations. View-space (x, y) of the camera-to-target
-        // direction tells us which way to rotate even when the target
-        // is fully behind the user.
-        const vsDir = viewSpaceScreenDir(tmpDir, camera, tmpAux);
-        if (vsDir) {
-          sux = vsDir[0];
-          suy = vsDir[1];
-          dirOk = true;
-        }
-      }
-      if (!dirOk) {
+      const screenDir = screenDirFromCascade(
+        camPos, tmpDir, auxStepW, projected, cx, cy, camera, w, h, tmpAux,
+      );
+      if (!screenDir) {
         hideEntry(e);
         continue;
       }
+      const [sux, suy] = screenDir;
 
       // Shaft length defaults to ARROW_PIXEL_LENGTH; shrunk so the tip
       // stops `targetMarginPx` short of the projected target when the
@@ -395,14 +362,3 @@ function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
 }
 
-function projectToScreen(
-  p: THREE.Vector3,
-  camera: THREE.PerspectiveCamera,
-  w: number,
-  h: number,
-): [number, number] | null {
-  const v = p.clone().applyMatrix4(camera.matrixWorldInverse);
-  if (v.z >= -camera.near) return null;
-  const ndc = v.applyMatrix4(camera.projectionMatrix);
-  return [(ndc.x + 1) * 0.5 * w, (1 - ndc.y) * 0.5 * h];
-}

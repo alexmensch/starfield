@@ -1,7 +1,7 @@
 // Shared primitives for the two typeahead dropdowns (the star/cloud
 // SearchBox in `search.ts` and the constellation picker in
 // `constellation-typeahead.ts`). The two are otherwise parallel
-// implementations of the same UI primitive — see stellata-9kz for a
+// implementations of the same UI primitive — see stellata-xbj for a
 // follow-up to unify them behind a single `Typeahead<T>` abstraction.
 
 // Sized so the wraparound point matches what the 320px max-height +
@@ -9,11 +9,16 @@
 // past invisible rows.
 export const TYPEAHEAD_MAX_RESULTS = 10;
 
-// Toggle `.active` on the previously-hovered and newly-hovered <li> in
-// place rather than rebuilding the whole results list. Full rebuild on
-// every keystroke was visibly janky on long lists. Also scrolls the
-// new row into view so wrap-around past the dropdown's max-height
-// stays visible (no-ops when already visible).
+// Class applied to the highlighted row. Coupled to styles.css selectors
+// (.search-results li.active and the monochrome variant) — keep them in
+// sync if this string changes.
+export const TYPEAHEAD_ACTIVE_CLASS = 'active';
+
+// Toggle the highlight class on the previously-hovered and newly-hovered
+// <li> in place rather than rebuilding the whole results list. Full
+// rebuild on every keystroke was visibly janky on long lists. Also
+// scrolls the new row into view when wrap-around lands outside the
+// dropdown's visible window.
 export function applyHoverClass(
   resultsEl: Element,
   prevIdx: number,
@@ -22,11 +27,26 @@ export function applyHoverClass(
   if (prevIdx === newIdx) return;
   const children = resultsEl.children;
   if (prevIdx >= 0 && prevIdx < children.length) {
-    (children[prevIdx] as HTMLElement).classList.remove('active');
+    (children[prevIdx] as HTMLElement).classList.remove(TYPEAHEAD_ACTIVE_CLASS);
   }
   if (newIdx >= 0 && newIdx < children.length) {
     const next = children[newIdx] as HTMLElement;
-    next.classList.add('active');
-    next.scrollIntoView({ block: 'nearest' });
+    next.classList.add(TYPEAHEAD_ACTIVE_CLASS);
+    scrollRowIntoView(resultsEl as HTMLElement, next);
   }
+}
+
+// Adjust the dropdown's own scrollTop so `row` sits inside its visible
+// window. Confines the scroll effect to the dropdown — bypasses
+// scrollIntoView({block: 'nearest'}), which walks ancestors and can shift
+// a parent panel even when the row is fully visible inside its own
+// scrollable list. No-op when the dropdown isn't actually scrollable.
+function scrollRowIntoView(list: HTMLElement, row: HTMLElement): void {
+  if (list.scrollHeight <= list.clientHeight) return;
+  const top = row.offsetTop;
+  const bottom = top + row.offsetHeight;
+  const viewTop = list.scrollTop;
+  const viewBottom = viewTop + list.clientHeight;
+  if (top < viewTop) list.scrollTop = top;
+  else if (bottom > viewBottom) list.scrollTop = bottom - list.clientHeight;
 }
