@@ -152,6 +152,20 @@ export function createDistanceVectorOverlay(
     // Position the warp affordance to the right of the distance label.
     warpText.setAttribute('x', (mx + labelWidth + WARP_GAP_PX).toFixed(1));
     warpText.setAttribute('y', my.toFixed(1));
+
+    // Navigate-mode disc-coverage fade — drops opacity to 0 as the focused
+    // star's disc grows past the standard Sol/GC chevron length. Same alpha
+    // is applied to the HUD Sol/GC arrows so all three reference arrows
+    // fade in unison; computation lives in Stellata so consumers stay
+    // synchronised within a frame. Pointer-events suppressed below half so
+    // the (barely visible) label + warp affordance don't accept stray
+    // clicks during fade-out.
+    const alpha = stellata.getNavigateArrowFadeAlpha();
+    const a = alpha.toFixed(3);
+    line.style.opacity = a;
+    lineBg.style.opacity = a;
+    distUi.style.opacity = a;
+    distUi.style.pointerEvents = alpha >= 0.5 ? '' : 'none';
   });
 }
 

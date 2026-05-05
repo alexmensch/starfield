@@ -80,6 +80,8 @@ src/
     debug-panel.ts        generic chrome (slider/colour/section helpers)
     star-tuning.ts        debug section: star-disc profile knobs
     milkyway-tuning.ts    debug section: Milky Way layer tuning
+    pin-debug-hud.ts      debug.pin() — focused-star pin diagnostics
+    arrow-fade-debug-hud.ts  debug.arrows() — Sol/GC arrow draw state + fade
     keyboard-shortcuts.ts global keydown dispatch (R/G/C/H/S/O/W/M/+/−/=/?/Esc)
     help-modal.ts         shortcut help overlay (the `?` target)
     chart-mode.ts         observe-only chart-mode orchestrator (theme + isobar + label engine)
