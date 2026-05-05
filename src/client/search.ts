@@ -2,6 +2,8 @@ import Fuse from 'fuse.js';
 import type { Stellata } from './stellata';
 import type { Catalog } from './catalog-loader';
 import type { CloudCatalog } from './cloud-loader';
+import { applyHoverClass, TYPEAHEAD_MAX_RESULTS } from './typeahead-util';
+import { escapeHtml } from './dom-util';
 
 export interface SearchIndexEntry {
   i: number;
@@ -105,6 +107,11 @@ class SearchBox {
     }
   }
 
+  private setHover(newIdx: number) {
+    applyHoverClass(this.resultsEl, this.hoverIdx, newIdx);
+    this.hoverIdx = newIdx;
+  }
+
   private pick(i: number) {
     const e = this.results[i];
     if (!e) return;
@@ -116,12 +123,10 @@ class SearchBox {
   private handleKey(e: KeyboardEvent) {
     if (this.results.length === 0) return;
     if (e.key === 'ArrowDown') {
-      this.hoverIdx = (this.hoverIdx + 1) % this.results.length;
-      this.renderResultsDom();
+      this.setHover((this.hoverIdx + 1) % this.results.length);
       e.preventDefault();
     } else if (e.key === 'ArrowUp') {
-      this.hoverIdx = (this.hoverIdx - 1 + this.results.length) % this.results.length;
-      this.renderResultsDom();
+      this.setHover((this.hoverIdx - 1 + this.results.length) % this.results.length);
       e.preventDefault();
     } else if (e.key === 'Enter') {
       if (this.hoverIdx >= 0) this.pick(this.hoverIdx);
@@ -427,7 +432,7 @@ export function bindSearch(
       if (seen.has(key)) continue;
       seen.add(key);
       out.push(r.item);
-      if (out.length >= 12) break;
+      if (out.length >= TYPEAHEAD_MAX_RESULTS) break;
     }
     return out;
   };
@@ -552,12 +557,4 @@ export function bindSearch(
 
   syncFocusUI();
   syncVectorUI();
-}
-
-function escapeHtml(s: string) {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
 }

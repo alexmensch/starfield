@@ -72,6 +72,8 @@ src/
     info-modal.ts         first-visit welcome modal (localStorage opt-out)
     brand-modal.ts        about / credits modals from the top-left brand box
     constellation-typeahead.ts  filter-by-name+code picker for #con-input
+    typeahead-util.ts     shared helpers for the two typeaheads (cap, hover-class swap)
+    dom-util.ts           shared escapeHtml for innerHTML splicing
     panel-layout.ts       top-level + per-group collapse for the settings panel
     warp-button.ts        warp trigger (on distance label) + skip pill
     mode-toggle.ts        navigate / observe pill in the top-right card

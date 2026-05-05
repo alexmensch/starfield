@@ -1,4 +1,6 @@
 import type { Stellata } from './stellata';
+import { applyHoverClass, TYPEAHEAD_MAX_RESULTS } from './typeahead-util';
+import { escapeHtml } from './dom-util';
 
 // Typeahead replacement for the old `<select id="con-select">` constellation
 // picker. 88 entries, all known up-front — no fuzzy library needed; a
@@ -18,8 +20,6 @@ export interface ConEntry {
   search: string;  // lowercased "name code" for substring matching
 }
 
-const MAX_RESULTS = 30;
-
 // Synthetic top-of-list entry that clears the highlight when picked. We
 // pin it on top whenever the input is empty so users can land on it
 // after Cmd+A → Delete → Enter, mirroring the way they pick any other
@@ -27,15 +27,15 @@ const MAX_RESULTS = 30;
 const NONE_ENTRY: ConEntry = { idx: -1, name: 'None', code: '', search: '' };
 
 // Substring filter on lowercased "name code". Empty query returns
-// [None, ...first MAX_RESULTS-1 entries] so the dropdown opens with
-// the clear-highlight option pinned and the alphabetical list under it.
-// Non-empty query filters and caps at MAX_RESULTS without prepending
-// None — picking None for a constellation that doesn't match is not
-// meaningful.
+// [None, ...first TYPEAHEAD_MAX_RESULTS-1 entries] so the dropdown opens
+// with the clear-highlight option pinned and the alphabetical list under
+// it. Non-empty query filters and caps at TYPEAHEAD_MAX_RESULTS without
+// prepending None — picking None for a constellation that doesn't match
+// is not meaningful.
 export function filterConstellations(entries: ConEntry[], query: string): ConEntry[] {
   const q = query.trim().toLowerCase();
-  if (!q) return [NONE_ENTRY, ...entries.slice(0, MAX_RESULTS - 1)];
-  return entries.filter((e) => e.search.includes(q)).slice(0, MAX_RESULTS);
+  if (!q) return [NONE_ENTRY, ...entries.slice(0, TYPEAHEAD_MAX_RESULTS - 1)];
+  return entries.filter((e) => e.search.includes(q)).slice(0, TYPEAHEAD_MAX_RESULTS);
 }
 
 export function bindConstellationTypeahead(stellata: Stellata) {
@@ -80,6 +80,11 @@ export function bindConstellationTypeahead(stellata: Stellata) {
     }
   };
 
+  const setHover = (newIdx: number) => {
+    applyHoverClass(resultsEl, hoverIdx, newIdx);
+    hoverIdx = newIdx;
+  };
+
   const renderQuery = (query: string) => {
     results = filter(query);
     hoverIdx = results.length > 0 ? 0 : -1;
@@ -114,12 +119,10 @@ export function bindConstellationTypeahead(stellata: Stellata) {
   input.addEventListener('keydown', (e) => {
     if (results.length === 0) return;
     if (e.key === 'ArrowDown') {
-      hoverIdx = (hoverIdx + 1) % results.length;
-      renderDom();
+      setHover((hoverIdx + 1) % results.length);
       e.preventDefault();
     } else if (e.key === 'ArrowUp') {
-      hoverIdx = (hoverIdx - 1 + results.length) % results.length;
-      renderDom();
+      setHover((hoverIdx - 1 + results.length) % results.length);
       e.preventDefault();
     } else if (e.key === 'Enter') {
       if (hoverIdx >= 0) pick(hoverIdx);
@@ -138,12 +141,4 @@ export function bindConstellationTypeahead(stellata: Stellata) {
   };
   stellata.onFilterChange(syncFromFilter);
   syncFromFilter();
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
 }
