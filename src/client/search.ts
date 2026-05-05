@@ -105,6 +105,22 @@ class SearchBox {
     }
   }
 
+  // Arrow-nav path: only the active row changes, so swap classes in place
+  // rather than tearing down and rebuilding every <li>. The full rebuild
+  // was visibly janky on long result lists.
+  private setHover(newIdx: number) {
+    const prev = this.hoverIdx;
+    if (prev === newIdx) return;
+    this.hoverIdx = newIdx;
+    const children = this.resultsEl.children;
+    if (prev >= 0 && prev < children.length) {
+      (children[prev] as HTMLElement).classList.remove('active');
+    }
+    if (newIdx >= 0 && newIdx < children.length) {
+      (children[newIdx] as HTMLElement).classList.add('active');
+    }
+  }
+
   private pick(i: number) {
     const e = this.results[i];
     if (!e) return;
@@ -116,12 +132,10 @@ class SearchBox {
   private handleKey(e: KeyboardEvent) {
     if (this.results.length === 0) return;
     if (e.key === 'ArrowDown') {
-      this.hoverIdx = (this.hoverIdx + 1) % this.results.length;
-      this.renderResultsDom();
+      this.setHover((this.hoverIdx + 1) % this.results.length);
       e.preventDefault();
     } else if (e.key === 'ArrowUp') {
-      this.hoverIdx = (this.hoverIdx - 1 + this.results.length) % this.results.length;
-      this.renderResultsDom();
+      this.setHover((this.hoverIdx - 1 + this.results.length) % this.results.length);
       e.preventDefault();
     } else if (e.key === 'Enter') {
       if (this.hoverIdx >= 0) this.pick(this.hoverIdx);

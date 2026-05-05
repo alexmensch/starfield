@@ -80,6 +80,22 @@ export function bindConstellationTypeahead(stellata: Stellata) {
     }
   };
 
+  // Arrow-nav path: swap the .active class in place rather than rebuilding
+  // the whole list. With 88 constellations the rebuild per keypress was
+  // visibly janky.
+  const setHover = (newIdx: number) => {
+    if (newIdx === hoverIdx) return;
+    const prev = hoverIdx;
+    hoverIdx = newIdx;
+    const children = resultsEl.children;
+    if (prev >= 0 && prev < children.length) {
+      (children[prev] as HTMLElement).classList.remove('active');
+    }
+    if (newIdx >= 0 && newIdx < children.length) {
+      (children[newIdx] as HTMLElement).classList.add('active');
+    }
+  };
+
   const renderQuery = (query: string) => {
     results = filter(query);
     hoverIdx = results.length > 0 ? 0 : -1;
@@ -114,12 +130,10 @@ export function bindConstellationTypeahead(stellata: Stellata) {
   input.addEventListener('keydown', (e) => {
     if (results.length === 0) return;
     if (e.key === 'ArrowDown') {
-      hoverIdx = (hoverIdx + 1) % results.length;
-      renderDom();
+      setHover((hoverIdx + 1) % results.length);
       e.preventDefault();
     } else if (e.key === 'ArrowUp') {
-      hoverIdx = (hoverIdx - 1 + results.length) % results.length;
-      renderDom();
+      setHover((hoverIdx - 1 + results.length) % results.length);
       e.preventDefault();
     } else if (e.key === 'Enter') {
       if (hoverIdx >= 0) pick(hoverIdx);
