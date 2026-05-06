@@ -276,7 +276,6 @@ html, body {
   max-width: 100%;
   overflow-wrap: anywhere;
 }
-.meta-focus { color: var(--fg); }
 .meta-count { color: var(--fg-dim); }
 
 .panel {
@@ -835,24 +834,56 @@ body.monochrome .poi-label {
   stroke: rgba(255, 255, 255, 0.9);
 }
 
+/* The scale-bar widget is a single SVG with two parts: a horizontal scene-
+ * scale bar at the bottom (always visible in navigate; degrees-FOV in
+ * observe), and a perspective z-axis line rising up-and-right from the
+ * bar's left end (only visible when focused on a star or cloud, hidden
+ * in observe). Both parts are drawn in scale-bar.ts in pixel coords. */
 .scale-bar {
   color: var(--fg);
   font-size: 10.5px;
   letter-spacing: 0.08em;
 }
-.scale-bar-line {
-  height: 6px;
-  border-left: 1px solid var(--fg);
-  border-right: 1px solid var(--fg);
-  border-bottom: 1px solid var(--fg);
-  min-width: 10px;
-  max-width: 400px;
-  transition: width 0.08s linear;
+.scale-bar-svg {
+  display: block;
+  overflow: visible;
 }
-.scale-bar-label {
-  margin-top: 4px;
-  text-align: center;
-  color: var(--fg-dim);
+.scale-bar-svg .h-line,
+.scale-bar-svg .h-endcap,
+.scale-bar-svg .h-tick,
+.scale-bar-svg .z-line,
+.scale-bar-svg .z-endcap {
+  stroke: var(--fg);
+  fill: none;
+  shape-rendering: crispEdges;
+}
+.scale-bar-svg .h-line,
+.scale-bar-svg .z-line {
+  stroke-width: 1;
+}
+.scale-bar-svg .h-endcap,
+.scale-bar-svg .z-endcap {
+  stroke-width: 1.25;
+}
+.scale-bar-svg .h-tick {
+  stroke-width: 1;
+  opacity: 0.55;
+}
+.scale-bar-svg .z-arrow {
+  fill: var(--fg);
+  stroke: none;
+}
+.scale-bar-svg .h-label,
+.scale-bar-svg .z-name,
+.scale-bar-svg .z-dist {
+  fill: var(--fg-dim);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  font-family: inherit;
+}
+.scale-bar-svg .z-name {
+  fill: var(--fg);
+  letter-spacing: 0.05em;
 }
 
 .tooltip {

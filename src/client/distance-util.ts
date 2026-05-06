@@ -1,6 +1,11 @@
 export type DistanceUnit = 'pc' | 'ly';
 
 export const LY_PER_PC = 3.2615638;
+export const AU_PER_PC = 206264.806;
+// Below this distance, the pc/ly readout becomes uncomfortably small
+// ("0.005 pc") and AU is the more graspable unit — Voyager-class /
+// outer-Oort scale. The switch is one-way: pc-or-ly above, AU below.
+export const AU_SWITCH_PC = 0.01;
 
 let currentUnit: DistanceUnit = 'pc';
 const handlers: Array<(u: DistanceUnit) => void> = [];
@@ -26,6 +31,21 @@ export function fmtDist(pc: number): string {
   // ".0" so round values read cleanly.
   const kStr = (v / 1000).toFixed(1).replace(/\.0$/, '');
   return `${kStr}k ${unit}`;
+}
+
+// Pc/ly above AU_SWITCH_PC (~0.01 pc ≈ 2063 AU); AU below. The toggle
+// only governs the upper regime — close-approach always reads in AU
+// regardless of the user's pc/ly preference.
+export function fmtDistAuto(pc: number): string {
+  if (pc < AU_SWITCH_PC) {
+    const au = pc * AU_PER_PC;
+    // Tier breakpoints mirror fmtDist's 3 / 1 / integer pattern so the
+    // transition across the AU switch reads consistently.
+    if (au < 1) return `${au.toFixed(3)} AU`;
+    if (au < 100) return `${au.toFixed(1)} AU`;
+    return `${Math.round(au)} AU`;
+  }
+  return fmtDist(pc);
 }
 
 // Round a positive value to the nearest 1, 2, 5, or 10 × 10^N. Used by

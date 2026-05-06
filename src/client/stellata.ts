@@ -899,6 +899,26 @@ export class Stellata {
   getMonochrome(): boolean { return this.monochrome; }
   getWarpActive(): boolean { return this.warpState !== null; }
 
+  // Warp endpoints + destination identity for read-only consumers (e.g.
+  // the scale-bar focus indicator) that need to react to the in-flight
+  // warp without subscribing to per-frame state. Returns null when no
+  // warp is active. A and B are returned as references to the
+  // warpState's stored vectors — callers must not mutate them.
+  getWarpInfo(): {
+    A: Readonly<THREE.Vector3>;
+    B: Readonly<THREE.Vector3>;
+    destKind: 'star' | 'cloud';
+    destIdx: number;
+  } | null {
+    const w = this.warpState;
+    if (!w) return null;
+    const B = w.destKind === 'star'
+      ? this.starLocalPosition(w.destIdx)
+      : this.cloudLocalPosition(w.destIdx);
+    if (!B) return null;
+    return { A: w.A, B, destKind: w.destKind, destIdx: w.destIdx };
+  }
+
   getCameraMode(): CameraMode { return this.cameraMode; }
   // True when an observe-mode transition (enter or exit) is in flight. The
   // 'unfocus' kind reuses observeTransition state for a navigate-mode lerp
@@ -2821,9 +2841,9 @@ export class Stellata {
     }
 
     // Click on the current vector destination → travel to it.
-    // For stars, focusStar matches the search-select teleport (2 pc
-    // viewing distance). For clouds, flyToCloud is the search-select
-    // analogue (cloudViewingDistancePc).
+    // For stars, focusStar matches the search-select teleport
+    // (parks at minDistForStar(idx)). For clouds, flyToCloud is the
+    // search-select analogue (cloudViewingDistancePc).
     if (vectorThing && sameTarget(clickedThing, vectorThing)) {
       if (clickedThing.kind === 'star') this.focusStar(clickedThing.idx);
       else this.flyToCloud(clickedThing.idx);
