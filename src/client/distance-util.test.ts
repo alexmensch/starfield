@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { fmtDist, niceRound, setUnit, getUnit, LY_PER_PC } from './distance-util';
+import { fmtDist, fmtDistAuto, niceRound, setUnit, getUnit, LY_PER_PC, AU_PER_PC, AU_SWITCH_PC } from './distance-util';
 
 // fmtDist reads a module-level current unit; tests reset it explicitly so
 // they're order-independent.
@@ -130,6 +130,41 @@ describe('distance-util / fmtDist (ly)', () => {
     // not the "<1" tier (3 decimals). The formatter measures tier on the
     // displayed-unit value.
     expect(fmtDist(0.5)).toBe('1.6 ly');
+  });
+});
+
+describe('distance-util / fmtDistAuto', () => {
+  it('keeps pc for distances at or above the switch threshold', () => {
+    expect(fmtDistAuto(AU_SWITCH_PC)).toBe('0.010 pc');
+    expect(fmtDistAuto(0.5)).toBe('0.500 pc');
+    expect(fmtDistAuto(12)).toBe('12.0 pc');
+  });
+
+  it('switches to AU below the threshold regardless of pc/ly toggle', () => {
+    setUnit('ly');
+    // 0.005 pc → ~1031 AU; toggle is ignored in the AU regime.
+    expect(fmtDistAuto(0.005)).toMatch(/ AU$/);
+    setUnit('pc');
+    expect(fmtDistAuto(0.005)).toMatch(/ AU$/);
+  });
+
+  it('uses Voyager-class AU magnitudes near the switch', () => {
+    // 0.01 pc - epsilon ≈ 2063 AU; just inside the AU regime.
+    expect(fmtDistAuto(AU_SWITCH_PC - 1e-9)).toBe(`${Math.round((AU_SWITCH_PC - 1e-9) * AU_PER_PC)} AU`);
+  });
+
+  it('uses fractional precision for sub-AU distances', () => {
+    // 1 AU == 1 / AU_PER_PC pc — sits at the 1-decimal tier boundary.
+    expect(fmtDistAuto(1 / AU_PER_PC)).toBe('1.0 AU');
+    // 0.5 AU — sub-1 tier uses 3 decimals.
+    expect(fmtDistAuto(0.5 / AU_PER_PC)).toBe('0.500 AU');
+    // 0.05 AU
+    expect(fmtDistAuto(0.05 / AU_PER_PC)).toBe('0.050 AU');
+  });
+
+  it('uses integer rounding above 100 AU', () => {
+    expect(fmtDistAuto(100 / AU_PER_PC)).toBe('100 AU');
+    expect(fmtDistAuto(1234 / AU_PER_PC)).toBe('1234 AU');
   });
 });
 

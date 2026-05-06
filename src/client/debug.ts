@@ -3,6 +3,8 @@ import { makeDebugPanel } from './debug-panel';
 import { buildMilkywaySection } from './milkyway-tuning';
 import { buildStarSection } from './star-tuning';
 import { installPerfHud, togglePerfHud } from './perf-hud';
+import { togglePinHud } from './pin-debug-hud';
+import { toggleArrowFadeHud } from './arrow-fade-debug-hud';
 import {
   type DecodedView,
   type IdMaps,
@@ -32,6 +34,13 @@ export interface DebugTools {
   encodeView(): string;
   /** Toggle the perf HUD (FPS + per-section frame timing). */
   perf(): void;
+  /** Toggle the focused-star pin diagnostic HUD: live target/camera state,
+   *  pin engaged/disengaged, latched directional extremes, flip counter. */
+  pin(): void;
+  /** Toggle the navigate-mode arrow-fade diagnostic HUD: live drawn shaft
+   *  lengths for Sol/GC, behind-camera flag, direction-derivation path,
+   *  disc radius, refLen, coverage, and the resulting alpha. */
+  arrows(): void;
 }
 
 export function setupDebug(stellata: Stellata, idMaps: IdMaps): DebugTools {
@@ -64,9 +73,11 @@ export function setupDebug(stellata: Stellata, idMaps: IdMaps): DebugTools {
       installPerfHud(stellata);
       togglePerfHud();
     },
+    pin: () => togglePinHud(stellata),
+    arrows: () => toggleArrowFadeHud(stellata),
   };
 
   (window as unknown as { debug: DebugTools }).debug = tools;
-  console.info('Debug tools: debug.panel(), debug.decodeView(blob), debug.encodeView(), debug.perf()');
+  console.info('Debug tools: debug.panel(), debug.decodeView(blob), debug.encodeView(), debug.perf(), debug.pin(), debug.arrows()');
   return tools;
 }

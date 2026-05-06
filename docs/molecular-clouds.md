@@ -76,8 +76,10 @@ mirrors `setOrbitTarget` for stars. Moves orbit pivot to the cloud
 centroid and sets the cloud focus, but leaves the camera position
 unchanged. Camera doesn't teleport; user pivots around the cloud from
 their current vantage. Calls `setFocusedCloud` first, which clears any
-star focus → recenters the floating origin to Sol → the cloud's
-absolute centroid is then directly usable as `controls.target`.
+star focus; since a7d.2.11 the floating origin stays at the former
+focal star instead of snapping back to Sol, so the cloud's absolute
+centroid is converted to local-frame coordinates by subtracting
+`worldOffset` before assigning to `controls.target`.
 
 **`flyToCloud(cloudIdx)`:** the teleport path — used by search-select
 and click-vector-tip. Mirrors `focusStar`: clears prior focus + vector,

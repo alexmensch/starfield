@@ -295,17 +295,73 @@ native html/css... we shouldn't dictate layout"). Do not reintroduce it.
   then panel (Settings). Because panel is a flex child below the topbar,
   it can never overlap it — no measurement needed.
 - `.ui-bottom` — fixed full-width along the bottom, `flex-wrap: wrap`,
-  `align-items: flex-end`. Children: scale-bar (left), meta (right, with
-  `margin-left: auto` for pull-apart). When the row doesn't fit, wrap puts
-  them on separate rows naturally.
-- `.meta` has `overflow-wrap: anywhere` — star names can be long and we
-  want them to break within the narrow column when necessary. Layout
-  is two stacked `<div>`s: `.meta-focus` (focused-star name ·
-  constellation, brighter) above `.meta-count` (catalog total, dimmer).
-  Distance-from-Sol used to live in this area but now belongs to the
-  Sol locator arrow's label, so the meta no longer carries it.
+  `align-items: flex-end`. Children: scale-bar widget (left, see
+  §Bottom-left widget below), meta (right, with `margin-left: auto`
+  for pull-apart). When the row doesn't fit, wrap puts them on
+  separate rows naturally.
+- `.meta` is just the catalog count (`.meta-count`, e.g. "313,242
+  stars"). Focused-object name + distance moved into the scale-bar
+  widget's z-axis indicator, where they sit alongside the camera-to-
+  focus distance for a single consolidated readout.
 - Both containers set `pointer-events: none` on themselves and `auto` on
   direct children, so clicks fall through empty regions to the canvas.
+
+## Bottom-left widget: scene-scale bar + focus z-axis indicator
+
+`scale-bar.ts` is a single SVG with two parts that can show
+independently:
+
+**Horizontal scale bar (always visible).** Targets ~20% of viewport
+width; `niceRound` snaps the represented distance to a 1/2/5×10^N
+value, then the bar's pixel width tracks `nicePc × pxPerPc` exactly so
+it lands on a clean number. Three internal ticks at 25/50/75% break
+the length up so the user can read sub-divisions without thinking.
+Label is centred on the **right endcap**, not the bar midpoint —
+internal ticks made a midpoint-anchored label read as "this distance
+applies to the nearest tick". In OBSERVE mode the bar switches to
+angular-extent-of-sky in degrees (FOV-driven) since "scene scale at
+camera-target depth" is meaningless when the camera sits on the focal
+star.
+
+**Perspective z-axis indicator (visible when a star or cloud is
+focused, hidden in OBSERVE).** A 10vw line rising from the bar's left
+endpoint at the projected angle from there to the focused object's
+on-screen position — the line literally aims at what it labels. When
+the projection is unusable (target behind camera, delta < 4 px,
+pre-layout) the line falls back to a default 45°. Clamped to the
+upper hemisphere (`-165°` to `-15°`) so heavy panning can't fold the
+line below the bar. The tip carries a ⇥-style endcap (perpendicular
+bar bracketing a triangular arrowhead) representing the "object
+plane"; the focused object's name rides along the projected
+continuation of the line a few px past the tip with text running
+horizontally; the camera-to-focus distance is rotated along the line
+itself.
+
+**Unit auto-switch.** Both labels (bar value and z-axis distance) use
+`fmtDistAuto` from `distance-util.ts`: pc/ly above 0.01 pc (respecting
+the user's pc/ly toggle), AU below. The threshold is a one-way switch
+where "0.005 pc" reads as awkward but "1031 AU" lands in the user's
+mental Voyager / outer-Oort frame of reference. Sub-AU readings stay
+in AU with 3-decimal precision (orbit floor for Sol-class is ~0.005
+AU, so we never need scientific notation in normal use). See
+`distance-util.ts AU_SWITCH_PC` for the constant.
+
+**Warp behaviour.** While a warp is in flight, the z-axis indicator
+shows the source while the camera is on the source side of the warp
+axis, then flips to the destination once `(camera − A) · (B − A) > 0`.
+Trajectory-relative test, not camera-attitude — stays stable under
+future curved-warp paths (a7d.2.9). Reads `Stellata.getWarpInfo()` for
+the destination identity + endpoints. The horizontal scale-bar
+behaviour is independent: its scene-scale already targets B from warp
+start (since `controls.target` is repointed at B at warp launch — see
+`docs/camera-modes.md` § Scale-bar smoothness).
+
+**SVG sizing.** `overflow: visible` on the SVG so off-default-angle
+z-axis lines and long names extend past the SVG bounds without being
+clipped (the widget is non-interactive, so overflow is fine). The SVG
+height is computed for the worst-case (default-angle) z-axis projection
+regardless of actual angle or visibility, so the bar's screen position
+is steady across focus/unfocus and any line angle.
 
 ## `[hidden]` specificity and `.modal { display: grid }`
 

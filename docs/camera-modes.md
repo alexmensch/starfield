@@ -8,51 +8,75 @@ for the steady-state HUD widgets (Sol/GC arrows, the OBSERVE ring) see
 
 ## Camera near plane vs controls minDistance
 
-`camera.near = 0.001`, `controls.minDistance` (when no star is focused)
-= `DEFAULT_MIN_DIST_PC = 0.005` pc. The near plane must stay **strictly
-less** than the closest orbit distance, otherwise a centered star lands
-on the clip plane at max zoom and gets culled. If adjusting, keep that
-invariant. Earlier attempts to zoom closer than 0.005 pc hit float32
-precision jitter when the destination star is far from the world origin.
+`camera.near = 1e-10`, `controls.minDistance` (when no star is focused)
+= `GLOBAL_MIN_DIST_PC = 5e-3` pc. The unfocused floor sits well above
+the float32-cancellation threshold so an unfocused orbit can't drift
+into the regime where projection precision breaks down — to get any
+closer than that, the user must focus a star, which then engages the
+per-star `minOrbitDistForStar` floor (sub-pc for Sol-class) plus the
+`uPinFocusToCenter` shader pin (see `docs/architecture.md`
+§ Pin-to-center) which sidesteps the float32 cancellation entirely. The near plane must stay
+**strictly less** than the closest orbit distance, otherwise a centered
+star lands on the clip plane at max zoom and gets culled. The log depth
+buffer (Phase 0, `logarithmicDepthBuffer: true` on the WebGL renderer)
+gives this configuration uniform precision in `log(z)`, so the
+multi-decade range from sub-AU close approach to 100 kpc background
+renders without z-fighting.
 
 When a star is focused, two distinct distances are in play —
 deliberately decoupled so manual zoom can push past the auto-park
-distance:
+distance. Both come from the **true angular geometry** of the star's
+disc through the camera lens — `θ = 2·atan(R / d)`:
 
 1. **Manual-zoom floor** — `controls.minDistance =
-   minOrbitDistForStar(idx)`: `DEFAULT_MIN_DIST_PC` for solo stars,
-   `Math.max(DEFAULT_MIN_DIST_PC, sep × BINARY_MIN_DIST_FACTOR)` for
-   binaries. This lets the user orbit close enough that the largest
-   stars fill ~50% of the smaller viewport dimension at max zoom, with
-   smaller stars scaling proportionally — needed for inspecting
-   stellar discs and (future) close-in planets.
+   minOrbitDistForStar(idx)`. Solves for `d` such that the disc fills
+   `ZOOM_FLOOR_FRACTION` (= 0.9) of the viewport's minor axis:
+   ```
+   d_min = R / tan(ZOOM_FLOOR_FRACTION × fov_minor / 2)
+   ```
+   `fov_minor = min(fov_x, fov_y)` so the 90% target reads consistently
+   across portrait + landscape viewports. Binary companions get an
+   additional `Math.max(d_min, sep × BINARY_MIN_DIST_FACTOR)` bump so
+   the partner stays in frame. This lets the user orbit close enough
+   that any star fills 90% of the smaller viewport axis at max zoom,
+   with `d_min` scaling linearly with the star's physical radius —
+   inspecting a Sol-class star vs Betelgeuse vs Sirius B looks the same
+   on screen.
 
 2. **Auto-park target** — `minDistForStar(idx)`: where the camera
    automatically lands. Used by:
 
+   - `focusStar(idx)`'s default park distance (search-select,
+     click-vector-tip, default-load Sol focus). Was a fixed 2 pc
+     before a7d.2.4; now uses the same geometric solve as every other
+     auto-park so all entry points land at the same on-screen disc
+     coverage.
    - Observe-exit landing position (camera pulls back to
      `minDistForStar` along its current view direction when leaving
      observe).
-   - Warp source departure (`pStart = A + dirBack × minDistForStar(destIdx)`).
-   - Warp arrival (`pEnd = B − forward × minDistForStar(destIdx)`).
+   - Warp source departure (`pStart = A + dirBack × sourceOffset`,
+     where `sourceOffset = minDistForStar(source)` for star sources or
+     `cloudViewingDistancePc(source)` for cloud sources — decoupled
+     from `endOffset` so a giant source like Betelgeuse warping to
+     Sol doesn't place `pStart` inside the source's rendered disc).
+   - Warp arrival (`pEnd = B − forward × endOffset`, with
+     `endOffset = minDistForStar(destIdx)`).
 
-   Computed from a per-star disc-size formula:
-
+   Same geometric solve at a smaller fraction so the disc reads as a
+   clear feature without dominating the frame:
    ```
-   sizeAtRef = mix(uPhysMinPx, uPhysMaxPx, logRatio(physicalRadius))
-   discDist  = sizeAtRef × uRefDistPc / TARGET_APPROACH_DISC_PX
+   d_park = R / tan(TARGET_PARK_FRACTION × fov_minor / 2)
    ```
+   `TARGET_PARK_FRACTION` = 0.10. Floored at `2 × d_min` so the parking
+   distance always sits clearly above the manual-zoom limit (only
+   matters at extreme aspect ratios; for reasonable viewports
+   `d_park ≈ 9 × d_min` naturally). Binary companions get the same
+   half-angle bump on top.
 
-   Same on-screen disc size at parking for any star — supergiants land
-   much further out than dwarfs. The single tunable is
-   `TARGET_APPROACH_DISC_PX` at the top of `stellata.ts` (currently
-   10 px). Binary companions still get a `Math.max(discDist, sep ×
-   BINARY_MIN_DIST_FACTOR)` bump on top so both components stay inside
-   the viewport half-angle (~25°) at parking — the binary requirement
-   is additive, not a replacement.
-
-   Mirrors the disc term of `renderedSizePx` exactly. Keep the two in
-   sync if the shader's physical-size math changes.
+   Mirrors `renderedSizePx`'s physical-size term exactly. Both
+   `minOrbitDistForStar` and `minDistForStar` re-evaluate on focus
+   change, FOV change (via `setCameraFov`), and viewport resize (since
+   aspect changes shift `fov_minor`).
 
 ## TrackballControls tuning
 
@@ -68,7 +92,8 @@ Current settings:
   `enableDamping`/`dampingFactor` like OrbitControls)
 - `staticMoving = false` (keeps damping on)
 - `noPan = false` (right-click pans; set `true` to disable)
-- `minDistance = 0.005`, `maxDistance = 100_000`
+- `minDistance = GLOBAL_MIN_DIST_PC = 5e-3` (when no star is focused;
+  per-star `minOrbitDistForStar` overrides on focus). `maxDistance = 100_000`.
 
 ## Warp animation
 
@@ -77,21 +102,25 @@ vector destination (B). Trigger: click the yellow distance label on the
 SVG overlay (hovering reveals a "→ Warp" suffix), or press `W`. Skip: the
 muted ghost pill at top-center (shown only while warping), or `Esc` /
 `Space`. Click-tip-to-travel is an instant teleport that routes through
-`focusStar(idx)` for consistency with search-select (2 pc viewing
-distance, camera teleports along with the orbit target).
+`focusStar(idx)` for consistency with search-select (parks at
+`minDistForStar(idx)` — same geometric auto-park every landing uses).
 
 Two- or three-phase animation in `stellata.ts updateWarp`, depending
 on whether the warp re-enters OBSERVE on arrival:
 
 1. **Reorient** (`WARP_REORIENT_MS` = 2000). Camera position
    spherically slerps around A from wherever the user was to `A +
-   dirBack × endOffset` (on the travel line, offset behind A from B's
-   perspective). Simultaneously the orbit distance eases linearly from
-   `mag0` down to `endOffset`. End state: A is centered and B is
-   straight ahead, beyond A. Quaternion slerp is used for the angular
-   interp (robust against antipodal starting positions). `endOffset`
-   is `minDistForStar(destIdx)` — see §Camera near plane vs controls
-   minDistance for the disc-size formula plus binary bump.
+   dirBack × sourceOffset` (on the travel line, offset behind A from
+   B's perspective). Simultaneously the orbit distance eases linearly
+   from `mag0` down to `sourceOffset`. End state: A is centered and B
+   is straight ahead, beyond A. Quaternion slerp is used for the
+   angular interp (robust against antipodal starting positions).
+   `sourceOffset` is the source's own auto-park distance (see
+   §Camera near plane vs controls minDistance), separate from
+   `endOffset` (the destination's). Decoupling these handles
+   asymmetric warps cleanly: a Betelgeuse → Sol flight starts well
+   outside Betelgeuse's giant disc and arrives at Sol's small park
+   radius, with neither endpoint inside the other star.
 
    Camera orientation during the reorient depends on launch mode:
    - **Navigate launch:** `camera.lookAt(A)` is called every frame.
@@ -108,7 +137,7 @@ on whether the warp re-enters OBSERVE on arrival:
      the destination" before the fly phase begins.
 
 2. **Fly** (log-scaled duration, `WARP_T_MIN_MS` to `WARP_T_MAX_MS`).
-   Straight-line lerp from `pStart` (= A + dirBack × endOffset) to
+   Straight-line lerp from `pStart` (= A + dirBack × sourceOffset) to
    `pEnd` (= B − forward × endOffset) with a symmetric
    accelerate/decelerate profile: `f(t) = 2t²` for `t < 0.5`, else
    `1 − 2(1−t)²`. `camera.lookAt(B)` throughout.
@@ -141,12 +170,22 @@ on whether the warp re-enters OBSERVE on arrival:
    `controls.target` from the camera quaternion, not the other way
    around.
 
-Scale bar smoothness: `controls.target` is pointed at **B** from the
+Scale-bar smoothness: `controls.target` is pointed at **B** from the
 moment the warp begins (not just at arrival). Camera orientation is
 controlled independently via `camera.lookAt`, so the reorient phase can
-still keep A centered visually while the scale bar already reflects
+still keep A centered visually while the horizontal scale bar (which
+reads scene-scale at the camera-target depth) already reflects
 distance-to-destination — this avoids a jarring scale-bar snap when the
 target would otherwise switch from A to B at arrival.
+
+The bottom-left widget's separate **focus z-axis indicator** (the
+perspective recession line above the scale bar; see
+`docs/ui-and-controls.md` §Bottom-left widget) follows a different
+rule: during warp it shows the source star/cloud while the camera is
+on the source side of the A→B axis, and flips to the destination once
+`(camera − A) · (B − A) > 0`. Trajectory-relative test, not camera-
+attitude — stays stable under future curved-warp paths. Implemented
+via `Stellata.getWarpInfo()`.
 
 During warp: `controls.enabled = false` (no orbit), pointer-up click
 handling is short-circuited, URL writer skips frame-hash updates (camera
@@ -290,7 +329,26 @@ direction from the new vantage — see §Warp animation phase 3.
 focused-star and immediately clears focus *before* starting the
 zoom-out animation. The search box empties via `onFocusChange` on the
 click, then the camera pulls back to `minDistForStar(formerFocal)`
-along its current view direction over `OBSERVE_TRANSITION_MS`. Capturing
+along its current view direction over `OBSERVE_TRANSITION_MS`.
+
+**Navigate-mode close-zoom unfocus** (a7d.2.6) takes the same shape:
+when the user hits Esc / clicks the focused star / clicks the X while
+already in navigate, and the camera sits closer than
+`minDistForStar(focal)`, `unfocus()` lerps the camera outward along
+its view direction to `minDistForStar` over `OBSERVE_TRANSITION_MS`
+instead of teleporting. Reuses `observeTransition` with a third
+`kind: 'unfocus'`. `setFocus(null)` runs at lerp start so UI clears
+immediately; `controls.minDistance` is tightened to `minDistForStar`
+on landing so manual zoom-in is bounded by the same parking distance.
+Skipped (snap) when already at or beyond the floor; cancelled cleanly
+by any new camera-changing action via `cancelUnfocusLerp` calls at
+the entry points (`focusStar`, `startWarp`, `aimAt`,
+`aimAtConstellation`, `onPointerUp`). `controls.enabled` is **not**
+toggled during the lerp — the `animate()` dispatcher routes to the
+lerp tick instead of `controls.update()`, so user input accumulates
+inside TrackballControls but doesn't apply visually. Disabling
+explicitly would race the click-to-unfocus event chain and leave
+TrackballControls' `_state` stuck at `ROTATE`. Capturing
 `forward` from the camera quaternion before the recenter (frame-
 invariant) keeps the animation aimed correctly even though
 `setFocus(null)` translates camera position into Sol-centric coords
@@ -304,19 +362,23 @@ frame is current). Two reasons:
   distance — `TrackballControls.update()`'s built-in `lookAt(target)`
   is therefore a no-op for orientation, and the user keeps facing
   whatever they were observing.
-- Setting `target = (0,0,0)` instead would point at Sol once
-  `setFocus(null)` recentred the origin, and the lookAt would whip
-  the camera around to face Sol. Using `fromPos` works for both the
-  unfocus path (`fromPos` = star's Sol-centric position) and the
-  focus-retained path (`fromPos` = `(0,0,0)` = the focused star
-  before the recenter that wasn't called), since both paths capture
-  `fromPos` from the camera position right before the lerp begins.
+- Setting `target = (0,0,0)` instead would point at the local-frame
+  origin (where the focal star sat) and the lookAt would whip the
+  camera around to face it. Using `fromPos` works for both the
+  unfocus path and the focus-retained path because each captures
+  `fromPos` from the camera position right before the lerp begins —
+  whatever frame the camera is in, `fromPos` is along the forward
+  ray at minDist, which is what we want lookAt to be a no-op against.
 
 **URL state:** the OBSERVE-mode flag round-trips through the `?v=`
 blob (flags-byte bit 5), applied after camera params +
 `controls.update()` so the saved pose lands first. The URL writer's
 debounced frame hook skips writes during
-`isObserveTransitionActive()` (mirrors the warp guard).
+`isCameraTransitionActive()` — covers warp, observe enter/exit, and
+the navigate-mode unfocus lerp (a7d.2.6) so transient mid-lerp poses
+don't get serialised. URL apply for `focus: 'cleared'` calls
+`unfocus({ animate: false })` so a state restore doesn't fight a
+following `view.cam` write.
 
 **Click dispatch in OBSERVE.** Canvas clicks have their own dispatcher
 distinct from navigate's click-state machine. `onPointerUp` defers

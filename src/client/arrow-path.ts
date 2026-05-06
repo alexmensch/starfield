@@ -50,35 +50,41 @@ export const ARROW_LABEL_PADDING_PX = 50;
 
 /**
  * Build an SVG path for a single arrow given the shaft's start and the
- * arrowhead tip in screen-space pixels. Returns an empty string when the
- * segment is too short to draw a clean head.
+ * arrowhead tip in screen-space pixels. Returns an empty string only when
+ * the segment has zero length.
  *
  * The chevron arrowhead is constructed in 2D (perpendicular to the
  * projected shaft), so the wings always face the camera regardless of the
- * shaft's 3D orientation.
+ * shaft's 3D orientation. `chevronScale` (default 1) scales the chevron's
+ * depth and half-width together — used by the navigate-mode HUD arrows so
+ * a short shaft gets a proportionally-small chevron rather than a stuck
+ * full-size head dominating a tiny stub.
  */
 export function buildArrowSvgPath(
   shaftStartX: number,
   shaftStartY: number,
   tipX: number,
   tipY: number,
+  chevronScale = 1,
 ): string {
   const dx = tipX - shaftStartX;
   const dy = tipY - shaftStartY;
   const len = Math.hypot(dx, dy);
-  if (len < ARROW_HEAD_DEPTH_PX + 2) return '';
+  if (len <= 0) return '';
 
   const ux = dx / len;
   const uy = dy / len;
   const px = -uy;
   const py = ux;
 
-  const backCx = tipX - ux * ARROW_HEAD_DEPTH_PX;
-  const backCy = tipY - uy * ARROW_HEAD_DEPTH_PX;
-  const wlX = backCx + px * ARROW_HEAD_HALF_WIDTH_PX;
-  const wlY = backCy + py * ARROW_HEAD_HALF_WIDTH_PX;
-  const wrX = backCx - px * ARROW_HEAD_HALF_WIDTH_PX;
-  const wrY = backCy - py * ARROW_HEAD_HALF_WIDTH_PX;
+  const headDepth = ARROW_HEAD_DEPTH_PX * chevronScale;
+  const headHalfWidth = ARROW_HEAD_HALF_WIDTH_PX * chevronScale;
+  const backCx = tipX - ux * headDepth;
+  const backCy = tipY - uy * headDepth;
+  const wlX = backCx + px * headHalfWidth;
+  const wlY = backCy + py * headHalfWidth;
+  const wrX = backCx - px * headHalfWidth;
+  const wrY = backCy - py * headHalfWidth;
 
   // Shaft + two wings. `M` jumps split the wings into separate sub-paths so
   // they meet only at the tip rather than tracing through it as a

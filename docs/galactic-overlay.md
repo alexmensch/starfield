@@ -64,19 +64,19 @@ entirely in screen space:
    — the OBSERVE steady state, where the camera sits at the focal star —
    fall back to screen centre. Same fallback applies for the rare frames
    near a transition endpoint where the focal-star projection collapses.
-2. Derive the projected arrow direction in 2D. Three paths, picked by which
-   one is well-defined this frame: (a) project an auxiliary point a small
-   step along the 3D direction from `origin` and take the screen-space
-   delta — gets perspective right when `origin` ≠ camera; (b) fall back
-   to the direct screen vector from the anchor to the projected target —
-   the aux-step collapses when `origin` sits at the camera (OBSERVE
-   steady state, where the camera is parked at the focal star), and a
-   target-projection from the screen-centre anchor gives the right
-   angular direction since camera == origin in that case; (c) view-space
-   fallback (`viewSpaceScreenDir` in `arrow-path.ts`) when the target is
-   behind the camera — both perspective-projection paths return null
-   because `v.z >= -near`, but the camera-local `(x, -y)` of the world
-   direction still tells us which way the user must rotate.
+2. Derive the projected arrow direction in 2D. Two paths, picked by which
+   one is well-defined this frame: (a) when the target projects in front
+   of the camera, take the screen-space vector from the anchor to the
+   target's projection (the natural direction); (b) when the target is
+   behind the camera, fall back to `viewSpaceScreenDir` from
+   `arrow-path.ts` — the camera-local `(x, -y)` of the world direction.
+   View-space arithmetic sidesteps the projection divide and is
+   independent of camera-to-origin distance, so a target the user must
+   turn 180° to see still yields a useful arrow direction. The previously-
+   primary aux-step path was dropped: its screen magnitude was
+   proportional to camera-to-origin distance, so at close approach it
+   went sub-pixel and Sol vs GC could snap independently as their
+   respective directions hit the per-arrow degenerate window.
 3. Build `shaftStart = originScreen + shaftStartPx × screenDir` and `tip =
    shaftStart + shaftLengthPx × screenDir`, both in pixels. The shared
    `buildArrowSvgPath` helper emits the chevron arrowhead perpendicular
@@ -104,13 +104,40 @@ target's local-frame position is projected and its screen offset along
 sizeMax`, the shaft shortens so the chevron tip sits `sizeMax` px short
 of the target — keeps the arrow from crowding (or overlapping) the
 target's rendered disc when zoomed in close. `sizeMax` is the
-camera-panel "Max" pixel size. Below 8 px of remaining shaft we hide
-rather than draw a stub.
+camera-panel "Max" pixel size. The shaft renders at any positive length;
+the chevron itself scales linearly to zero below `CHEVRON_FULL_AT_PX = 16`
+so a heavily-shrunk shaft doesn't end up dominated by a full-size
+arrowhead. We hide only when shrink-to-target pushes the shaft length to
+zero or negative.
 
-Arrow hidden when the camera is looking exactly along the arrow's 3D
-direction — all three derivation paths agree there's no preferred
-rotation, since rotating in any direction is equally close. Sol arrow
-also hidden when focused on Sol — pointing at yourself adds nothing.
+Arrow hidden when no screen direction can be derived at all — both
+target-projection and view-space-dir paths must fail, which only
+happens when `dir` lies exactly along the camera view axis (measure-
+zero orientation). Sol arrow also hidden when focused on Sol —
+pointing at yourself adds nothing.
+
+**Navigate-mode arrow fade.** As the user orbits close to a focused star,
+the rendered disc grows past the standard chevron length and the Sol/GC
+chevrons would otherwise sit on top of the disc. `Stellata.getNavigateArrowFadeAlpha`
+computes a single alpha each frame, applied uniformly to Sol arrow, GC
+arrow, and the distance-vector chevron so all three reference arrows
+fade together. The fade keys on the *actually drawn* shaft lengths
+(`HudOverlay.getDrawnLengths`, with one frame of lag — alpha read at the
+start of frame N uses values stored by frame N-1's render). Coverage is
+`(discRadius − shaftStart) / max(solDrawn, gcDrawn)`, where `discRadius`
+is the focal star's *peak-amplitude* disc radius (so a high-amplitude
+variable's pulsation doesn't oscillate the fade). Smoothstep eased over
+[0.5, 0.75]. During an in-flight observe transition the alpha holds the
+*source*-mode value (navigate alpha during enter, 1 during exit) and
+snaps to the destination on completion — visible alpha changes during
+the camera glide would render on top of the focal disc and look like
+chrome floating over the star, so we wait for the transition to finish.
+
+Diagnostic HUD: `debug.arrows()` in the dev console shows live drawn
+shaft lengths, behind-camera flags, direction-derivation paths, disc
+radius, refLen, coverage, and alpha — including a red-border alert when
+the two arrows are in independent draw states (one drawn while the other
+is hidden, or front/behind disagreement) so transient snaps surface.
 
 **HUD ring.** A translucent screen-centred circle drawn in OBSERVE mode
 (and during the navigate↔observe transition) when `showHud` is on. The

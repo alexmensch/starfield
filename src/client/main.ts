@@ -20,7 +20,7 @@ import { maybeShowInfoModal } from './info-modal';
 import { bindBrandModals } from './brand-modal';
 import { bindKeyboardShortcuts } from './keyboard-shortcuts';
 import { applyFromUrl, startUrlSync, type IdMaps } from './url-state';
-import { fmtDist, onUnitChange } from './distance-util';
+import { fmtDist } from './distance-util';
 import { setupDebug } from './debug';
 import { escapeHtml } from './dom-util';
 
@@ -131,7 +131,7 @@ async function main() {
     createDistanceVectorOverlay(stellata, starLabels);
     createFocusRingOverlay(stellata);
     createPoiOverlay(stellata, starLabels);
-    createScaleBar(stellata);
+    createScaleBar(stellata, starLabels);
     bindWarpButton(stellata);
     bindModeToggle(stellata);
 
@@ -140,39 +140,11 @@ async function main() {
     applyFromUrl(stellata, idMaps);
     startUrlSync(stellata, idMaps);
 
+    // Bottom-right meta: just the catalog count. The focused-object name
+    // moved into the scale-bar widget's z-axis indicator, where it sits
+    // alongside the camera-to-focus distance.
     const countLabel = `${catalog.count.toLocaleString()} stars`;
-    const renderMeta = () => {
-      // Two-line layout: focused name + classifier on top, total count
-      // beneath. Distance from Sol used to live here but is now in the Sol
-      // locator arrow's label, so it'd be redundant — skip it.
-      // Star and cloud focus are mutually exclusive in Stellata, so at
-      // most one of these is non-null.
-      const starIdx = stellata.getFocusedStar();
-      const cloudIdx = stellata.getFocusedCloud();
-      let focusLine = '';
-      if (starIdx !== null) {
-        const name = starLabels.get(starIdx) ?? `Unnamed #${starIdx}`;
-        const conIdx = catalog.constellation[starIdx];
-        const con = conIdx !== 255 ? catalog.constellations[conIdx].name : '';
-        focusLine = con
-          ? `${escapeHtml(name)} · ${escapeHtml(con)}`
-          : escapeHtml(name);
-      } else if (cloudIdx !== null && cloudCatalog) {
-        const c = cloudCatalog.clouds[cloudIdx];
-        focusLine = `${escapeHtml(c.name)} · Molecular cloud`;
-      }
-      if (!focusLine) {
-        meta.innerHTML = `<div class="meta-count">${escapeHtml(countLabel)}</div>`;
-        return;
-      }
-      meta.innerHTML =
-        `<div class="meta-focus">${focusLine}</div>` +
-        `<div class="meta-count">${escapeHtml(countLabel)}</div>`;
-    };
-    renderMeta();
-    stellata.onFocusChange(renderMeta);
-    stellata.onCloudFocusChange(renderMeta);
-    onUnitChange(renderMeta);
+    meta.innerHTML = `<div class="meta-count">${escapeHtml(countLabel)}</div>`;
 
     bindHoverTooltip(canvas, tooltip, stellata, describeStarDetailed, describeCloud);
 

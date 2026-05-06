@@ -188,6 +188,14 @@ the currently focused star.
   `idx===null` branch shifted `target` by the focal star's full world
   position, breaking the pin invariant below and re-introducing
   cancellation in the projection chain).
+- **Default-load** (a7d.2.8) auto-engages `setFocus(catalog.solIndex)`
+  before the first frame so URL-less loads start with the pin engaged
+  and the per-Sol orbit floor in effect, matching every other entry
+  point (warp arrival, observe→navigate, search-select). The URL
+  encoder treats Sol as the canonical default focus and *omits* the
+  field when focused on Sol; "explicitly unfocused" rides a separate
+  presence bit so the three states (default-Sol / specific star /
+  cleared) round-trip unambiguously.
 
 The key precision win: the big `absolute − offset` subtractions happen
 in JS float64 on the CPU, producing small float32 deltas near zero with
