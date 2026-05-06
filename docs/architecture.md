@@ -186,9 +186,32 @@ the currently focused star.
   recentre** (since a7d.2.11): `worldOffset` stays at the former focal
   object so the projection chain remains float32-clean across the
   focus → unfocus transition. URL serialisation rides this along via a
-  free `worldOffset` Float32 vec3 field, so close-orbit unfocus poses
-  round-trip exactly. The anchor concept is type-agnostic — future
-  object kinds (clouds, planets, probes) plug into the same mechanism.
+  free `worldOffset` Float32 vec3 field (FIELDS_V2 bit 20, appended
+  for graceful forward-compat with older clients), so close-orbit
+  unfocus poses round-trip exactly. The anchor concept is type-
+  agnostic — future object kinds (clouds, planets, probes) plug into
+  the same mechanism.
+- After the recenter, `setFocus` snaps `controls.target` to exactly
+  `(0, 0, 0)` and shifts `camera.position` by the residual delta to
+  preserve the user-visible camera-to-target offset. This eliminates
+  two distinct float32 residuals in one place: (a) the AT-HYG
+  heliocentric offset (Sol is at catalog `(5e-6, 0, 0)`, not exact
+  origin); (b) the difference between the float32 `_localPositions[idx]`
+  read and the freshly-computed float64 `dx` from the recenter, which
+  for a long-distance setFocus (e.g. Sol → Rigel at ~265 pc) can hit
+  ~5e-5 pc — comparable to Rigel's arrival endOffset. The snap is
+  load-bearing for the `uPinFocusToCenter` mechanism (see
+  `docs/rendering.md`), whose engagement guard is
+  `target.lengthSq() < 1e-12`. Every caller of `setFocus(idx)` is
+  correct by construction because the snap runs at the choke point.
+- **Default-load** (a7d.2.8) auto-engages `setFocus(catalog.solIndex)`
+  before the first frame so URL-less loads start with the pin engaged
+  and the per-Sol orbit floor in effect, matching every other entry
+  point (warp arrival, observe→navigate, search-select). The URL
+  encoder treats Sol as the canonical default focus and *omits* the
+  field when focused on Sol; "explicitly unfocused" rides a separate
+  presence bit so the three states (default-Sol / specific star /
+  cleared) round-trip unambiguously.
 
 The key precision win: the big `absolute − offset` subtractions happen
 in JS float64 on the CPU, producing small float32 deltas near zero with

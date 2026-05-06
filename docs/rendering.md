@@ -66,6 +66,27 @@ flash the focal disc as the camera pulls away. Cleared back to `-1` by
 `finishWarp` for navigate-mode arrivals; reset to the new anchor by
 `swapObserveAnchor` for observe→observe arrivals.
 
+`uPinFocusToCenter` (int, default `-1`) bypasses the standard
+`projectionMatrix * modelViewMatrix * vec4(worldPos, 1.0)` chain for a
+single instance, replacing it with `projectionMatrix * vec4(0, 0, -dPc,
+1)` (where `dPc` is the camera-to-target distance). The motivation is
+float32 cancellation: with the per-star physical orbit floor pulling
+the camera as close as ~5e-8 pc on Sol-class stars, the standard
+projection chain drifts the projected centre by visible pixels even
+though the focused star is mathematically at view origin. The pin
+sidesteps the matrix-multiply path because the geometric invariant
+`focused star projects to NDC (0, 0)` is exact when `controls.target ==
+focused star's local position` and lookAt is active. JS-side guard
+engages the pin iff `focusedStar !== null && cameraMode === 'navigate'
+&& !warpState && !aimState && controls.target.lengthSq() < 1e-12`. Pan
+moves target away from origin → pin disengages → standard projection
+resumes (intentional: post-pan the focused star isn't at view centre).
+The load-bearing requirement is that `controls.target = (0,0,0)` *exactly* in the focal-star local frame — `setFocus(idx)`'s post-recenter
+target snap makes this the case at the choke point so every caller is
+correct by construction. See `pin-debug-hud.ts` (`debug.pin()`) for the
+diagnostic HUD with latched directional extremes — use it when
+investigating any "star drifts off-screen" report at close approach.
+
 `ShaderMaterial({ glslVersion: THREE.GLSL3 })`. Vertex shader uses `uint`
 uniforms and bitwise ops for the spectral-class mask. Do **not** downgrade to
 GLSL1 — the mask logic would need to be rewritten as per-class bools.
@@ -80,14 +101,21 @@ linearly by magnitude. See `docs/chart-mode.md` for the full feature.
 Each star's final pixel size is `max(appSize, physSize) × pixelRatio`
 in the vertex shader:
 
-- `appSize` is the brightness-based term:
-  `mix(uSizeMin, uSizeMax, sqrt(brightness))` where
-  `brightness = clamp((uMaxAppMag - appMag) / uSizeSpan, 0, 1)`. Dominates
-  for distant stars. The √Δm shape comes from a Gaussian-PSF model: a
-  star's "perceived disc" is where the PSF intensity exceeds the
-  detection threshold, which grows as the square root of magnitudes
-  above threshold (see `SCIENCE.md` §Stellar perception model). The
-  endpoints `uSizeMin/Max` are derived per-frame from the active
+- `appSize` is the brightness-based term. Below the visible-population
+  window (`Δm = uMaxAppMag − appMag ≤ uSizeSpan`) it's the canonical
+  `mix(uSizeMin, uSizeMax, sqrt(Δm / uSizeSpan))` Gaussian-PSF curve;
+  see `SCIENCE.md` §Stellar perception model for the √Δm derivation
+  (perceived radius ∝ √(magnitudes above threshold) because the visible
+  footprint of a star is where PSF intensity exceeds detection). Above
+  the window the size used to hard-clamp at `uSizeMax`, but that broke
+  ratios in the close-approach regime — Sol and Barnard's Star at 5e-3
+  pc both pinned to the cap despite a 2300× flux ratio. **Soft-knee
+  saturation** (`uSizeKnee`, default 4 mag, debug-tunable) replaces the
+  clamp with a Michaelis–Menten asymptote: `dMEff = uSizeSpan + uSizeKnee
+  · over / (uSizeKnee + over)` where `over = Δm − uSizeSpan`. Identity
+  below `uSizeSpan`, smoothly bending toward a ceiling of `uSizeSpan +
+  uSizeKnee` as Δm → ∞. `uSizeKnee = 0` recovers the old hard clamp.
+  Endpoints `uSizeMin/Max` are derived per-frame from the active
   magnitude preset's angular targets converted to pixels (see
   §Magnitude presets and angular-size calibration below).
 - `physSize = 2·atan(R · radiusFactor / dPc) · viewport.y / uFovYRad`
@@ -213,11 +241,12 @@ The disc pass adds two depth-handling rules on top of the shared profile:
   the fragment entirely so the imperceptible outer pixels don't cost
   a depth write or no-op blend.
 
-All seven knobs are live-tunable from the debug panel (`debug.panel()`)
+All eight knobs are live-tunable from the debug panel (`debug.panel()`)
 under "Star disc": `visibleThreshold`, `coreThreshold`, `discardThreshold`,
-`distN min/max`, `lumBias dwarf/hypergiant`. See `STAR_RENDER_DEFAULTS`
-in `stellata.ts` for shipping values; `setStarRenderParams(patch)` is
-the programmatic setter.
+`distN min/max`, `lumBias dwarf/hypergiant`, `sizeKnee` (the soft-knee
+saturation extent above). See `STAR_RENDER_DEFAULTS` in `stellata.ts`
+for shipping values; `setStarRenderParams(patch)` is the programmatic
+setter.
 
 ## Variable star rendering
 

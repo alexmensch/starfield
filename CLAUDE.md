@@ -64,10 +64,10 @@ src/
     poi-overlay.ts        observe-mode pinned-star labels + arrows + rings
     cloud-loader.ts       fetch + parse public/clouds.json
     molecular-clouds.ts   3D ellipsoid render layer + raycast pick + fly-to
-    scale-bar.ts          bottom-left distance scale
+    scale-bar.ts          bottom-left SVG widget: scene-scale bar + perspective z-axis indicator pointing at the focused star/cloud
     unit-toggle.ts        pc/ly toggle in the panel
     theme-toggle.ts       programmatic theme API (no live UI; default dark)
-    distance-util.ts      fmtDist, unit state + broadcast, niceRound
+    distance-util.ts      fmtDist + fmtDistAuto (pc/ly above 0.01 pc, AU below), unit state + broadcast, niceRound
     url-state.ts          URL ↔ state sync (debounced)
     info-modal.ts         first-visit welcome modal (localStorage opt-out)
     brand-modal.ts        about / credits modals from the top-left brand box
