@@ -212,21 +212,56 @@ const R_SUN_PC = 2.2543e-8;
 const BINARY_VIEWPORT_HALF_ANGLE_RAD = (25 * Math.PI) / 180;
 const BINARY_MIN_DIST_FACTOR = 1 / Math.tan(BINARY_VIEWPORT_HALF_ANGLE_RAD);
 
-// Warp animation tuning. A warp has two phases:
-//   1. Reorient (WARP_REORIENT_MS) — camera keeps looking at the source star
-//      while spherically rotating around it from its current orbit direction
-//      to the "behind A, facing B" direction, simultaneously zooming to
-//      the end-offset from A. End state: A is centered, B is straight
-//      ahead beyond A.
-//   2. Fly — straight-line flight from pStart to pEnd with a symmetric
-//      accelerate/decelerate profile. Duration scales log-linearly with
-//      distance and caps at MAX.
-// End offset matches the destination star's effective minDistance so the
-// warp parks exactly where the user can then orbit.
+// Warp animation tuning. A warp has four animated phases plus an optional
+// post-arrival quaternion slerp:
+//   1. Reorient core (WARP_REORIENT_MS) — radial direction around A slerps
+//      from the user's current orbit direction toward dirBack (the "behind
+//      A, facing B" direction), and magnitude smoothstep-eases from mag0
+//      down to sourceOffset (A's parking distance). Camera looks at A.
+//   2. Departure tail (WARP_DEPARTURE_T_FRAC · T_fly) — the radial slerp
+//      continues toward dirBack while mag eases linearly in 1/mag from
+//      sourceOffset down to handoffOffsetA (= sourceOffset / K). The
+//      angular size of A grows at constant dα/dt over this window —
+//      mirror of the angular arrival at B. The combined "swing while
+//      approaching" produces a curved path when the user launched off-axis.
+//      Phase 1+2 ends with the camera at A − handoffOffsetA · forward,
+//      looking at A (which from this position is in the +forward direction
+//      so lookAt(A) and lookAt(B) give the same orientation — bulk handoff
+//      is seamless).
+//   3. Bulk (WARP_BULK_T_FRAC · T_fly) — straight position-lerp from the
+//      departure handoff to the arrival handoff (B − handoffOffsetB · forward,
+//      where handoffOffsetB = K · endOffset). Symmetric quadratic ease.
+//      The camera passes through A's position in the first frame or two,
+//      which is acceptable because the close approach was already shown
+//      during the angular-departure tail.
+//   4. Arrival (WARP_ARRIVAL_T_FRAC · T_fly) — 1/d_B eases linearly from
+//      1/handoffOffsetB to 1/endOffset; B's angular size grows at constant
+//      dα/dt to parking. Mirror of phase 2.
+// "T_fly" here is the historical fly duration (the log-distance formula
+// below); phases 2–4 partition it (WARP_DEPARTURE_T_FRAC + WARP_BULK_T_FRAC
+// + WARP_ARRIVAL_T_FRAC = 1). The total warp clock is unchanged at
+// WARP_REORIENT_MS + T_fly. End offset matches the destination's effective
+// minDistance so the warp parks exactly where the user can then orbit.
 export const WARP_T_MIN_MS = 5000;
 export const WARP_T_MAX_MS = 20000;
 export const WARP_T_K_MS = 2000;
 export const WARP_REORIENT_MS = 2000;
+
+// T_fly partition. The first slice is folded into the reorient as the
+// angular-departure tail; the last is the angular-arrival sub-phase of the
+// fly; the middle is the bulk position-lerp.
+const WARP_DEPARTURE_T_FRAC = 0.15;
+const WARP_ARRIVAL_T_FRAC = 0.15;
+const WARP_BULK_T_FRAC = 1 - WARP_DEPARTURE_T_FRAC - WARP_ARRIVAL_T_FRAC;
+
+// Multiplier on parking distance that defines where the angular phases hand
+// off to the bulk. handoffOffsetA = sourceOffset / K (so A's angular size at
+// the start of the bulk is 1/K of parking — small enough to read as "we
+// crossed past A", large enough that the close approach during the
+// departure tail is visible). handoffOffsetB = endOffset · K (mirror).
+// Clamped at startWarp time when |AB| can't accommodate handoffOffsetB
+// (mostly an issue for cloud destinations whose endOffset rivals |AB|).
+const WARP_ANGULAR_HANDOFF_FACTOR = 10;
 
 // Arbitrary reference axis for the reorient slerp. Any fixed unit vector
 // works — the two setFromUnitVectors calls each produce a quaternion rotating
@@ -297,22 +332,29 @@ interface ObserveAimState {
 
 interface WarpState {
   startTimeMs: number;
-  reorientMs: number;
-  durationMs: number;
-  postArrivalMs: number;   // duration of the post-arrival reorient phase
-  A: THREE.Vector3;        // source world position (focused star or cloud centroid)
-  dir0: THREE.Vector3;     // unit vector from A toward camera at warp start
-  mag0: number;            // |camera - A| at warp start
-  dirBack: THREE.Vector3;  // unit vector from A away from B (reorient end direction)
-  pStart: THREE.Vector3;   // fly start = A + dirBack * sourceOffset
-  pEnd: THREE.Vector3;     // fly end = B - forward * endOffset
-  endOffset: number;       // arrival viewing distance for the destination
+  reorientMs: number;       // smoothstep core duration (= WARP_REORIENT_MS)
+  departureMs: number;      // 1/mag-linear angular-departure tail of the reorient
+  durationMs: number;       // total fly time (bulkMs + arrivalMs)
+  bulkMs: number;           // bulk position-lerp duration within fly
+  arrivalMs: number;        // angular-arrival duration within fly
+  postArrivalMs: number;    // duration of the post-arrival quaternion slerp
+  A: THREE.Vector3;         // source world position (focused star or cloud centroid)
+  dir0: THREE.Vector3;      // unit vector from A toward camera at warp start
+  mag0: number;             // |camera - A| at warp start
+  dirBack: THREE.Vector3;   // unit vector from A away from B (reorient end direction)
+  forward: THREE.Vector3;   // unit vector from A toward B (= -dirBack)
+  pBulkStart: THREE.Vector3;  // bulk start = A − handoffOffsetA · forward (= end of extended reorient)
+  pBulkEnd: THREE.Vector3;    // bulk end = B − handoffOffsetB · forward (= start of angular arrival)
+  pEnd: THREE.Vector3;        // fly end = B − endOffset · forward (final parked position)
+  endOffset: number;          // arrival viewing distance for the destination
   // Source-side reorient distance — minDistForStar(source) when warping
   // from a focused star, cloudViewingDistancePc(source) when warping
   // from a focused cloud. Decoupled from endOffset so warps from a
   // giant source (e.g. Betelgeuse) to a small destination (Sol) don't
-  // place pStart inside the source's rendered disc.
+  // place pBulkStart inside the source's rendered disc.
   sourceOffset: number;
+  handoffOffsetA: number;     // distance from A to pBulkStart (= sourceOffset / K, clamped)
+  handoffOffsetB: number;     // distance from B to pBulkEnd (= endOffset · K, clamped)
   destKind: 'star' | 'cloud';
   destIdx: number;
   // Warp originated from OBSERVE mode. finishWarp re-enters observe at the
@@ -1993,7 +2035,25 @@ export class Stellata {
       const c = this.clouds.clouds[this.focusedCloud];
       if (c) sourceOffset = cloudViewingDistancePc(c);
     }
-    const pStart = A.clone().addScaledVector(dirBack, sourceOffset);
+
+    // Angular handoff distances. The departure tail of the reorient brings the
+    // camera in to A − handoffOffsetA · forward; the arrival sub-phase of the
+    // fly starts at B − handoffOffsetB · forward. K = 10 by default. For
+    // pathological close warps where 10·endOffset would push past A (cloud
+    // destinations are the realistic case), shrink handoffOffsetB so the bulk
+    // gets at least 20 % of |AB|. handoffOffsetB stays > endOffset so the
+    // arrival ease retains a non-trivial range.
+    const handoffOffsetA = sourceOffset / WARP_ANGULAR_HANDOFF_FACTOR;
+    let handoffOffsetB = endOffset * WARP_ANGULAR_HANDOFF_FACTOR;
+    const minBulkDist = distPc * 0.2;
+    if (handoffOffsetA + handoffOffsetB > distPc - minBulkDist) {
+      handoffOffsetB = Math.max(
+        endOffset * 1.2,
+        distPc - minBulkDist - handoffOffsetA,
+      );
+    }
+    const pBulkStart = A.clone().addScaledVector(forward, -handoffOffsetA);
+    const pBulkEnd = B.clone().addScaledVector(forward, -handoffOffsetB);
     const pEnd = B.clone().addScaledVector(forward, -endOffset);
 
     const p0 = this.camera.position.clone();
@@ -2004,10 +2064,14 @@ export class Stellata {
     // runs instead of NaN-ing out.
     const dir0 = mag0 > 1e-9 ? radial.divideScalar(mag0) : dirBack.clone();
 
-    const durationMs = Math.min(
+    const tFlyOrig = Math.min(
       WARP_T_MAX_MS,
       WARP_T_MIN_MS + WARP_T_K_MS * Math.log10(1 + distPc),
     );
+    const departureMs = WARP_DEPARTURE_T_FRAC * tFlyOrig;
+    const bulkMs = WARP_BULK_T_FRAC * tFlyOrig;
+    const arrivalMs = WARP_ARRIVAL_T_FRAC * tFlyOrig;
+    const durationMs = bulkMs + arrivalMs;
 
     this.controls.enabled = false;
     // Point orbit-target at the destination from the moment the warp begins
@@ -2020,17 +2084,21 @@ export class Stellata {
     // user-chosen look direction. lookAt(A) per frame collapses to "snap to
     // facing forward" the moment the camera moves off A, so we slerp the
     // quaternion across the reorient phase instead. Endpoint = the
-    // orientation lookAt(A) would produce from pStart, captured here so the
-    // reorient interpolates from observe view → fly orientation smoothly.
+    // orientation lookAt(A) would produce from pBulkStart (the position the
+    // combined reorient/departure lands on), captured here so the reorient
+    // interpolates from observe view → fly orientation smoothly.
     let reorientEndQuaternion: THREE.Quaternion | undefined;
     if (returnToObserve) {
-      const m = new THREE.Matrix4().lookAt(pStart, A, this.camera.up);
+      const m = new THREE.Matrix4().lookAt(pBulkStart, A, this.camera.up);
       reorientEndQuaternion = new THREE.Quaternion().setFromRotationMatrix(m);
     }
     this.warpState = {
       startTimeMs: performance.now(),
       reorientMs: WARP_REORIENT_MS,
+      departureMs,
       durationMs,
+      bulkMs,
+      arrivalMs,
       // Post-arrival slerp only runs when we're returning to OBSERVE.
       // Navigate-mode arrival re-engages TrackballControls, whose update()
       // calls camera.lookAt(target=B) every frame — applying a 1.2 s
@@ -2044,10 +2112,14 @@ export class Stellata {
       dir0,
       mag0,
       dirBack,
-      pStart,
+      forward,
+      pBulkStart,
+      pBulkEnd,
       pEnd,
       endOffset,
       sourceOffset,
+      handoffOffsetA,
+      handoffOffsetB,
       destKind,
       destIdx,
       returnToObserve,
@@ -2096,8 +2168,7 @@ export class Stellata {
       this.camera.position.copy(B);
       this.camera.quaternion.copy(state.startQuaternion).normalize();
     } else {
-      const forward = new THREE.Vector3().subVectors(B, state.pStart).normalize();
-      this.camera.position.copy(B).addScaledVector(forward, -state.endOffset);
+      this.camera.position.copy(B).addScaledVector(state.forward, -state.endOffset);
       this.camera.lookAt(B);
     }
     this.controls.target.copy(B);
@@ -2127,9 +2198,8 @@ export class Stellata {
         // by a ~|AB|·1e-7 residual, which on long warps to small stars
         // disengages the pin guard (lengthSq < 1e-12) and lands the dest
         // visibly off-centre. Snapping to clean values here avoids that.
-        const forward = new THREE.Vector3().subVectors(B, state.pStart).normalize();
         this.controls.target.set(0, 0, 0);
-        this.camera.position.copy(forward).multiplyScalar(-state.endOffset);
+        this.camera.position.copy(state.forward).multiplyScalar(-state.endOffset);
         this.camera.lookAt(this.controls.target);
       } else {
         this.setFocusedCloud(state.destIdx);
@@ -3162,14 +3232,23 @@ export class Stellata {
     if (!state) return;
     const elapsed = performance.now() - state.startTimeMs;
 
-    if (elapsed < state.reorientMs) {
-      // Reorient phase: spherically slerp the camera's radial direction from
-      // the user's starting angle around A to `dirBack`, while linearly
-      // easing the distance from A from `mag0` down to state.sourceOffset.
-      // Look-at stays locked on A so A remains centered in view the whole
-      // time. Quaternion slerp robustly handles any starting angle including
-      // antipodal cases (user looking at A from the B side).
-      const u = elapsed / state.reorientMs;
+    const combinedReorientMs = state.reorientMs + state.departureMs;
+    if (elapsed < combinedReorientMs) {
+      // Combined reorient (smoothstep core + 1/mag-linear departure tail).
+      // The radial slerp from dir0 to dirBack runs over the FULL combined
+      // duration, so the camera continues to swing around A while mag is
+      // closing in during the departure tail — off-axis launches get a
+      // visibly curved approach path. The mag profile is piecewise:
+      //   • elapsed < reorientMs  smoothstep ease from mag0 → sourceOffset
+      //     (matches the historical reorient feel — eased start and end).
+      //   • elapsed ≥ reorientMs  1/mag linear in time from sourceOffset →
+      //     handoffOffsetA (= sourceOffset / K). 1/mag linear ⇒ constant
+      //     dα_A/dt; the source disc grows at uniform angular rate over the
+      //     close approach instead of teleporting past in one frame of bulk.
+      // A small velocity discontinuity exists at the splice (smoothstep
+      // ends with zero velocity, the 1/mag-linear segment starts with
+      // finite velocity) — invisible at typical mag scales.
+      const u = elapsed / combinedReorientMs;
       const f = u * u * (3 - 2 * u);
 
       this.warpQ0.setFromUnitVectors(WARP_BASE_DIR, state.dir0);
@@ -3177,7 +3256,17 @@ export class Stellata {
       this.warpQ0.slerp(this.warpQ1, f);
       this.warpTmp.copy(WARP_BASE_DIR).applyQuaternion(this.warpQ0);
 
-      const mag = state.mag0 * (1 - f) + state.sourceOffset * f;
+      let mag: number;
+      if (elapsed < state.reorientMs) {
+        const uCore = elapsed / state.reorientMs;
+        const fCore = uCore * uCore * (3 - 2 * uCore);
+        mag = state.mag0 * (1 - fCore) + state.sourceOffset * fCore;
+      } else {
+        const uDep = (elapsed - state.reorientMs) / state.departureMs;
+        const invMag =
+          (1 - uDep) / state.sourceOffset + uDep / state.handoffOffsetA;
+        mag = 1 / invMag;
+      }
       this.camera.position.copy(state.A).addScaledVector(this.warpTmp, mag);
       if (state.reorientEndQuaternion) {
         // Observe-mode launch: slerp the camera quaternion from the user's
@@ -3192,16 +3281,38 @@ export class Stellata {
       return;
     }
 
-    // Fly phase: symmetric accelerate/decelerate along the A→B line.
-    const flyElapsed = elapsed - state.reorientMs;
-    if (flyElapsed < state.durationMs) {
-      const t = flyElapsed / state.durationMs;
+    // Bulk: straight position-lerp from pBulkStart to pBulkEnd with a
+    // symmetric accelerate/decelerate ease. The camera passes through A's
+    // position in the first frame or two of acceleration; the user already
+    // saw the close approach during the angular-departure tail, so the
+    // crossing reads as "we're past A" rather than as the original pop.
+    const flyElapsed = elapsed - combinedReorientMs;
+    if (flyElapsed < state.bulkMs) {
+      const t = flyElapsed / state.bulkMs;
       const f = t < 0.5 ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t);
-      this.camera.position.lerpVectors(state.pStart, state.pEnd, f);
+      this.camera.position.lerpVectors(state.pBulkStart, state.pBulkEnd, f);
       const B = state.destKind === 'star'
         ? this.starLocalPosition(state.destIdx)
         : this.cloudLocalPosition(state.destIdx);
       if (B) this.camera.lookAt(B);
+      return;
+    }
+
+    // Angular arrival: ease 1/d_B linearly from 1/handoffOffsetB to
+    // 1/endOffset so B's angular size grows at constant dα/dt up to parking.
+    // Mirror of the angular departure tail in the reorient.
+    const arrivalElapsed = flyElapsed - state.bulkMs;
+    if (arrivalElapsed < state.arrivalMs) {
+      const u = arrivalElapsed / state.arrivalMs;
+      const invD = (1 - u) / state.handoffOffsetB + u / state.endOffset;
+      const d = 1 / invD;
+      const B = state.destKind === 'star'
+        ? this.starLocalPosition(state.destIdx)
+        : this.cloudLocalPosition(state.destIdx);
+      if (B) {
+        this.camera.position.copy(B).addScaledVector(state.forward, -d);
+        this.camera.lookAt(B);
+      }
       return;
     }
 
@@ -3214,7 +3325,7 @@ export class Stellata {
     // The user sees the same celestial direction they had at warp start,
     // now from the new vantage — foreground stars shift due to parallax,
     // distant Milky Way stays roughly fixed.
-    const postElapsed = flyElapsed - state.durationMs;
+    const postElapsed = arrivalElapsed - state.arrivalMs;
     if (postElapsed < state.postArrivalMs) {
       const B = state.destKind === 'star'
         ? this.starLocalPosition(state.destIdx)
