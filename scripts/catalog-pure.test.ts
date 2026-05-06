@@ -8,7 +8,10 @@ import {
   normalizeGcvsName,
   parseGcvsNumber,
   inferBinaries,
+  markPrimary,
+  markPrimaryIfUnflagged,
   BINARY_MAX_SEP_PC,
+  FLAG_BINARY_PRIMARY,
   type SpectralInfo,
   type BinaryStar,
 } from './catalog-pure';
@@ -296,7 +299,6 @@ describe('catalog-pure / inferBinaries', () => {
     const stats = inferBinaries(stars);
     expect(stats.pairs).toBe(2); // both record the other as companion
     expect(stats.mutualPairs).toBe(1);
-    expect(stats.primaries).toBe(1);
     expect(stars[0].companionIdx).toBe(1);
     expect(stars[1].companionIdx).toBe(0);
   });
@@ -307,8 +309,8 @@ describe('catalog-pure / inferBinaries', () => {
       makeStar({ x: 0.001, y: 0, z: 0, absmag: 4 }),   // brighter
     ];
     inferBinaries(stars);
-    expect(stars[1].flags & 0x10).toBeTruthy(); // primary flag bit
-    expect(stars[0].flags & 0x10).toBeFalsy();
+    expect(stars[1].flags & FLAG_BINARY_PRIMARY).toBeTruthy();
+    expect(stars[0].flags & FLAG_BINARY_PRIMARY).toBeFalsy();
   });
 
   it('does not pair stars that are further apart than BINARY_MAX_SEP_PC', () => {
@@ -365,11 +367,11 @@ describe('catalog-pure / inferBinaries', () => {
     expect(stars[2].companionIdx).toBe(1);
     expect(stats.mutualPairs).toBe(1);
     // Primary = brighter of mutual pair B↔C → B (absmag=5 < C's 6).
-    expect(stars[1].flags & 0x10).toBeTruthy();
+    expect(stars[1].flags & FLAG_BINARY_PRIMARY).toBeTruthy();
     // A is not part of any mutual pair, so it is NOT flagged primary
     // even though it is the brightest of the three.
-    expect(stars[0].flags & 0x10).toBeFalsy();
-    expect(stars[2].flags & 0x10).toBeFalsy();
+    expect(stars[0].flags & FLAG_BINARY_PRIMARY).toBeFalsy();
+    expect(stars[2].flags & FLAG_BINARY_PRIMARY).toBeFalsy();
   });
 
   it('does not flag stars in non-mutual chains as primary', () => {
@@ -394,12 +396,11 @@ describe('catalog-pure / inferBinaries', () => {
     expect(stars[2].companionIdx).toBe(1);
     expect(stars[3].companionIdx).toBe(2);
     expect(stats.mutualPairs).toBe(1);
-    expect(stats.primaries).toBe(1);
     // Primary = brighter of B↔C → B (absmag=4).
-    expect(stars[1].flags & 0x10).toBeTruthy();
-    expect(stars[0].flags & 0x10).toBeFalsy();
-    expect(stars[2].flags & 0x10).toBeFalsy();
-    expect(stars[3].flags & 0x10).toBeFalsy();
+    expect(stars[1].flags & FLAG_BINARY_PRIMARY).toBeTruthy();
+    expect(stars[0].flags & FLAG_BINARY_PRIMARY).toBeFalsy();
+    expect(stars[2].flags & FLAG_BINARY_PRIMARY).toBeFalsy();
+    expect(stars[3].flags & FLAG_BINARY_PRIMARY).toBeFalsy();
   });
 
   it('flags one primary per mutual pair when there are several', () => {
@@ -412,15 +413,14 @@ describe('catalog-pure / inferBinaries', () => {
     ];
     const stats = inferBinaries(stars);
     expect(stats.mutualPairs).toBe(2);
-    expect(stats.primaries).toBe(2);
-    expect(stars[0].flags & 0x10).toBeTruthy(); // pair 1 brighter
-    expect(stars[1].flags & 0x10).toBeFalsy();
-    expect(stars[2].flags & 0x10).toBeTruthy(); // pair 2 brighter
-    expect(stars[3].flags & 0x10).toBeFalsy();
+    expect(stars[0].flags & FLAG_BINARY_PRIMARY).toBeTruthy(); // pair 1 brighter
+    expect(stars[1].flags & FLAG_BINARY_PRIMARY).toBeFalsy();
+    expect(stars[2].flags & FLAG_BINARY_PRIMARY).toBeTruthy(); // pair 2 brighter
+    expect(stars[3].flags & FLAG_BINARY_PRIMARY).toBeFalsy();
   });
 
   it('returns zero counts for an empty input', () => {
-    expect(inferBinaries([])).toEqual({ pairs: 0, mutualPairs: 0, primaries: 0 });
+    expect(inferBinaries([])).toEqual({ pairs: 0, mutualPairs: 0 });
   });
 
   it('uses 3D distance, not 2D', () => {
@@ -433,3 +433,85 @@ describe('catalog-pure / inferBinaries', () => {
     expect(stars[0].companionIdx).toBe(1);
   });
 });
+
+describe("catalog-pure / markPrimary", () => {
+  type Slim = { absmag: number; flags: number };
+  const star = (absmag: number, flags = 0): Slim => ({ absmag, flags });
+
+  it("flags the brightest (lowest absmag) of a group", () => {
+    const stars: Slim[] = [star(6), star(4), star(5)];
+    expect(markPrimary(stars, [0, 1, 2])).toBe(1);
+    expect(stars[1].flags & FLAG_BINARY_PRIMARY).toBeTruthy();
+    expect(stars[0].flags & FLAG_BINARY_PRIMARY).toBeFalsy();
+    expect(stars[2].flags & FLAG_BINARY_PRIMARY).toBeFalsy();
+  });
+
+  it("returns -1 for an empty group", () => {
+    const stars: Slim[] = [star(4)];
+    expect(markPrimary(stars, [])).toBe(-1);
+    expect(stars[0].flags).toBe(0);
+  });
+
+  it("preserves pre-existing flag bits via OR", () => {
+    const stars: Slim[] = [star(4, 0x01)];
+    markPrimary(stars, [0]);
+    expect(stars[0].flags & 0x01).toBeTruthy();
+    expect(stars[0].flags & FLAG_BINARY_PRIMARY).toBeTruthy();
+  });
+
+  it("is idempotent under re-application to the same group", () => {
+    const stars: Slim[] = [star(4), star(6)];
+    markPrimary(stars, [0, 1]);
+    const before = stars.map(s => s.flags);
+    markPrimary(stars, [0, 1]);
+    expect(stars.map(s => s.flags)).toEqual(before);
+  });
+
+  it("breaks ties on the first-encountered index", () => {
+    // Both equally bright — the helper picks whichever it sees first
+    // (matching the prior `i <= j ? i : j` behaviour for mutual pairs).
+    const stars: Slim[] = [star(4), star(4)];
+    expect(markPrimary(stars, [0, 1])).toBe(0);
+  });
+});
+
+describe("catalog-pure / markPrimaryIfUnflagged", () => {
+  type Slim = { absmag: number; flags: number };
+  const star = (absmag: number, flags = 0): Slim => ({ absmag, flags });
+
+  it("delegates to markPrimary when no member is pre-flagged", () => {
+    const stars: Slim[] = [star(6), star(4), star(5)];
+    expect(markPrimaryIfUnflagged(stars, [0, 1, 2])).toBe(1);
+    expect(stars[1].flags & FLAG_BINARY_PRIMARY).toBeTruthy();
+  });
+
+  it("returns -2 (skip sentinel) when any member is already flagged", () => {
+    // Geometric pass already picked stars[2] (e.g. mutual pair primary).
+    // CCDM pass should not re-flag stars[0] even though it is brighter.
+    const stars: Slim[] = [star(4), star(6), star(5, FLAG_BINARY_PRIMARY)];
+    expect(markPrimaryIfUnflagged(stars, [0, 1, 2])).toBe(-2);
+    expect(stars[0].flags & FLAG_BINARY_PRIMARY).toBeFalsy();
+    expect(stars[1].flags & FLAG_BINARY_PRIMARY).toBeFalsy();
+    expect(stars[2].flags & FLAG_BINARY_PRIMARY).toBeTruthy();
+  });
+
+  it("returns -1 for an empty group", () => {
+    const stars: Slim[] = [star(4)];
+    expect(markPrimaryIfUnflagged(stars, [])).toBe(-1);
+  });
+
+  it("is idempotent: a group whose primary it just flagged returns -2 next time", () => {
+    const stars: Slim[] = [star(4), star(6)];
+    expect(markPrimaryIfUnflagged(stars, [0, 1])).toBe(0);
+    expect(markPrimaryIfUnflagged(stars, [0, 1])).toBe(-2);
+  });
+
+  it("does not flag any star when bailing on the pre-flagged check", () => {
+    const stars: Slim[] = [star(4), star(6, FLAG_BINARY_PRIMARY)];
+    markPrimaryIfUnflagged(stars, [0, 1]);
+    // stars[0] was brighter but must remain unflagged because stars[1]
+    // already carried the bit.
+    expect(stars[0].flags).toBe(0);
+  });
+});
+

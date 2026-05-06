@@ -45,6 +45,7 @@ export class MolecularClouds {
   private materials: THREE.ShaderMaterial[] = [];
   private geometry: THREE.SphereGeometry;
   private mono = false;
+  private isobar = false;
   /** Map from THREE.Mesh.uuid → cloud index, so raycasts resolve to clouds. */
   private meshIndex = new Map<string, number>();
   /** Mesh references in catalog order, for picking ray-ellipsoid analytically. */
@@ -101,27 +102,19 @@ export class MolecularClouds {
     for (const mat of this.materials) {
       mat.uniforms.uMonochrome.value = on ? 1 : 0;
       mat.uniforms.uOpacity.value = on ? this.monoOpacity : this.darkOpacity;
-      // Mono = alpha-over (paper); colour = additive (glow). Both branches
-      // rely on `premultipliedAlpha = true` — the shader bakes intensity
-      // into rgb so additive becomes a clean (ONE, ONE) sum and normal
-      // becomes a clean (ONE, ONE-α) over-blend. Without that, src.a
-      // multiplies into rgb a second time and the cloud comes out ~30×
-      // too dim to see.
-      mat.blending = on ? THREE.NormalBlending : THREE.AdditiveBlending;
-      mat.needsUpdate = true;
     }
+    this.applyBlending();
   }
 
   /**
    * Chart-mode isobar pass. When on, each cloud's fragment shader emits
    * only a thin outline at the density iso-line driven by uMaxAppMag — a
    * topographic-contour treatment that follows the user's "minimally
-   * visible magnitude" slider. The outline is opaque-over, so the shader
-   * always uses NormalBlending while in isobar mode regardless of the
-   * mono palette state.
+   * visible magnitude" slider.
    */
   setIsobar(on: boolean, magnitudeUniform: { value: number }) {
     const rebind = this.boundMagUniform !== magnitudeUniform;
+    this.isobar = on;
     for (const mat of this.materials) {
       mat.uniforms.uChartIsobar.value = on ? 1 : 0;
       // Reuse the stellata's shared uMaxAppMag uniform reference so the
@@ -130,15 +123,27 @@ export class MolecularClouds {
       // shared reference — repeated rebinds with the same wrapper silently
       // abandon prior bindings.
       if (rebind) mat.uniforms.uMaxAppMag = magnitudeUniform;
-      // Outline ink is opaque-over against the chart palette; restore the
-      // per-mode default when toggled off so the layer doesn't get stranded
-      // in NormalBlending after chart-mode exits (matches setMonochrome).
-      mat.blending = on
-        ? THREE.NormalBlending
-        : (this.mono ? THREE.NormalBlending : THREE.AdditiveBlending);
-      mat.needsUpdate = true;
     }
     this.boundMagUniform = magnitudeUniform;
+    this.applyBlending();
+  }
+
+  // Single source of truth for blend mode, derived from (mono, isobar).
+  // Isobar wins when on (opaque outline ink); mono = alpha-over (paper);
+  // colour = additive (glow). Both non-isobar branches rely on
+  // `premultipliedAlpha = true` — the shader bakes intensity into rgb so
+  // additive becomes a clean (ONE, ONE) sum and normal becomes a clean
+  // (ONE, ONE-α) over-blend. Without that, src.a multiplies into rgb a
+  // second time and the cloud comes out ~30× too dim to see.
+  private applyBlending() {
+    const blending = this.isobar || this.mono
+      ? THREE.NormalBlending
+      : THREE.AdditiveBlending;
+    for (const mat of this.materials) {
+      if (mat.blending === blending) continue;
+      mat.blending = blending;
+      mat.needsUpdate = true;
+    }
   }
 
   /**
@@ -242,19 +247,76 @@ export function cloudViewingDistancePc(cloud: Cloud): number {
   return Math.max(maxAxis * 2.4, 5.0);
 }
 
+// Scratch vectors / quaternion used by the silhouette projection — kept
+// at module scope so the per-frame distance-vector overlay calls allocate
+// nothing.
+const scratchDirLocal = /*@__PURE__*/ new THREE.Vector3();
+const scratchU = /*@__PURE__*/ new THREE.Vector3();
+const scratchV = /*@__PURE__*/ new THREE.Vector3();
+const scratchQuatInv = /*@__PURE__*/ new THREE.Quaternion();
+
 /**
  * Pixel diameter the cloud's silhouette spans on screen at the current
- * camera distance, used as the per-cloud analogue of `Stellata.renderedSizePx`
- * for stars. Picks the largest semi-axis as the representative scale —
- * matches `cloudViewingDistancePc` and means the chevron tip always clears
- * the silhouette regardless of view direction (worst-case for a prolate
- * cloud viewed end-on it lands a touch outside, never inside).
+ * camera distance — the per-cloud analogue of `Stellata.renderedSizePx`.
+ *
+ * When `viewDir` is supplied (a world-space unit vector from the cloud
+ * centroid toward the camera), the silhouette diameter is the silhouette
+ * ellipse's major axis under the proper quadric projection — tight for
+ * any orientation. For an axis-aligned view of a prolate cloud (axes
+ * [10, 1, 1] viewed along the long axis) this returns the short axis
+ * diameter (= 2), not the long-axis diameter (= 20).
+ *
+ * When `viewDir` is omitted, falls back to the longest semi-axis — the
+ * legacy conservative answer used by `cloudViewingDistancePc`. This is
+ * what the distance-vector chevron-tip clearance still wants when the
+ * caller isn't yet plumbed for a view direction.
  */
 export function renderedCloudSizePx(
   cloud: Cloud,
   dCamPc: number,
   angularToPx: number,
+  viewDir?: THREE.Vector3,
 ): number {
-  const maxAxis = Math.max(cloud.axes[0], cloud.axes[1], cloud.axes[2]);
-  return 2 * Math.atan(maxAxis / Math.max(dCamPc, 1e-30)) * angularToPx;
+  let R: number;
+  if (viewDir) {
+    // Rotate the world-space view direction into the cloud's local frame
+    // so the silhouette ellipse computed below uses the same axis-aligned
+    // basis as the cloud's `axes` array.
+    scratchQuatInv.copy(cloud.quat).conjugate();
+    scratchDirLocal.copy(viewDir).applyQuaternion(scratchQuatInv).normalize();
+
+    const a2 = cloud.axes[0] * cloud.axes[0];
+    const b2 = cloud.axes[1] * cloud.axes[1];
+    const c2 = cloud.axes[2] * cloud.axes[2];
+
+    // Build an orthonormal basis (u, v) perpendicular to dirLocal so the
+    // ellipsoid quadric M = diag(a², b², c²) can be projected to that
+    // 2D plane. Pick the world axis least aligned with dirLocal as the
+    // seed for cross-product, avoiding numerical degeneracies.
+    const ax = Math.abs(scratchDirLocal.x);
+    const ay = Math.abs(scratchDirLocal.y);
+    const az = Math.abs(scratchDirLocal.z);
+    if (ax <= ay && ax <= az) scratchU.set(1, 0, 0);
+    else if (ay <= az) scratchU.set(0, 1, 0);
+    else scratchU.set(0, 0, 1);
+    scratchU.crossVectors(scratchDirLocal, scratchU).normalize();
+    scratchV.crossVectors(scratchDirLocal, scratchU);
+
+    // Projected 2x2 matrix entries (u^T M u, u^T M v, v^T M v).
+    const ux = scratchU.x; const uy = scratchU.y; const uz = scratchU.z;
+    const vx = scratchV.x; const vy = scratchV.y; const vz = scratchV.z;
+    const muu = a2 * ux * ux + b2 * uy * uy + c2 * uz * uz;
+    const mvv = a2 * vx * vx + b2 * vy * vy + c2 * vz * vz;
+    const muv = a2 * ux * vx + b2 * uy * vy + c2 * uz * vz;
+
+    // Larger eigenvalue of the 2x2 [[muu, muv], [muv, mvv]] = silhouette
+    // major-axis squared.
+    const trace = muu + mvv;
+    const disc = Math.sqrt(Math.max(0, (muu - mvv) * (muu - mvv) + 4 * muv * muv));
+    const lambdaMax = 0.5 * (trace + disc);
+    R = Math.sqrt(Math.max(0, lambdaMax));
+  } else {
+    R = Math.max(cloud.axes[0], cloud.axes[1], cloud.axes[2]);
+  }
+  return 2 * Math.atan(R / Math.max(dCamPc, 1e-30)) * angularToPx;
 }

@@ -1,7 +1,6 @@
 import { type FilterState, type Stellata, type MagPresetName, MAG_PRESETS, DEFAULT_FOV } from './stellata';
 import { sliderToDist, distToSlider, SLIDER_STEPS } from './controls';
-import { setUnit } from './distance-util';
-import { getUnit, onUnitChange } from './distance-util';
+import { setUnit, getUnit, onUnitChange } from './distance-util';
 
 // URL state lives in a single opaque param: `?v=<base64url>`. The blob
 // is `[1 byte version] [3 bytes LE presence mask] [variable payload]`
@@ -726,8 +725,16 @@ export function applyDecodedView(
 
   if (view.fov !== undefined && view.fov > 0) stellata.setCameraFov(view.fov);
 
+  // Single dirty flag for everything that requires controls.update() at
+  // the end of the camera-touching block. Each branch below that mutates
+  // camera.position / controls.target / camera.up sets this so the final
+  // update() reads as "if any of those happened, refresh" — replaces
+  // a hand-maintained N-way OR that grew with every new branch.
+  let controlsDirty = false;
+
   if (view.up) {
     stellata.camera.up.set(view.up[0], view.up[1], view.up[2]).normalize();
+    controlsDirty = true;
   }
 
   const hasCam = view.cam !== undefined;
@@ -778,13 +785,16 @@ export function applyDecodedView(
     const camDefault = view.mode === 'observe' ? [0, 0, 0] : DEFAULT_CAM;
     stellata.camera.position.set(camDefault[0], camDefault[1], camDefault[2]);
     stellata.controls.target.set(DEFAULT_TGT[0], DEFAULT_TGT[1], DEFAULT_TGT[2]);
+    controlsDirty = true;
   }
 
   if (view.cam) {
     stellata.camera.position.set(view.cam[0], view.cam[1], view.cam[2]);
+    controlsDirty = true;
   }
   if (view.tgt) {
     stellata.controls.target.set(view.tgt[0], view.tgt[1], view.tgt[2]);
+    controlsDirty = true;
   }
   // Mirror the encoder's observe-mode cam omission: pre-snap the camera
   // to the focal-star origin *before* controls.update so that lookAt
@@ -794,8 +804,9 @@ export function applyDecodedView(
   const willEnterObserve = view.mode === 'observe' && stellata.getFocusedStar() !== null;
   if (willEnterObserve && !hasCam) {
     stellata.camera.position.set(0, 0, 0);
+    controlsDirty = true;
   }
-  if (hasCam || hasTgt || view.up || view.worldOffset || willEnterObserve) stellata.controls.update();
+  if (controlsDirty) stellata.controls.update();
 
   if (willEnterObserve) {
     stellata.setCameraMode('observe', { animate: false });

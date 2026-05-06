@@ -109,6 +109,12 @@ export class ObserveControls {
     window.addEventListener('pointerup', this.onPointerUp);
     window.addEventListener('pointercancel', this.onPointerCancel);
     window.addEventListener('pointermove', this.onPointerMove);
+    // Cmd-Tab / app-switcher / tab-hide can preempt the drag without ever
+    // delivering pointerup or pointercancel. On return, dragging would
+    // resume from a stale dGrabbed and the next pointermove would whip
+    // the camera. Treat blur and tab-hide as cancel events.
+    window.addEventListener('blur', this.onWindowBlur);
+    document.addEventListener('visibilitychange', this.onVisibilityChange);
     this.canvas.addEventListener('wheel', this.onWheel, { passive: false });
   }
 
@@ -119,7 +125,18 @@ export class ObserveControls {
     window.removeEventListener('pointerup', this.onPointerUp);
     window.removeEventListener('pointercancel', this.onPointerCancel);
     window.removeEventListener('pointermove', this.onPointerMove);
+    window.removeEventListener('blur', this.onWindowBlur);
+    document.removeEventListener('visibilitychange', this.onVisibilityChange);
     this.canvas.removeEventListener('wheel', this.onWheel);
+    this.cancelDrag();
+  }
+
+  // Reset all live drag/momentum state. Used by disable(), onPointerCancel,
+  // and the blur/visibilitychange handlers — all four are "the pointer is
+  // no longer ours" events that must wipe the same fields in lockstep.
+  // onPointerUp does not call this because release legitimately promotes
+  // the last per-event rotation to a momentum velocity.
+  private cancelDrag() {
     this.dragging = false;
     this.activePointerId = null;
     this.momentumSpeed = 0;
@@ -196,10 +213,15 @@ export class ObserveControls {
   // continue the drag from a stale activePointerId / dragging=true.
   private onPointerCancel = (e: PointerEvent) => {
     if (this.activePointerId !== null && e.pointerId !== this.activePointerId) return;
-    this.dragging = false;
-    this.activePointerId = null;
-    this.momentumSpeed = 0;
-    this.lastRotAngle = 0;
+    this.cancelDrag();
+  };
+
+  private onWindowBlur = () => {
+    if (this.dragging) this.cancelDrag();
+  };
+
+  private onVisibilityChange = () => {
+    if (document.hidden && this.dragging) this.cancelDrag();
   };
 
   private onPointerMove = (e: PointerEvent) => {

@@ -83,8 +83,14 @@ class SearchBox {
       return;
     }
     this.results = this.runQuery(q);
-    this.hoverIdx = this.results.length > 0 ? 0 : -1;
+    // Rebuild rows with no active class, then route the initial hover
+    // through setHover so applyHoverClass owns the scroll-into-view
+    // for both rebuild and arrow-nav. Pre-baking the class here would
+    // skip the scroll path and silently break the moment a rebuild
+    // preserves resultsEl.scrollTop.
+    this.hoverIdx = -1;
     this.renderResultsDom();
+    if (this.results.length > 0) this.setHover(0);
     this.resultsEl.hidden = this.results.length === 0;
     const row = this.input.closest('.search-row') as HTMLElement | null;
     if (row) {
@@ -97,7 +103,10 @@ class SearchBox {
     for (let i = 0; i < this.results.length; i++) {
       const e = this.results[i];
       const li = document.createElement('li');
-      li.className = i === this.hoverIdx ? 'active' : '';
+      // No active class here — render() calls setHover(0) after the
+      // rebuild so the initial highlight goes through applyHoverClass
+      // (which also handles scroll-into-view).
+      li.className = '';
       li.innerHTML = `<span>${escapeHtml(e.primary)}</span><span class="sub">${escapeHtml(e.displayCon || '—')}</span>`;
       li.addEventListener('mousedown', (ev) => {
         ev.preventDefault();
@@ -305,7 +314,7 @@ export function bindSearch(
       if (norm) glMap.set(norm, entry.i);
     }
 
-    const conIdx = entry.c !== undefined ? entry.c : 255;
+    const conIdx = entry.c ?? 255;
     const con = conIdx !== 255 ? conByIdx[conIdx] : null;
     const conCode = con?.code ?? '';
     const conName = con?.name ?? '';

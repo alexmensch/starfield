@@ -123,9 +123,13 @@ export class HudOverlay {
   // Reusable scratch vectors so per-frame updates allocate nothing.
   private tmpDir = new THREE.Vector3();
   private tmpOrigin = new THREE.Vector3();
-  private tmpAux = new THREE.Vector3();
   private tmpSolLocal = new THREE.Vector3();
   private tmpGcLocal = new THREE.Vector3();
+
+  // Click handlers — owned here so dispose() can remove them and let the SVG
+  // labels release their references back to the Stellata closure.
+  private onSolLabelClick: (() => void) | null = null;
+  private onGcLabelClick: (() => void) | null = null;
 
   constructor(
     ring: SVGCircleElement,
@@ -135,6 +139,8 @@ export class HudOverlay {
     gcBg: SVGPathElement,
     solLabel: SVGTextElement,
     gcLabel: SVGTextElement,
+    onSolClick: () => void,
+    onGcClick: () => void,
   ) {
     this.ring = ring;
     this.solPath = solPath;
@@ -143,7 +149,22 @@ export class HudOverlay {
     this.gcBg = gcBg;
     this.solLabel = solLabel;
     this.gcLabel = gcLabel;
+    this.onSolLabelClick = onSolClick;
+    this.onGcLabelClick = onGcClick;
+    this.solLabel.addEventListener('click', this.onSolLabelClick);
+    this.gcLabel.addEventListener('click', this.onGcLabelClick);
     this.hideAll();
+  }
+
+  dispose() {
+    if (this.onSolLabelClick) {
+      this.solLabel.removeEventListener('click', this.onSolLabelClick);
+      this.onSolLabelClick = null;
+    }
+    if (this.onGcLabelClick) {
+      this.gcLabel.removeEventListener('click', this.onGcLabelClick);
+      this.onGcLabelClick = null;
+    }
   }
 
   /** Per-frame update. */
@@ -309,7 +330,7 @@ export class HudOverlay {
       // projection divide and gives a robust screen direction whenever the
       // direction has any component perpendicular to the camera axis. See
       // arrow-path.ts for the helper.
-      const vsDir = viewSpaceScreenDir(dir, camera, this.tmpAux);
+      const vsDir = viewSpaceScreenDir(dir, camera);
       if (vsDir) {
         sux = vsDir[0];
         suy = vsDir[1];
@@ -472,28 +493,12 @@ function projectToScreen(
 }
 
 export interface ArrowDebugRecord {
-  /** updateOne was called with `hide=true` (focal star is the same as the
-   *  arrow's target — i.e. focused on Sol while computing Sol arrow). */
   hideRequested: boolean;
-  /** True when the target's view-space Z >= -near (i.e. behind the camera);
-   *  this is the case where the arrow points in a direction only and is
-   *  drawn at full ARROW_PIXEL_LENGTH. */
   behindCamera: boolean;
-  /** Which path produced the screen direction. 'targetScreen' when the
-   *  target projects in front and we used the screen vector to it;
-   *  'viewSpaceDir' when we transformed `dir` to view space and read its
-   *  xy components; 'none' when both failed (arrow hidden). */
   dirPath: 'none' | 'targetScreen' | 'viewSpaceDir';
-  /** Signed projection of the (target_screen - origin_screen) vector onto
-   *  the screen-direction unit vector. 0 when targetScreen was null. */
   projAlong: number;
-  /** True when the shrink-to-target rule shortened the shaft from the
-   *  nominal ARROW_PIXEL_LENGTH. */
   shrunkToTarget: boolean;
-  /** Final shaft length actually drawn (after shrink-to-target). 0 when
-   *  hidden. */
   shaftLengthPx: number;
-  /** The fade alpha that was applied to this arrow's elements. */
   fadeAlpha: number;
 }
 

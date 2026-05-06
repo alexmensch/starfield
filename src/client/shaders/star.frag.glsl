@@ -6,7 +6,8 @@ precision highp float;
 uniform float uMonochrome; // 0 = colour, 1 = ink-on-paper (multiply)
 // Render mode:
 //   0 = glow pass (additive, distant unresolved points)
-//   1 = disc pass (premul-alpha, close-range resolved stars)
+//   1 = disc pass (per-channel max, close-range resolved stars; see
+//       applyDiscBlendDefaults in stellata.ts for the blend rationale)
 //   2 = core depth-mask (depth-only, only the bright core of disc-pass
 //       stars). Renders before any background layer so the Milky Way,
 //       molecular clouds, and galactic grid depth-fail behind disc cores.
@@ -74,11 +75,10 @@ void main() {
     float r = length(vUv);
     if (r > 0.5) discard;
 
-    // Default: write our actual depth. The disc pass overrides this for
-    // halo fragments so they don't occlude background stars drawn later.
-    // The logdepthbuf chunk overrides this with the log-encoded depth
-    // when the renderer's logarithmicDepthBuffer is enabled.
-    gl_FragDepth = gl_FragCoord.z;
+    // Log-depth chunk writes gl_FragDepth from vFragDepth. The halo
+    // override below pushes haloed disc-pass fragments to the far plane
+    // (1.0 reads correctly under any depth encoding) so they don't
+    // occlude background stars drawn later.
     #include <logdepthbuf_fragment>
 
     // Chart mode: flatten everything. Stars render as solid hard-edged
@@ -136,9 +136,9 @@ void main() {
         glow *= tap;
         outColor = vec4(vColor * glow, glow);
     } else {
-        // Disc pass — only disc-dominated stars. Premultiplied-alpha
-        // blending; depth handling below decides whether each fragment
-        // occludes the background.
+        // Disc pass — only disc-dominated stars. Per-channel MaxEquation
+        // blending (see applyDiscBlendDefaults); depth handling below
+        // decides whether each fragment occludes the background.
         if (vPhysRatio < PHYS_RATIO_THRESHOLD) discard;
         // The taper region (m_lim, m_lim + 0.5] is glow-only — resolved
         // discs at threshold would render as a sub-pixel speck and read as

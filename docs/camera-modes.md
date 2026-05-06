@@ -263,6 +263,18 @@ vanishes before the camera arrives. `controls.enabled = false`;
   cursor at that moment and pointer-move keeps it there. So the user
   can rotate the screen image to match the sky overhead and dragging
   still drags the world along intuitively.
+- **Drag teardown.** Four code paths reset `dragging` /
+  `activePointerId` / `momentumSpeed` / `lastRotAngle` to known-clean
+  state via the shared `cancelDrag()` helper: `disable()` (mode change),
+  `pointercancel` (OS-cancelled gesture — phone-call interrupt, system
+  gesture preempt), `window.blur` (Cmd-Tab / app-switcher), and
+  `document.visibilitychange` while hidden (tab swap, swipe-up app
+  switcher on mobile). All four are "the pointer is no longer ours"
+  events; without one of them, dragging would resume from a stale
+  `dGrabbed` and the next pointermove would whip the camera. The
+  navigate-mode click detector in `stellata.ts` has a parallel
+  `pointercancel` partner clearing `pointerDownAt` to prevent phantom
+  clicks from cross-gesture drift.
 - **Release momentum.** On `pointermove` we extract the per-event
   rotation as axis-angle (`lastRotAxis`, `lastRotAngle`,
   `lastMoveTimeMs`). On `pointerup`, if the gap between the last move

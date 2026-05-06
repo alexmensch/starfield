@@ -322,7 +322,7 @@ export function createPoiOverlay(
         // derivations. View-space (x, y) of the camera-to-target
         // direction tells us which way to rotate even when the target
         // is fully behind the user.
-        const vsDir = viewSpaceScreenDir(tmpDir, camera, tmpAux);
+        const vsDir = viewSpaceScreenDir(tmpDir, camera);
         if (vsDir) {
           sux = vsDir[0];
           suy = vsDir[1];

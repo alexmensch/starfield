@@ -203,6 +203,18 @@ export function parseGcvsNumber(s: string): number | null {
   return Number.isFinite(v) ? v : null;
 }
 
+// ---- Catalog flag bits --------------------------------------------------
+
+// Per-star bitfield in the binary catalog. Bit 3 (0x08) is reserved for
+// future use. Single source of truth for both writers (scripts/build-catalog,
+// scripts/catalog-pure inferBinaries) and readers (catalog-loader,
+// chart-labels, verify-catalog). Adding a bit means adding a name here, not
+// sprinkling another magic number.
+export const FLAG_HAS_NAME = 0x01;
+export const FLAG_IS_SOL = 0x02;
+export const FLAG_HAS_BAYER = 0x04;
+export const FLAG_BINARY_PRIMARY = 0x10;
+
 // ---- Geometric binary inference -----------------------------------------
 
 // Pairs within this 3D distance are flagged as a physical binary/multiple
@@ -223,6 +235,53 @@ export interface BinaryStar {
   companionIdx: number;
 }
 
+// Pick the brightest star (lowest absmag) of `indices` and OR
+// FLAG_BINARY_PRIMARY onto it. Returns the picked index, or -1 if the
+// group is empty. Single point of truth for the "primary = brightest of
+// group" convention shared by both binary-flagging passes (geometric
+// mutual pairs in inferBinaries; CCDM groups in applyDoublesFlag).
+//
+// Idempotent: re-running on a group whose primary is already flagged
+// produces the same flag bits.
+export function markPrimary(
+  stars: Pick<BinaryStar, 'absmag' | 'flags'>[],
+  indices: number[],
+): number {
+  let bestIdx = -1;
+  let bestMag = Infinity;
+  for (const i of indices) {
+    const m = stars[i].absmag;
+    if (m < bestMag) {
+      bestMag = m;
+      bestIdx = i;
+    }
+  }
+  if (bestIdx === -1) return -1;
+  stars[bestIdx].flags |= FLAG_BINARY_PRIMARY;
+  return bestIdx;
+}
+
+// Like markPrimary, but a no-op when any star in `indices` already carries
+// FLAG_BINARY_PRIMARY. Used by the CCDM pass: a star flagged by
+// inferBinaries' mutual-pair pick should not get re-picked here, since
+// the two passes can disagree on which of a triple is "primary" (e.g. a
+// non-mutual {A, B, C} where the geometric pair is (B, C) but A is
+// brightest in the CCDM group). Honouring the existing pick keeps the
+// "at most one primary per physical system" contract — re-flagging would
+// produce two wings glyphs for the same system. Returns the picked
+// index, -1 if no in-catalog members, or -2 if a member was already
+// flagged.
+export function markPrimaryIfUnflagged(
+  stars: Pick<BinaryStar, 'absmag' | 'flags'>[],
+  indices: number[],
+): number {
+  if (indices.length === 0) return -1;
+  for (const i of indices) {
+    if ((stars[i].flags & FLAG_BINARY_PRIMARY) !== 0) return -2;
+  }
+  return markPrimary(stars, indices);
+}
+
 // Spatial-grid nearest-neighbour pass. For each star, find its nearest
 // neighbour within BINARY_MAX_SEP_PC and record it as `companionIdx`.
 // `companionIdx` is the **directed** nearest neighbour (A's nearest may
@@ -239,11 +298,12 @@ export interface BinaryStar {
 // Mutates `stars[i].companionIdx` and `stars[i].flags` in place.
 // Returns counts for the build-time log line:
 //   pairs        — total directed companion assignments
-//   mutualPairs  — undirected mutual pairs (each counted once)
-//   primaries    — stars marked with 0x10 (== mutualPairs)
+//   mutualPairs  — undirected mutual pairs (each counted once); also
+//                  equals the count of FLAG_BINARY_PRIMARY bits set,
+//                  since we mark exactly one primary per mutual pair
 export function inferBinaries(
   stars: BinaryStar[],
-): { pairs: number; mutualPairs: number; primaries: number } {
+): { pairs: number; mutualPairs: number } {
   const cell = BINARY_MAX_SEP_PC;
   const cellInv = 1 / cell;
   const grid = new Map<number, number[]>();
@@ -308,9 +368,8 @@ export function inferBinaries(
     if (j < 0 || j <= i) continue;
     if (stars[j].companionIdx !== i) continue;
     mutualPairs++;
-    const primary = stars[i].absmag <= stars[j].absmag ? i : j;
-    stars[primary].flags |= 0x10;
+    markPrimary(stars, [i, j]);
   }
 
-  return { pairs, mutualPairs, primaries: mutualPairs };
+  return { pairs, mutualPairs };
 }

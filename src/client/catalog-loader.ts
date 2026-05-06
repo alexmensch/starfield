@@ -1,3 +1,5 @@
+import { FLAG_HAS_NAME, FLAG_IS_SOL } from '../../scripts/catalog-pure';
+
 export interface Constellation {
   code: string;
   name: string;
@@ -135,7 +137,7 @@ export function parseBinary(ab: ArrayBuffer, constellations: Constellation[]): C
     amplitudeMag[i] = view.getUint8(off + 36) * 0.05;
     periodDays[i] = view.getUint16(off + 38, true) * 0.1;
     hip[i] = view.getUint32(off + 40, true);
-    if (flags[i] & 0x02) solIndex = i;
+    if (flags[i] & FLAG_IS_SOL) solIndex = i;
   }
 
   const names = new Map<number, string>();
@@ -156,7 +158,7 @@ export function parseBinary(ab: ArrayBuffer, constellations: Constellation[]): C
       p += len;
     }
     for (let i = 0; i < count; i++) {
-      if (flags[i] & 0x01) {
+      if (flags[i] & FLAG_HAS_NAME) {
         const name = offsetToName.get(nameOffsetArr[i]);
         if (name) names.set(i, name);
       }
