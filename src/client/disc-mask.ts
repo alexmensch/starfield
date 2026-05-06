@@ -1,6 +1,5 @@
 import * as THREE from 'three';
 import type { Stellata } from './stellata';
-import { OVERLAY_NEAR_CLIP_PC } from './arrow-path';
 
 // Per-frame SVG mask updater. Overlays that should appear BEHIND any close
 // rendered-disc star apply `mask="url(#disc-occlude-mask)"`. This module
@@ -51,7 +50,7 @@ export function createDiscMask(stellata: Stellata) {
     const camera = stellata.camera;
     v.set(positions[idx * 3], positions[idx * 3 + 1], positions[idx * 3 + 2]);
     v.applyMatrix4(camera.matrixWorldInverse);
-    if (v.z > -OVERLAY_NEAR_CLIP_PC) return false;
+    if (v.z > -camera.near) return false;
     v.applyMatrix4(camera.projectionMatrix);
     const cx = (v.x + 1) * 0.5 * window.innerWidth;
     const cy = (1 - v.y) * 0.5 * window.innerHeight;

@@ -10,7 +10,7 @@ import { GalacticDisc } from './galactic-disc';
 import { GalacticGrid } from './galactic-grid';
 import { HudOverlay } from './hud-overlay';
 import { GALACTIC_CENTRE_PC } from './galactic-coords';
-import { MolecularClouds, cloudViewingDistancePc } from './molecular-clouds';
+import { MolecularClouds, cloudViewingDistancePc, renderedCloudSizePx } from './molecular-clouds';
 import type { CloudCatalog } from './cloud-loader';
 import { MilkyWay } from './milkyway';
 import { ObserveControls } from './observe-controls';
@@ -117,6 +117,12 @@ export interface StarRenderParams {
   distNMax: number;
   lumBiasMin: number;
   lumBiasMax: number;
+  // Soft-knee saturation extent (magnitudes) for the Gaussian-PSF disc
+  // size formula. See uSizeKnee comment in star.vert.glsl. 0 = hard cap
+  // (legacy behaviour); larger values let bright stars keep growing
+  // before saturating. 16 lands ~43% size advantage for Sol over Sirius
+  // when standing at the unfocused floor inside the solar system.
+  sizeKnee: number;
 }
 export const STAR_RENDER_DEFAULTS: StarRenderParams = {
   visibleThreshold: 0.2,
@@ -126,6 +132,7 @@ export const STAR_RENDER_DEFAULTS: StarRenderParams = {
   distNMax: 10.0,
   lumBiasMin: 1.0,
   lumBiasMax: 0.6,
+  sizeKnee: 16,
 };
 
 interface MagPreset {
@@ -164,24 +171,40 @@ function computeMagPresets(): Record<MagPresetName, MagPreset> {
 // MAG_PRESETS see the latest values after a K tweak.
 export let MAG_PRESETS: Record<MagPresetName, MagPreset> = computeMagPresets();
 
-// Fallback near-star distance, used when no focus exists yet (controls'
-// minDistance before a star is ever focused). Per-star approach distance is
-// otherwise computed by `minDistForStar` from the star's rendered disc size,
-// so the camera lands on a uniform on-screen size regardless of stellar
-// luminosity class — see TARGET_APPROACH_DISC_PX.
-const DEFAULT_MIN_DIST_PC = 0.005;
+// Fallback orbit-controls floor when no star is focused. Sized to keep
+// the camera comfortably outside any single star's physical envelope
+// (Sol's photosphere at 2.25×10⁻⁸ pc, Earth's orbit at 4.85×10⁻⁶ pc) so
+// approaching origin without an explicit focus anchor doesn't enter the
+// extreme-close-range regime where float32 matrix cancellation drifts
+// the projected center off-screen. To get closer than this, focus a
+// star — `minOrbitDistForStar` then returns the per-star physical floor.
+const GLOBAL_MIN_DIST_PC = 5e-3;
 
-// Target rendered disc diameter, in CSS pixels, when the camera parks at
-// `minDistForStar`. Same on-screen size for any star → distance scales with
-// the star's physical radius. Tune here to make every "land near a star"
-// transition (observe-exit, warp source departure, warp arrival, orbit
-// minDistance clamp) place the camera closer (larger value) or further
-// (smaller value).
-const TARGET_APPROACH_DISC_PX = 10;
+// Fraction of the viewport's minor axis that the focused star's disc
+// fills at the manual-zoom orbit floor. 0.9 means a maximally-zoomed
+// camera lands with the star covering 90% of the smaller viewport
+// dimension — leaves a small ring of background visible. Both the
+// vertex shader (variability headroom) and minOrbitDistForStar use
+// this constant; keep them in sync.
+const ZOOM_FLOOR_FRACTION = 0.9;
+
+// Fraction of the viewport's minor axis that a destination star fills
+// when the camera auto-parks at it (warp arrival, observe-exit landing,
+// search-select teleport). 0.10 = the disc reads as a clear feature
+// without dominating the frame, leaving room to see the surrounding
+// star field. Drives minDistForStar.
+const TARGET_PARK_FRACTION = 0.10;
 
 // Default vertical FOV (degrees). User-tunable via the FOV slider; the
 // reset button snaps back to this value.
 export const DEFAULT_FOV = 50;
+
+// One solar radius in parsecs. catalog.physicalRadius (and therefore
+// iLogRadius) is in solar radii; the angular-diameter formula needs
+// physical radius in pc to match the camera-distance units. Used both
+// in stellata.ts and in the star vertex shader (uRSunPc).
+//   1 R_sun = 6.957e8 m, 1 pc = 3.0857e16 m  →  R_sun = 2.2543e-8 pc
+const R_SUN_PC = 2.2543e-8;
 
 // When a focused star has a binary companion, minDistance is set so the
 // companion subtends at most this half-angle from the camera axis — gives
@@ -233,17 +256,25 @@ interface ObserveTransitionState {
   // floating-origin frame). 'exit' translates to the star's effective
   // minDistance along the camera's current backward direction; on
   // completion controls.target snaps to the focal star and TrackballControls
-  // re-enables.
-  kind: 'enter' | 'exit';
+  // re-enables. 'unfocus' is the navigate-mode close-zoom unfocus zoom-out
+  // (a7d.2.6): focus has already been cleared when the lerp starts, the
+  // camera lerps from its close-orbit position outward to the former focal
+  // star's parking distance, and on completion controls.minDistance is
+  // tightened to that parking distance so manual zoom-in is bounded.
+  kind: 'enter' | 'exit' | 'unfocus';
   // Only meaningful for 'exit' transitions. When true, finishObserveTransition
   // calls setFocus(null) right after the camera lands at minDistance — used by
   // the X button on the location search so the user gets the same zoom-out
   // animation whether they're returning to navigate-with-focus or fully
   // unfocusing.
   clearFocusOnExit?: boolean;
+  // Only meaningful for 'unfocus'. controls.minDistance to set when the lerp
+  // lands. setFocus(null) (called before the transition starts) clamps
+  // minDistance to the pre-animation eye distance so the camera doesn't get
+  // pushed outward when the lerp begins; this value tightens minDistance to
+  // the parking distance once the lerp completes.
+  finalMinDistance?: number;
 }
-
-export { DEFAULT_MIN_DIST_PC };
 
 interface AimState {
   startTimeMs: number;
@@ -273,9 +304,15 @@ interface WarpState {
   dir0: THREE.Vector3;     // unit vector from A toward camera at warp start
   mag0: number;            // |camera - A| at warp start
   dirBack: THREE.Vector3;  // unit vector from A away from B (reorient end direction)
-  pStart: THREE.Vector3;   // fly start = A + dirBack * endOffset
+  pStart: THREE.Vector3;   // fly start = A + dirBack * sourceOffset
   pEnd: THREE.Vector3;     // fly end = B - forward * endOffset
   endOffset: number;       // arrival viewing distance for the destination
+  // Source-side reorient distance — minDistForStar(source) when warping
+  // from a focused star, cloudViewingDistancePc(source) when warping
+  // from a focused cloud. Decoupled from endOffset so warps from a
+  // giant source (e.g. Betelgeuse) to a small destination (Sol) don't
+  // place pStart inside the source's rendered disc.
+  sourceOffset: number;
   destKind: 'star' | 'cloud';
   destIdx: number;
   // Warp originated from OBSERVE mode. finishWarp re-enters observe at the
@@ -400,6 +437,12 @@ export class Stellata {
   private sortedDistFromSol!: Float32Array;
   private sortedByDistFromSol!: Uint32Array;
 
+  // Largest physicalRadius in the catalog, in pc. Drives shouldEnableCoreMask:
+  // the core depth-mask only matters when at least one star's angular disc
+  // crosses the visibility threshold, and the largest star at the closest
+  // approach is the worst case.
+  private maxPhysicalRadiusPc!: number;
+
   private filter: FilterState = { ...DEFAULT_FILTER };
 
   private disposed = false;
@@ -518,7 +561,7 @@ export class Stellata {
     this.controls.noPan = false;
     this.controls.staticMoving = false;
     this.controls.dynamicDampingFactor = 0.15;
-    this.controls.minDistance = DEFAULT_MIN_DIST_PC;
+    this.controls.minDistance = GLOBAL_MIN_DIST_PC;
     this.controls.maxDistance = 100_000;
     this.controls.target.set(0, 0, 0);
 
@@ -532,29 +575,28 @@ export class Stellata {
       () => this.camera.fov,
     );
 
-    // Precompute log10(physicalRadius) per star for the shader, and the
-    // catalog-wide min/max for uniform bounds. Done once at load so the
-    // vertex shader can just do a linear mix. Luminosity class is
-    // converted from Uint8 to Float32 since the vertex attribute is a
-    // float; 255 (unknown) survives the conversion and is handled inside
-    // the shader.
+    // Precompute log10(physicalRadius) per star for the shader (vertex
+    // attribute decode: pow(10, iLogRadius) → physical radius in pc),
+    // and track the catalog-wide max so shouldEnableCoreMask can reason
+    // about the largest disc that could appear at close range.
+    // Luminosity class is converted from Uint8 to Float32 since the
+    // vertex attribute is a float; 255 (unknown) survives the conversion
+    // and is handled inside the shader.
     const logRadii = new Float32Array(catalog.count);
     const lumClassF32 = new Float32Array(catalog.count);
     const distSol = new Float32Array(catalog.count);
-    let logRMin = Infinity;
-    let logRMax = -Infinity;
+    let maxPhysicalRadius = 0;
     for (let i = 0; i < catalog.count; i++) {
       const r = Math.max(catalog.physicalRadius[i], 1e-6);
-      const lr = Math.log10(r);
-      logRadii[i] = lr;
-      if (lr < logRMin) logRMin = lr;
-      if (lr > logRMax) logRMax = lr;
+      logRadii[i] = Math.log10(r);
+      if (r > maxPhysicalRadius) maxPhysicalRadius = r;
       lumClassF32[i] = catalog.luminosityClass[i];
       const x = catalog.positions[i * 3];
       const y = catalog.positions[i * 3 + 1];
       const z = catalog.positions[i * 3 + 2];
       distSol[i] = Math.sqrt(x * x + y * y + z * z);
     }
+    this.maxPhysicalRadiusPc = maxPhysicalRadius * R_SUN_PC;
     // Local-frame position buffer — starts identical to catalog.positions
     // since worldOffset is (0,0,0) at construction. Recenter rewrites this
     // in place.
@@ -570,13 +612,11 @@ export class Stellata {
     for (let i = 0; i < catalog.count; i++) {
       this.sortedDistFromSol[i] = distSol[this.sortedByDistFromSol[i]];
     }
-    const physMaxPx = this.computePhysMaxPx();
-
     // Instanced quads: one unit square per star, expanded in screen space in
     // the vertex shader. This replaces the earlier THREE.Points approach,
     // which was capped by the driver-defined gl_PointSize maximum (often
-    // 64–255 px) — too small for the physical-size rendering to reach the
-    // 50%-viewport ceiling we want for supergiants at close range.
+    // 64–255 px) — too small for the angular-diameter rendering to reach
+    // the viewport-filling sizes we want for supergiants at close range.
     this.geometry = new THREE.InstancedBufferGeometry();
     this.geometry.setAttribute(
       'aCorner',
@@ -628,11 +668,14 @@ export class Stellata {
       uChartDiscMaxPx: { value: 16.0 },
       uChartDiscMinPx: { value: 1.5 },
       uChartMagBright: { value: -2.0 },
-      uLogRMin: { value: logRMin },
-      uLogRMax: { value: logRMax },
-      uPhysMinPx: { value: 2.0 },
-      uPhysMaxPx: { value: physMaxPx },
-      uRefDistPc: { value: DEFAULT_MIN_DIST_PC },
+      // Camera vertical FOV in radians, mirrored from camera.fov whenever
+      // setCameraFov runs. The shader needs it to convert a star's angular
+      // diameter (2·atan(R/d)) into pixels.
+      uFovYRad: { value: (this.camera.fov * Math.PI) / 180 },
+      // Solar-radii → parsecs conversion for the physical-size formula.
+      // catalog.physicalRadius is in solar radii; iLogRadius decodes back
+      // to solar radii via pow(10, x); multiply by uRSunPc to get pc.
+      uRSunPc: { value: R_SUN_PC },
       uViewport: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
       // Variability time. uTime advances in real seconds; uSecondsPerDay is
       // the compression factor — lower values make catalog periods cycle
@@ -655,6 +698,7 @@ export class Stellata {
       uDistNMax: { value: STAR_RENDER_DEFAULTS.distNMax },
       uLumBiasMin: { value: STAR_RENDER_DEFAULTS.lumBiasMin },
       uLumBiasMax: { value: STAR_RENDER_DEFAULTS.lumBiasMax },
+      uSizeKnee: { value: STAR_RENDER_DEFAULTS.sizeKnee },
 
       // Interstellar-dust extinction. Off by default (uDustEnabled = 0) —
       // attachDust() wires in the Data3DTexture progressively as chunks
@@ -682,6 +726,16 @@ export class Stellata {
       // three star passes (disc, glow, core mask) share these uniforms so
       // the suppression fires uniformly.
       uHideFocusIdx: { value: -1 },
+      // Force-center the focused star at NDC (0,0). At the close-approach
+      // orbit floor (~5×10⁻⁸ pc for Sol-class stars), float32 cancellation
+      // in projectionMatrix * modelViewMatrix * (0,0,0,1) can drift the
+      // projected center by visible pixels even though the star is
+      // mathematically at view-origin (controls.target = star, lookAt
+      // aligns -Z with target). This uniform names the instance to pin;
+      // the shader replaces its centreClip with projectionMatrix *
+      // (0, 0, -distCam, 1) to bypass the cancellation. -1 disables.
+      // Updated each frame in animate() since pan can move target away.
+      uPinFocusToCenter: { value: -1 },
     };
 
     // Disc pass: per-channel max so overlapping discs / halos don't sum.
@@ -785,8 +839,26 @@ export class Stellata {
     });
     this.scene.add(this.milkyway.group);
 
-    // Seed focus on Sol if it exists so measurement works from the start.
-    if (catalog.solIndex >= 0) this.focusedStar = catalog.solIndex;
+    // Engage focus on Sol if it exists so measurement and per-star zoom
+    // work from the start. setFocus (rather than raw field assignment)
+    // wires up controls.minDistance to the per-star orbit floor and
+    // snaps controls.target to local (0,0,0) — without this, the
+    // unfocused GLOBAL_MIN_DIST_PC clamp set above stays in place AND
+    // the pin guard fails because Sol's catalog position is
+    // (5e-6, 0, 0) pc (not exactly zero), so recenterOrigin shifts
+    // target by 5e-6 and breaks the lengthSq < 1e-12 invariant. Safe
+    // at this point in the constructor: handlers aren't subscribed yet
+    // and camera/aspect are already initialised.
+    if (catalog.solIndex >= 0) {
+      this.setFocus(catalog.solIndex);
+      // After setFocus, the local-frame origin is Sol and controls.target is
+      // (0,0,0). Park camera at the unified auto-arrival distance — same as
+      // every other minDistForStar landing — instead of the (0,0,30) seed
+      // value above, so first-load matches a fresh warp-back-to-Sol.
+      const d = this.minDistForStar(catalog.solIndex);
+      this.camera.position.set(0, 0, d);
+      this.controls.update();
+    }
 
     // Compute initial pixel sizes for the active preset against the real
     // viewport. DEFAULT_FILTER carries placeholder pixel values; this call
@@ -817,21 +889,98 @@ export class Stellata {
 
   getFocusedStar(): number | null { return this.focusedStar; }
   getFocusedCloud(): number | null { return this.focusedCloud; }
+  /** Absolute-space coordinate of the renderer's current local origin.
+   *  Read-only snapshot; callers must not mutate. URL serialisation
+   *  emits this so close-orbit unfocus poses (where worldOffset sits at
+   *  the former focal star, not Sol — see stellata-a7d.2.11) round-trip
+   *  exactly through the float32 cam/tgt fields. */
+  getWorldOffset(): Readonly<THREE.Vector3> { return this.worldOffset; }
+  /** Shift the floating origin to a new absolute position. Star instance
+   *  positions, camera, and controls.target are translated to preserve
+   *  the user-visible pose; subsequent rendering operates in the new
+   *  local frame. URL loading uses this to restore a saved worldOffset
+   *  before applying cam/tgt (which then overwrite the camera/target
+   *  translations the recentre produced). */
+  setWorldOffset(absX: number, absY: number, absZ: number): void {
+    this.recenterOrigin(this.tmpRecenter.set(absX, absY, absZ));
+  }
   getVectorTo(): number | null { return this.vectorTo; }
   getVectorToCloud(): number | null { return this.vectorToCloud; }
   getMonochrome(): boolean { return this.monochrome; }
   getWarpActive(): boolean { return this.warpState !== null; }
 
+  // Warp endpoints + destination identity for read-only consumers (e.g.
+  // the scale-bar focus indicator) that need to react to the in-flight
+  // warp without subscribing to per-frame state. Returns null when no
+  // warp is active. A and B are returned as references to the
+  // warpState's stored vectors — callers must not mutate them.
+  getWarpInfo(): {
+    A: Readonly<THREE.Vector3>;
+    B: Readonly<THREE.Vector3>;
+    destKind: 'star' | 'cloud';
+    destIdx: number;
+  } | null {
+    const w = this.warpState;
+    if (!w) return null;
+    const B = w.destKind === 'star'
+      ? this.starLocalPosition(w.destIdx)
+      : this.cloudLocalPosition(w.destIdx);
+    if (!B) return null;
+    return { A: w.A, B, destKind: w.destKind, destIdx: w.destIdx };
+  }
+
   getCameraMode(): CameraMode { return this.cameraMode; }
-  isObserveTransitionActive(): boolean { return this.observeTransition !== null; }
+  // True when an observe-mode transition (enter or exit) is in flight. The
+  // 'unfocus' kind reuses observeTransition state for a navigate-mode lerp
+  // and shouldn't surface to UI/overlay code that's gating on observe-mode
+  // visibility — overlays should see steady-state navigate during it.
+  isObserveTransitionActive(): boolean {
+    return this.observeTransition !== null && this.observeTransition.kind !== 'unfocus';
+  }
+
+  // True whenever a camera-position lerp is in flight — warp, observe
+  // enter/exit, OR the navigate-mode unfocus zoom-out. URL-state writes
+  // gate on this to avoid serialising transient mid-lerp poses; the end
+  // of each animation schedules a final write with the settled pose.
+  isCameraTransitionActive(): boolean {
+    return this.warpState !== null || this.observeTransition !== null;
+  }
+
+  // Cancel an in-flight 'unfocus' lerp (a7d.2.6) so a new camera-changing
+  // action (focus, warp, aim, click) can proceed without the lerp's next
+  // tick lerping the camera away from the action's destination. No-op for
+  // observe enter/exit transitions and when no transition is active.
+  private cancelUnfocusLerp() {
+    if (this.observeTransition?.kind === 'unfocus') {
+      this.observeTransition = null;
+    }
+  }
+  /** Whether the focused-star pin (uPinFocusToCenter) would engage right
+   *  now, mirroring the per-frame guard in animate(). Read by the pin
+   *  debug HUD (`debug.pin()`) to display live state. */
+  isPinEngaged(): boolean {
+    return (
+      this.focusedStar !== null &&
+      this.cameraMode === 'navigate' &&
+      !this.warpState && !this.aimState &&
+      this.controls.target.lengthSq() < 1e-12
+    );
+  }
+  /** True while an aim animation is in flight. Mirror of getWarpActive
+   *  for the camera's other interpolated transition. */
+  isAimActive(): boolean { return this.aimState !== null; }
 
   // Eased progress of the in-flight observe-mode camera translate, or null
   // if no transition is active. `f` matches the easing inside
   // updateObserveTransition so overlays that lerp alongside the camera
-  // (focus ring shrink, HUD ring grow) stay in sync visually.
+  // (focus ring shrink, HUD ring grow) stay in sync visually. The
+  // 'unfocus' lerp (a7d.2.6) reuses the same state slot but isn't an
+  // observe transition — focus has already been cleared and there's no
+  // focus-ring/HUD-ring morph to drive. Hide it from this getter so
+  // overlay code stays steady-state-navigate during the lerp.
   getObserveTransitionProgress(): { f: number; kind: 'enter' | 'exit' } | null {
     const s = this.observeTransition;
-    if (!s) return null;
+    if (!s || s.kind === 'unfocus') return null;
     const t = Math.min(1, (performance.now() - s.startTimeMs) / s.durationMs);
     const f = t < 0.5 ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t);
     return { f, kind: s.kind };
@@ -934,7 +1083,7 @@ export class Stellata {
   setCameraMode(mode: CameraMode, opts: { animate?: boolean } = {}) {
     if (mode === this.cameraMode) return;
     if (this.warpState) return;
-    if (this.observeTransition) return;
+    if (this.isObserveTransitionActive()) return;
     if (mode === 'observe') {
       if (this.focusedStar === null) return;
       if (this.warpState || this.aimState) return;
@@ -1048,20 +1197,53 @@ export class Stellata {
       for (const h of this.onCameraModeHandlers) h(this.cameraMode);
     }
     this.focusedStar = idx;
-    // Recenter the floating origin on every focus change. Focused: origin
-    // snaps to the focused star's absolute position, so close-range rendering
-    // happens with tiny coordinate values. Unfocused: origin snaps back to
-    // Sol (0,0,0) so the URL-serialised camera pose is in absolute space
-    // whenever no focus anchor is in play.
+    // Recenter the floating origin only when *focusing* a star. The new
+    // origin snaps to the focal star's absolute position, so close-range
+    // rendering happens with tiny coordinate values and the projection
+    // chain stays float32-clean. On *unfocus* (idx === null) we leave
+    // worldOffset alone — the camera is wherever it was, and continuing
+    // to render in the (former focal star's) local frame keeps every
+    // close-orbit precision invariant intact across the focus → unfocus
+    // transition (stellata-a7d.2.11). worldOffset only ever changes on
+    // focus, so the URL contract is "cam/tgt are in worldOffset-local
+    // frame; worldOffset itself rides along when it differs from Sol"
+    // (see url-state.ts FIELDS_V2 bit 20 + the loader's worldOffset
+    // application). Earlier behaviour recentred to Sol on every unfocus
+    // for URL simplicity, but that re-introduced kpc-scale subtractions
+    // in the projection chain and visibly bumped the focal star on
+    // screen at the moment of unfocus.
     if (idx !== null) {
       const p = this.catalog.positions;
       this.recenterOrigin(this.tmpRecenter.set(
         p[idx * 3], p[idx * 3 + 1], p[idx * 3 + 2],
       ));
-    } else {
-      this.recenterOrigin(this.tmpRecenter.set(0, 0, 0));
+      // After recenterOrigin, the focused star is at local (0,0,0). Snap
+      // controls.target to (0,0,0) and shift camera by the same delta so
+      // the camera-to-target relationship is preserved — the user-visible
+      // pose doesn't change. Without this, target lands at -dx (where dx
+      // is whatever recenterOrigin shifted by) and the per-frame pin guard
+      // (target.lengthSq < 1e-12) silently disengages whenever Sol's
+      // catalog offset (5e-6 pc) or a long warp's |AB|·1e-7 Float32
+      // residual leaks through. Every call site that sets target+camera
+      // before setFocus relies on this snap to land cleanly.
+      const t = this.controls.target;
+      this.camera.position.x -= t.x;
+      this.camera.position.y -= t.y;
+      this.camera.position.z -= t.z;
+      t.set(0, 0, 0);
     }
-    this.controls.minDistance = idx !== null ? this.minOrbitDistForStar(idx) : DEFAULT_MIN_DIST_PC;
+    // else: no recentre — see comment above.
+    if (idx !== null) {
+      this.controls.minDistance = this.minOrbitDistForStar(idx);
+    } else {
+      // Unfocus: clamp the new minDistance to ≤ current eye distance so
+      // TrackballControls doesn't push the camera outward when the user was
+      // sitting closer than GLOBAL_MIN_DIST_PC to the (former) focal star.
+      // Once minDistance is below current eye, future zoom-out is free; the
+      // 5e-3 pc unfocused floor latches once the user has zoomed out past it.
+      const eye = this.camera.position.distanceTo(this.controls.target);
+      this.controls.minDistance = Math.min(GLOBAL_MIN_DIST_PC, eye);
+    }
     for (const h of this.onFocusHandlers) h(idx);
     this.fireStateChange();
   }
@@ -1222,10 +1404,12 @@ export class Stellata {
     if (!cloud) return;
     if (this.warpState) return;
 
-    // Drop any star focus first. setFocus(null) recenters the floating
-    // origin to Sol, putting both camera and target back into absolute
-    // ICRS space — so we can place the new view directly using the
-    // cloud's absolute centroid, without subtracting worldOffset.
+    // Drop any star focus first. Since a7d.2.11, setFocus(null) leaves
+    // worldOffset at the former focal star (so the projection chain
+    // stays float32-clean across unfocus); we therefore can't assume
+    // the local frame is Sol-relative here. Subtract worldOffset
+    // explicitly when placing camera/target so the cloud's absolute
+    // centroid translates correctly into the current local frame.
     if (this.focusedStar !== null) this.setFocus(null);
     this.setVectorTo(null);
     this.setVectorToCloud(null);
@@ -1235,8 +1419,8 @@ export class Stellata {
     if (dir.lengthSq() < 1e-6) dir.set(0, 0, 1);
     dir.normalize().multiplyScalar(offsetDist);
 
-    this.controls.target.copy(cloud.centerAbs);
-    this.camera.position.copy(cloud.centerAbs).add(dir);
+    this.controls.target.copy(cloud.centerAbs).sub(this.worldOffset);
+    this.camera.position.copy(this.controls.target).add(dir);
     this.controls.update();
     this.setFocusedCloud(idx);
   }
@@ -1336,7 +1520,7 @@ export class Stellata {
     // OBSERVE doesn't draw vectors. Defensive: search "To" or URL state
     // could try to write one — drop the value rather than fight an invalid
     // overlay state.
-    if (idx !== null && (this.cameraMode === 'observe' || this.observeTransition)) return;
+    if (idx !== null && (this.cameraMode === 'observe' || this.isObserveTransitionActive())) return;
     // Mutually exclusive with vectorToCloud; setting a star vector clears
     // any cloud destination.
     if (idx !== null && this.vectorToCloud !== null) {
@@ -1350,7 +1534,7 @@ export class Stellata {
   }
 
   setVectorToCloud(idx: number | null) {
-    if (idx !== null && (this.cameraMode === 'observe' || this.observeTransition)) return;
+    if (idx !== null && (this.cameraMode === 'observe' || this.isObserveTransitionActive())) return;
     // Mutually exclusive with vectorTo; setting a cloud vector clears
     // any star destination.
     if (idx !== null && this.vectorTo !== null) {
@@ -1363,24 +1547,27 @@ export class Stellata {
     this.fireStateChange();
   }
 
-  unfocus() {
+  unfocus(opts: { animate?: boolean } = {}) {
     if (this.warpState) return;
     if (
       this.focusedStar === null && this.focusedCloud === null &&
       this.vectorTo === null && this.vectorToCloud === null
     ) return;
+    const animate = opts.animate ?? true;
     this.setVectorTo(null);
     this.setVectorToCloud(null);
     // X-out from OBSERVE: clear focus FIRST so the search box empties as
     // soon as the user clicks (via onFocusChange → syncFocusUI), then
-    // animate the same zoom-out the navigate-mode toggle uses. The
-    // animation runs in the post-recenter (Sol-centric) frame because
-    // setFocus(null) recentres the floating origin.
-    if (this.cameraMode === 'observe' && this.focusedStar !== null) {
+    // animate the same zoom-out the navigate-mode toggle uses. Since
+    // a7d.2.11 setFocus(null) doesn't recentre, so the animation runs
+    // in the (former focal star's) local frame — fromPos/toPos below
+    // are captured in that same frame.
+    if (animate && this.cameraMode === 'observe' && this.focusedStar !== null) {
       const focalIdx = this.focusedStar;
       const minDist = this.minDistForStar(focalIdx);
-      // Quaternion → forward is frame-invariant, so capture before the
-      // recenter rebases coordinates.
+      // Quaternion → forward is frame-invariant — capturing here is
+      // historical (a7d.2.11 made setFocus(null) below frame-preserving
+      // too) but harmless and self-documenting.
       const forward = new THREE.Vector3(0, 0, -1)
         .applyQuaternion(this.camera.quaternion);
 
@@ -1390,10 +1577,10 @@ export class Stellata {
       this.observeControls.disable();
       this.observeAimState = null;
 
-      // setFocus(null) recentres origin → camera.position translates;
-      // search box clears via the onFocusChange handler. cameraMode is
-      // already 'navigate' so the observe-cleanup branch inside setFocus
-      // is skipped.
+      // Clear the star focus; search box clears via the onFocusChange
+      // handler. cameraMode is already 'navigate' so the observe-cleanup
+      // branch inside setFocus is skipped. Since a7d.2.11, setFocus(null)
+      // leaves worldOffset alone — camera.position stays put.
       this.setFocus(null);
 
       const fromPos = this.camera.position.clone();
@@ -1411,6 +1598,59 @@ export class Stellata {
       for (const h of this.onCameraModeHandlers) h(this.cameraMode);
       this.fireStateChange();
       return;
+    }
+    // Navigate-mode close-zoom unfocus: animate the camera back to the
+    // former focal star's parking distance instead of teleporting (a7d.2.6).
+    // Skip when the camera is already further out than minDistForStar (the
+    // acceptance "no-op when at or beyond the floor" criterion), or when
+    // there's no focused star to anchor on (cloud-only / vector-only
+    // unfocus, no animation reference). Pin disengages naturally because
+    // setFocus(null) clears focusedStar before the lerp tick runs; the
+    // (former) focal star sits at iPosition=(0,0,0) in the worldOffset-
+    // local frame so the projection chain stays float32-clean without it.
+    if (
+      animate &&
+      this.cameraMode === 'navigate' &&
+      this.focusedStar !== null &&
+      !this.observeTransition
+    ) {
+      const focalIdx = this.focusedStar;
+      const minDist = this.minDistForStar(focalIdx);
+      const fromPos = this.camera.position.clone();
+      const eye = fromPos.distanceTo(this.controls.target);
+      if (eye < minDist) {
+        const dir = fromPos.clone().sub(this.controls.target).normalize();
+        const toPos = this.controls.target.clone().addScaledVector(dir, minDist);
+        // Clear focus before the lerp starts so UI listeners (search box,
+        // overlays, focus-ring) update immediately. setFocus(null) clamps
+        // controls.minDistance to ≤ current eye, so the camera doesn't
+        // fight the lerp's outward motion. After the lerp lands,
+        // finishObserveTransition tightens minDistance to minDist.
+        this.setFocus(null);
+        this.setFocusedCloud(null);
+        // Don't toggle controls.enabled during the lerp. The animate()
+        // dispatcher routes to updateObserveTransition, which lerps
+        // camera.position directly and skips controls.update(), so any
+        // user input accumulates inside TrackballControls but doesn't
+        // apply visually. Disabling explicitly would race the click-to-
+        // unfocus event chain: Stellata's pointerup listener runs before
+        // TrackballControls' dynamically-added pointerup, and TC's
+        // handleMouseUp early-returns on `enabled === false` without
+        // resetting its internal `_state` from ROTATE → after the lerp
+        // every cursor movement would drag the view as if a button were
+        // held. queueMicrotask doesn't help — the microtask checkpoint
+        // drains between event listeners.
+        this.observeTransition = {
+          startTimeMs: performance.now(),
+          durationMs: OBSERVE_TRANSITION_MS,
+          fromPos,
+          toPos,
+          kind: 'unfocus',
+          finalMinDistance: minDist,
+        };
+        this.fireStateChange();
+        return;
+      }
     }
     this.setFocus(null);
     this.setFocusedCloud(null);
@@ -1496,13 +1736,19 @@ export class Stellata {
     };
   }
 
-  // Camera FOV setter. Updates the projection matrix, rebases
+  // Camera FOV setter. Updates the projection matrix, mirrors the new FOV
+  // into uFovYRad (drives the angular-diameter shader formula), recomputes
+  // the focused star's orbit floor (which depends on FOV), rebases
   // non-overridden pixel sizes (arcsec/px depends on FOV), and fires a
   // state change so URL sync picks up the new value.
   setCameraFov(fov: number) {
     if (this.camera.fov === fov) return;
     this.camera.fov = fov;
     this.camera.updateProjectionMatrix();
+    this.material.uniforms.uFovYRad.value = (fov * Math.PI) / 180;
+    if (this.focusedStar !== null) {
+      this.controls.minDistance = this.minOrbitDistForStar(this.focusedStar);
+    }
     this.recomputePresetPxSizes();
     for (const h of this.onFilterHandlers) h(this.filter);
     this.fireStateChange();
@@ -1545,6 +1791,7 @@ export class Stellata {
     if (patch.distNMax !== undefined) u.uDistNMax.value = patch.distNMax;
     if (patch.lumBiasMin !== undefined) u.uLumBiasMin.value = patch.lumBiasMin;
     if (patch.lumBiasMax !== undefined) u.uLumBiasMax.value = patch.lumBiasMax;
+    if (patch.sizeKnee !== undefined) u.uSizeKnee.value = patch.sizeKnee;
   }
   getStarRenderParams(): StarRenderParams {
     const u = this.material.uniforms;
@@ -1556,6 +1803,7 @@ export class Stellata {
       distNMax: u.uDistNMax.value,
       lumBiasMin: u.uLumBiasMin.value,
       lumBiasMax: u.uLumBiasMax.value,
+      sizeKnee: u.uSizeKnee.value,
     };
   }
 
@@ -1641,16 +1889,31 @@ export class Stellata {
     };
   }
 
-  focusStar(starIndex: number, distancePc = 2) {
+  focusStar(starIndex: number, distancePc?: number) {
     if (this.warpState) return;
+    // Interrupt any in-flight unfocus zoom-out (a7d.2.6) cleanly so the
+    // lerp's next tick doesn't drag the camera away from the new park
+    // position. Observe enter/exit transitions still gate via the regular
+    // call sites (e.g. setCameraMode); focusStar is reached through them.
+    this.cancelUnfocusLerp();
+    // Default park = the same auto-arrival distance every other landing
+    // uses (warp arrival, observe→navigate, boot). Callers can still
+    // override for e.g. URL restores that want a specific pose.
+    const d = distancePc ?? this.minDistForStar(starIndex);
     const target = this.starLocalPosition(starIndex);
     const offset = new THREE.Vector3()
       .subVectors(this.camera.position, this.controls.target)
       .normalize()
-      .multiplyScalar(distancePc);
-    if (offset.lengthSq() === 0) offset.set(0, 0, distancePc);
+      .multiplyScalar(d);
+    if (offset.lengthSq() === 0) offset.set(0, 0, d);
     this.camera.position.copy(target).add(offset);
     this.controls.target.copy(target);
+    // Set the new star's orbit floor BEFORE controls.update(). Without this,
+    // TrackballControls clamps the eye vector to the OLD focal star's
+    // minOrbit (or GLOBAL_MIN_DIST_PC when previously unfocused), which can
+    // be larger than the new park distance — pushing the camera outward and
+    // leaving the user farther from the star than the 10% disc-fill target.
+    this.controls.minDistance = this.minOrbitDistForStar(starIndex);
     this.controls.update();
     this.setVectorTo(null);
     this.setFocus(starIndex);
@@ -1670,11 +1933,13 @@ export class Stellata {
     if (!this.clouds) return;
     const cloud = this.clouds.clouds[cloudIdx];
     if (!cloud) return;
-    // setFocusedCloud clears any star focus first, which recenters the
-    // floating origin to Sol — so the cloud's absolute centroid IS its
-    // local-frame coordinate after that.
+    // setFocusedCloud clears any star focus first. Since a7d.2.11,
+    // that doesn't recentre worldOffset back to Sol — the floating
+    // origin stays at the former focal star — so subtract worldOffset
+    // to translate the cloud's absolute centroid into the current
+    // local frame before assigning it as controls.target.
     this.setFocusedCloud(cloudIdx);
-    this.controls.target.copy(cloud.centerAbs);
+    this.controls.target.copy(cloud.centerAbs).sub(this.worldOffset);
     this.controls.update();
   }
 
@@ -1727,7 +1992,8 @@ export class Stellata {
     endOffset: number,
   ) {
     if (this.warpState) return;
-    if (this.observeTransition) return;
+    this.cancelUnfocusLerp();
+    if (this.isObserveTransitionActive()) return;
     // Warp launched from OBSERVE: leave cameraMode='observe' for the
     // duration so the search-row label, mode toggle, and any other
     // mode-bound UI don't flicker through navigate while the warp runs.
@@ -1754,7 +2020,17 @@ export class Stellata {
     // after the reorient A is in front of the camera and B is further along
     // the same line.
     const dirBack = forward.clone().negate();
-    const pStart = A.clone().addScaledVector(dirBack, endOffset);
+    // Source-side park keyed to the SOURCE's size, not the destination's,
+    // so the reorient point isn't embedded inside a giant source star or
+    // cloud when warping toward something tiny.
+    let sourceOffset = endOffset;
+    if (this.focusedStar !== null) {
+      sourceOffset = this.minDistForStar(this.focusedStar);
+    } else if (this.focusedCloud !== null && this.clouds) {
+      const c = this.clouds.clouds[this.focusedCloud];
+      if (c) sourceOffset = cloudViewingDistancePc(c);
+    }
+    const pStart = A.clone().addScaledVector(dirBack, sourceOffset);
     const pEnd = B.clone().addScaledVector(forward, -endOffset);
 
     const p0 = this.camera.position.clone();
@@ -1808,6 +2084,7 @@ export class Stellata {
       pStart,
       pEnd,
       endOffset,
+      sourceOffset,
       destKind,
       destIdx,
       returnToObserve,
@@ -1878,8 +2155,22 @@ export class Stellata {
       // navigate-mode arrival. Source-star hide expires with the warp; the
       // destination star (if any) renders normally.
       this.material.uniforms.uHideFocusIdx.value = -1;
-      if (state.destKind === 'star') this.setFocus(state.destIdx);
-      else this.setFocusedCloud(state.destIdx);
+      if (state.destKind === 'star') {
+        this.setFocus(state.destIdx);
+        // Re-anchor camera and target in the clean dest-local frame after
+        // setFocus's recenterOrigin runs. The earlier writes used B from
+        // _localPositions (Float32) while recenterOrigin's dx is computed
+        // fresh in float64 — the difference leaves controls.target offset
+        // by a ~|AB|·1e-7 residual, which on long warps to small stars
+        // disengages the pin guard (lengthSq < 1e-12) and lands the dest
+        // visibly off-centre. Snapping to clean values here avoids that.
+        const forward = new THREE.Vector3().subVectors(B, state.pStart).normalize();
+        this.controls.target.set(0, 0, 0);
+        this.camera.position.copy(forward).multiplyScalar(-state.endOffset);
+        this.camera.lookAt(this.controls.target);
+      } else {
+        this.setFocusedCloud(state.destIdx);
+      }
       this.controls.enabled = true;
       this.controls.update();
     }
@@ -1923,7 +2214,8 @@ export class Stellata {
   // dominate from the user's current vantage, even when the user has
   // travelled deep into 3D space.
   aimAtConstellation(conIndex: number) {
-    if (this.observeTransition) return;
+    this.cancelUnfocusLerp();
+    if (this.isObserveTransitionActive()) return;
     const cons = this.catalog.constellations;
     const lines = conIndex >= 0 && conIndex < cons.length ? cons[conIndex].lines : undefined;
     if (!lines || lines.length === 0) return;
@@ -1943,7 +2235,7 @@ export class Stellata {
       const dx = positions[i * 3] - t.x;
       const dy = positions[i * 3 + 1] - t.y;
       const dz = positions[i * 3 + 2] - t.z;
-      const dist = Math.max(Math.sqrt(dx * dx + dy * dy + dz * dz), 0.001);
+      const dist = Math.max(Math.sqrt(dx * dx + dy * dy + dz * dz), 1e-30);
       const appMag = absmag[i] + 5 * (Math.log10(dist) - 1);
       scored.push({ idx: i, appMag });
     }
@@ -1990,7 +2282,8 @@ export class Stellata {
    */
   aimAt(pointLocal: THREE.Vector3) {
     if (this.warpState || this.aimState) return;
-    if (this.observeTransition) return;
+    this.cancelUnfocusLerp();
+    if (this.isObserveTransitionActive()) return;
     if (this.cameraMode === 'observe') {
       if (this.observeAimState) return;
       // Camera is fixed at the focal star; orientation changes only. Build
@@ -2168,7 +2461,7 @@ export class Stellata {
       const dx = x - camPos.x;
       const dy = y - camPos.y;
       const dz = z - camPos.z;
-      const dCam = Math.max(Math.sqrt(dx * dx + dy * dy + dz * dz), 0.001);
+      const dCam = Math.max(Math.sqrt(dx * dx + dy * dy + dz * dz), 1e-30);
       const appMag = absmag[i] + 5 * (Math.log10(dCam) - 1);
       // For variables, use the bright-extreme appMag so a star whose
       // disc is only visible at peak phase remains pickable across the
@@ -2236,8 +2529,13 @@ export class Stellata {
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h, false);
     this.material.uniforms.uPixelRatio.value = this.renderer.getPixelRatio();
-    this.material.uniforms.uPhysMaxPx.value = this.computePhysMaxPx();
     this.material.uniforms.uViewport.value.set(w, h);
+    // Aspect change → fov_minor moves → orbit floor needs a refresh while
+    // a star is focused. (FOV-only changes go through setCameraFov, which
+    // does its own recompute.)
+    if (this.focusedStar !== null) {
+      this.controls.minDistance = this.minOrbitDistForStar(this.focusedStar);
+    }
     // Line2 needs the canvas resolution for its screen-space line width.
     this.galacticGrid.setResolution(w, h);
     // The Milky Way layer renders at native resolution via the main scene
@@ -2250,19 +2548,11 @@ export class Stellata {
     this.recomputePresetPxSizes();
   };
 
-  // The physical-size ceiling: the biggest star in the catalog renders at
-  // this pixel size when the camera is at the reference distance. 50% of
-  // the smaller viewport axis (in CSS pixels) — dominant but not stuffed
-  // edge-to-edge. Tune here if you want supergiants to feel bigger/smaller.
-  private computePhysMaxPx(): number {
-    return 0.5 * Math.min(window.innerWidth, window.innerHeight);
-  }
-
-  // Rendered pixel size (final gl_PointSize-equivalent diameter) for a star
-  // from the current camera. Mirrors the vertex-shader math exactly —
-  // callers include the focus-ring overlay, the disc mask, and pickStar.
-  // Variability modulation + the uPhysMaxPx clamp are replicated here so
-  // the mask shrinks in sync with the disc (no gap as a variable pulses).
+  // Rendered pixel diameter for a star from the current camera. Mirrors
+  // the vertex-shader angular-diameter formula exactly — callers include
+  // the focus-ring overlay, the disc mask, and pickStar. Variability
+  // modulation is replicated with the same headroom-compression rule so
+  // the mask tracks the rendered disc through a pulse.
   // Keep in sync with star.vert.glsl if the shader size computation changes.
   renderedSizePx(idx: number): number {
     const positions = this._localPositions;
@@ -2273,22 +2563,20 @@ export class Stellata {
     const dx = positions[idx * 3] - camPos.x;
     const dy = positions[idx * 3 + 1] - camPos.y;
     const dz = positions[idx * 3 + 2] - camPos.z;
-    const dCam = Math.max(Math.sqrt(dx * dx + dy * dy + dz * dz), 0.001);
+    // 1e-30 floor on dCam: keeps log10(dCam) finite in the appMag calc
+    // without clamping the angular-diameter atan(R/d) at close approach.
+    const dCam = Math.max(Math.sqrt(dx * dx + dy * dy + dz * dz), 1e-30);
     let appMag = absmag[idx] + 5 * (Math.log10(dCam) - 1);
 
-    const logRMin = u.uLogRMin.value as number;
-    const logRMax = u.uLogRMax.value as number;
-    const physMinPx = u.uPhysMinPx.value as number;
-    const physMaxPx = u.uPhysMaxPx.value as number;
-    const refDistPc = u.uRefDistPc.value as number;
-    const logSpan = Math.max(logRMax - logRMin, 0.001);
-    const logR = Math.log10(Math.max(physicalRadius[idx], 1e-6));
-    const logRatio = Math.max(0, Math.min(1, (logR - logRMin) / logSpan));
-    const sizeAtRef = physMinPx + logRatio * (physMaxPx - physMinPx);
-    const baseSize = sizeAtRef * (refDistPc / dCam);
+    const fovYRad = u.uFovYRad.value as number;
+    const viewport = u.uViewport.value as THREE.Vector2;
+    const angularToPx = viewport.y / Math.max(fovYRad, 1e-9);
+    const R = Math.max(physicalRadius[idx], 1e-6) * R_SUN_PC;
+    const baseSize = 2 * Math.atan(R / dCam) * angularToPx;
+    const maxPhysSize = ZOOM_FLOOR_FRACTION * Math.min(viewport.x, viewport.y);
 
     // Variability — same compression rule as the shader: effective
-    // amplitude is clamped so peak ≤ physMaxPx and trough ≥ 20% of
+    // amplitude is clamped so peak ≤ maxPhysSize and trough ≥ 20% of
     // baseSize, keeping the sinusoidal pulse smooth at both ends.
     let radiusFactor = 1;
     const period = periodDays[idx];
@@ -2301,7 +2589,7 @@ export class Stellata {
       const phase = (u.uTime.value as number) / periodSec;
 
       const VAR_TROUGH_FLOOR_FRACTION = 0.2;
-      const maxUpLog10 = Math.log10(Math.max(physMaxPx / Math.max(baseSize, 1), 1));
+      const maxUpLog10 = Math.log10(Math.max(maxPhysSize / Math.max(baseSize, 1), 1));
       const maxDownLog10 = -Math.log10(VAR_TROUGH_FLOOR_FRACTION);
       const ampLimitMag = 10 * Math.min(maxUpLog10, maxDownLog10);
       const ampEff = Math.min(amp, Math.max(0, ampLimitMag));
@@ -2321,20 +2609,144 @@ export class Stellata {
     );
     const appSize = f.sizeMin + Math.sqrt(brightness) * (f.sizeMax - f.sizeMin);
 
-    const physSize = baseSize * radiusFactor;
+    const physSize = 2 * Math.atan((R * radiusFactor) / dCam) * angularToPx;
 
     return Math.max(appSize, physSize);
   }
 
-  // Manual-zoom floor for TrackballControls when a star is focused.
-  // Distinct from `minDistForStar` (auto-park target): the user can
-  // orbit past the parking distance, all the way down to
-  // DEFAULT_MIN_DIST_PC, so the largest stars can fill ~50% of the
-  // smaller viewport dimension at max zoom — needed for inspecting
-  // stellar discs and (future) close-in planets. Binary companions
-  // still get the half-angle bump so the partner stays in frame.
+  /** Cloud analogue of `renderedSizePx` — pixel diameter of the cloud's
+   *  silhouette at the current camera distance. Used by the distance-vector
+   *  overlay so the chevron tip lands on the cloud's rendered edge instead
+   *  of the user's `sizeMax` star-size knob. Returns 0 when no cloud layer
+   *  is loaded or the index is out of range. */
+  renderedCloudSizePx(cloudIdx: number): number {
+    if (!this.clouds) return 0;
+    const cloud = this.clouds.clouds[cloudIdx];
+    if (!cloud) return 0;
+    const local = this.cloudLocalPosition(cloudIdx);
+    if (!local) return 0;
+    const camPos = this.camera.position;
+    const dx = local.x - camPos.x;
+    const dy = local.y - camPos.y;
+    const dz = local.z - camPos.z;
+    const dCam = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    const u = this.material.uniforms;
+    const fovYRad = u.uFovYRad.value as number;
+    const viewport = u.uViewport.value as THREE.Vector2;
+    const angularToPx = viewport.y / Math.max(fovYRad, 1e-9);
+    return renderedCloudSizePx(cloud, dCam, angularToPx);
+  }
+
+  // Navigate-mode opacity for the focused-star reference arrows (Sol, GC,
+  // distance-vector). Returns 1 outside navigate or when no star is focused.
+  // On close approach the focal disc grows past the standard chevron length
+  // — fading the arrows out frees screen real estate for the near-field
+  // story. Fade trigger uses max(currentSolLen, currentGcLen) so the trigger
+  // is dynamic when one of the two reference arrows is shortened by its
+  // target projecting close to the focal star.
+  getNavigateArrowFadeAlpha(): number {
+    return this._navArrowFadeAlpha;
+  }
+
+  /** Public access to the HUD overlay — for the arrow-fade debug HUD only. */
+  get hud(): HudOverlay { return this.hudOverlay; }
+
+  /** Peak-amplitude rendered disc diameter in pixels — exposed for the
+   *  arrow-fade debug HUD so it can show the same disc value the fade keys
+   *  on. Diameter, not radius. */
+  renderedDiscPxAtPeakDebug(idx: number): number {
+    return this.renderedDiscPxAtPeak(idx);
+  }
+
+  private _navArrowFadeAlpha = 1;
+
+  private updateNavArrowFadeAlpha() {
+    this._navArrowFadeAlpha = this.computeNavArrowFadeAlpha();
+  }
+
+  private computeNavArrowFadeAlpha(): number {
+    // During an in-flight observe transition the focal star's disc is on
+    // screen and growing (enter) or shrinking (exit), so any visible alpha
+    // change rides on top of the disc — looks like fading-in chrome over
+    // the star. Hold the source-mode alpha throughout the transition and
+    // let it snap to the destination once the transition completes; the
+    // pop is acceptable because at that moment the disc is also disappearing
+    // (enter: uHideFocusIdx engages on landing) or has shrunk to its parked
+    // size (exit). cameraMode flips to the destination at the *start* of the
+    // transition, so we can't rely on it to identify the source — use kind.
+    const transition = this.getObserveTransitionProgress();
+    if (transition) {
+      return transition.kind === 'enter' ? this.computeDiscCoverageAlpha() : 1;
+    }
+
+    if (this.cameraMode !== 'navigate') return 1;
+    return this.computeDiscCoverageAlpha();
+  }
+
+  private computeDiscCoverageAlpha(): number {
+    const idx = this.focusedStar;
+    if (idx === null) return 1;
+
+    // Read the actual rendered shaft lengths from the HUD's last frame.
+    // One frame of lag (alpha computed before HudOverlay.update this frame
+    // uses lengths from the previous frame's render); imperceptible at 60 fps
+    // and avoids a circular dependency between the alpha calc and the
+    // rendering that depends on the alpha. Using actually-drawn lengths —
+    // rather than re-deriving them geometrically here — means the fade
+    // automatically tracks every gate HudOverlay applies (hideSolArrow,
+    // dirOk failure, shrink-to-target collapsing the shaft to zero).
+    const lengths = this.hudOverlay.getDrawnLengths();
+    const refLen = Math.max(lengths.sol, lengths.gc);
+    if (refLen <= 0) return 1;
+
+    const SHAFT_START = 28;  // FOCUS_RING_RADIUS_PX + RING_HALO_GAP_PX
+    // Use the peak-amplitude disc size, not the current phase-modulated
+    // size — otherwise a high-amplitude variable's pulsation would oscillate
+    // the alpha across its variability cycle.
+    const discRadius = this.renderedDiscPxAtPeak(idx) / 2;
+    const coverage = Math.max(0, discRadius - SHAFT_START) / refLen;
+
+    // Smoothstep ease over [0.5, 0.75]: alpha 1 → 0. Cubic Hermite (3t²-2t³)
+    // gives zero slope at both ends so the fade engages and ends gently.
+    const t = Math.max(0, Math.min(1, (coverage - 0.5) / 0.25));
+    const eased = t * t * (3 - 2 * t);
+    return 1 - eased;
+  }
+
+  // Smaller of the camera's vertical and horizontal FOV in radians. The
+  // disc-fill geometry uses the minor axis so the target fraction reads
+  // consistently in both portrait and landscape viewports.
+  private fovMinorRad(): number {
+    const fovY = (this.camera.fov * Math.PI) / 180;
+    const fovX = 2 * Math.atan(Math.tan(fovY / 2) * this.camera.aspect);
+    return Math.min(fovX, fovY);
+  }
+
+  // Peak-amplitude radius factor for variable stars. At brightest phase
+  // magMod = -0.5·amp, so radiusFactor = 10^(amp/10). 1 for non-variables.
+  // Used by the navigate-mode arrow-fade so the alpha gates on the peak
+  // disc envelope, not on whatever the variable's current phase is —
+  // otherwise a high-amplitude pulsation would oscillate the alpha. The
+  // orbit-floor / parking-distance calibration (see beads stellata-a7d.2.x)
+  // does not yet feed off this; tracked separately.
+  private peakAmplitudeFactor(idx: number): number {
+    const amp = this.catalog.amplitudeMag[idx];
+    const period = this.catalog.periodDays[idx];
+    return period > 0 && amp > 0 ? Math.pow(10, amp / 10) : 1;
+  }
+
+  // Manual-zoom floor for TrackballControls when a star is focused. The
+  // camera can orbit down to where the focused star's true angular disc
+  // fills ZOOM_FLOOR_FRACTION of the viewport's minor axis — same on-
+  // screen coverage for any star, regardless of physical radius. Solves
+  // for d in `2·atan(R/d) = ZOOM_FLOOR_FRACTION · fov_minor`. Binary
+  // companions still get the half-angle bump so the partner stays in
+  // frame.
   private minOrbitDistForStar(idx: number): number {
-    const base = DEFAULT_MIN_DIST_PC;
+    const fovMinor = this.fovMinorRad();
+    const R = Math.max(this.catalog.physicalRadius[idx], 1e-9) * R_SUN_PC;
+    const base = R / Math.tan((ZOOM_FLOOR_FRACTION * fovMinor) / 2);
+
     const comp = this.catalog.companion[idx];
     if (comp < 0) return base;
     const p = this.catalog.positions;
@@ -2346,37 +2758,53 @@ export class Stellata {
   }
 
   // Auto-park target — used by observe-exit landing, warp source
-  // departure, and warp arrival.
-  //
-  // Distance is chosen so the star renders at TARGET_APPROACH_DISC_PX in
-  // CSS pixels: this gives every star the same on-screen disc size at
-  // approach, with the physical distance scaling with the star's physical
-  // radius (supergiants land further out than dwarfs). Mirrors the disc
-  // term of `renderedSizePx` (physSize = sizeAtRef × refDistPc / dist).
-  //
-  // For binary stars the result is bumped so the companion still fits
-  // within the viewport half-angle, keeping the whole system in frame.
+  // departure, and warp arrival. Distance solves `2·atan(R/d) =
+  // TARGET_PARK_FRACTION · fov_minor`, so every star fills the same
+  // fraction of the viewport on arrival regardless of physical radius
+  // (supergiants land much further out than dwarfs in absolute parsecs).
+  // Floored at twice the orbit floor so the parking distance always
+  // sits clearly above the manual-zoom limit. For binaries the result
+  // is bumped so the companion stays within the viewport half-angle.
   minDistForStar(idx: number): number {
-    const u = this.material.uniforms;
-    const physMinPx = u.uPhysMinPx.value as number;
-    const physMaxPx = u.uPhysMaxPx.value as number;
-    const refDistPc = u.uRefDistPc.value as number;
-    const logRMin = u.uLogRMin.value as number;
-    const logRMax = u.uLogRMax.value as number;
-    const logSpan = Math.max(logRMax - logRMin, 0.001);
-    const logR = Math.log10(Math.max(this.catalog.physicalRadius[idx], 1e-6));
-    const logRatio = Math.max(0, Math.min(1, (logR - logRMin) / logSpan));
-    const sizeAtRef = physMinPx + logRatio * (physMaxPx - physMinPx);
-    const discDist = (sizeAtRef * refDistPc) / TARGET_APPROACH_DISC_PX;
+    const fovMinor = this.fovMinorRad();
+    const R = Math.max(this.catalog.physicalRadius[idx], 1e-9) * R_SUN_PC;
+    const dPark = R / Math.tan((TARGET_PARK_FRACTION * fovMinor) / 2);
+    const dMin = R / Math.tan((ZOOM_FLOOR_FRACTION * fovMinor) / 2);
+    const parkFloored = Math.max(dPark, 2 * dMin);
 
     const comp = this.catalog.companion[idx];
-    if (comp < 0) return discDist;
+    if (comp < 0) return parkFloored;
     const p = this.catalog.positions;
     const dx = p[comp * 3] - p[idx * 3];
     const dy = p[comp * 3 + 1] - p[idx * 3 + 1];
     const dz = p[comp * 3 + 2] - p[idx * 3 + 2];
     const sep = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    return Math.max(discDist, sep * BINARY_MIN_DIST_FACTOR);
+    return Math.max(parkFloored, sep * BINARY_MIN_DIST_FACTOR);
+  }
+
+  // Peak-amplitude rendered disc diameter in pixels. Mirrors the physSize
+  // branch of renderedSizePx but with the variable held at its peak radius
+  // (no time-phase oscillation), so the navigate-mode arrow fade reads a
+  // stable disc envelope across the variability cycle. Used only for fade
+  // gating — visible disc rendering and other overlays still call
+  // renderedSizePx so they track the actual rendered disc edge.
+  private renderedDiscPxAtPeak(idx: number): number {
+    const positions = this._localPositions;
+    const camPos = this.camera.position;
+    const u = this.material.uniforms;
+
+    const dx = positions[idx * 3] - camPos.x;
+    const dy = positions[idx * 3 + 1] - camPos.y;
+    const dz = positions[idx * 3 + 2] - camPos.z;
+    const dCam = Math.max(Math.sqrt(dx * dx + dy * dy + dz * dz), 1e-30);
+
+    const fovYRad = u.uFovYRad.value as number;
+    const viewport = u.uViewport.value as THREE.Vector2;
+    const angularToPx = viewport.y / Math.max(fovYRad, 1e-9);
+    const R = Math.max(this.catalog.physicalRadius[idx], 1e-6) * R_SUN_PC;
+    const Reff = R * this.peakAmplitudeFactor(idx);
+
+    return 2 * Math.atan(Reff / dCam) * angularToPx;
   }
 
   private onPointerDown = (e: PointerEvent) => {
@@ -2394,7 +2822,8 @@ export class Stellata {
     this.pointerDownAt = null;
     if (!down) return;
     if (this.warpState || this.aimState) return;
-    if (this.observeTransition) return;
+    this.cancelUnfocusLerp();
+    if (this.isObserveTransitionActive()) return;
     const dx = e.clientX - down.x;
     const dy = e.clientY - down.y;
     if (dx * dx + dy * dy > 25) return;
@@ -2440,9 +2869,12 @@ export class Stellata {
           ? { kind: 'cloud' as const, idx: this.vectorToCloud }
           : null;
 
-    // No focus → click sets the focus (orbit pivot). Camera stays put.
+    // No focus → click parks the camera at the clicked thing, matching
+    // search-select and URL-restore. For stars that's minDistForStar (10%
+    // disc fill); clouds keep their orbit-target-only behaviour for now
+    // (cloud focus UX is shelved — see CLAUDE.md).
     if (!focusedThing) {
-      if (clickedThing.kind === 'star') this.setOrbitTarget(clickedThing.idx);
+      if (clickedThing.kind === 'star') this.focusStar(clickedThing.idx);
       else this.setOrbitTargetCloud(clickedThing.idx);
       return;
     }
@@ -2459,9 +2891,9 @@ export class Stellata {
     }
 
     // Click on the current vector destination → travel to it.
-    // For stars, focusStar matches the search-select teleport (2 pc
-    // viewing distance). For clouds, flyToCloud is the search-select
-    // analogue (cloudViewingDistancePc).
+    // For stars, focusStar matches the search-select teleport
+    // (parks at minDistForStar(idx)). For clouds, flyToCloud is the
+    // search-select analogue (cloudViewingDistancePc).
     if (vectorThing && sameTarget(clickedThing, vectorThing)) {
       if (clickedThing.kind === 'star') this.focusStar(clickedThing.idx);
       else this.flyToCloud(clickedThing.idx);
@@ -2610,10 +3042,15 @@ export class Stellata {
   // candidates) and only do the squared-distance check on those. Replaces
   // a full 313k-element linear scan that ran every frame in every mode.
   private shouldEnableCoreMask(): boolean {
+    // Largest catalog star at distance d subtends 2·atan(R_max/d) radians,
+    // which is CORE_MASK_MIN_PX × fov_y / viewport.y radians at the
+    // threshold. Solve for d → R_max / tan(half-angle).
     const u = this.material.uniforms;
-    const physMaxPx = u.uPhysMaxPx.value as number;
-    const refDistPc = u.uRefDistPc.value as number;
-    const dThresh = (physMaxPx * refDistPc) / Stellata.CORE_MASK_MIN_PX;
+    const fovYRad = u.uFovYRad.value as number;
+    const viewport = u.uViewport.value as THREE.Vector2;
+    const halfAngle = (Stellata.CORE_MASK_MIN_PX * fovYRad)
+      / (Math.max(viewport.y, 1) * 2);
+    const dThresh = this.maxPhysicalRadiusPc / Math.max(Math.tan(halfAngle), 1e-30);
     const dThreshSq = dThresh * dThresh;
 
     // Camera distance from Sol in absolute space (catalog frame).
@@ -2690,6 +3127,18 @@ export class Stellata {
     perfMeasure('controls.update');
     perfMark('pre-render');
     this.material.uniforms.uCameraPos.value.copy(this.camera.position);
+    // Pin the focused star at NDC (0,0) only when the geometric
+    // invariant holds: navigate mode, no warp/aim animation, and the
+    // user hasn't panned the camera target away from the focused star
+    // (target ≈ local origin). Pan moves target away from the star and
+    // we want it to render at its actual projected position again.
+    const pinTarget = (
+      this.focusedStar !== null &&
+      this.cameraMode === 'navigate' &&
+      !this.warpState && !this.aimState &&
+      this.controls.target.lengthSq() < 1e-12
+    ) ? this.focusedStar : -1;
+    this.material.uniforms.uPinFocusToCenter.value = pinTarget;
     // Advance variability clock (seconds since start). Shared with glow
     // material via sharedUniforms so both passes see the same time.
     this.material.uniforms.uTime.value = (performance.now() - this.animateStartMs) / 1000;
@@ -2756,6 +3205,10 @@ export class Stellata {
       this.focusedStar !== null ? this.starLocalPosition(this.focusedStar) : null;
     const isSolFocus =
       this.focusedStar !== null && this.focusedStar === this.catalog.solIndex;
+    // Compute the navigate-mode arrow fade alpha before the HUD render so
+    // both consumers (HUD Sol/GC arrows here, distance-vector overlay in the
+    // onFrame phase) read the same value within a frame.
+    this.updateNavArrowFadeAlpha();
     this.hudOverlay.update({
       enabled: this.filter.showHud,
       camera: this.camera,
@@ -2766,6 +3219,7 @@ export class Stellata {
       sizeMaxPx: this.filter.sizeMax,
       cameraMode: this.cameraMode,
       transition: this.getObserveTransitionProgress(),
+      navArrowFadeAlpha: this._navArrowFadeAlpha,
       w: window.innerWidth,
       h: window.innerHeight,
     });
@@ -2781,7 +3235,7 @@ export class Stellata {
     if (elapsed < state.reorientMs) {
       // Reorient phase: spherically slerp the camera's radial direction from
       // the user's starting angle around A to `dirBack`, while linearly
-      // easing the distance from A from `mag0` down to state.endOffset.
+      // easing the distance from A from `mag0` down to state.sourceOffset.
       // Look-at stays locked on A so A remains centered in view the whole
       // time. Quaternion slerp robustly handles any starting angle including
       // antipodal cases (user looking at A from the B side).
@@ -2793,7 +3247,7 @@ export class Stellata {
       this.warpQ0.slerp(this.warpQ1, f);
       this.warpTmp.copy(WARP_BASE_DIR).applyQuaternion(this.warpQ0);
 
-      const mag = state.mag0 * (1 - f) + state.endOffset * f;
+      const mag = state.mag0 * (1 - f) + state.sourceOffset * f;
       this.camera.position.copy(state.A).addScaledVector(this.warpTmp, mag);
       if (state.reorientEndQuaternion) {
         // Observe-mode launch: slerp the camera quaternion from the user's
@@ -2892,6 +3346,21 @@ export class Stellata {
         this.material.uniforms.uHideFocusIdx.value = this.focusedStar;
       }
       this.observeControls.enable();
+    } else if (state.kind === 'unfocus') {
+      this.camera.position.copy(state.toPos);
+      // Tighten controls.minDistance to the parking distance the camera
+      // just landed at. setFocus(null) clamped it to the (smaller) start
+      // eye distance to let the lerp move outward; now that the camera
+      // is parked, the same minDistance the focused star had during
+      // close orbit becomes the unfocused floor. controls.target was
+      // not touched during the lerp (animate() dispatched to the lerp
+      // tick rather than controls.update()) so it stays at whatever it
+      // was at unfocus start — usually (0,0,0) = former focal star's
+      // local origin = a sensible orbit pivot.
+      if (state.finalMinDistance !== undefined) {
+        this.controls.minDistance = state.finalMinDistance;
+      }
+      this.controls.update();
     } else {
       this.camera.position.copy(state.toPos);
       // Target = the camera's pre-exit position (= the observed star's
@@ -2902,15 +3371,14 @@ export class Stellata {
       // and gives the user a sensible orbit pivot (the star they just left)
       // for any subsequent drag.
       //
-      // Origin frame at this point depends on the caller:
-      //   - setCameraMode → startObserveExit (focus retained): origin still
-      //     on the focused star, fromPos = (0,0,0) = the focused star.
-      //   - unfocus (focus cleared via setFocus(null) before the lerp):
-      //     origin recentered to Sol, fromPos = the star's Sol-centric
-      //     absolute position.
-      // Setting target = (0,0,0) here was correct only for the first case;
-      // in the unfocus path it pointed at Sol and TrackballControls.update()'s
-      // lookAt(target) would whip the camera around to face Sol.
+      // Origin frame at this point: since a7d.2.11, both branches
+      // (focus-retained exit and unfocus exit) leave worldOffset on
+      // the (former) focal star — setFocus(null) no longer recentres
+      // — so fromPos is the captured camera position in *that* local
+      // frame regardless of which path the user took. Setting
+      // target = (0,0,0) would point at the focal star's local origin
+      // and lookAt(target) would whip the camera around to face it;
+      // setting target = fromPos keeps lookAt a no-op.
       this.controls.target.copy(state.fromPos);
       this.alignCameraUpToQuaternion();
       this.controls.update();

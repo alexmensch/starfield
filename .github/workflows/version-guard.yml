@@ -3,6 +3,11 @@ name: version-guard
 on:
   pull_request:
     branches: [main]
+    # `labeled` / `unlabeled` so the job-level `if:` skip re-evaluates
+    # when `skip-version-bump` is attached after PR creation (e.g. via
+    # `gh pr create --label`, which applies the label after the `opened`
+    # event has already fired with an empty label set).
+    types: [opened, synchronize, reopened, labeled, unlabeled]
 
 permissions:
   contents: read

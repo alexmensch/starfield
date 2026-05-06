@@ -3,8 +3,7 @@ import { GALACTIC_CENTRE_PC } from './galactic-coords';
 import { fmtDist } from './distance-util';
 import {
   buildArrowSvgPath,
-  projectToScreen,
-  screenDirFromCascade,
+  viewSpaceScreenDir,
   ARROW_HEAD_DEPTH_PX,
   ARROW_LABEL_OFFSET_PX,
   ARROW_LABEL_PADDING_PX,
@@ -25,10 +24,12 @@ const RING_HALO_GAP_PX = 4;
 // from this one — keeping the focus ring's geometry self-contained beats
 // adding a one-symbol cross-import.
 const FOCUS_RING_RADIUS_PX = 24;
-// Minimum shaft length below which the shrunken arrow reads as a stub. We
-// hide instead of drawing it. 8 px keeps the chevron + a sliver of shaft
-// visible when on the edge.
-const MIN_SHAFT_PIXEL_LENGTH = 8;
+// (Removed MIN_SHAFT_PIXEL_LENGTH cutoff — used to be 8 px; we now render at
+// any positive length so the drawn shaft is a continuous function of the
+// arrow's projection geometry. This is what makes the navigate-mode disc-
+// coverage fade work cleanly: the fade keys on the longest currently-drawn
+// shaft, so the shaft shrinking smoothly toward 0 — instead of snapping to
+// 0 at 8 px — keeps the alpha consistent with what's visible.)
 // FOV anchor for the OBSERVE ring: at 10° vertical FOV the ring radius
 // equals `RING_SIZE_FACTOR × f.sizeMax`. Above that the radius scales
 // `1/fov` so the ring's angular size stays constant as FOV changes; the
@@ -69,6 +70,11 @@ export interface HudUpdateOpts {
   /** Eased progress of the in-flight observe transition, or null. Driven
    *  by Stellata.getObserveTransitionProgress(). */
   transition: { f: number; kind: 'enter' | 'exit' } | null;
+  /** Navigate-mode opacity for Sol/GC arrows + labels. Multiplied onto each
+   *  element's opacity each frame; pointer events suppressed when alpha is
+   *  low so the (invisible) labels don't accept clicks. Always 1 outside
+   *  navigate. Driven by Stellata.getNavigateArrowFadeAlpha(). */
+  navArrowFadeAlpha: number;
   /** Viewport size in CSS pixels. */
   w: number;
   h: number;
@@ -97,6 +103,22 @@ export class HudOverlay {
   private gcBg: SVGPathElement;
   private solLabel: SVGTextElement;
   private gcLabel: SVGTextElement;
+
+  // Most-recently rendered shaft length per arrow, in CSS pixels. 0 when the
+  // arrow was hidden this frame. Read by Stellata's nav-arrow fade alpha
+  // computation (with one frame of lag — alpha computed at the start of the
+  // next frame uses these values) so the fade keys on the longest *actually
+  // drawn* shaft rather than a re-derived geometric estimate.
+  private solDrawnLen = 0;
+  private gcDrawnLen = 0;
+
+  // Per-arrow per-frame diagnostic record, populated by updateOne. Read by
+  // the arrow-fade debug HUD (debug.arrows()) so we can see live why an
+  // arrow ended up at the length it did — front-of-camera vs behind, which
+  // direction path was used, whether shrink-to-target shortened it, and
+  // the screen-direction magnitude that drove the path choice.
+  private solDebug: ArrowDebugRecord = emptyArrowDebug();
+  private gcDebug: ArrowDebugRecord = emptyArrowDebug();
 
   // Reusable scratch vectors so per-frame updates allocate nothing.
   private tmpDir = new THREE.Vector3();
@@ -153,7 +175,7 @@ export class HudOverlay {
     }
 
     const { camera, target, worldOffset, focusedLocal, hideSolArrow,
-            sizeMaxPx, cameraMode, transition, w, h } = opts;
+            sizeMaxPx, cameraMode, transition, navArrowFadeAlpha, w, h } = opts;
 
     // Sol's local-frame position is `-worldOffset` (Sol is the catalog
     // origin); GC is the absolute GC vector minus the same offset.
@@ -197,48 +219,60 @@ export class HudOverlay {
       this.ring.style.display = 'none';
     }
 
-    // Aux-step for screen-direction derivation. Sized as the world
-    // equivalent of ARROW_PIXEL_LENGTH at the focal depth — long enough for
-    // clean projection error, short enough to stay in front of the camera
-    // even when `dir` points toward the camera.
-    const distToOrigin = camera.position.distanceTo(origin);
-    const focalPx = h / (2 * Math.tan((camera.fov * Math.PI) / 360));
-    const auxStepW = (ARROW_PIXEL_LENGTH * Math.max(distToOrigin, 1e-3)) / Math.max(focalPx, 1);
-
     const targetMarginPx = Math.max(sizeMaxPx, 0);
+    this.lastShaftStartPx = shaftStartPx;
 
     const solDist = this.tmpSolLocal.distanceTo(origin);
-    this.updateOne(
+    this.solDrawnLen = this.updateOne(
       this.solPath, this.solBg, this.solLabel,
-      origin, cx, cy,
+      cx, cy,
       this.tmpDir.copy(this.tmpSolLocal).sub(origin),
       solDist, this.tmpSolLocal,
-      auxStepW, camera, w, h,
+      camera, w, h,
       hideSolArrow, targetMarginPx, shaftStartPx, 'Sol',
+      navArrowFadeAlpha, this.solDebug,
     );
 
     const gcDist = this.tmpGcLocal.distanceTo(origin);
-    this.updateOne(
+    this.gcDrawnLen = this.updateOne(
       this.gcPath, this.gcBg, this.gcLabel,
-      origin, cx, cy,
+      cx, cy,
       this.tmpDir.copy(this.tmpGcLocal).sub(origin),
       gcDist, this.tmpGcLocal,
-      auxStepW, camera, w, h,
+      camera, w, h,
       false, targetMarginPx, shaftStartPx, 'Galactic centre',
+      navArrowFadeAlpha, this.gcDebug,
     );
   }
+
+  /** Sol/GC arrow shaft lengths actually drawn last frame, in CSS pixels.
+   *  0 when the arrow was hidden. Used by the nav-arrow fade alpha calc
+   *  in Stellata to key the fade on `max(sol, gc)`. */
+  getDrawnLengths(): { sol: number; gc: number } {
+    return { sol: this.solDrawnLen, gc: this.gcDrawnLen };
+  }
+
+  /** Debug snapshot of the most recent updateOne for each arrow. Read each
+   *  frame by the arrow-fade debug HUD (`debug.arrows()`). */
+  getDebugSnapshot(): { sol: ArrowDebugRecord; gc: ArrowDebugRecord } {
+    return { sol: this.solDebug, gc: this.gcDebug };
+  }
+
+  /** Most-recent shaft start radius (focus-ring rim + halo gap in nav,
+   *  HUD ring + halo gap in observe). Frozen between frames at the value
+   *  used by the last `update`. Surfaced for the arrow-fade debug HUD. */
+  getShaftStartPx(): number { return this.lastShaftStartPx; }
+  private lastShaftStartPx = 0;
 
   private updateOne(
     path: SVGPathElement,
     bg: SVGPathElement,
     label: SVGTextElement,
-    origin: THREE.Vector3,
     cx: number,
     cy: number,
     dir: THREE.Vector3,
     distancePc: number,
     targetLocal: THREE.Vector3,
-    auxStepW: number,
     camera: THREE.PerspectiveCamera,
     w: number,
     h: number,
@@ -246,43 +280,95 @@ export class HudOverlay {
     targetMarginPx: number,
     shaftStartPx: number,
     labelPrefix: string,
-  ) {
+    fadeAlpha: number,
+    debug: ArrowDebugRecord,
+  ): number {
+    debug.hideRequested = hide;
+    debug.dirPath = 'none';
+    debug.behindCamera = false;
+    debug.shrunkToTarget = false;
+    debug.projAlong = 0;
+    debug.shaftLengthPx = 0;
+    debug.fadeAlpha = fadeAlpha;
+
     const dirLenSq = dir.lengthSq();
     if (hide || dirLenSq < 1e-12) {
       this.hideArrow(path, bg, label);
-      return;
+      return 0;
     }
     dir.multiplyScalar(1 / Math.sqrt(dirLenSq));
 
     const targetScreen = projectToScreen(targetLocal, camera, w, h);
+    debug.behindCamera = !targetScreen;
 
-    const screenDir = screenDirFromCascade(
-      origin, dir, auxStepW, targetScreen, cx, cy, camera, w, h,
-    );
-    if (!screenDir) {
-      // Direction is exactly along the camera axis — no preferred
-      // rotation brings the target into view.
-      this.hideArrow(path, bg, label);
-      return;
+    // Screen direction of the arrow. Two paths, both robust:
+    //   1. Target in front: take the screen-space vector from origin's
+    //      projection (cx,cy) to the target's projection. The natural
+    //      direction.
+    //   2. Target behind / projection degenerate: transform `dir` into
+    //      view space (rotation only) and read its xy components, scaled
+    //      by per-axis FOV so non-square viewports stay correct.
+    //      Independent of camera-to-origin distance, so it doesn't go
+    //      sub-pixel under close approach the way an aux-step in world
+    //      space would.
+    let sux = 0, suy = 0;
+    let dirOk = false;
+    if (targetScreen) {
+      const tdx = targetScreen[0] - cx;
+      const tdy = targetScreen[1] - cy;
+      const tlen = Math.hypot(tdx, tdy);
+      if (tlen > 0) {
+        sux = tdx / tlen;
+        suy = tdy / tlen;
+        dirOk = true;
+        debug.dirPath = 'targetScreen';
+      }
     }
-    const [sux, suy] = screenDir;
+    if (!dirOk) {
+      // Target behind the camera (or projects exactly to origin's screen
+      // position). View-space (x, -y) of the world direction sidesteps the
+      // projection divide and gives a robust screen direction whenever the
+      // direction has any component perpendicular to the camera axis. See
+      // arrow-path.ts for the helper.
+      const vsDir = viewSpaceScreenDir(dir, camera);
+      if (vsDir) {
+        sux = vsDir[0];
+        suy = vsDir[1];
+        dirOk = true;
+        debug.dirPath = 'viewSpaceDir';
+      }
+    }
+    if (!dirOk) {
+      // dir is exactly along the camera axis — no preferred screen
+      // direction (measure-zero orientation).
+      this.hideArrow(path, bg, label);
+      return 0;
+    }
 
     // Shaft endpoints + chevron tip in screen pixels. Default length
     // ARROW_PIXEL_LENGTH; shrunk so the tip stays `targetMarginPx` short of
     // the projected target when the target falls inside the nominal shaft.
+    // When the target is behind the camera (no targetScreen) the arrow is
+    // drawn at full length to indicate direction only.
     let shaftLengthPx = ARROW_PIXEL_LENGTH;
     if (targetScreen) {
       const tdx = targetScreen[0] - cx;
       const tdy = targetScreen[1] - cy;
       const projAlong = tdx * sux + tdy * suy;
+      debug.projAlong = projAlong;
       if (projAlong > 0) {
         const allowed = projAlong - shaftStartPx - targetMarginPx;
-        if (allowed < shaftLengthPx) shaftLengthPx = allowed;
+        if (allowed < shaftLengthPx) {
+          shaftLengthPx = allowed;
+          debug.shrunkToTarget = true;
+        }
       }
     }
-    if (shaftLengthPx < MIN_SHAFT_PIXEL_LENGTH) {
+    debug.shaftLengthPx = shaftLengthPx;
+
+    if (shaftLengthPx <= 0) {
       this.hideArrow(path, bg, label);
-      return;
+      return 0;
     }
 
     const shaftStartX = cx + sux * shaftStartPx;
@@ -290,10 +376,16 @@ export class HudOverlay {
     const tipX = shaftStartX + sux * shaftLengthPx;
     const tipY = shaftStartY + suy * shaftLengthPx;
 
-    const d = buildArrowSvgPath(shaftStartX, shaftStartY, tipX, tipY);
+    // Chevron scales with shaft length so a heavily-shrunk shaft (slen-
+    // degeneracy) doesn't end up dominated by a full-size arrowhead. Above
+    // CHEVRON_FULL_AT_PX shafts the chevron is at its nominal size; below
+    // it scales linearly to zero.
+    const CHEVRON_FULL_AT_PX = 16;
+    const chevronScale = Math.min(1, shaftLengthPx / CHEVRON_FULL_AT_PX);
+    const d = buildArrowSvgPath(shaftStartX, shaftStartY, tipX, tipY, chevronScale);
     if (!d) {
       this.hideArrow(path, bg, label);
-      return;
+      return 0;
     }
     path.setAttribute('d', d);
     bg.setAttribute('d', d);
@@ -306,6 +398,9 @@ export class HudOverlay {
     label.setAttribute('x', sx.toFixed(1));
     label.setAttribute('y', sy.toFixed(1));
     label.textContent = `${labelPrefix} · ${fmtDist(distancePc)}`;
+
+    applyFade(path, bg, label, fadeAlpha);
+    return shaftLengthPx;
   }
 
   /** Mono-mode swap is handled by CSS rules on `.gal-arrow`, `.gal-arrow-bg`,
@@ -322,6 +417,10 @@ export class HudOverlay {
     this.ring.style.display = 'none';
     this.hideArrow(this.solPath, this.solBg, this.solLabel);
     this.hideArrow(this.gcPath, this.gcBg, this.gcLabel);
+    this.solDrawnLen = 0;
+    this.gcDrawnLen = 0;
+    Object.assign(this.solDebug, emptyArrowDebug());
+    Object.assign(this.gcDebug, emptyArrowDebug());
   }
 
   private hideArrow(path: SVGPathElement, bg: SVGPathElement, label: SVGTextElement) {
@@ -381,3 +480,53 @@ function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
 }
 
+function projectToScreen(
+  p: THREE.Vector3,
+  camera: THREE.PerspectiveCamera,
+  w: number,
+  h: number,
+): [number, number] | null {
+  const v = p.clone().applyMatrix4(camera.matrixWorldInverse);
+  if (v.z >= -camera.near) return null;
+  const ndc = v.applyMatrix4(camera.projectionMatrix);
+  return [(ndc.x + 1) * 0.5 * w, (1 - ndc.y) * 0.5 * h];
+}
+
+export interface ArrowDebugRecord {
+  hideRequested: boolean;
+  behindCamera: boolean;
+  dirPath: 'none' | 'targetScreen' | 'viewSpaceDir';
+  projAlong: number;
+  shrunkToTarget: boolean;
+  shaftLengthPx: number;
+  fadeAlpha: number;
+}
+
+export function emptyArrowDebug(): ArrowDebugRecord {
+  return {
+    hideRequested: false,
+    behindCamera: false,
+    dirPath: 'none',
+    projAlong: 0,
+    shrunkToTarget: false,
+    shaftLengthPx: 0,
+    fadeAlpha: 1,
+  };
+}
+
+// Apply the navigate-mode arrow fade to a Sol or GC arrow's three SVG
+// elements. Pointer events are suppressed below half-opacity so a barely-
+// visible label can't accept the click that would aim the camera at it.
+function applyFade(
+  path: SVGPathElement,
+  bg: SVGPathElement,
+  label: SVGTextElement,
+  alpha: number,
+) {
+  const a = alpha.toFixed(3);
+  path.style.opacity = a;
+  bg.style.opacity = a;
+  label.style.opacity = a;
+  const clickable = alpha >= 0.5 ? '' : 'none';
+  label.style.pointerEvents = clickable;
+}

@@ -246,3 +246,20 @@ export function cloudViewingDistancePc(cloud: Cloud): number {
   const maxAxis = Math.max(cloud.axes[0], cloud.axes[1], cloud.axes[2]);
   return Math.max(maxAxis * 2.4, 5.0);
 }
+
+/**
+ * Pixel diameter the cloud's silhouette spans on screen at the current
+ * camera distance, used as the per-cloud analogue of `Stellata.renderedSizePx`
+ * for stars. Picks the largest semi-axis as the representative scale —
+ * matches `cloudViewingDistancePc` and means the chevron tip always clears
+ * the silhouette regardless of view direction (worst-case for a prolate
+ * cloud viewed end-on it lands a touch outside, never inside).
+ */
+export function renderedCloudSizePx(
+  cloud: Cloud,
+  dCamPc: number,
+  angularToPx: number,
+): number {
+  const maxAxis = Math.max(cloud.axes[0], cloud.axes[1], cloud.axes[2]);
+  return 2 * Math.atan(maxAxis / Math.max(dCamPc, 1e-30)) * angularToPx;
+}

@@ -6,7 +6,6 @@ import {
   ARROW_HEAD_DEPTH_PX,
   ARROW_LABEL_OFFSET_PX,
   ARROW_LABEL_PADDING_PX,
-  OVERLAY_NEAR_CLIP_PC,
 } from './arrow-path';
 
 // Source-end offset — shaft starts past the focus ring (radius 24 px) so it
@@ -95,10 +94,15 @@ export function createDistanceVectorOverlay(
     const { pA, pB } = projected;
 
     // Source inset stays at the focus-ring offset; destination inset is
-    // the user's max-app-size (≈ disc radius, since sizeMax is a diameter)
-    // so the tip clears the destination star's rendered disc without
-    // overshooting.
-    const destOffsetPx = Math.max(stellata.getFilter().sizeMax, 0);
+    // the destination's actual rendered silhouette diameter so the tip
+    // lands on the visible edge regardless of size — a supergiant's disc
+    // can fill a large fraction of the viewport, a dwarf is a few pixels,
+    // and a nearby molecular cloud spans tens of degrees. Cloud silhouette
+    // is keyed off the largest semi-axis (matches `cloudViewingDistancePc`);
+    // exact for spheres, slight overshoot for prolate clouds viewed end-on.
+    const destOffsetPx = toStar !== null
+      ? Math.max(stellata.renderedSizePx(toStar), 0)
+      : Math.max(stellata.renderedCloudSizePx(toCloud as number), 0);
     const dxPx = pB[0] - pA[0];
     const dyPx = pB[1] - pA[1];
     const lenPx = Math.hypot(dxPx, dyPx);
@@ -149,6 +153,20 @@ export function createDistanceVectorOverlay(
     // Position the warp affordance to the right of the distance label.
     warpText.setAttribute('x', (mx + labelWidth + WARP_GAP_PX).toFixed(1));
     warpText.setAttribute('y', my.toFixed(1));
+
+    // Navigate-mode disc-coverage fade — drops opacity to 0 as the focused
+    // star's disc grows past the standard Sol/GC chevron length. Same alpha
+    // is applied to the HUD Sol/GC arrows so all three reference arrows
+    // fade in unison; computation lives in Stellata so consumers stay
+    // synchronised within a frame. Pointer-events suppressed below half so
+    // the (barely visible) label + warp affordance don't accept stray
+    // clicks during fade-out.
+    const alpha = stellata.getNavigateArrowFadeAlpha();
+    const a = alpha.toFixed(3);
+    line.style.opacity = a;
+    lineBg.style.opacity = a;
+    distUi.style.opacity = a;
+    distUi.style.pointerEvents = alpha >= 0.5 ? '' : 'none';
   });
 }
 
@@ -161,7 +179,7 @@ export function projectWithNearClip(
 ): { pA: [number, number]; pB: [number, number] } | null {
   const vA = worldA.clone().applyMatrix4(camera.matrixWorldInverse);
   const vB = worldB.clone().applyMatrix4(camera.matrixWorldInverse);
-  const threshold = -OVERLAY_NEAR_CLIP_PC;
+  const threshold = -camera.near;
 
   // If the focus star itself is behind the camera, we can't draw a
   // meaningful origin — bail out.

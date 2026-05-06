@@ -39,12 +39,6 @@ const DEFAULT_CAM: [number, number, number] = [0, 0, 30];
 const DEFAULT_TGT: [number, number, number] = [0, 0, 0];
 const DEFAULT_UP: [number, number, number] = [0, 1, 0];
 
-// Observe-mode camera default in the focal-star-local frame: the camera
-// sits *at* the focused star, so its local position is the origin. This
-// is semantically distinct from DEFAULT_TGT (target at origin in
-// navigate-mode absolute coords); naming it separately keeps grep honest.
-const OBSERVE_CAM_LOCAL: [number, number, number] = [0, 0, 0];
-
 // Focus-tag-bit semantics: high bit set = HIP-resolved ID, clear = raw
 // row index. The 0xFFFFFFFF sentinel is reserved (won't naturally appear
 // since "explicitly unfocused" uses a separate presence bit, not a magic
@@ -124,6 +118,22 @@ export interface DecodedView {
    *  exit anyway. HIP-only (no catalog-index fallback) so URLs survive
    *  catalog rebuilds. Hard-capped at POI_MAX_COUNT to bound the blob. */
   pois?: number[];
+  /** Absolute-space position anchoring the floating origin. Emitted
+   *  only when no focus is active and the anchor isn't Sol — i.e.
+   *  after a close-orbit unfocus left the origin parked at the former
+   *  focal object. The loader applies this *before* cam/tgt so cam/tgt
+   *  (kept as small local-frame coordinates) land in the right frame.
+   *
+   *  Why a free vec3 rather than a catalog ref: the anchor concept
+   *  generalises beyond stars to clouds, planets, probes, and other
+   *  future objects. Encoding the world-space position directly keeps
+   *  the URL agnostic to anchor type and decouples it from catalog
+   *  identifiers that may not exist (planets) or may shift under
+   *  catalog rebuilds. Float32 ULP at megaparsec absolute scale is
+   *  ~10⁻² pc — invisible in any view because the user-visible pose
+   *  is the cam/tgt offset *within* the local frame, and that's
+   *  encoded at full Float32 precision relative to the anchor. */
+  worldOffset?: [number, number, number];
 }
 
 const POI_MAX_COUNT = 16;
@@ -148,7 +158,7 @@ function fixed(n: number) {
   return { encodeBytes: (_v: DecodedView) => n, decodeBytes: (_dv: DataView, _o: number) => n };
 }
 
-function vec3Field(bit: number, key: 'cam' | 'tgt' | 'up'): FieldSpec {
+function vec3Field(bit: number, key: 'cam' | 'tgt' | 'up' | 'worldOffset'): FieldSpec {
   return {
     bit, key, ...fixed(12),
     isPresent: v => v[key] !== undefined,
@@ -413,6 +423,13 @@ const FIELDS_V2: FieldSpec[] = [
       v.pois = out;
     },
   },
+  // Floating-origin anchor. Appended at the *end* of FIELDS_V2 (rather
+  // than slotted in by bit number) so a stale client reading a newer
+  // URL just stops short of these trailing bytes — every preceding
+  // field decodes at its expected offset and the missing worldOffset
+  // gracefully degrades to "Sol-anchored" (the pre-fix default). Future
+  // additions should follow the same append-only pattern.
+  vec3Field(20, 'worldOffset'),
 ];
 
 function packFlags(v: DecodedView): number {
@@ -616,11 +633,39 @@ export function currentStateOf(stellata: Stellata, idMaps: IdMaps): DecodedView 
   // them when at default trims ~16 base64url chars from nearly every
   // URL. Cam's default depends on mode — receiver re-snaps cam to
   // origin via setCameraMode('observe', { animate: false }) on apply.
-  const camDefault = mode === 'observe' ? OBSERVE_CAM_LOCAL : DEFAULT_CAM;
-  if (!approx(c.x, camDefault[0]) || !approx(c.y, camDefault[1]) || !approx(c.z, camDefault[2])) {
+  //
+  // Frame: cam/tgt are emitted as raw camera.position / controls.target
+  // — i.e. in worldOffset-local frame. With focus, the focal object's
+  // setFocus call has already recentred worldOffset to that object's
+  // absolute position, so cam/tgt are object-local. Without focus, the
+  // origin rides along with whatever object was most recently anchored
+  // (the unfocus path no longer recentres to Sol — a7d.2.11). The
+  // worldOffset field below carries the absolute anchor position so
+  // the loader can re-establish the same frame on page-load. Old-style
+  // URLs without worldOffset always had worldOffset=(0,0,0) at save
+  // time, so the local frame was Sol — backward-compatible.
+  //
+  // Emit worldOffset only when no focus is active AND the anchor isn't
+  // Sol. With focus, the loader's focusStar call recentres origin
+  // automatically. With anchor at Sol, the local frame is implicitly
+  // Sol-relative (matches the legacy default), so omitting saves
+  // 12 bytes on every default-pose URL.
+  const wo = stellata.getWorldOffset();
+  const woNonSol = stellata.getFocusedStar() === null
+    && (!approx(wo.x, 0) || !approx(wo.y, 0) || !approx(wo.z, 0));
+  if (woNonSol) {
+    view.worldOffset = [wo.x, wo.y, wo.z];
+  }
+  // When the anchor is non-Sol, always emit cam/tgt explicitly. The
+  // default-elision logic ("omit when cam matches DEFAULT_CAM")
+  // assumes the local frame is Sol; in a non-Sol frame the implicit
+  // default doesn't reconstruct the right pose because setWorldOffset
+  // shifts camera/target alongside the origin.
+  const camDefault = mode === 'observe' ? [0, 0, 0] : DEFAULT_CAM;
+  if (woNonSol || !approx(c.x, camDefault[0]) || !approx(c.y, camDefault[1]) || !approx(c.z, camDefault[2])) {
     view.cam = [c.x, c.y, c.z];
   }
-  if (!approx(t.x, DEFAULT_TGT[0]) || !approx(t.y, DEFAULT_TGT[1]) || !approx(t.z, DEFAULT_TGT[2])) {
+  if (woNonSol || !approx(t.x, DEFAULT_TGT[0]) || !approx(t.y, DEFAULT_TGT[1]) || !approx(t.z, DEFAULT_TGT[2])) {
     view.tgt = [t.x, t.y, t.z];
   }
   if (!approx(u.x, DEFAULT_UP[0]) || !approx(u.y, DEFAULT_UP[1]) || !approx(u.z, DEFAULT_UP[2])) {
@@ -697,7 +742,11 @@ export function applyDecodedView(
 
   if (view.focus !== undefined) {
     if (view.focus === 'cleared') {
-      stellata.unfocus();
+      // URL restore — bypass the close-zoom unfocus animation (a7d.2.6).
+      // cam/tgt below would overwrite camera.position mid-lerp, leaving
+      // the transition state to silently drag the camera away from the
+      // restored pose on the next frame.
+      stellata.unfocus({ animate: false });
     } else {
       const idx = resolveStarRef(view.focus, idMaps, idMaps.solIndex);
       if (idx >= 0 && idx < idMaps.starCount) {
@@ -719,6 +768,26 @@ export function applyDecodedView(
     if (idx >= 0 && idx < idMaps.starCount) stellata.setVectorTo(idx);
   }
 
+  // Apply worldOffset *before* cam/tgt so the local frame is established
+  // first. With focus, focusStar above already recentred the origin to
+  // the focal object, and the encoder elides worldOffset in that case —
+  // but apply it anyway when present (no-op when redundant). Without
+  // focus, worldOffset carries the close-orbit unfocus origin
+  // (a7d.2.11) so cam/tgt can be tiny local-frame values that round-
+  // trip cleanly through float32. setWorldOffset also shifts camera
+  // and target alongside the origin to preserve the user-visible
+  // pose; for URL load we explicitly reset them to defaults here so
+  // an absent view.cam / view.tgt produces the conventional default
+  // pose in the *new* local frame rather than the recentre-shifted
+  // junk position. view.cam / view.tgt below override when present.
+  if (view.worldOffset) {
+    stellata.setWorldOffset(view.worldOffset[0], view.worldOffset[1], view.worldOffset[2]);
+    const camDefault = view.mode === 'observe' ? [0, 0, 0] : DEFAULT_CAM;
+    stellata.camera.position.set(camDefault[0], camDefault[1], camDefault[2]);
+    stellata.controls.target.set(DEFAULT_TGT[0], DEFAULT_TGT[1], DEFAULT_TGT[2]);
+    controlsDirty = true;
+  }
+
   if (view.cam) {
     stellata.camera.position.set(view.cam[0], view.cam[1], view.cam[2]);
     controlsDirty = true;
@@ -734,7 +803,7 @@ export function applyDecodedView(
   // below preserves that quaternion when it pins position again.
   const willEnterObserve = view.mode === 'observe' && stellata.getFocusedStar() !== null;
   if (willEnterObserve && !hasCam) {
-    stellata.camera.position.set(...OBSERVE_CAM_LOCAL);
+    stellata.camera.position.set(0, 0, 0);
     controlsDirty = true;
   }
   if (controlsDirty) stellata.controls.update();
@@ -809,11 +878,11 @@ export function startUrlSync(stellata: Stellata, idMaps: IdMaps): void {
   onUnitChange(schedule);
 
   stellata.onFrame(() => {
-    // Skip URL writes while a warp or observe transition is in flight —
+    // Skip URL writes while any camera-position lerp is in flight (warp,
+    // observe enter/exit, or navigate-mode unfocus zoom-out a7d.2.6) —
     // the camera mutates every frame and we don't want intermediate poses
     // in the URL. The end-of-animation events flush the final pose.
-    if (stellata.getWarpActive()) return;
-    if (stellata.isObserveTransitionActive()) return;
+    if (stellata.isCameraTransitionActive()) return;
     const c = stellata.camera.position;
     const t = stellata.controls.target;
     const u = stellata.camera.up;

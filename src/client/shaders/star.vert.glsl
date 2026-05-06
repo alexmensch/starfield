@@ -14,10 +14,30 @@ uniform uint uSpectMask;
 // every other mode disables the suppression by construction (gl_InstanceID
 // is non-negative).
 uniform int uHideFocusIdx;
+// Force-center the focused star at NDC (0,0). At extreme close approach
+// (~5×10⁻⁸ pc for Sol-class stars), float32 cancellation in the matrix
+// chain can drift the projected centre by visible pixels even though
+// `controls.target = focused star + lookAt` puts it mathematically at
+// view-origin. JS-side stellata sets this to the focused-star index
+// when the camera-target alignment holds; -1 means use the default
+// projection path.
+uniform int uPinFocusToCenter;
 uniform float uPixelRatio;
 uniform float uSizeMin;
 uniform float uSizeMax;
 uniform float uSizeSpan;
+// Soft-knee saturation extent (magnitudes). The Gaussian-PSF model
+// r = σ·√(1.84·Δm) is unbounded in Δm, so above the visible-population
+// window (Δm > uSizeSpan) we used to hard-clamp brightness to 1, making
+// every super-bright star render at uSizeMax. That broke ratios in the
+// close-approach regime — Sol and Barnard's Star at 5e-3 pc both pinned
+// to the cap despite a 2300× flux ratio. The knee replaces the clamp
+// with a rational asymptote: identity below uSizeSpan, smoothly bending
+// to a ceiling of (uSizeSpan + uSizeKnee) above. uSizeKnee = 0 recovers
+// the old hard-clamp; larger values let bright stars keep growing
+// before saturation locks in (perceptually honest — eye + screen DO
+// saturate, just not abruptly).
+uniform float uSizeKnee;
 // Chart-mode disc sizing. Stars render as flat hard-edged discs whose
 // pixel diameter spreads linearly between [Min, Max] across the visible
 // magnitude range [Bright, MaxAppMag]. Linear in mag = log10 in flux,
@@ -29,19 +49,16 @@ uniform float uChartDiscMinPx;   // faintest end (e.g. 1.5 px)
 uniform float uChartMagBright;   // magnitude that maps to MAX (e.g. -2.0)
 uniform float uMonochrome;       // 0 = colour mode, 1 = chart mode (shared with frag)
 
-// Physical-size rendering term. At the reference camera distance uRefDistPc
-// (= the default controls.minDistance), a star's rendered pixel size is a
-// linear mapping of log10(radius) into [uPhysMinPx, uPhysMaxPx]. The
-// effective size scales as uRefDistPc/dPc so the term falls off with 1/d
-// and is effectively invisible beyond a few pc — at that range the
-// brightness-based apparent-magnitude term dominates, which is what
-// `max(appSize, physSize)` at the end of main() preserves.
-uniform float uLogRMin;   // log10 of smallest physicalRadius in catalog
-uniform float uLogRMax;   // log10 of largest  physicalRadius in catalog
-uniform float uPhysMinPx; // pixel size floor at ref distance (e.g. 2 px)
-uniform float uPhysMaxPx; // pixel size ceiling at ref distance — typically
-                          // 50% of min viewport axis, updated on resize
-uniform float uRefDistPc; // the distance at which uPhysMaxPx applies
+// Physical-size rendering term. A star's rendered pixel diameter equals
+// its true angular diameter through the camera's projection:
+//   pxSize = 2·atan(R · radiusFactor / d) · viewport.y / fov_y_rad
+// R is the per-star physical radius in pc — iLogRadius is in solar
+// radii (matching catalog.physicalRadius), so we multiply through by
+// uRSunPc (≈ 2.2543e-8 pc/R_sun) to land in pc-relative-to-d.
+// radiusFactor is the variability modulation. Falls off as 1/d in the
+// small-angle regime and saturates as d → R (disc fills the frame).
+uniform float uFovYRad;   // camera vertical FOV in radians
+uniform float uRSunPc;    // 1 R_sun in parsecs (≈ 2.2543e-8)
 uniform vec2 uViewport;   // viewport size in CSS pixels (for quad expansion)
 
 // Variability. uTime is real elapsed seconds. Per-star period is in days
@@ -186,7 +203,11 @@ void main() {
     vec3 worldPos = iPosition;
     float distCam = distance(worldPos, uCameraPos);
 
-    float dPc = max(distCam, 0.001);
+    // Floor at 1e-30 only to keep log(dPc) finite in the appMag calc;
+    // small enough that the per-star physical orbit floor (down to ~5e-8
+    // pc for Sol-class) never hits it, so physSize = 2·atan(R/d) can
+    // grow all the way to fill the viewport at the manual-zoom limit.
+    float dPc = max(distCam, 1e-30);
     float appMag = iAbsmag + 5.0 * (log(dPc) / LOG10 - 1.0);
 
     // Variability. The same magnitude modulation drives two visual effects:
@@ -200,24 +221,27 @@ void main() {
     //
     // The effective amplitude is compressed per-frame so that at the star's
     // current baseSize the pulse stays within a sensible display range —
-    // peak ≤ uPhysMaxPx, trough ≥ VAR_TROUGH_FLOOR_FRACTION × baseSize.
+    // peak ≤ MAX_PHYS_PX, trough ≥ VAR_TROUGH_FLOOR_FRACTION × baseSize.
     // Keeps the sine smooth (no plateau at peak, no disappearing at trough)
     // even for extreme-amplitude variables like Mira.
+    float R_pc = pow(10.0, iLogRadius) * uRSunPc;
+    float angularToPx = uViewport.y / max(uFovYRad, 1e-9);
     float radiusFactor = 1.0;
     float magMod = 0.0;
     if (iPeriodDays > 0.0 && iAmplitudeMag > 0.0) {
         float periodSec = max(iPeriodDays * uSecondsPerDay, uMinPeriodSec);
         float phase = uTime / periodSec;
 
-        // Precompute base (un-modulated) physSize to know how much headroom
-        // we have in each direction.
-        float logSpan0 = max(uLogRMax - uLogRMin, 0.001);
-        float logRatio0 = clamp((iLogRadius - uLogRMin) / logSpan0, 0.0, 1.0);
-        float sizeAtRef0 = mix(uPhysMinPx, uPhysMaxPx, logRatio0);
-        float baseSize0 = sizeAtRef0 * (uRefDistPc / dPc);
+        // Precompute base (un-modulated) physSize to size the headroom.
+        float baseSize0 = 2.0 * atan(R_pc / dPc) * angularToPx;
+        // Cap the peak at the same fraction of the viewport's minor axis
+        // that ZOOM_FLOOR_FRACTION uses for the manual zoom floor — once
+        // the disc is filling 90% of the frame at the closest approach,
+        // a variable's pulse can't usefully grow it any further.
+        float maxPhysSize = 0.9 * min(uViewport.x, uViewport.y);
 
         const float VAR_TROUGH_FLOOR_FRACTION = 0.2;
-        float maxUpLog10 = log(max(uPhysMaxPx / max(baseSize0, 1.0), 1.0)) / LOG10;
+        float maxUpLog10 = log(max(maxPhysSize / max(baseSize0, 1.0), 1.0)) / LOG10;
         float maxDownLog10 = -log(VAR_TROUGH_FLOOR_FRACTION) / LOG10; // ≈ 0.699
         float ampLimitMag = 10.0 * min(maxUpLog10, maxDownLog10);
         float ampEff = min(iAmplitudeMag, max(0.0, ampLimitMag));
@@ -292,17 +316,28 @@ void main() {
         // square root of brightness above threshold. Linear-in-mag would
         // compress bright stars too far; √Δm keeps Sirius distinctively
         // larger than the field.
-        float brightness = clamp((uMaxAppMag - appMag) / max(uSizeSpan, 0.001), 0.0, 1.0);
-        float appSize = mix(uSizeMin, uSizeMax, sqrt(brightness));
+        // Gaussian-PSF disc with soft-knee saturation. dM is magnitudes
+        // above the visibility threshold; below uSizeSpan we use the
+        // canonical √(Δm/sizeSpan) curve unchanged. Above, dMEff bends
+        // through a Michaelis-Menten asymptote: dMEff → uSizeSpan +
+        // uSizeKnee as dM → ∞. The disc keeps growing past uSizeMax for
+        // very bright stars, then levels off — preserving Sol-vs-Barnard
+        // ratio at close approach without unbounded growth.
+        float dM = uMaxAppMag - appMag;
+        float dMEff;
+        if (dM <= uSizeSpan) {
+            dMEff = max(dM, 0.0);
+        } else {
+            float over = dM - uSizeSpan;
+            dMEff = uSizeSpan + uSizeKnee * over / max(uSizeKnee + over, 1e-6);
+        }
+        float appSize = mix(uSizeMin, uSizeMax, sqrt(dMEff / max(uSizeSpan, 0.001)));
 
-        // Physical-size term. Log-map the star's radius into the size
-        // range, then scale by ref/distance so the curve falls off with
-        // distance. radiusFactor is the already-compressed variability
-        // modulation above.
-        float logSpan = max(uLogRMax - uLogRMin, 0.001);
-        float logRatio = clamp((iLogRadius - uLogRMin) / logSpan, 0.0, 1.0);
-        float sizeAtRef = mix(uPhysMinPx, uPhysMaxPx, logRatio);
-        float physSize = sizeAtRef * (uRefDistPc / dPc) * radiusFactor;
+        // Physical-size term. True angular diameter projected to pixels:
+        // 2·atan(R/d) is the angle the disc subtends at the camera,
+        // multiplied by viewport.y/fov_y to convert radians to pixels.
+        // radiusFactor is the already-compressed variability modulation.
+        float physSize = 2.0 * atan(R_pc * radiusFactor / dPc) * angularToPx;
 
         pxSize = max(appSize, physSize);
         vPhysRatio = clamp(physSize / max(pxSize, 0.001), 0.0, 1.0);
@@ -321,6 +356,13 @@ void main() {
     // by centreClip.w makes it perspective-correct (so the quad stays the
     // same pixel size regardless of depth).
     vec4 centreClip = projectionMatrix * modelViewMatrix * vec4(worldPos, 1.0);
+    if (gl_InstanceID == uPinFocusToCenter) {
+        // Bypass float32 cancellation in the matrix chain at extreme
+        // close approach. The focused star is mathematically at view
+        // (0, 0, -distCam) since controls.target = star and lookAt()
+        // aligns -Z with target; substitute the canonical projection.
+        centreClip = projectionMatrix * vec4(0.0, 0.0, -dPc, 1.0);
+    }
     vec2 pixelOffset = aCorner * pxSize * uPixelRatio;
     vec2 ndcOffset = pixelOffset / (uViewport * uPixelRatio) * 2.0;
     gl_Position = centreClip + vec4(ndcOffset * centreClip.w, 0.0, 0.0);
