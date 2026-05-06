@@ -100,8 +100,12 @@ Per-pass overrides on top of the chunk default:
 - All star vertex/fragment shaders include the standard three.js
   `<logdepthbuf_pars_vertex/fragment>` + `<logdepthbuf_vertex/fragment>`
   chunks. The chunks populate the `vFragDepth` varying and write it
-  into `gl_FragDepth` automatically — the fragment shader doesn't write
-  `gl_FragDepth = gl_FragCoord.z` itself; that would be redundant.
+  into `gl_FragDepth` when `USE_LOGDEPTHBUF` is defined. `star.frag.glsl`
+  also writes `gl_FragDepth = gl_FragCoord.z` unconditionally before
+  the chunk include — defensive against the GLSL rule that, once any
+  path writes `gl_FragDepth`, unwritten paths leave it undefined. The
+  halo override below relies on that; the unconditional write keeps
+  the shader correct if `logarithmicDepthBuffer` is ever toggled off.
 - Off-screen-sentinel early-returns in `star.vert.glsl` and
   `dust-particle.vert.glsl` skip the `<logdepthbuf_vertex>` chunk and
   leave `vFragDepth` undefined. Safe because every vertex of the
