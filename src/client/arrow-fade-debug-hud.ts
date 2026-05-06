@@ -34,11 +34,13 @@ function emptyLatch(): Latch {
 }
 
 let panel: HTMLDivElement | null = null;
+let unsubscribe: (() => void) | null = null;
 
 export function toggleArrowFadeHud(stellata: Stellata): void {
   if (panel) {
     panel.remove();
     panel = null;
+    if (unsubscribe) { unsubscribe(); unsubscribe = null; }
     return;
   }
 
@@ -74,7 +76,7 @@ export function toggleArrowFadeHud(stellata: Stellata): void {
   };
   const fmtAlpha = (n: number) => n.toFixed(3);
 
-  stellata.onFrame(() => {
+  unsubscribe = stellata.onFrame(() => {
     if (!panel) return;
     const lengths = stellata.hud.getDrawnLengths();
     const dbg = stellata.hud.getDebugSnapshot();

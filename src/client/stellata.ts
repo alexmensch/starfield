@@ -15,6 +15,12 @@ import type { CloudCatalog } from './cloud-loader';
 import { MilkyWay } from './milkyway';
 import { ObserveControls } from './observe-controls';
 import { mark as perfMark, measure as perfMeasure, frame as perfFrame } from './perf-hud';
+import {
+  angularToPx as angularToPxPure,
+  physSizePx,
+  varEffectiveAmplitude,
+  distAtFillFraction,
+} from './star-geometry';
 
 export type MagPresetName = 'naked-eye' | 'binoculars' | 'all';
 
@@ -183,10 +189,29 @@ const GLOBAL_MIN_DIST_PC = 5e-3;
 // Fraction of the viewport's minor axis that the focused star's disc
 // fills at the manual-zoom orbit floor. 0.9 means a maximally-zoomed
 // camera lands with the star covering 90% of the smaller viewport
-// dimension — leaves a small ring of background visible. Both the
-// vertex shader (variability headroom) and minOrbitDistForStar use
-// this constant; keep them in sync.
+// dimension — leaves a small ring of background visible. Driven through
+// to the vertex shader as `uMaxPhysFrac` so the variability-headroom
+// clamp matches without a hand-edited literal.
 const ZOOM_FLOOR_FRACTION = 0.9;
+
+// Trough-floor for variable-star pulsation: minimum disc fraction
+// (relative to the un-modulated baseSize) at the dimmest phase. 0.2
+// keeps the trough visible without going sub-pixel. Driven to the shader
+// as `uVarTroughFrac`.
+const VAR_TROUGH_FLOOR_FRACTION = 0.2;
+
+// Camera-distance floor used by sites that need a finite log10(dCam)
+// or atan(R/dCam) at close approach. 1e-30 pc is well below any orbit
+// the camera can actually reach, so it never affects rendering — it
+// just keeps Math.log10 / division well-defined at the singular point.
+const DCAM_LOG_FLOOR_PC = 1e-30;
+
+// Squared-length threshold below which `controls.target` is treated as
+// coincident with the local origin (= focal-star position). Engages the
+// uPinFocusToCenter shader pin so the focused star renders at NDC (0,0)
+// regardless of float32 cancellation. 1e-12 pc² ≈ (1e-6 pc)² ≈ 0.2 AU
+// — under this, the geometric pin is the right answer.
+const PIN_ENGAGE_THRESHOLD_SQ_PC = 1e-12;
 
 // Fraction of the viewport's minor axis that a destination star fills
 // when the camera auto-parks at it (warp arrival, observe-exit landing,
@@ -677,6 +702,11 @@ export class Stellata {
       // to solar radii via pow(10, x); multiply by uRSunPc to get pc.
       uRSunPc: { value: R_SUN_PC },
       uViewport: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+      // Variability headroom drivers (mirrored to GLSL); single source of
+      // truth in the TS-side constants so the shader and the
+      // renderedSizePx mirror compute the same effective amplitude.
+      uMaxPhysFrac: { value: ZOOM_FLOOR_FRACTION },
+      uVarTroughFrac: { value: VAR_TROUGH_FLOOR_FRACTION },
       // Variability time. uTime advances in real seconds; uSecondsPerDay is
       // the compression factor — lower values make catalog periods cycle
       // faster on-screen. uMinPeriodSec clamps the shortest cycle so sub-day
@@ -880,7 +910,16 @@ export class Stellata {
 
   onFocusChange(h: (starIndex: number | null) => void) { this.onFocusHandlers.push(h); }
   onCloudFocusChange(h: (cloudIndex: number | null) => void) { this.onCloudFocusHandlers.push(h); }
-  onFrame(h: () => void) { this.onFrameHandlers.push(h); }
+  /** Subscribe to per-frame ticks. Returns a disposer that removes the
+   *  handler when invoked — debug HUDs and other temporary subscribers
+   *  call this on close so the closure doesn't accumulate across toggles. */
+  onFrame(h: () => void): () => void {
+    this.onFrameHandlers.push(h);
+    return () => {
+      const i = this.onFrameHandlers.indexOf(h);
+      if (i >= 0) this.onFrameHandlers.splice(i, 1);
+    };
+  }
   onFilterChange(h: (f: Readonly<FilterState>) => void) { this.onFilterHandlers.push(h); }
   onVectorChange(h: (toIdx: number | null) => void) { this.onVectorHandlers.push(h); }
   onVectorCloudChange(h: (toCloudIdx: number | null) => void) { this.onVectorCloudHandlers.push(h); }
@@ -946,6 +985,19 @@ export class Stellata {
     return this.warpState !== null || this.observeTransition !== null;
   }
 
+  /** True while *any* camera-driving animation is in flight: warp,
+   *  aim-slerp, or observe enter/exit. Sites that need a uniform "the
+   *  camera is currently animating" gate should call this. Several call
+   *  sites in this file deliberately use a narrower predicate (e.g.
+   *  `warpState` only, or warp + observeTransition without aim) — those
+   *  are intentional: focus-change can interrupt aim but not warp,
+   *  cosmetic cloud picking is suppressed during warp only, etc. */
+  isCameraBusy(): boolean {
+    return this.warpState !== null
+      || this.aimState !== null
+      || this.isObserveTransitionActive();
+  }
+
   // Cancel an in-flight 'unfocus' lerp (a7d.2.6) so a new camera-changing
   // action (focus, warp, aim, click) can proceed without the lerp's next
   // tick lerping the camera away from the action's destination. No-op for
@@ -955,6 +1007,11 @@ export class Stellata {
       this.observeTransition = null;
     }
   }
+  /** Threshold squared-length below which `controls.target` engages the
+   *  focused-star pin. Surfaced for the pin debug HUD so the displayed
+   *  rule matches the runtime constant exactly. */
+  getPinEngageThresholdSq(): number { return PIN_ENGAGE_THRESHOLD_SQ_PC; }
+
   /** Whether the focused-star pin (uPinFocusToCenter) would engage right
    *  now, mirroring the per-frame guard in animate(). Read by the pin
    *  debug HUD (`debug.pin()`) to display live state. */
@@ -963,7 +1020,7 @@ export class Stellata {
       this.focusedStar !== null &&
       this.cameraMode === 'navigate' &&
       !this.warpState && !this.aimState &&
-      this.controls.target.lengthSq() < 1e-12
+      this.controls.target.lengthSq() < PIN_ENGAGE_THRESHOLD_SQ_PC
     );
   }
   /** True while an aim animation is in flight. Mirror of getWarpActive
@@ -1082,11 +1139,9 @@ export class Stellata {
    */
   setCameraMode(mode: CameraMode, opts: { animate?: boolean } = {}) {
     if (mode === this.cameraMode) return;
-    if (this.warpState) return;
-    if (this.isObserveTransitionActive()) return;
+    if (this.isCameraBusy()) return;
     if (mode === 'observe') {
       if (this.focusedStar === null) return;
-      if (this.warpState || this.aimState) return;
       // Drop any drawn vector — measurement endpoints don't survive a
       // perspective change to "I'm standing on the source."
       this.setVectorTo(null);
@@ -2235,7 +2290,7 @@ export class Stellata {
       const dx = positions[i * 3] - t.x;
       const dy = positions[i * 3 + 1] - t.y;
       const dz = positions[i * 3 + 2] - t.z;
-      const dist = Math.max(Math.sqrt(dx * dx + dy * dy + dz * dz), 1e-30);
+      const dist = Math.max(Math.sqrt(dx * dx + dy * dy + dz * dz), DCAM_LOG_FLOOR_PC);
       const appMag = absmag[i] + 5 * (Math.log10(dist) - 1);
       scored.push({ idx: i, appMag });
     }
@@ -2461,7 +2516,7 @@ export class Stellata {
       const dx = x - camPos.x;
       const dy = y - camPos.y;
       const dz = z - camPos.z;
-      const dCam = Math.max(Math.sqrt(dx * dx + dy * dy + dz * dz), 1e-30);
+      const dCam = Math.max(Math.sqrt(dx * dx + dy * dy + dz * dz), DCAM_LOG_FLOOR_PC);
       const appMag = absmag[i] + 5 * (Math.log10(dCam) - 1);
       // For variables, use the bright-extreme appMag so a star whose
       // disc is only visible at peak phase remains pickable across the
@@ -2548,6 +2603,15 @@ export class Stellata {
     this.recomputePresetPxSizes();
   };
 
+  // Pixel-per-radian conversion for the active viewport / FOV. Shared
+  // by every screen-space size calc (star disc, cloud silhouette, peak-
+  // amplitude disc, glsl `physSizePx` mirror).
+  private angularToPx(): number {
+    const u = this.material.uniforms;
+    const viewport = u.uViewport.value as THREE.Vector2;
+    return angularToPxPure(viewport.y, u.uFovYRad.value as number);
+  }
+
   // Rendered pixel diameter for a star from the current camera. Mirrors
   // the vertex-shader angular-diameter formula exactly — callers include
   // the focus-ring overlay, the disc mask, and pickStar. Variability
@@ -2563,21 +2627,18 @@ export class Stellata {
     const dx = positions[idx * 3] - camPos.x;
     const dy = positions[idx * 3 + 1] - camPos.y;
     const dz = positions[idx * 3 + 2] - camPos.z;
-    // 1e-30 floor on dCam: keeps log10(dCam) finite in the appMag calc
-    // without clamping the angular-diameter atan(R/d) at close approach.
-    const dCam = Math.max(Math.sqrt(dx * dx + dy * dy + dz * dz), 1e-30);
+    const dCam = Math.max(Math.sqrt(dx * dx + dy * dy + dz * dz), DCAM_LOG_FLOOR_PC);
     let appMag = absmag[idx] + 5 * (Math.log10(dCam) - 1);
 
     const fovYRad = u.uFovYRad.value as number;
     const viewport = u.uViewport.value as THREE.Vector2;
-    const angularToPx = viewport.y / Math.max(fovYRad, 1e-9);
     const R = Math.max(physicalRadius[idx], 1e-6) * R_SUN_PC;
-    const baseSize = 2 * Math.atan(R / dCam) * angularToPx;
+    const baseSize = physSizePx(R, dCam, viewport.y, fovYRad);
     const maxPhysSize = ZOOM_FLOOR_FRACTION * Math.min(viewport.x, viewport.y);
 
     // Variability — same compression rule as the shader: effective
-    // amplitude is clamped so peak ≤ maxPhysSize and trough ≥ 20% of
-    // baseSize, keeping the sinusoidal pulse smooth at both ends.
+    // amplitude is clamped so peak ≤ maxPhysSize and trough ≥
+    // VAR_TROUGH_FLOOR_FRACTION × baseSize.
     let radiusFactor = 1;
     const period = periodDays[idx];
     const amp = amplitudeMag[idx];
@@ -2587,12 +2648,7 @@ export class Stellata {
         u.uMinPeriodSec.value as number,
       );
       const phase = (u.uTime.value as number) / periodSec;
-
-      const VAR_TROUGH_FLOOR_FRACTION = 0.2;
-      const maxUpLog10 = Math.log10(Math.max(maxPhysSize / Math.max(baseSize, 1), 1));
-      const maxDownLog10 = -Math.log10(VAR_TROUGH_FLOOR_FRACTION);
-      const ampLimitMag = 10 * Math.min(maxUpLog10, maxDownLog10);
-      const ampEff = Math.min(amp, Math.max(0, ampLimitMag));
+      const ampEff = varEffectiveAmplitude(amp, baseSize, maxPhysSize, VAR_TROUGH_FLOOR_FRACTION);
 
       const magMod = 0.5 * ampEff * Math.sin(2 * Math.PI * phase);
       appMag += magMod;
@@ -2609,9 +2665,7 @@ export class Stellata {
     );
     const appSize = f.sizeMin + Math.sqrt(brightness) * (f.sizeMax - f.sizeMin);
 
-    const physSize = 2 * Math.atan((R * radiusFactor) / dCam) * angularToPx;
-
-    return Math.max(appSize, physSize);
+    return Math.max(appSize, physSizePx(R, dCam, viewport.y, fovYRad, radiusFactor));
   }
 
   /** Cloud analogue of `renderedSizePx` — pixel diameter of the cloud's
@@ -2630,12 +2684,18 @@ export class Stellata {
     const dy = local.y - camPos.y;
     const dz = local.z - camPos.z;
     const dCam = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    const u = this.material.uniforms;
-    const fovYRad = u.uFovYRad.value as number;
-    const viewport = u.uViewport.value as THREE.Vector2;
-    const angularToPx = viewport.y / Math.max(fovYRad, 1e-9);
-    return renderedCloudSizePx(cloud, dCam, angularToPx);
+    if (dCam < 1e-12) {
+      return renderedCloudSizePx(cloud, dCam, this.angularToPx());
+    }
+    // World-space unit direction from the cloud toward the camera. The
+    // helper rotates this into the cloud's local frame so the silhouette
+    // bound tightens for axis-aligned views (prolate end-on no longer
+    // overshoots by the prolate axis ratio).
+    this.tmpCloudDir.set(camPos.x - local.x, camPos.y - local.y, camPos.z - local.z)
+      .multiplyScalar(1 / dCam);
+    return renderedCloudSizePx(cloud, dCam, this.angularToPx(), this.tmpCloudDir);
   }
+  private tmpCloudDir = new THREE.Vector3();
 
   // Navigate-mode opacity for the focused-star reference arrows (Sol, GC,
   // distance-vector). Returns 1 outside navigate or when no star is focused.
@@ -2699,12 +2759,15 @@ export class Stellata {
     const refLen = Math.max(lengths.sol, lengths.gc);
     if (refLen <= 0) return 1;
 
-    const SHAFT_START = 28;  // FOCUS_RING_RADIUS_PX + RING_HALO_GAP_PX
+    // Source the shaft-start radius from the HUD (focus-ring rim + halo
+    // gap in nav, HUD ring + halo gap in observe), so a future change to
+    // either ring radius or the halo gap doesn't drift this calc.
+    const shaftStart = this.hudOverlay.getShaftStartPx();
     // Use the peak-amplitude disc size, not the current phase-modulated
     // size — otherwise a high-amplitude variable's pulsation would oscillate
     // the alpha across its variability cycle.
     const discRadius = this.renderedDiscPxAtPeak(idx) / 2;
-    const coverage = Math.max(0, discRadius - SHAFT_START) / refLen;
+    const coverage = Math.max(0, discRadius - shaftStart) / refLen;
 
     // Smoothstep ease over [0.5, 0.75]: alpha 1 → 0. Cubic Hermite (3t²-2t³)
     // gives zero slope at both ends so the fade engages and ends gently.
@@ -2743,18 +2806,22 @@ export class Stellata {
   // companions still get the half-angle bump so the partner stays in
   // frame.
   private minOrbitDistForStar(idx: number): number {
-    const fovMinor = this.fovMinorRad();
     const R = Math.max(this.catalog.physicalRadius[idx], 1e-9) * R_SUN_PC;
-    const base = R / Math.tan((ZOOM_FLOOR_FRACTION * fovMinor) / 2);
+    const base = distAtFillFraction(R, this.fovMinorRad(), ZOOM_FLOOR_FRACTION);
+    return Math.max(base, this.binaryCompanionFloorPc(idx));
+  }
 
+  // Floor on the focused-star camera distance imposed by a binary
+  // companion: keeps the partner inside the BINARY_VIEWPORT_HALF_ANGLE
+  // cone. Returns 0 for stars without a flagged companion.
+  private binaryCompanionFloorPc(idx: number): number {
     const comp = this.catalog.companion[idx];
-    if (comp < 0) return base;
+    if (comp < 0) return 0;
     const p = this.catalog.positions;
     const dx = p[comp * 3] - p[idx * 3];
     const dy = p[comp * 3 + 1] - p[idx * 3 + 1];
     const dz = p[comp * 3 + 2] - p[idx * 3 + 2];
-    const sep = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    return Math.max(base, sep * BINARY_MIN_DIST_FACTOR);
+    return Math.sqrt(dx * dx + dy * dy + dz * dz) * BINARY_MIN_DIST_FACTOR;
   }
 
   // Auto-park target — used by observe-exit landing, warp source
@@ -2768,18 +2835,9 @@ export class Stellata {
   minDistForStar(idx: number): number {
     const fovMinor = this.fovMinorRad();
     const R = Math.max(this.catalog.physicalRadius[idx], 1e-9) * R_SUN_PC;
-    const dPark = R / Math.tan((TARGET_PARK_FRACTION * fovMinor) / 2);
-    const dMin = R / Math.tan((ZOOM_FLOOR_FRACTION * fovMinor) / 2);
-    const parkFloored = Math.max(dPark, 2 * dMin);
-
-    const comp = this.catalog.companion[idx];
-    if (comp < 0) return parkFloored;
-    const p = this.catalog.positions;
-    const dx = p[comp * 3] - p[idx * 3];
-    const dy = p[comp * 3 + 1] - p[idx * 3 + 1];
-    const dz = p[comp * 3 + 2] - p[idx * 3 + 2];
-    const sep = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    return Math.max(parkFloored, sep * BINARY_MIN_DIST_FACTOR);
+    const dPark = distAtFillFraction(R, fovMinor, TARGET_PARK_FRACTION);
+    const dMin = distAtFillFraction(R, fovMinor, ZOOM_FLOOR_FRACTION);
+    return Math.max(dPark, 2 * dMin, this.binaryCompanionFloorPc(idx));
   }
 
   // Peak-amplitude rendered disc diameter in pixels. Mirrors the physSize
@@ -2791,20 +2849,16 @@ export class Stellata {
   private renderedDiscPxAtPeak(idx: number): number {
     const positions = this._localPositions;
     const camPos = this.camera.position;
-    const u = this.material.uniforms;
 
     const dx = positions[idx * 3] - camPos.x;
     const dy = positions[idx * 3 + 1] - camPos.y;
     const dz = positions[idx * 3 + 2] - camPos.z;
-    const dCam = Math.max(Math.sqrt(dx * dx + dy * dy + dz * dz), 1e-30);
+    const dCam = Math.max(Math.sqrt(dx * dx + dy * dy + dz * dz), DCAM_LOG_FLOOR_PC);
 
-    const fovYRad = u.uFovYRad.value as number;
-    const viewport = u.uViewport.value as THREE.Vector2;
-    const angularToPx = viewport.y / Math.max(fovYRad, 1e-9);
     const R = Math.max(this.catalog.physicalRadius[idx], 1e-6) * R_SUN_PC;
-    const Reff = R * this.peakAmplitudeFactor(idx);
-
-    return 2 * Math.atan(Reff / dCam) * angularToPx;
+    const u = this.material.uniforms;
+    const viewport = u.uViewport.value as THREE.Vector2;
+    return physSizePx(R, dCam, viewport.y, u.uFovYRad.value as number, this.peakAmplitudeFactor(idx));
   }
 
   private onPointerDown = (e: PointerEvent) => {
@@ -3050,7 +3104,7 @@ export class Stellata {
     const viewport = u.uViewport.value as THREE.Vector2;
     const halfAngle = (Stellata.CORE_MASK_MIN_PX * fovYRad)
       / (Math.max(viewport.y, 1) * 2);
-    const dThresh = this.maxPhysicalRadiusPc / Math.max(Math.tan(halfAngle), 1e-30);
+    const dThresh = this.maxPhysicalRadiusPc / Math.max(Math.tan(halfAngle), DCAM_LOG_FLOOR_PC);
     const dThreshSq = dThresh * dThresh;
 
     // Camera distance from Sol in absolute space (catalog frame).
@@ -3132,12 +3186,7 @@ export class Stellata {
     // user hasn't panned the camera target away from the focused star
     // (target ≈ local origin). Pan moves target away from the star and
     // we want it to render at its actual projected position again.
-    const pinTarget = (
-      this.focusedStar !== null &&
-      this.cameraMode === 'navigate' &&
-      !this.warpState && !this.aimState &&
-      this.controls.target.lengthSq() < 1e-12
-    ) ? this.focusedStar : -1;
+    const pinTarget = this.isPinEngaged() ? this.focusedStar : -1;
     this.material.uniforms.uPinFocusToCenter.value = pinTarget;
     // Advance variability clock (seconds since start). Shared with glow
     // material via sharedUniforms so both passes see the same time.

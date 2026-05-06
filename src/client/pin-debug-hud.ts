@@ -99,7 +99,6 @@ export function togglePinHud(stellata: Stellata): void {
     const c = stellata.camera.position;
     const distCam = Math.hypot(c.x - t.x, c.y - t.y, c.z - t.z);
     const tLen = Math.hypot(t.x, t.y, t.z);
-    const guard = t.lengthSq() < 1e-12;
     const pinNow = stellata.isPinEngaged();
 
     if (t.x > latch.tgtMaxX) latch.tgtMaxX = t.x;
@@ -128,7 +127,7 @@ export function togglePinHud(stellata: Stellata): void {
       `warp:${stellata.getWarpActive()}  aim:${stellata.isAimActive()}\n` +
       `pin: ${pinNow ? 'YES' : 'NO'}  flips:${latch.pinFlips}  off-frames:${latch.pinOffFrames}\n` +
       `\n` +
-      `target.lengthSq < 1e-12? ${guard}\n` +
+      `target.lengthSq: ${fmt(t.lengthSq())} (engage <${stellata.getPinEngageThresholdSq()})\n` +
       `target.len now: ${fmt(tLen)}  max: ${fmt(latch.tgtLenMax)}\n` +
       `target.x now: ${fmt(t.x)}  range: [${fmt(latch.tgtMinX)}, ${fmt(latch.tgtMaxX)}]\n` +
       `target.y now: ${fmt(t.y)}  range: [${fmt(latch.tgtMinY)}, ${fmt(latch.tgtMaxY)}]\n` +
@@ -145,9 +144,5 @@ export function togglePinHud(stellata: Stellata): void {
     root.style.color = pinNow ? '#0f0' : '#f33';
   };
 
-  stellata.onFrame(onFrame);
-  unsubscribe = () => {
-    // No frame-handler removal API today; the closure keeps `panel` null
-    // after toggle-off so onFrame becomes a no-op.
-  };
+  unsubscribe = stellata.onFrame(onFrame);
 }

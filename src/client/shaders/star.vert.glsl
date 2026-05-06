@@ -60,6 +60,10 @@ uniform float uMonochrome;       // 0 = colour mode, 1 = chart mode (shared with
 uniform float uFovYRad;   // camera vertical FOV in radians
 uniform float uRSunPc;    // 1 R_sun in parsecs (≈ 2.2543e-8)
 uniform vec2 uViewport;   // viewport size in CSS pixels (for quad expansion)
+// Variability headroom drivers, mirroring the TS-side ZOOM_FLOOR_FRACTION
+// and VAR_TROUGH_FLOOR_FRACTION. Driven from a single source in stellata.ts.
+uniform float uMaxPhysFrac;     // peak disc fraction of min(viewport) (= ZOOM_FLOOR_FRACTION)
+uniform float uVarTroughFrac;   // trough floor fraction relative to baseSize
 
 // Variability. uTime is real elapsed seconds. Per-star period is in days
 // (0 = not a variable), per-star amplitude is in magnitudes. uSecondsPerDay
@@ -234,15 +238,14 @@ void main() {
 
         // Precompute base (un-modulated) physSize to size the headroom.
         float baseSize0 = 2.0 * atan(R_pc / dPc) * angularToPx;
-        // Cap the peak at the same fraction of the viewport's minor axis
-        // that ZOOM_FLOOR_FRACTION uses for the manual zoom floor — once
-        // the disc is filling 90% of the frame at the closest approach,
-        // a variable's pulse can't usefully grow it any further.
-        float maxPhysSize = 0.9 * min(uViewport.x, uViewport.y);
+        // Cap the peak at uMaxPhysFrac of the viewport's minor axis —
+        // matches the TS-side ZOOM_FLOOR_FRACTION used by the orbit
+        // floor — and the trough at uVarTroughFrac of baseSize so the
+        // pulse never goes sub-baseSize × varTroughFrac.
+        float maxPhysSize = uMaxPhysFrac * min(uViewport.x, uViewport.y);
 
-        const float VAR_TROUGH_FLOOR_FRACTION = 0.2;
         float maxUpLog10 = log(max(maxPhysSize / max(baseSize0, 1.0), 1.0)) / LOG10;
-        float maxDownLog10 = -log(VAR_TROUGH_FLOOR_FRACTION) / LOG10; // ≈ 0.699
+        float maxDownLog10 = -log(uVarTroughFrac) / LOG10;
         float ampLimitMag = 10.0 * min(maxUpLog10, maxDownLog10);
         float ampEff = min(iAmplitudeMag, max(0.0, ampLimitMag));
 

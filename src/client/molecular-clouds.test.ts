@@ -150,6 +150,41 @@ describe('renderedCloudSizePx', () => {
     expect(Number.isFinite(out)).toBe(true);
     expect(out).toBeGreaterThan(0);
   });
+
+  it('uses the perpendicular axes when a viewDir is supplied (prolate end-on)', () => {
+    // Cloud of axes [10, 1, 1] viewed end-on along the long axis: the
+    // silhouette is a circle of radius 1, NOT 10. With viewDir omitted
+    // the helper falls back to max axis (= 10) — that's the legacy
+    // conservative answer. With viewDir = [1,0,0] the helper should
+    // tighten the bound to 1.
+    const angularToPx = 1000;
+    const dCam = 100;
+    const cloud = makeCloud([10, 1, 1]);
+    const endOn = new THREE.Vector3(1, 0, 0); // along long axis (cloud-local x)
+    const sideOn = new THREE.Vector3(0, 1, 0); // perpendicular to long axis
+
+    const noDir = renderedCloudSizePx(cloud, dCam, angularToPx);
+    const endOnPx = renderedCloudSizePx(cloud, dCam, angularToPx, endOn);
+    const sideOnPx = renderedCloudSizePx(cloud, dCam, angularToPx, sideOn);
+
+    // Side-on still sees the full long axis (silhouette radius = 10).
+    expect(sideOnPx).toBeCloseTo(noDir, 6);
+    // End-on should be ~10× tighter — silhouette radius drops from 10 to 1.
+    expect(endOnPx).toBeLessThan(noDir / 5);
+    // ...specifically matching 2·atan(1/100)·angularToPx.
+    const expectedEndOn = 2 * Math.atan(1 / dCam) * angularToPx;
+    expect(endOnPx).toBeCloseTo(expectedEndOn, 9);
+  });
+
+  it('reduces to the legacy max-axis when the cloud is a sphere', () => {
+    const angularToPx = 1000;
+    const dCam = 100;
+    const cloud = makeCloud([5, 5, 5]);
+    const someDir = new THREE.Vector3(0.6, 0.5, 0.4).normalize();
+    const noDir = renderedCloudSizePx(cloud, dCam, angularToPx);
+    const withDir = renderedCloudSizePx(cloud, dCam, angularToPx, someDir);
+    expect(withDir).toBeCloseTo(noDir, 9);
+  });
 });
 
 describe('cloudViewingDistancePc', () => {

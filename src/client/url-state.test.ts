@@ -85,6 +85,54 @@ describe('url-state', () => {
       expect(out.cam![0]).toBeCloseTo(1.85e-6, 9);
       expect(out.cam![2]).toBeCloseTo(3.95e-5, 9);
     });
+
+    // 9mm.61: guards the architectural claim from the encoder design
+    // comment that "Float32 ULP at megaparsec absolute scale is ~10⁻²
+    // pc — invisible in any view because the user-visible pose is the
+    // cam/tgt offset within the local frame, and that's encoded at full
+    // Float32 precision relative to the anchor."
+    it('preserves sub-pc cam precision at kpc-scale worldOffset (galactic-centre frame)', () => {
+      // 8.5 kpc ≈ Sol-to-GC distance. Float32 has ~24 bits of mantissa,
+      // so absolute resolution at 8500 pc is ~5e-4 pc — much coarser than
+      // the µpc cam offset, which is exactly why the encoder splits the
+      // anchor and the local-frame pose.
+      const view: DecodedView = {
+        worldOffset: [8500, 0, 0],
+        cam: [1.85e-6, -2.61e-6, 3.95e-5],
+        tgt: [0, 0, 0],
+      };
+      const { view: out } = roundtrip(view);
+      // Anchor round-trips at the float32 precision available at 8.5 kpc.
+      // 5e-4 pc absolute → roughly 4 decimals.
+      expect(out.worldOffset![0]).toBeCloseTo(8500, 3);
+      // ...and the local cam offset stays at sub-µpc precision because
+      // it's encoded in the local frame, not added to the anchor first.
+      expect(out.cam![0]).toBeCloseTo(1.85e-6, 9);
+      expect(out.cam![1]).toBeCloseTo(-2.61e-6, 9);
+      expect(out.cam![2]).toBeCloseTo(3.95e-5, 9);
+    });
+
+    it('preserves cam precision at Mpc-scale worldOffset (extragalactic anchor)', () => {
+      // 1 Mpc ≈ Andromeda-distance scale. Float32 ULP here is ~10⁻² pc —
+      // the encoder design comment's claim. Anchor precision degrades but
+      // local-frame cam is unaffected because of the split storage.
+      const view: DecodedView = {
+        worldOffset: [1e6, 0, 0],
+        cam: [1.85e-6, -2.61e-6, 3.95e-5],
+        tgt: [1e-3, 0, 0],
+      };
+      const { view: out } = roundtrip(view);
+      // 1 Mpc anchor: float32 ULP ≈ 0.06 pc absolute → relative precision ~1e-7.
+      expect(Math.abs(out.worldOffset![0] - 1e6) / 1e6).toBeLessThan(1e-6);
+      // Local cam values are stored as float32s relative to the anchor —
+      // i.e. as their raw small magnitudes, NOT as anchor + offset. So
+      // their precision is set by the cam magnitudes themselves
+      // (~1e-13 ULP at 1e-6 pc), not by the worldOffset's ULP.
+      expect(out.cam![0]).toBeCloseTo(1.85e-6, 9);
+      expect(out.cam![1]).toBeCloseTo(-2.61e-6, 9);
+      expect(out.cam![2]).toBeCloseTo(3.95e-5, 9);
+      expect(out.tgt![0]).toBeCloseTo(1e-3, 9);
+    });
   });
 
   describe('quantised u8 fields (v2)', () => {
