@@ -75,10 +75,14 @@ void main() {
     float r = length(vUv);
     if (r > 0.5) discard;
 
-    // Log-depth chunk writes gl_FragDepth from vFragDepth. The halo
-    // override below pushes haloed disc-pass fragments to the far plane
-    // (1.0 reads correctly under any depth encoding) so they don't
-    // occlude background stars drawn later.
+    // Defensive default — the halo branch below conditionally writes
+    // gl_FragDepth = 1.0, and once any path in the shader writes it,
+    // unwritten paths leave the value undefined per GLSL spec. The
+    // logdepthbuf_fragment chunk overwrites this with the log-encoded
+    // depth when USE_LOGDEPTHBUF is defined (the renderer's current
+    // config), but keeping the unconditional write means the shader
+    // stays correct if logarithmicDepthBuffer is ever toggled off.
+    gl_FragDepth = gl_FragCoord.z;
     #include <logdepthbuf_fragment>
 
     // Chart mode: flatten everything. Stars render as solid hard-edged
