@@ -306,20 +306,15 @@ function parseGcvsCrossref(): VarStarXref {
 // The parser tolerates VizieR's preamble (`#` comments, header row,
 // dash-separator row, then data).
 
-// Returns a map from system identifier → list of component HIPs.
-// Real CCDM systems use the CCDM_ID as the key; curated overrides use
-// synthetic keys (`OVERRIDE-N`) so they sit in the same flat map.
+// Returns a map from CCDM_ID → list of component HIPs. Curated visual
+// doubles are NOT included here — they live in KNOWN_VISUAL_DOUBLES and
+// applyDoublesFlag unions both sources at flag time. Keeping them
+// separate avoids minting synthetic CCDM keys that share a type with
+// real CCDM IDs.
 // Components in the same group are siblings of one system —
 // applyDoublesFlag picks the brightest as the primary.
 function parseHipCcdm(): Map<string, number[]> {
   const groups = new Map<string, number[]>();
-
-  // Curated overrides flag unconditionally — these systems don't need
-  // to appear in the CCDM file, and if any of their HIPs do, the file
-  // path skips them so each HIP lives in exactly one group.
-  for (let i = 0; i < KNOWN_VISUAL_DOUBLES.length; i++) {
-    groups.set(`OVERRIDE-${i}`, [...KNOWN_VISUAL_DOUBLES[i].components]);
-  }
 
   if (!existsSync(SRC_HIP_CCDM)) return groups;
 
@@ -385,9 +380,9 @@ function parseHipCcdm(): Map<string, number[]> {
   }
 
   console.log(
-    `  ${kept} HIPs via CCDM+MultFlag(C/G/O), ${KNOWN_VISUAL_DOUBLE_HIPS.size} via override; ` +
+    `  ${kept} HIPs via CCDM+MultFlag(C/G/O); ` +
       `${groups.size} systems total; ` +
-      `${scanned} scanned, dropped ${droppedNoHip} no-HIP, ${droppedNoCcdm} blank CCDM, ${droppedMultFlag} unconfirmed MultFlag, ${viaOverride} duplicate(override)`,
+      `${scanned} scanned, dropped ${droppedNoHip} no-HIP, ${droppedNoCcdm} blank CCDM, ${droppedMultFlag} unconfirmed MultFlag, ${viaOverride} skipped(in-override)`,
   );
   return groups;
 }
@@ -408,7 +403,7 @@ function parseHipCcdm(): Map<string, number[]> {
 // (the renderer's zoom-fit guards on companion ≥ 0).
 function applyDoublesFlag(
   stars: Star[],
-  groups: Map<string, number[]>,
+  ccdmGroups: Map<string, number[]>,
 ): { systems: number; flagged: number } {
   const hipToIndex = new Map<number, number>();
   for (let i = 0; i < stars.length; i++) {
@@ -416,9 +411,18 @@ function applyDoublesFlag(
     if (h !== null && h > 0) hipToIndex.set(h, i);
   }
 
+  // Two source streams: real CCDM systems from the file, plus curated
+  // overrides for canonical visual doubles Hipparcos modelled as single
+  // stars. Iterating them as one sequence keeps the per-group logic
+  // identical without conflating the type of identifier.
+  const allGroups: Iterable<Iterable<number>> = (function* () {
+    yield* ccdmGroups.values();
+    for (const sys of KNOWN_VISUAL_DOUBLES) yield sys.components;
+  })();
+
   let systems = 0;
   let flagged = 0;
-  for (const hips of groups.values()) {
+  for (const hips of allGroups) {
     const indices: number[] = [];
     for (const h of hips) {
       const idx = hipToIndex.get(h);
@@ -677,7 +681,7 @@ async function main() {
   const tBin = Date.now();
   const binStats = inferBinaries(stars);
   console.log(
-    `  ${binStats.pairs} companion assignments, ${binStats.mutualPairs} mutual pairs (${binStats.primaries} primaries) in ${Date.now() - tBin}ms`,
+    `  ${binStats.pairs} companion assignments, ${binStats.mutualPairs} mutual pairs in ${Date.now() - tBin}ms`,
   );
 
   // GCVS variable-star cross-match. Optional — if the files aren't present

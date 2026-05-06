@@ -317,7 +317,7 @@ function sameTarget(a: Target | null, b: Target | null): boolean {
 // material to MultiplyBlending. Single source of truth for the four
 // CustomBlending fields plus the depth flags so a future tweak (e.g. the
 // AddEquation -> MaxEquation switch in PR #25) only needs to touch one site.
-function applyDiscBlendDefaults(m: THREE.ShaderMaterial) {
+export function applyDiscBlendDefaults(m: THREE.ShaderMaterial) {
   m.blending = THREE.CustomBlending;
   m.blendSrc = THREE.OneFactor;
   m.blendDst = THREE.OneFactor;
@@ -1243,6 +1243,19 @@ export class Stellata {
 
   private tmpVec3b = new THREE.Vector3();
 
+  // Release the particle mesh's geometry + material. Two callers — the
+  // attachDustParticles rebuild path (which also pulls the mesh out of
+  // the scene before re-creating it) and Stellata.dispose() (which lets
+  // the scene get garbage-collected wholesale, so removeFromScene is
+  // false). One owner means a third resource added to the particle layer
+  // can't be forgotten in one of the two cleanup paths.
+  private disposeParticles(opts: { removeFromScene: boolean }) {
+    if (!this.particleMesh) return;
+    if (opts.removeFromScene) this.scene.remove(this.particleMesh);
+    this.particleMesh.geometry.dispose();
+    this.particleMaterial?.dispose();
+  }
+
   /** Build the dust-particle mesh from the loaded particle data. Called
    *  once after the network fetch resolves; the mesh stays in the scene
    *  and gates on uParticleStrength + uDustEnabled. Idempotent — calling
@@ -1257,11 +1270,7 @@ export class Stellata {
    *  without re-deriving the preprocessor/loader/shader plumbing. See
    *  NEXT_STEPS.md "Revisit dust particles" for the open questions. */
   attachDustParticles(data: DustParticleData) {
-    if (this.particleMesh) {
-      this.scene.remove(this.particleMesh);
-      this.particleMesh.geometry.dispose();
-      this.particleMaterial?.dispose();
-    }
+    this.disposeParticles({ removeFromScene: true });
 
     const geom = new THREE.InstancedBufferGeometry();
     geom.setAttribute(
@@ -1579,8 +1588,8 @@ export class Stellata {
     this.material.uniforms.uMonochrome.value = on ? 1 : 0;
     // Both materials share the uMonochrome uniform via sharedUniforms, so
     // one assignment covers both. Blending and depth settings differ per
-    // pass, though — disc pass is opaque-over in colour mode, multiply in
-    // chart mode; glow pass is additive in colour mode, multiply in chart.
+    // pass, though — disc pass is per-channel max in colour mode, multiply
+    // in chart mode; glow pass is additive in colour mode, multiply in chart.
     if (on) {
       this.material.blending = THREE.MultiplyBlending;
       this.material.depthWrite = false;
@@ -2956,10 +2965,7 @@ export class Stellata {
     this.material.dispose();
     this.glowMaterial.dispose();
     this.coreMaskMaterial.dispose();
-    if (this.particleMesh) {
-      this.particleMesh.geometry.dispose();
-      this.particleMaterial?.dispose();
-    }
+    this.disposeParticles({ removeFromScene: false });
     this.clouds?.dispose();
     this.galacticDisc.dispose();
     this.galacticGrid.dispose();

@@ -8,12 +8,23 @@ for the steady-state HUD widgets (Sol/GC arrows, the OBSERVE ring) see
 
 ## Camera near plane vs controls minDistance
 
-`camera.near = 0.001`, `controls.minDistance` (when no star is focused)
-= `DEFAULT_MIN_DIST_PC = 0.005` pc. The near plane must stay **strictly
-less** than the closest orbit distance, otherwise a centered star lands
-on the clip plane at max zoom and gets culled. If adjusting, keep that
-invariant. Earlier attempts to zoom closer than 0.005 pc hit float32
-precision jitter when the destination star is far from the world origin.
+`camera.near = 1e-10`, `controls.minDistance` (when no star is focused)
+= `DEFAULT_MIN_DIST_PC = 0.005` pc. `camera.near` is now a *log-depth
+precision floor*, not a perceptual cutoff: it sits arbitrarily close to
+zero because `WebGLRenderer({ logarithmicDepthBuffer: true })` (see
+`docs/rendering.md`'s depth-encoding section) gives precision that
+doesn't collapse near the near plane. The aggressive value is the
+prerequisite for the per-star physical-size disc rendering — without
+log-depth, dropping `camera.near` from 0.001 → 1e-10 would have killed
+z-fidelity at intermediate ranges. Earlier attempts to zoom closer than
+0.005 pc still hit float32 precision jitter when the destination star
+is far from the world origin, so the orbit floor is unchanged.
+
+Overlays use a separate constant `OVERLAY_NEAR_CLIP_PC = 1e-3` for their
+"is the projected point in front of the camera?" gate (see
+`src/client/arrow-path.ts`). Overlays don't care about GPU depth
+precision; they care about avoiding division by ~zero in their CPU-side
+projection, which is a perceptual scale, not a precision floor.
 
 When a star is focused, two distinct distances are in play —
 deliberately decoupled so manual zoom can push past the auto-park
@@ -224,6 +235,18 @@ vanishes before the camera arrives. `controls.enabled = false`;
   cursor at that moment and pointer-move keeps it there. So the user
   can rotate the screen image to match the sky overhead and dragging
   still drags the world along intuitively.
+- **Drag teardown.** Four code paths reset `dragging` /
+  `activePointerId` / `momentumSpeed` / `lastRotAngle` to known-clean
+  state via the shared `cancelDrag()` helper: `disable()` (mode change),
+  `pointercancel` (OS-cancelled gesture — phone-call interrupt, system
+  gesture preempt), `window.blur` (Cmd-Tab / app-switcher), and
+  `document.visibilitychange` while hidden (tab swap, swipe-up app
+  switcher on mobile). All four are "the pointer is no longer ours"
+  events; without one of them, dragging would resume from a stale
+  `dGrabbed` and the next pointermove would whip the camera. The
+  navigate-mode click detector in `stellata.ts` has a parallel
+  `pointercancel` partner clearing `pointerDownAt` to prevent phantom
+  clicks from cross-gesture drift.
 - **Release momentum.** On `pointermove` we extract the per-event
   rotation as axis-angle (`lastRotAxis`, `lastRotAngle`,
   `lastMoveTimeMs`). On `pointerup`, if the gap between the last move

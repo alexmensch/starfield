@@ -298,11 +298,12 @@ export function markPrimaryIfUnflagged(
 // Mutates `stars[i].companionIdx` and `stars[i].flags` in place.
 // Returns counts for the build-time log line:
 //   pairs        — total directed companion assignments
-//   mutualPairs  — undirected mutual pairs (each counted once)
-//   primaries    — stars marked with 0x10 (== mutualPairs)
+//   mutualPairs  — undirected mutual pairs (each counted once); also
+//                  equals the count of FLAG_BINARY_PRIMARY bits set,
+//                  since we mark exactly one primary per mutual pair
 export function inferBinaries(
   stars: BinaryStar[],
-): { pairs: number; mutualPairs: number; primaries: number } {
+): { pairs: number; mutualPairs: number } {
   const cell = BINARY_MAX_SEP_PC;
   const cellInv = 1 / cell;
   const grid = new Map<number, number[]>();
@@ -370,5 +371,5 @@ export function inferBinaries(
     markPrimary(stars, [i, j]);
   }
 
-  return { pairs, mutualPairs, primaries: mutualPairs };
+  return { pairs, mutualPairs };
 }

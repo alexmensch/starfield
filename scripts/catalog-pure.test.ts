@@ -299,7 +299,6 @@ describe('catalog-pure / inferBinaries', () => {
     const stats = inferBinaries(stars);
     expect(stats.pairs).toBe(2); // both record the other as companion
     expect(stats.mutualPairs).toBe(1);
-    expect(stats.primaries).toBe(1);
     expect(stars[0].companionIdx).toBe(1);
     expect(stars[1].companionIdx).toBe(0);
   });
@@ -397,7 +396,6 @@ describe('catalog-pure / inferBinaries', () => {
     expect(stars[2].companionIdx).toBe(1);
     expect(stars[3].companionIdx).toBe(2);
     expect(stats.mutualPairs).toBe(1);
-    expect(stats.primaries).toBe(1);
     // Primary = brighter of B↔C → B (absmag=4).
     expect(stars[1].flags & FLAG_BINARY_PRIMARY).toBeTruthy();
     expect(stars[0].flags & FLAG_BINARY_PRIMARY).toBeFalsy();
@@ -415,7 +413,6 @@ describe('catalog-pure / inferBinaries', () => {
     ];
     const stats = inferBinaries(stars);
     expect(stats.mutualPairs).toBe(2);
-    expect(stats.primaries).toBe(2);
     expect(stars[0].flags & FLAG_BINARY_PRIMARY).toBeTruthy(); // pair 1 brighter
     expect(stars[1].flags & FLAG_BINARY_PRIMARY).toBeFalsy();
     expect(stars[2].flags & FLAG_BINARY_PRIMARY).toBeTruthy(); // pair 2 brighter
@@ -423,7 +420,7 @@ describe('catalog-pure / inferBinaries', () => {
   });
 
   it('returns zero counts for an empty input', () => {
-    expect(inferBinaries([])).toEqual({ pairs: 0, mutualPairs: 0, primaries: 0 });
+    expect(inferBinaries([])).toEqual({ pairs: 0, mutualPairs: 0 });
   });
 
   it('uses 3D distance, not 2D', () => {

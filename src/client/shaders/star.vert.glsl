@@ -164,6 +164,14 @@ float dustExtinctionAV(vec3 absStar, vec3 absCamera) {
 }
 
 void main() {
+    // Off-screen-sentinel early-returns below skip <logdepthbuf_vertex>,
+    // leaving vFragDepth undefined for that vertex. Safe because the
+    // suppression conditions read only per-instance attributes — all 4
+    // verts of the quad share the path and land at the same off-screen
+    // NDC, so the primitive is fully NDC-clipped before rasterization
+    // and the fragment shader never executes for it. A future change
+    // that makes the off-screen position per-vertex would break this
+    // invariant and need to write vFragDepth before returning.
     if (gl_InstanceID == uHideFocusIdx) {
         gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
         vAppMag = 0.0;

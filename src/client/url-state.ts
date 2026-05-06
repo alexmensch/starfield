@@ -680,8 +680,16 @@ export function applyDecodedView(
 
   if (view.fov !== undefined && view.fov > 0) stellata.setCameraFov(view.fov);
 
+  // Single dirty flag for everything that requires controls.update() at
+  // the end of the camera-touching block. Each branch below that mutates
+  // camera.position / controls.target / camera.up sets this so the final
+  // update() reads as "if any of those happened, refresh" — replaces
+  // a hand-maintained N-way OR that grew with every new branch.
+  let controlsDirty = false;
+
   if (view.up) {
     stellata.camera.up.set(view.up[0], view.up[1], view.up[2]).normalize();
+    controlsDirty = true;
   }
 
   const hasCam = view.cam !== undefined;
@@ -713,9 +721,11 @@ export function applyDecodedView(
 
   if (view.cam) {
     stellata.camera.position.set(view.cam[0], view.cam[1], view.cam[2]);
+    controlsDirty = true;
   }
   if (view.tgt) {
     stellata.controls.target.set(view.tgt[0], view.tgt[1], view.tgt[2]);
+    controlsDirty = true;
   }
   // Mirror the encoder's observe-mode cam omission: pre-snap the camera
   // to the focal-star origin *before* controls.update so that lookAt
@@ -725,8 +735,9 @@ export function applyDecodedView(
   const willEnterObserve = view.mode === 'observe' && stellata.getFocusedStar() !== null;
   if (willEnterObserve && !hasCam) {
     stellata.camera.position.set(...OBSERVE_CAM_LOCAL);
+    controlsDirty = true;
   }
-  if (hasCam || hasTgt || view.up || willEnterObserve) stellata.controls.update();
+  if (controlsDirty) stellata.controls.update();
 
   if (willEnterObserve) {
     stellata.setCameraMode('observe', { animate: false });

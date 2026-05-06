@@ -40,6 +40,11 @@ const float LOG10 = 2.302585093;
 
 void main() {
     if (uDustEnabled < 0.5 || uParticleStrength <= 0.0) {
+        // Skipping <logdepthbuf_vertex> here is safe because the
+        // suppression keys on uniforms — every vert of every primitive
+        // takes this path together, so the whole primitive lands at
+        // the same off-screen NDC and is clipped before rasterization.
+        // See star.vert.glsl for the matching invariant note.
         gl_Position = vec4(2.0, 2.0, 2.0, 1.0); // off-screen
         return;
     }

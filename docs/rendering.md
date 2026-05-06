@@ -40,10 +40,13 @@ Rendering is **three passes over the same instanced geometry**:
   skipped.
 - **Disc pass** (`renderOrder = 0`). Stars where `vPhysRatio ≥ 0.5` —
   i.e. the physical-size term dominates the final `max(appSize,
-  physSize)`. Premultiplied-alpha blend + `depthTest` + `depthWrite`.
-  Halo fragments (`glow < uCoreThreshold`) push `gl_FragDepth = 1.0` so
-  they paint dim haze without occluding the later glow pass — distant
-  stars peek through the halo additively.
+  physSize)`. Per-channel `MaxEquation` blend (`CustomBlending` with
+  `OneFactor` × `OneFactor`) + `depthTest` + `depthWrite`. The four
+  blend fields live in one helper, `applyDiscBlendDefaults()`, called
+  both at construction and on chart-mode → colour-mode swap-back, so the
+  two sites can't drift. Halo fragments (`glow < uCoreThreshold`) push
+  `gl_FragDepth = 1.0` so they paint dim haze without occluding the
+  later glow pass — distant stars peek through the halo additively.
 - **Glow pass** (`renderOrder = 1`). Stars where `vPhysRatio < 0.5`.
   Additive blending + depthTest but no depthWrite, so overlapping
   distant-field stars accumulate brightness (Milky Way density stays
@@ -73,6 +76,41 @@ Chart mode (Phase 8) swaps both star materials to `MultiplyBlending` +
 disables depth for an ink-on-paper look against the light canvas, and
 replaces the super-Gaussian profile with flat hard-edged discs sized
 linearly by magnitude. See `docs/chart-mode.md` for the full feature.
+
+## Depth encoding
+
+The renderer is constructed with `WebGLRenderer({ logarithmicDepthBuffer:
+true })`. Linear depth doesn't have the dynamic range to handle the
+camera dollying from `~1e-10` pc (intra-star) to `~3e4` pc (galactic
+centre) without z-fighting at intermediate scales — log depth maps
+`log(z+1) / log(far+1)` into the depth buffer so precision is roughly
+constant in `log(z)` instead of collapsing near the far plane. This is
+what enables `camera.near = 1e-10` (see `docs/camera-modes.md`).
+
+Per-pass overrides on top of the chunk default:
+
+- All star vertex/fragment shaders include the standard three.js
+  `<logdepthbuf_pars_vertex/fragment>` + `<logdepthbuf_vertex/fragment>`
+  chunks. The chunks populate the `vFragDepth` varying and write it
+  into `gl_FragDepth` automatically — the fragment shader doesn't write
+  `gl_FragDepth = gl_FragCoord.z` itself; that would be redundant.
+- Off-screen-sentinel early-returns in `star.vert.glsl` and
+  `dust-particle.vert.glsl` skip the `<logdepthbuf_vertex>` chunk and
+  leave `vFragDepth` undefined. Safe because every vertex of the
+  primitive lands at the same off-screen NDC, so the whole quad is
+  clipped before rasterization and the fragment shader never runs. A
+  load-bearing invariant — see the in-shader comments.
+- The disc pass's halo override `gl_FragDepth = 1.0` (when
+  `glow < uCoreThreshold`) writes the far-plane depth directly. `1.0`
+  is the far plane in *any* depth encoding, so this works under
+  log-depth without modification — distant stars in the later glow
+  pass pass the depth test against haloed fragments and peek through.
+
+Overlays (CPU-side projection in `arrow-path.ts` etc.) use a separate
+constant `OVERLAY_NEAR_CLIP_PC = 1e-3` for their "is the projected
+point in front of the camera?" gate. Decoupled from `camera.near`'s
+GPU precision floor because overlays care about avoiding division-by-
+zero in CSS pixel space, not z-buffer precision.
 
 ## Physical-size rendering
 
@@ -196,11 +234,16 @@ even at identical diameters.
 The disc pass adds two depth-handling rules on top of the shared profile:
 
 - **Halo transparency.** When `glow < uCoreThreshold`, the fragment
-  paints its dim alpha-blended colour but writes `gl_FragDepth = 1.0`
-  (far plane). The later glow pass's distant stars then pass the depth
-  test and accumulate additively on top — the haze stays visible while
-  background stars peek through. The core mask handles the inverse
-  problem (preventing MW/grid from bleeding through the bright core).
+  paints its colour under the disc pass's `MaxEquation` blend (so the
+  halo brightens the framebuffer per channel up to the halo's level)
+  but writes `gl_FragDepth = 1.0` (far plane). The later glow pass's
+  distant stars then pass the depth test and accumulate additively on
+  top — the haze stays visible while background stars peek through.
+  Trade-off under `MaxEquation` (vs the prior premul-alpha additive):
+  faint halos against bright backgrounds wash out instead of summing,
+  but disc-edge artefacts in close binaries are eliminated. The core
+  mask handles the inverse problem (preventing MW/grid from bleeding
+  through the bright core).
 - **Discard fringe.** `glow < uDiscardThreshold` (default 0.02) drops
   the fragment entirely so the imperceptible outer pixels don't cost
   a depth write or no-op blend.

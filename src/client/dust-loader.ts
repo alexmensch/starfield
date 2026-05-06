@@ -48,6 +48,15 @@ export interface DustParticleData {
   densities: Float32Array;
 }
 
+// Convention: loadDustParticles is single-shot and returns null on any
+// failure (bad magic, bad version, size mismatch, fetch error, exception).
+// The caller (`main.ts`) skips attachDustParticles on null, leaving the
+// scene without dust particles but otherwise functional. Distinct from
+// fetchAndUpload below, which is one of N parallel chunk fetches and
+// throws on size mismatch so a single bad chunk doesn't stop the rest —
+// startLoading() catches the throw per-chunk and continues. Both paths
+// end at "log and skip" but the mechanisms reflect the surrounding
+// concurrency.
 export async function loadDustParticles(
   baseUrl: string,
   meta: { file: string; count: number },
