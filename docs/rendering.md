@@ -66,26 +66,12 @@ flash the focal disc as the camera pulls away. Cleared back to `-1` by
 `finishWarp` for navigate-mode arrivals; reset to the new anchor by
 `swapObserveAnchor` for observe→observe arrivals.
 
-`uPinFocusToCenter` (int, default `-1`) bypasses the standard
-`projectionMatrix * modelViewMatrix * vec4(worldPos, 1.0)` chain for a
-single instance, replacing it with `projectionMatrix * vec4(0, 0, -dPc,
-1)` (where `dPc` is the camera-to-target distance). The motivation is
-float32 cancellation: with the per-star physical orbit floor pulling
-the camera as close as ~5e-8 pc on Sol-class stars, the standard
-projection chain drifts the projected centre by visible pixels even
-though the focused star is mathematically at view origin. The pin
-sidesteps the matrix-multiply path because the geometric invariant
-`focused star projects to NDC (0, 0)` is exact when `controls.target ==
-focused star's local position` and lookAt is active. JS-side guard
-engages the pin iff `focusedStar !== null && cameraMode === 'navigate'
-&& !warpState && !aimState && controls.target.lengthSq() < 1e-12`. Pan
-moves target away from origin → pin disengages → standard projection
-resumes (intentional: post-pan the focused star isn't at view centre).
-The load-bearing requirement is that `controls.target = (0,0,0)` *exactly* in the focal-star local frame — `setFocus(idx)`'s post-recenter
-target snap makes this the case at the choke point so every caller is
-correct by construction. See `pin-debug-hud.ts` (`debug.pin()`) for the
-diagnostic HUD with latched directional extremes — use it when
-investigating any "star drifts off-screen" report at close approach.
+`uPinFocusToCenter` (int, default `-1`) replaces the standard projection
+chain with `projectionMatrix * vec4(0, 0, -dPc, 1)` for the matched
+instance, sidestepping the float32 cancellation that close-approach
+otherwise produces. See `docs/architecture.md` § Pin-to-center
+(`uPinFocusToCenter`) for the full rationale, the load-bearing
+`controls.target` invariant, and the diagnostic HUD pointer.
 
 `ShaderMaterial({ glslVersion: THREE.GLSL3 })`. Vertex shader uses `uint`
 uniforms and bitwise ops for the spectral-class mask. Do **not** downgrade to

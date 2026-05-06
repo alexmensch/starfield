@@ -181,29 +181,13 @@ the currently focused star.
 - `recenterOrigin(newOrigin)` rewrites the local-positions buffer using
   JS Number (= float64) subtraction and shifts `camera.position` and
   `controls.target` by the same delta so the user sees no jump.
-- `setFocus(idx)` calls `recenterOrigin` automatically when focusing a
-  star — the floating origin pins to that star. **Unfocusing does not
-  recentre** (since a7d.2.11): `worldOffset` stays at the former focal
-  object so the projection chain remains float32-clean across the
-  focus → unfocus transition. URL serialisation rides this along via a
-  free `worldOffset` Float32 vec3 field (FIELDS_V2 bit 20, appended
-  for graceful forward-compat with older clients), so close-orbit
-  unfocus poses round-trip exactly. The anchor concept is type-
-  agnostic — future object kinds (clouds, planets, probes) plug into
-  the same mechanism.
-- After the recenter, `setFocus` snaps `controls.target` to exactly
-  `(0, 0, 0)` and shifts `camera.position` by the residual delta to
-  preserve the user-visible camera-to-target offset. This eliminates
-  two distinct float32 residuals in one place: (a) the AT-HYG
-  heliocentric offset (Sol is at catalog `(5e-6, 0, 0)`, not exact
-  origin); (b) the difference between the float32 `_localPositions[idx]`
-  read and the freshly-computed float64 `dx` from the recenter, which
-  for a long-distance setFocus (e.g. Sol → Rigel at ~265 pc) can hit
-  ~5e-5 pc — comparable to Rigel's arrival endOffset. The snap is
-  load-bearing for the `uPinFocusToCenter` mechanism (see
-  `docs/rendering.md`), whose engagement guard is
-  `target.lengthSq() < 1e-12`. Every caller of `setFocus(idx)` is
-  correct by construction because the snap runs at the choke point.
+- `setFocus(idx)` calls `recenterOrigin` on focus. **Unfocus does
+  *not* recenter** — `worldOffset` stays at the former focal object
+  so camera/target/iPosition all remain in their float32-clean local
+  frame. Recentering on unfocus used to cause a visible jump (the
+  `idx===null` branch shifted `target` by the focal star's full world
+  position, breaking the pin invariant below and re-introducing
+  cancellation in the projection chain).
 - **Default-load** (a7d.2.8) auto-engages `setFocus(catalog.solIndex)`
   before the first frame so URL-less loads start with the pin engaged
   and the per-Sol orbit floor in effect, matching every other entry
@@ -234,9 +218,81 @@ Implications for code that reads positions:
 - `starLocalPosition(i)` (formerly `starWorldPosition`) returns the
   local-frame vector — use it for camera math, never for Sol-distance.
 
-URL round-trip works without special handling because sender and
-receiver both recenter on the same focus star. Camera/target serialise
-in local frame; loading the URL recenters to the same absolute origin
-and the local coordinates apply unchanged. The unfocused state has
-`worldOffset = (0,0,0)` by construction, so camera/target in that state
-are already in absolute space.
+URL round-trip works without special handling for the focused case
+because sender and receiver both recenter on the same focus star.
+Camera/target serialise in local frame; loading the URL recenters to
+the same absolute origin and the local coordinates apply unchanged.
+
+For unfocused-but-not-at-Sol, the URL serialises a `worldOffset` field
+(FIELDS_V2 bit 20, vec3 Float32, appended to the end for forward-compat
+with older clients). The encoder emits it when `focusedStar === null`
+AND `worldOffset` isn't ≈Sol; cam/tgt then encode in the local frame
+and round-trip with full Float32 precision. The loader applies
+`setWorldOffset` *before* cam/tgt and resets cam/tgt to defaults so a
+missing `view.cam` / `view.tgt` produces a sane pose in the new local
+frame. Old URLs without `worldOffset` decode as Sol-anchored (legacy
+behaviour).
+
+The general design treats `worldOffset` as a free Float32 vec3 anchor
+(not a catalog ref): future object types (clouds, planets, probes,
+exoplanets) can each set it on focus without coupling to the star
+catalog index space. Float32 precision is sufficient at any magnitude
+because the user-visible pose is the cam/tgt offset *within* the
+local frame, stored at full Float32 precision relative to the anchor.
+
+## Pin-to-center (`uPinFocusToCenter`)
+
+After the physical-orbit floor (`R / tan(0.45·fovMinor)` for a Sol-class
+star) brings the camera to ~5e-8 pc on close approach, float32 cancellation
+in the projection chain (`projectionMatrix * modelViewMatrix * vec4(0)`)
+drifts the projected centre by visible pixels even though the focused
+star is mathematically at view-origin. Float64 emulation was rejected
+as too heavy; instead `star.vert.glsl` exposes a `uPinFocusToCenter: int`
+uniform (-1 = disabled). When set, the shader replaces the projection
+chain with `projectionMatrix * vec4(0, 0, -dPc, 1)` for the matched
+`gl_InstanceID` — bypassing matrix-multiply cancellation entirely. One
+int uniform, ~5 lines of GLSL, no CPU cost.
+
+JS-side per frame in `stellata.ts`: pin engages iff
+`focusedStar !== null && cameraMode === 'navigate' && !warpState
+&& !aimState && controls.target.lengthSq() < 1e-12`.
+
+**Load-bearing invariant:** `controls.target` must be `(0,0,0)`
+*exactly* (length < 1e-6 pc). Any code path that engages focus while
+leaving target at a non-trivial residual silently disengages the pin.
+Three residual sources have bitten this:
+
+1. **Sol's catalog offset.** Sol is at AT-HYG `(5e-6, 0, 0)` pc, not
+   `(0,0,0)`. `recenterOrigin(solPos)` shifts target by `5e-6` →
+   guard fails on first frame.
+2. **Float32 truncation on long warps.** `finishWarp`/`focusStar`
+   read target from `_localPositions` (Float32Array), then
+   `recenterOrigin` shifts target by a delta computed fresh in
+   float64. The two representations of `|AB|` differ by Float32 ULP
+   (~`|AB|·1e-7`); for Sol→Rigel (265 pc) that's `~5e-5 pc`,
+   comparable to Rigel's arrival endOffset → 30%-of-screen drift.
+3. **Unfocus from close approach.** Solved by removing the
+   `recenterOrigin(0,0,0)` from the `setFocus(null)` branch (see
+   above) — `worldOffset` stays put on unfocus.
+
+**Fix for #1 and #2** lives at the choke point in `setFocus`'s
+`idx !== null` branch: after `recenterOrigin`, subtract `target` from
+`camera.position` (preserving cam-to-target offset) and snap target to
+`(0,0,0)`. Eliminates both residuals for every caller of `setFocus`.
+
+Limitations: pan moves target away → pin disengages (intentional;
+post-pan the focused star isn't at view centre). Doesn't fire in
+observe mode, during warp, or during aim animations — the mid-warp
+close-approach drift would need pin generalisation to support
+non-origin pin targets.
+
+**Where to look:**
+- `src/client/shaders/star.vert.glsl` — `uPinFocusToCenter` decl + use site.
+- `src/client/stellata.ts` — `GLOBAL_MIN_DIST_PC = 5e-3 pc`, `setFocus`
+  body (the post-recenter snap to origin in the focused branch; empty
+  unfocus branch), per-frame pin guard in the animate loop.
+- `src/client/url-state.ts` — `DecodedView.worldOffset`, encoder/loader.
+- `src/client/url-state.test.ts` — round-trip regression test.
+- `src/client/pin-debug-hud.ts` + `debug.pin()` in dev console — diagnostic
+  HUD with latched directional extremes. **Always use this when
+  investigating any "star drifts off-screen" report.**
