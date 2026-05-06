@@ -10,7 +10,7 @@ import { GalacticDisc } from './galactic-disc';
 import { GalacticGrid } from './galactic-grid';
 import { HudOverlay } from './hud-overlay';
 import { GALACTIC_CENTRE_PC } from './galactic-coords';
-import { MolecularClouds, cloudViewingDistancePc } from './molecular-clouds';
+import { MolecularClouds, cloudViewingDistancePc, renderedCloudSizePx } from './molecular-clouds';
 import type { CloudCatalog } from './cloud-loader';
 import { MilkyWay } from './milkyway';
 import { ObserveControls } from './observe-controls';
@@ -2589,6 +2589,29 @@ export class Stellata {
     const physSize = 2 * Math.atan((R * radiusFactor) / dCam) * angularToPx;
 
     return Math.max(appSize, physSize);
+  }
+
+  /** Cloud analogue of `renderedSizePx` — pixel diameter of the cloud's
+   *  silhouette at the current camera distance. Used by the distance-vector
+   *  overlay so the chevron tip lands on the cloud's rendered edge instead
+   *  of the user's `sizeMax` star-size knob. Returns 0 when no cloud layer
+   *  is loaded or the index is out of range. */
+  renderedCloudSizePx(cloudIdx: number): number {
+    if (!this.clouds) return 0;
+    const cloud = this.clouds.clouds[cloudIdx];
+    if (!cloud) return 0;
+    const local = this.cloudLocalPosition(cloudIdx);
+    if (!local) return 0;
+    const camPos = this.camera.position;
+    const dx = local.x - camPos.x;
+    const dy = local.y - camPos.y;
+    const dz = local.z - camPos.z;
+    const dCam = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    const u = this.material.uniforms;
+    const fovYRad = u.uFovYRad.value as number;
+    const viewport = u.uViewport.value as THREE.Vector2;
+    const angularToPx = viewport.y / Math.max(fovYRad, 1e-9);
+    return renderedCloudSizePx(cloud, dCam, angularToPx);
   }
 
   // Navigate-mode opacity for the focused-star reference arrows (Sol, GC,

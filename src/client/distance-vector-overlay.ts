@@ -94,14 +94,15 @@ export function createDistanceVectorOverlay(
     const { pA, pB } = projected;
 
     // Source inset stays at the focus-ring offset; destination inset is
-    // the destination star's actual rendered disc diameter so the tip
-    // lands on the disc edge regardless of star size (a supergiant's
-    // disc can fill a large fraction of the viewport, while a dwarf is
-    // a few pixels). For cloud destinations there's no per-cloud
-    // analogue, so fall back to the user's sizeMax slider value.
+    // the destination's actual rendered silhouette diameter so the tip
+    // lands on the visible edge regardless of size — a supergiant's disc
+    // can fill a large fraction of the viewport, a dwarf is a few pixels,
+    // and a nearby molecular cloud spans tens of degrees. Cloud silhouette
+    // is keyed off the largest semi-axis (matches `cloudViewingDistancePc`);
+    // exact for spheres, slight overshoot for prolate clouds viewed end-on.
     const destOffsetPx = toStar !== null
       ? Math.max(stellata.renderedSizePx(toStar), 0)
-      : Math.max(stellata.getFilter().sizeMax, 0);
+      : Math.max(stellata.renderedCloudSizePx(toCloud as number), 0);
     const dxPx = pB[0] - pA[0];
     const dyPx = pB[1] - pA[1];
     const lenPx = Math.hypot(dxPx, dyPx);
