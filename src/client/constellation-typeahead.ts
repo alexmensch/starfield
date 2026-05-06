@@ -1,5 +1,5 @@
 import type { Stellata } from './stellata';
-import { applyHoverClass, TYPEAHEAD_ACTIVE_CLASS, TYPEAHEAD_MAX_RESULTS } from './typeahead-util';
+import { applyHoverClass, TYPEAHEAD_MAX_RESULTS } from './typeahead-util';
 import { escapeHtml } from './dom-util';
 
 // Typeahead replacement for the old `<select id="con-select">` constellation
@@ -70,7 +70,9 @@ export function bindConstellationTypeahead(stellata: Stellata) {
     for (let i = 0; i < results.length; i++) {
       const e = results[i];
       const li = document.createElement('li');
-      li.className = i === hoverIdx ? TYPEAHEAD_ACTIVE_CLASS : '';
+      // No active class here — renderQuery calls setHover(0) after the
+      // rebuild so the initial highlight goes through applyHoverClass.
+      li.className = '';
       li.innerHTML = `<span>${escapeHtml(e.name)}</span><span class="sub">${escapeHtml(e.code)}</span>`;
       li.addEventListener('mousedown', (ev) => {
         ev.preventDefault();
@@ -87,8 +89,13 @@ export function bindConstellationTypeahead(stellata: Stellata) {
 
   const renderQuery = (query: string) => {
     results = filter(query);
-    hoverIdx = results.length > 0 ? 0 : -1;
+    // Rebuild rows with no active class, then route the initial hover
+    // through setHover so applyHoverClass owns the scroll-into-view.
+    // Pre-baking the class would skip the scroll path and silently
+    // break the moment a rebuild preserves resultsEl.scrollTop.
+    hoverIdx = -1;
     renderDom();
+    if (results.length > 0) setHover(0);
     resultsEl.hidden = results.length === 0;
   };
 
