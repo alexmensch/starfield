@@ -101,7 +101,6 @@ export class HudOverlay {
   // Reusable scratch vectors so per-frame updates allocate nothing.
   private tmpDir = new THREE.Vector3();
   private tmpOrigin = new THREE.Vector3();
-  private tmpAux = new THREE.Vector3();
   private tmpSolLocal = new THREE.Vector3();
   private tmpGcLocal = new THREE.Vector3();
 
@@ -258,7 +257,7 @@ export class HudOverlay {
     const targetScreen = projectToScreen(targetLocal, camera, w, h);
 
     const screenDir = screenDirFromCascade(
-      origin, dir, auxStepW, targetScreen, cx, cy, camera, w, h, this.tmpAux,
+      origin, dir, auxStepW, targetScreen, cx, cy, camera, w, h,
     );
     if (!screenDir) {
       // Direction is exactly along the camera axis — no preferred

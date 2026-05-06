@@ -67,7 +67,6 @@ export function createPoiOverlay(
 
   const tmpStarLocal = new THREE.Vector3();
   const tmpDir = new THREE.Vector3();
-  const tmpAux = new THREE.Vector3();
   const tmpAim = new THREE.Vector3();
 
   function createEntry(idx: number): Entry {
@@ -293,7 +292,7 @@ export function createPoiOverlay(
       tmpDir.multiplyScalar(1 / Math.sqrt(dirLenSq));
 
       const screenDir = screenDirFromCascade(
-        camPos, tmpDir, auxStepW, projected, cx, cy, camera, w, h, tmpAux,
+        camPos, tmpDir, auxStepW, projected, cx, cy, camera, w, h,
       );
       if (!screenDir) {
         hideEntry(e);

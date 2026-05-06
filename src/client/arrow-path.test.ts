@@ -15,12 +15,11 @@ function makeCamera(opts: { yawRad?: number; pitchRad?: number } = {}) {
 }
 
 describe('arrow-path / viewSpaceScreenDir', () => {
-  const scratch = new THREE.Vector3();
 
   it('points right for an in-front target to the camera right', () => {
     const cam = makeCamera();
     const dir = new THREE.Vector3(1, 0, -10).normalize();
-    const out = viewSpaceScreenDir(dir, cam, scratch)!;
+    const out = viewSpaceScreenDir(dir, cam)!;
     expect(out).not.toBeNull();
     // Positive sux (right), zero suy.
     expect(out[0]).toBeGreaterThan(0.99);
@@ -30,7 +29,7 @@ describe('arrow-path / viewSpaceScreenDir', () => {
   it('points up (negative suy, browser y is inverted) for an in-front target above camera', () => {
     const cam = makeCamera();
     const dir = new THREE.Vector3(0, 1, -10).normalize();
-    const out = viewSpaceScreenDir(dir, cam, scratch)!;
+    const out = viewSpaceScreenDir(dir, cam)!;
     expect(Math.abs(out[0])).toBeLessThan(1e-6);
     expect(out[1]).toBeLessThan(-0.99); // up = negative screen y
   });
@@ -41,7 +40,7 @@ describe('arrow-path / viewSpaceScreenDir', () => {
     // still point right. This is the case the bug fix targets.
     const cam = makeCamera();
     const dir = new THREE.Vector3(1, 0, 10).normalize();
-    const out = viewSpaceScreenDir(dir, cam, scratch)!;
+    const out = viewSpaceScreenDir(dir, cam)!;
     expect(out).not.toBeNull();
     expect(out[0]).toBeGreaterThan(0);
     expect(Math.abs(out[1])).toBeLessThan(1e-6);
@@ -50,7 +49,7 @@ describe('arrow-path / viewSpaceScreenDir', () => {
   it('points up when target is behind camera and above', () => {
     const cam = makeCamera();
     const dir = new THREE.Vector3(0, 1, 10).normalize();
-    const out = viewSpaceScreenDir(dir, cam, scratch)!;
+    const out = viewSpaceScreenDir(dir, cam)!;
     expect(out).not.toBeNull();
     expect(Math.abs(out[0])).toBeLessThan(1e-6);
     expect(out[1]).toBeLessThan(0);
@@ -59,19 +58,19 @@ describe('arrow-path / viewSpaceScreenDir', () => {
   it('returns null for a target directly in front (along camera axis)', () => {
     const cam = makeCamera();
     const dir = new THREE.Vector3(0, 0, -1);
-    expect(viewSpaceScreenDir(dir, cam, scratch)).toBeNull();
+    expect(viewSpaceScreenDir(dir, cam)).toBeNull();
   });
 
   it('returns null for a target directly behind (along camera axis)', () => {
     const cam = makeCamera();
     const dir = new THREE.Vector3(0, 0, 1);
-    expect(viewSpaceScreenDir(dir, cam, scratch)).toBeNull();
+    expect(viewSpaceScreenDir(dir, cam)).toBeNull();
   });
 
   it('returns a unit vector', () => {
     const cam = makeCamera();
     const dir = new THREE.Vector3(3, 4, -5).normalize();
-    const out = viewSpaceScreenDir(dir, cam, scratch)!;
+    const out = viewSpaceScreenDir(dir, cam)!;
     expect(Math.hypot(out[0], out[1])).toBeCloseTo(1, 5);
   });
 
@@ -81,14 +80,13 @@ describe('arrow-path / viewSpaceScreenDir', () => {
     // left in the camera's local frame → screen direction left.
     const cam = makeCamera({ yawRad: Math.PI });
     const dir = new THREE.Vector3(1, 0, 0);
-    const out = viewSpaceScreenDir(dir, cam, scratch)!;
+    const out = viewSpaceScreenDir(dir, cam)!;
     expect(out[0]).toBeLessThan(0);
     expect(Math.abs(out[1])).toBeLessThan(1e-6);
   });
 });
 
 describe('arrow-path / screenDirFromCascade (3-tier ordering)', () => {
-  const scratch = new THREE.Vector3();
   const W = 800;
   const H = 600;
   const cx = W * 0.5;
@@ -114,7 +112,7 @@ describe('arrow-path / screenDirFromCascade (3-tier ordering)', () => {
     const dir = new THREE.Vector3(1, 0, 0);
     const target = new THREE.Vector3(1, 0, 0);
     const targetScreen = projectIfPossible(target, cam);
-    const out = screenDirFromCascade(origin, dir, 0.5, targetScreen, cx, cy, cam, W, H, scratch)!;
+    const out = screenDirFromCascade(origin, dir, 0.5, targetScreen, cx, cy, cam, W, H)!;
     expect(out).not.toBeNull();
     expect(out[0]).toBeGreaterThan(0); // pointing right
     expect(Math.abs(out[1])).toBeLessThan(0.05);
@@ -129,7 +127,7 @@ describe('arrow-path / screenDirFromCascade (3-tier ordering)', () => {
     const origin = new THREE.Vector3(0, 0, 0); // == camera pos
     const dir = new THREE.Vector3(1, 0, 1).normalize(); // behind-and-right
     const targetScreen: [number, number] | null = null; // pre-projected null
-    const out = screenDirFromCascade(origin, dir, 0.5, targetScreen, cx, cy, cam, W, H, scratch)!;
+    const out = screenDirFromCascade(origin, dir, 0.5, targetScreen, cx, cy, cam, W, H)!;
     expect(out).not.toBeNull();
     // View-space x should still be positive — user turns RIGHT to bring
     // the behind-right target back into view.
@@ -146,7 +144,7 @@ describe('arrow-path / screenDirFromCascade (3-tier ordering)', () => {
     const dir = new THREE.Vector3(0, 0, -1);   // forward
     // Pre-projected target offset to the right of screen centre.
     const targetScreen: [number, number] = [cx + 100, cy];
-    const out = screenDirFromCascade(origin, dir, 0.001, targetScreen, cx, cy, cam, W, H, scratch)!;
+    const out = screenDirFromCascade(origin, dir, 0.001, targetScreen, cx, cy, cam, W, H)!;
     expect(out).not.toBeNull();
     // Direction toward (cx+100, cy) from (cx, cy) is +x, 0 — tier 2 wins.
     expect(out[0]).toBeGreaterThan(0.99);
@@ -160,7 +158,7 @@ describe('arrow-path / screenDirFromCascade (3-tier ordering)', () => {
     const cam = makeCamera();
     const origin = new THREE.Vector3(0, 0, 0);
     const dir = new THREE.Vector3(0, 0, -1);
-    const out = screenDirFromCascade(origin, dir, 0.001, null, cx, cy, cam, W, H, scratch);
+    const out = screenDirFromCascade(origin, dir, 0.001, null, cx, cy, cam, W, H);
     expect(out).toBeNull();
   });
 });

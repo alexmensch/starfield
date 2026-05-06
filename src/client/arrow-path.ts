@@ -30,14 +30,25 @@ export const ARROW_HEAD_HALF_WIDTH_PX = 4;
  * (view-space x and y both ≈ 0) — no rotation brings such a target into
  * view in any preferred direction.
  */
+// Module-scope scratch vectors. Owning them inside the helpers keeps
+// arrow-path symmetric with focus-ring-overlay / disc-mask /
+// distance-vector-overlay (all of which hide their per-frame scratch
+// state) and frees call sites from threading a Vector3 through.
+// Scratch reuse across these helpers is single-threaded — JS is
+// single-threaded and no helper here calls another while still reading
+// its own scratch. screenDirFromCascade and viewSpaceScreenDir use
+// distinct scratches because the cascade may invoke viewSpaceScreenDir
+// after writing its own scratch in tier 1.
+const scratchVS = /*@__PURE__*/ new THREE.Vector3();
+const scratchAux = /*@__PURE__*/ new THREE.Vector3();
+
 export function viewSpaceScreenDir(
   worldDir: THREE.Vector3,
   camera: THREE.Camera,
-  scratch: THREE.Vector3,
 ): [number, number] | null {
-  scratch.copy(worldDir).transformDirection(camera.matrixWorldInverse);
-  const sx = scratch.x;
-  const sy = -scratch.y;
+  scratchVS.copy(worldDir).transformDirection(camera.matrixWorldInverse);
+  const sx = scratchVS.x;
+  const sy = -scratchVS.y;
   const len = Math.hypot(sx, sy);
   if (len < 1e-6) return null;
   return [sx / len, sy / len];
@@ -74,9 +85,6 @@ export const OVERLAY_NEAR_CLIP_PC = 1e-3;
  * Each tier returns null when its result is too short to normalise (<1 px
  * for tiers 1-2, view-space ≈ 0 for tier 3). Final null only when all three
  * tiers fail — i.e. the direction is exactly along the camera axis.
- *
- * `scratch` is consumed (tier 1 writes the aux point into it; tier 3 writes
- * the view-space vector into it). Callers must not depend on its value.
  */
 export function screenDirFromCascade(
   auxStepFrom: THREE.Vector3,
@@ -88,10 +96,9 @@ export function screenDirFromCascade(
   camera: THREE.PerspectiveCamera,
   w: number,
   h: number,
-  scratch: THREE.Vector3,
 ): [number, number] | null {
-  scratch.copy(auxStepFrom).addScaledVector(dir, auxStepW);
-  const auxScreen = projectToScreen(scratch, camera, w, h);
+  scratchAux.copy(auxStepFrom).addScaledVector(dir, auxStepW);
+  const auxScreen = projectToScreen(scratchAux, camera, w, h);
   if (auxScreen) {
     const sdx = auxScreen[0] - cx;
     const sdy = auxScreen[1] - cy;
@@ -104,7 +111,7 @@ export function screenDirFromCascade(
     const tlen = Math.hypot(tdx, tdy);
     if (tlen >= 1) return [tdx / tlen, tdy / tlen];
   }
-  return viewSpaceScreenDir(dir, camera, scratch);
+  return viewSpaceScreenDir(dir, camera);
 }
 
 /**
