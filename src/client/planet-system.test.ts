@@ -94,6 +94,16 @@ describe('SOL_PLANETS data', () => {
     }
   });
 
+  it('eccentricities are in [0, 1) and Mercury is the most eccentric', () => {
+    let mostEccentric = SOL_PLANETS[0];
+    for (const p of SOL_PLANETS) {
+      expect(p.eccentricity).toBeGreaterThanOrEqual(0);
+      expect(p.eccentricity).toBeLessThan(1);
+      if (p.eccentricity > mostEccentric.eccentricity) mostEccentric = p;
+    }
+    expect(mostEccentric.name).toBe('Mercury');
+  });
+
   it('classifies inner four as rocky and outer four as giants', () => {
     const types = SOL_PLANETS.map(p => p.type);
     expect(types.slice(0, 4)).toEqual(['rocky', 'rocky', 'rocky', 'rocky']);

@@ -89,6 +89,7 @@ src/
     chart-mode.ts         observe-only chart-mode orchestrator (theme + isobar + label engine)
     chart-labels.ts       per-frame chart label engine + SVG glyphs (variable rings, binary wings)
     planet-system.ts      per-star PlanetSystem data model + Sol planet table (3re.6 groundwork)
+    star-system.ts        per-host orbit-rings layer with pixel-gap visibility heuristic (3re.7)
     shaders/
       star.vert.glsl, star.frag.glsl              GLSL3/WebGL2
       dust-particle.vert.glsl, dust-particle.frag.glsl   shelved dust splats

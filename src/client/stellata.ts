@@ -22,6 +22,7 @@ import {
   distAtFillFraction,
 } from './star-geometry';
 import { getPlanetSystem, hasPlanets, type PlanetSystem } from './planet-system';
+import { StarSystem } from './star-system';
 
 export type MagPresetName = 'naked-eye' | 'binoculars' | 'all';
 
@@ -567,6 +568,11 @@ export class Stellata {
   // `filter.showHud`. Mono mode swaps strokes to a paper-chart palette via
   // setMonochrome on each layer (HUD is CSS-only).
   private galacticDisc: GalacticDisc;
+  // Generic per-host orbit-rings layer. Geometry rebuilds whenever the
+  // focused star's PlanetSystem changes; per-frame tick drives the
+  // pixel-gap visibility heuristic. Sol is the only populated host in
+  // v1 — see star-system.ts.
+  private starSystem: StarSystem;
   private galacticGrid: GalacticGrid;
   private hudOverlay: HudOverlay;
 
@@ -876,6 +882,16 @@ export class Stellata {
     // styling and inherits the `body.warping` hide rule for free.
     this.galacticDisc = new GalacticDisc();
     this.scene.add(this.galacticDisc.group);
+    this.starSystem = new StarSystem();
+    this.scene.add(this.starSystem.group);
+    // Build/teardown rings whenever the focused star's planet data changes.
+    // The host always sits at the local origin under the floating-origin
+    // recenter from setFocus(idx), so the rings need no per-frame
+    // worldOffset bookkeeping — only the visibility heuristic ticks each
+    // frame in updateGalacticLayers().
+    this.onPlanetSystemChange((ps) => {
+      this.starSystem.setPlanetSystem(ps, this.catalog.solIndex);
+    });
     this.galacticGrid = new GalacticGrid();
     this.scene.add(this.galacticGrid.group);
     const hudRing = document.getElementById('hud-ring') as unknown as SVGCircleElement;
@@ -1985,6 +2001,7 @@ export class Stellata {
     this.galacticGrid.setMonochrome(on);
     this.hudOverlay.setMonochrome(on);
     this.clouds?.setMonochrome(on);
+    this.starSystem.setMonochrome(on);
     // The milky-way layer used to fully hide in chart mode, but Phase 8
     // re-purposes it to render an isobar contour. Visibility/contour
     // are now driven by the chart-mode orchestrator via
@@ -3349,9 +3366,12 @@ export class Stellata {
       this.galacticDisc.group.visible = false;
       this.galacticGrid.group.visible = false;
       this.hudOverlay.setVisible(false);
+      this.starSystem.setHidden(true);
       this.clouds?.update(this.worldOffset, this.filter.showMolecularClouds);
       return;
     }
+    this.starSystem.setHidden(false);
+    this.starSystem.update(this.camera, window.innerHeight);
 
     // Refresh camera matrices before any SVG projection — controls.update()
     // mutates camera.position/quaternion but doesn't propagate to
@@ -3614,6 +3634,7 @@ export class Stellata {
     this.clouds?.dispose();
     this.galacticDisc.dispose();
     this.galacticGrid.dispose();
+    this.starSystem.dispose();
     this.milkyway.dispose();
     // The dust voxel grid is the largest single GPU allocation in the app
     // (~128 MiB Data3DTexture). MilkyWay shares the same texture handle but

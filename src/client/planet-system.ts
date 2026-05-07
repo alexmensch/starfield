@@ -24,6 +24,12 @@ export interface Planet {
   // Semi-major axis in AU. Real orbital phase is deferred to stellata-3re.3
   // (VSOP87 ephemerides); placeholder positions in 3re.4 use this alone.
   readonly semiMajorAxisAu: number;
+  // Orbital eccentricity. The orbit-rings layer (stellata-3re.7) draws
+  // each ring as an ellipse with the host star at one focus, using
+  // `b = a·√(1−e²)` and a focal offset of `c = a·e`. v1 places the
+  // perihelion along the local +x axis as a placeholder; longitude of
+  // perihelion lands later (alongside VSOP87 in stellata-3re.3).
+  readonly eccentricity: number;
   readonly type: PlanetType;
   // Representative single-colour RGB in linear-ish [0,1]. Per stellata-3re.4
   // these are average tones — atmospheric scattering / banding belong to
@@ -51,6 +57,7 @@ export const SOL_PLANETS: readonly Planet[] = [
     name: 'Mercury',
     radiusKm: 2440,
     semiMajorAxisAu: 0.387,
+    eccentricity: 0.2056,
     type: 'rocky',
     colour: [0.55, 0.47, 0.32],
     hasAtmosphere: false,
@@ -59,6 +66,7 @@ export const SOL_PLANETS: readonly Planet[] = [
     name: 'Venus',
     radiusKm: 6052,
     semiMajorAxisAu: 0.723,
+    eccentricity: 0.0068,
     type: 'rocky',
     colour: [0.91, 0.82, 0.60],
     hasAtmosphere: true,
@@ -67,6 +75,7 @@ export const SOL_PLANETS: readonly Planet[] = [
     name: 'Earth',
     radiusKm: 6371,
     semiMajorAxisAu: 1.000,
+    eccentricity: 0.0167,
     type: 'rocky',
     colour: [0.31, 0.49, 0.67],
     hasAtmosphere: true,
@@ -75,6 +84,7 @@ export const SOL_PLANETS: readonly Planet[] = [
     name: 'Mars',
     radiusKm: 3390,
     semiMajorAxisAu: 1.524,
+    eccentricity: 0.0934,
     type: 'rocky',
     colour: [0.76, 0.27, 0.05],
     hasAtmosphere: false,
@@ -83,6 +93,7 @@ export const SOL_PLANETS: readonly Planet[] = [
     name: 'Jupiter',
     radiusKm: 69911,
     semiMajorAxisAu: 5.203,
+    eccentricity: 0.0485,
     type: 'gas_giant',
     colour: [0.85, 0.72, 0.51],
     hasAtmosphere: true,
@@ -91,6 +102,7 @@ export const SOL_PLANETS: readonly Planet[] = [
     name: 'Saturn',
     radiusKm: 58232,
     semiMajorAxisAu: 9.537,
+    eccentricity: 0.0555,
     type: 'gas_giant',
     colour: [0.90, 0.79, 0.62],
     hasAtmosphere: true,
@@ -99,6 +111,7 @@ export const SOL_PLANETS: readonly Planet[] = [
     name: 'Uranus',
     radiusKm: 25362,
     semiMajorAxisAu: 19.191,
+    eccentricity: 0.0464,
     type: 'ice_giant',
     colour: [0.64, 0.85, 0.90],
     hasAtmosphere: true,
@@ -107,6 +120,7 @@ export const SOL_PLANETS: readonly Planet[] = [
     name: 'Neptune',
     radiusKm: 24622,
     semiMajorAxisAu: 30.069,
+    eccentricity: 0.0095,
     type: 'ice_giant',
     colour: [0.25, 0.37, 0.75],
     hasAtmosphere: true,
