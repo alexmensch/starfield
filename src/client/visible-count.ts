@@ -1,23 +1,28 @@
 import type { Stellata } from './stellata';
 
 // Bottom-right HUD: the "N visible" line under the catalog total.
-// Settle-debounced — the scan is bounded but not free (a clip-space
-// projection per surviving star), and a continuous live count is more
-// distraction than feedback during interaction. Behaviour:
+// Settle-debounced — the scan is bounded but not free, and a continuous
+// live count is more distraction than feedback during interaction.
 //
-//   - Any per-frame change to an input that affects the count resets
-//     a settle timer and replaces the count with an em-dash placeholder.
-//   - Once SETTLE_MS has passed with no further change, the scan runs
-//     once and the real count appears.
+// Behaviour:
+//   - Any per-frame change that materially affects the count resets a
+//     settle timer and replaces the count with an em-dash placeholder.
+//   - Once SETTLE_MS has passed with no further material change, the
+//     scan runs once and the real count appears.
+//
+// Material-change detection uses small epsilons rather than strict
+// `!==`: TrackballControls writes camera.position and camera.quaternion
+// every frame and its dynamicDampingFactor leaves residual sub-
+// perceptible motion for many seconds after the user releases. Strict
+// equality treats that as continuous change and the count never
+// resolves; the epsilon thresholds drop the residual below the dirty
+// bar within ~1 s.
 //
 // Inputs the count depends on:
 //   - filter knobs we mirror in countVisibleStars: maxAppMag,
 //     min/maxDistSol, spectMask
 //   - camera pose: position + quaternion (view matrix)
 //   - camera projection: fov + aspect (frustum bounds)
-//
-// uTime / variable pulsation is deliberately excluded — count-
-// VisibleStars treats variables at static appMag.
 
 export interface VisibleCountStats {
   /** Last computed value displayed in the HUD, or -1 while settling. */
@@ -34,12 +39,18 @@ export interface VisibleCountStats {
   reset(): void;
 }
 
-/** How long the inputs must be unchanged before we run a scan. Chosen
- *  so a quick magnitude-slider drag or continuous orbit gesture stays
- *  on the placeholder until the user lets go, while a single rotation
- *  or click resolves to a number quickly enough to feel snappy. */
 const SETTLE_MS = 220;
 const PLACEHOLDER = '— visible';
+
+// Per-frame deltas below these thresholds count as "not moving."
+//   Position: 1e-4 pc per frame ≈ 6e-3 pc/sec at 60 fps — well below
+//     anything the user would perceive even at AU-scale focus.
+//   Quaternion: squared L2 across components. ‖Δq‖² < 1e-10 ⇒ rotation
+//     delta < ~2e-5 rad (~0.001°), imperceptible.
+//   FOV: 1e-3°. Aspect snaps on resize so an exact compare is fine.
+const POS_EPS_SQ = 1e-4 * 1e-4;
+const QUAT_EPS_SQ = 1e-10;
+const FOV_EPS = 1e-3;
 
 export function bindVisibleStarCount(stellata: Stellata, mount: HTMLElement): VisibleCountStats {
   const div = document.createElement('div');
@@ -59,31 +70,45 @@ export function bindVisibleStarCount(stellata: Stellata, mount: HTMLElement): Vi
     },
   };
 
-  // Snapshot of every input the count depends on. NaN-init so the
-  // first tick always counts as "changed" and starts the settle clock.
+  // Last-frame snapshot. Position+quaternion start at NaN/0 so the
+  // first frame's delta is NaN (compares false against epsilons) — we
+  // fall through to "no material change", placeholder stays, and the
+  // settle clock starts; the scan fires SETTLE_MS later with the real
+  // initial camera state.
   let sCamX = NaN, sCamY = NaN, sCamZ = NaN;
-  let sQX = 0, sQY = 0, sQZ = 0, sQW = 0;
-  let sFov = 0, sAspect = 0;
+  let sQX = NaN, sQY = NaN, sQZ = NaN, sQW = NaN;
+  let sFov = NaN, sAspect = NaN;
   let sMaxAppMag = NaN, sMinDistSol = NaN, sMaxDistSol = NaN, sSpectMask = -1;
   let lastChangeMs = performance.now();
-  // True until we've completed a scan for the current settled state;
-  // flips back to true the moment any input changes.
   let placeholderShown = true;
 
   stellata.onFrame(() => {
     const cam = stellata.camera;
     const f = stellata.getFilter();
-    const changed =
-      cam.position.x !== sCamX || cam.position.y !== sCamY || cam.position.z !== sCamZ ||
-      cam.quaternion.x !== sQX || cam.quaternion.y !== sQY || cam.quaternion.z !== sQZ || cam.quaternion.w !== sQW ||
-      cam.fov !== sFov || cam.aspect !== sAspect ||
-      f.maxAppMag !== sMaxAppMag || f.minDistSol !== sMinDistSol || f.maxDistSol !== sMaxDistSol || f.spectMask !== sSpectMask;
+    const cx = cam.position.x, cy = cam.position.y, cz = cam.position.z;
+    const qx = cam.quaternion.x, qy = cam.quaternion.y, qz = cam.quaternion.z, qw = cam.quaternion.w;
+    const fv = cam.fov, asp = cam.aspect;
 
-    if (changed) {
-      sCamX = cam.position.x; sCamY = cam.position.y; sCamZ = cam.position.z;
-      sQX = cam.quaternion.x; sQY = cam.quaternion.y; sQZ = cam.quaternion.z; sQW = cam.quaternion.w;
-      sFov = cam.fov; sAspect = cam.aspect;
-      sMaxAppMag = f.maxAppMag; sMinDistSol = f.minDistSol; sMaxDistSol = f.maxDistSol; sSpectMask = f.spectMask;
+    const dPx = cx - sCamX, dPy = cy - sCamY, dPz = cz - sCamZ;
+    const dPos2 = dPx * dPx + dPy * dPy + dPz * dPz;
+    const dQx = qx - sQX, dQy = qy - sQY, dQz = qz - sQZ, dQw = qw - sQW;
+    const dQuat2 = dQx * dQx + dQy * dQy + dQz * dQz + dQw * dQw;
+    const dFov = Math.abs(fv - sFov);
+
+    const moved = dPos2 > POS_EPS_SQ || dQuat2 > QUAT_EPS_SQ || dFov > FOV_EPS || asp !== sAspect;
+    const filterChanged =
+      f.maxAppMag !== sMaxAppMag || f.minDistSol !== sMinDistSol ||
+      f.maxDistSol !== sMaxDistSol || f.spectMask !== sSpectMask;
+
+    // Snapshot every frame so per-frame deltas measure this-frame vs
+    // last-frame, not cumulative drift since the last "real" change.
+    sCamX = cx; sCamY = cy; sCamZ = cz;
+    sQX = qx; sQY = qy; sQZ = qz; sQW = qw;
+    sFov = fv; sAspect = asp;
+    sMaxAppMag = f.maxAppMag; sMinDistSol = f.minDistSol;
+    sMaxDistSol = f.maxDistSol; sSpectMask = f.spectMask;
+
+    if (moved || filterChanged) {
       lastChangeMs = performance.now();
       if (!placeholderShown) {
         div.textContent = PLACEHOLDER;
