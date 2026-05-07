@@ -94,6 +94,7 @@ src/
     time.ts               wall-clock `t` helpers for the solar-system layer (3re.1: tToJDE, isLive)
     ephemeris.ts          JPL Standish 1992 planet positions for Sol (3re.3: ±arcmin over ±3000 yr)
     time-readout.ts       plain-English UTC `t` readout in `.ui-bottom` (3re.11; planet-host gated)
+    heliopause.ts         Sol's heliopause wireframe ellipsoid + apex label (3re.5; ~122 AU upwind)
     shaders/
       star.vert.glsl, star.frag.glsl              GLSL3/WebGL2
       dust-particle.vert.glsl, dust-particle.frag.glsl   shelved dust splats

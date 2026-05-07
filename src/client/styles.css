@@ -833,6 +833,20 @@ body.monochrome .hud-ring {
   stroke-width: 3px;
   stroke-linejoin: round;
 }
+/* Heliopause apex label (3re.5). Dimmer than .planet-label since it
+   names a chrome boundary rather than an interactive object — same
+   font/halo treatment so it reads as part of the same family. */
+.heliopause-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  fill: rgba(200, 214, 255, 0.55);
+  paint-order: stroke;
+  stroke: rgba(7, 9, 18, 0.9);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
 /* Ring around each pinned POI star — same styling as the HUD ring so
    the POI assembly reads as a member of the same HUD widget family.
    Sized in poi-overlay.ts (fixed 24 px in screen pixels, matching the

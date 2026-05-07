@@ -23,6 +23,7 @@ import {
 } from './star-geometry';
 import { getPlanetSystem, hasPlanets, type PlanetSystem } from './planet-system';
 import { StarSystem } from './star-system';
+import { Heliopause } from './heliopause';
 
 export type MagPresetName = 'naked-eye' | 'binoculars' | 'all';
 
@@ -593,6 +594,9 @@ export class Stellata {
   // load — increments on every refresh so a quick cancel-then-retry
   // doesn't double-apply.
   private warpDestPlanetSystemToken = 0;
+  // Heliopause boundary (3re.5). Sol-anchored asymmetric wireframe
+  // ellipsoid; visible only when Sol is the focused host.
+  private heliopause: Heliopause;
   private galacticGrid: GalacticGrid;
   private hudOverlay: HudOverlay;
 
@@ -906,14 +910,22 @@ export class Stellata {
     this.scene.add(this.starSystem.group);
     this.warpDestStarSystem = new StarSystem();
     this.scene.add(this.warpDestStarSystem.group);
+    // Heliopause is Sol-anchored — added once, visibility gated on
+    // focused star = Sol via the planet-system event below.
+    this.heliopause = new Heliopause();
+    this.scene.add(this.heliopause.group);
     // Build/teardown rings whenever the focused star's planet data changes.
     // The focused host always sits at the local origin under the
     // floating-origin recenter from setFocus(idx), so the focused
     // starSystem's group stays at (0,0,0). The warp-destination layer
     // is positioned per-frame in updateGalacticLayers() — its host is
-    // off-origin during a warp.
+    // off-origin during a warp. Heliopause shows iff the focal host
+    // is Sol — only Sol's heliopause is meaningful, and we render it
+    // in the Sol-centric local frame so it must be hidden under any
+    // other focus (which would put world-origin elsewhere).
     this.onPlanetSystemChange((ps) => {
       this.starSystem.setPlanetSystem(ps, this.catalog.solIndex);
+      this.heliopause.setVisible(ps !== null && ps.hostStarIdx === this.catalog.solIndex);
     });
     this.galacticGrid = new GalacticGrid();
     this.scene.add(this.galacticGrid.group);
@@ -2083,6 +2095,7 @@ export class Stellata {
     this.clouds?.setMonochrome(on);
     this.starSystem.setMonochrome(on);
     this.warpDestStarSystem.setMonochrome(on);
+    this.heliopause.setMonochrome(on);
     // The milky-way layer used to fully hide in chart mode, but Phase 8
     // re-purposes it to render an isobar contour. Visibility/contour
     // are now driven by the chart-mode orchestrator via
@@ -3741,6 +3754,7 @@ export class Stellata {
     this.galacticGrid.dispose();
     this.starSystem.dispose();
     this.warpDestStarSystem.dispose();
+    this.heliopause.dispose();
     this.milkyway.dispose();
     // The dust voxel grid is the largest single GPU allocation in the app
     // (~128 MiB Data3DTexture). MilkyWay shares the same texture handle but

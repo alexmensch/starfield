@@ -10,6 +10,7 @@ import { createDistanceVectorOverlay } from './distance-vector-overlay';
 import { createFocusRingOverlay } from './focus-ring-overlay';
 import { createPoiOverlay } from './poi-overlay';
 import { createPlanetLabels } from './planet-labels';
+import { createHeliopauseLabel } from './heliopause';
 import { createScaleBar } from './scale-bar';
 import { createTimeReadout } from './time-readout';
 import { bindUnitToggle } from './unit-toggle';
@@ -134,6 +135,7 @@ async function main() {
     createFocusRingOverlay(stellata);
     createPoiOverlay(stellata, starLabels);
     createPlanetLabels(stellata);
+    createHeliopauseLabel(stellata);
     createScaleBar(stellata, starLabels);
     createTimeReadout({
       el: document.getElementById('time-readout')!,
