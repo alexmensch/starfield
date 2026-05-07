@@ -867,7 +867,12 @@ export function applyFromUrl(stellata: Stellata, idMaps: IdMaps): void {
 
 export function startUrlSync(stellata: Stellata, idMaps: IdMaps): void {
   let timer: number | undefined;
-  let lastCamHash = '';
+  // Scratch for the per-frame camera/target/up change detector. Layout:
+  //   [0..2] camera.position, [3..5] controls.target, [6..8] camera.up
+  // Initialised to NaN so every comparison on the first frame is false
+  // (NaN < x is always false), which triggers the initial schedule.
+  const lastCam = new Float64Array(9);
+  lastCam.fill(NaN);
 
   const schedule = () => {
     if (timer !== undefined) clearTimeout(timer);
@@ -886,11 +891,22 @@ export function startUrlSync(stellata: Stellata, idMaps: IdMaps): void {
     const c = stellata.camera.position;
     const t = stellata.controls.target;
     const u = stellata.camera.up;
-    const hash = `${c.x.toFixed(3)},${c.y.toFixed(3)},${c.z.toFixed(3)}|${t.x.toFixed(3)},${t.y.toFixed(3)},${t.z.toFixed(3)}|${u.x.toFixed(3)},${u.y.toFixed(3)},${u.z.toFixed(3)}`;
-    if (hash !== lastCamHash) {
-      lastCamHash = hash;
-      schedule();
+    // Component-wise epsilon comparison on the steady-state path. EPS
+    // matches the pre-a0n toFixed(3) precision (1e-3) so the change-
+    // detection threshold is unchanged. No allocations on the no-change
+    // path — used to be 10+ string allocations per frame from a
+    // toFixed(3)×9 hash.
+    if (
+      Math.abs(c.x - lastCam[0]) < EPS && Math.abs(c.y - lastCam[1]) < EPS && Math.abs(c.z - lastCam[2]) < EPS &&
+      Math.abs(t.x - lastCam[3]) < EPS && Math.abs(t.y - lastCam[4]) < EPS && Math.abs(t.z - lastCam[5]) < EPS &&
+      Math.abs(u.x - lastCam[6]) < EPS && Math.abs(u.y - lastCam[7]) < EPS && Math.abs(u.z - lastCam[8]) < EPS
+    ) {
+      return;
     }
+    lastCam[0] = c.x; lastCam[1] = c.y; lastCam[2] = c.z;
+    lastCam[3] = t.x; lastCam[4] = t.y; lastCam[5] = t.z;
+    lastCam[6] = u.x; lastCam[7] = u.y; lastCam[8] = u.z;
+    schedule();
   });
 }
 
