@@ -1,13 +1,35 @@
 import { describe, it, expect } from 'vitest';
+import * as THREE from 'three';
 import {
   AU_PC,
   ECLIPTIC_NORTH_POLE_ICRS,
   RING_VISIBILITY_THRESHOLD_PX,
+  StarSystem,
   buildEllipsePoints,
   orbitalPlaneNormalFor,
   ringVisibility,
 } from './star-system';
 import { GALACTIC_NORTH_POLE_ICRS } from './galactic-coords';
+import type { Planet, PlanetSystem } from './planet-system';
+
+function makePlanet(overrides: Partial<Planet> = {}): Planet {
+  return {
+    name: 'Test',
+    radiusKm: 1000,
+    semiMajorAxisAu: 1,
+    eccentricity: 0,
+    type: 'rocky',
+    colour: [1, 1, 1],
+    hasAtmosphere: false,
+    ...overrides,
+  };
+}
+
+function makeCamera(distancePc: number): THREE.PerspectiveCamera {
+  const cam = new THREE.PerspectiveCamera(60, 1, 1e-7, 1000);
+  cam.position.set(0, 0, distancePc);
+  return cam;
+}
 
 describe('AU_PC', () => {
   it('matches IAU 2012 to 7 significant figures', () => {
@@ -138,5 +160,84 @@ describe('RING_VISIBILITY_THRESHOLD_PX', () => {
   it('is a small positive pixel count consistent with the bead recommendation', () => {
     expect(RING_VISIBILITY_THRESHOLD_PX).toBeGreaterThanOrEqual(4);
     expect(RING_VISIBILITY_THRESHOLD_PX).toBeLessThanOrEqual(8);
+  });
+});
+
+describe('StarSystem.anyRingVisible', () => {
+  it('returns false with no planet system attached', () => {
+    const ss = new StarSystem();
+    expect(ss.anyRingVisible()).toBe(false);
+    ss.dispose();
+  });
+
+  it('returns true after a tick that lets at least one ring through the heuristic', () => {
+    const ss = new StarSystem();
+    const ps: PlanetSystem = {
+      hostStarIdx: 0,
+      planets: [makePlanet({ name: 'Alpha', semiMajorAxisAu: 1 })],
+    };
+    ss.setPlanetSystem(ps, 0);
+    // Camera at 5 AU from the (origin) host. A lone ring has no
+    // neighbours, so the gap heuristic always lets it render.
+    ss.update(makeCamera(5 * AU_PC), 800);
+    expect(ss.anyRingVisible()).toBe(true);
+    ss.dispose();
+  });
+
+  it('returns false after the planet system is cleared', () => {
+    const ss = new StarSystem();
+    const ps: PlanetSystem = {
+      hostStarIdx: 0,
+      planets: [makePlanet()],
+    };
+    ss.setPlanetSystem(ps, 0);
+    ss.update(makeCamera(5 * AU_PC), 800);
+    ss.setPlanetSystem(null, 0);
+    expect(ss.anyRingVisible()).toBe(false);
+    ss.dispose();
+  });
+
+  it('returns false when warp-hidden, even with rings still in the heuristic', () => {
+    const ss = new StarSystem();
+    const ps: PlanetSystem = {
+      hostStarIdx: 0,
+      planets: [makePlanet()],
+    };
+    ss.setPlanetSystem(ps, 0);
+    ss.update(makeCamera(5 * AU_PC), 800);
+    ss.setHidden(true);
+    expect(ss.anyRingVisible()).toBe(false);
+    ss.dispose();
+  });
+
+  it('returns false in chart (mono) mode', () => {
+    const ss = new StarSystem();
+    const ps: PlanetSystem = {
+      hostStarIdx: 0,
+      planets: [makePlanet()],
+    };
+    ss.setPlanetSystem(ps, 0);
+    ss.update(makeCamera(5 * AU_PC), 800);
+    ss.setMonochrome(true);
+    expect(ss.anyRingVisible()).toBe(false);
+    ss.dispose();
+  });
+
+  it('returns false when every ring is suppressed by the pixel-gap heuristic', () => {
+    // Two rings with semi-major axes very close together, viewed from far
+    // enough that the projected pixel gap collapses below the threshold.
+    const ss = new StarSystem();
+    const ps: PlanetSystem = {
+      hostStarIdx: 0,
+      planets: [
+        makePlanet({ name: 'A', semiMajorAxisAu: 1.000 }),
+        makePlanet({ name: 'B', semiMajorAxisAu: 1.001 }),
+      ],
+    };
+    ss.setPlanetSystem(ps, 0);
+    // 1e6 pc is absurdly far; both ring projections shrink to indistinguishable.
+    ss.update(makeCamera(1e6), 800);
+    expect(ss.anyRingVisible()).toBe(false);
+    ss.dispose();
   });
 });

@@ -993,6 +993,11 @@ export class Stellata {
    *  layer gates on this — renderers also subscribe to
    *  onPlanetSystemChange to react to focus swaps. */
   getFocusedPlanetSystem(): PlanetSystem | null { return this.focusedPlanetSystem; }
+  /** True when the orbit-rings layer is currently rendering at least one
+   *  ring. Frame-coherent — `updateGalacticLayers()` runs before
+   *  `onFrame` handlers, so overlays driven by the frame loop (focus
+   *  ring, etc.) read current-frame data. */
+  anyOrbitRingVisible(): boolean { return this.starSystem.anyRingVisible(); }
   /** Absolute-space coordinate of the renderer's current local origin.
    *  Read-only snapshot; callers must not mutate. URL serialisation
    *  emits this so close-orbit unfocus poses (where worldOffset sits at

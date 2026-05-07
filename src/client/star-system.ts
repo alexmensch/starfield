@@ -241,6 +241,21 @@ export class StarSystem {
   }
 
   /**
+   * True when at least one orbit ring is currently being rendered (i.e.
+   * the layer is active and the visibility heuristic let some ring
+   * through). The focus ring overlay reads this each frame to suppress
+   * itself when the orbit rings are already identifying the focused
+   * host — both indicators on the same star is redundant chrome.
+   */
+  anyRingVisible(): boolean {
+    if (this.hidden || this.mono || !this.group.visible) return false;
+    for (const r of this.rings) {
+      if (r.line.visible) return true;
+    }
+    return false;
+  }
+
+  /**
    * Suppress the layer entirely (used during warp transitions, where
    * orbit-ring context is exactly the kind of detail the warp blur
    * intentionally drops).
