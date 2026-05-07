@@ -140,11 +140,28 @@ async function main() {
     applyFromUrl(stellata, idMaps);
     startUrlSync(stellata, idMaps);
 
-    // Bottom-right meta: just the catalog count. The focused-object name
+    // Bottom-right meta: catalog total on top, currently-visible count
+    // (passes filter + inside frustum) below it. The focused-object name
     // moved into the scale-bar widget's z-axis indicator, where it sits
     // alongside the camera-to-focus distance.
     const countLabel = `${catalog.count.toLocaleString()} stars`;
-    meta.innerHTML = `<div class="meta-count">${escapeHtml(countLabel)}</div>`;
+    meta.innerHTML =
+      `<div class="meta-count">${escapeHtml(countLabel)}</div>` +
+      `<div class="meta-visible"></div>`;
+    const metaVisible = meta.querySelector<HTMLDivElement>('.meta-visible')!;
+    // Throttle to ~10 Hz: the count scan iterates the full catalog and
+    // the value is stable enough that per-frame is wasted work.
+    let lastVisibleTickMs = 0;
+    let lastVisible = -1;
+    stellata.onFrame(() => {
+      const now = performance.now();
+      if (now - lastVisibleTickMs < 100) return;
+      lastVisibleTickMs = now;
+      const n = stellata.countVisibleStars();
+      if (n === lastVisible) return;
+      lastVisible = n;
+      metaVisible.textContent = `${n.toLocaleString()} visible`;
+    });
 
     bindHoverTooltip(canvas, tooltip, stellata, describeStarDetailed, describeCloud);
 

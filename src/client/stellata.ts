@@ -2539,6 +2539,48 @@ export class Stellata {
     return out.set(p[i * 3 + 0], p[i * 3 + 1], p[i * 3 + 2]);
   }
 
+  // Count stars currently being drawn — passing the active filter
+  // (apparent magnitude, distance-from-Sol band, spectral mask) AND
+  // inside the camera frustum. Mirrors the GPU shader's discard rules
+  // on the CPU; the renderer dispatches all instances and discards in
+  // the fragment shader, so there is no draw count to surface.
+  // Variables are checked at static appMag (no per-frame pulsation
+  // adjustment) — accurate to within a handful of stars near the
+  // cutoff edge, and the HUD is a sense-of-scale readout, not an
+  // instrument.
+  countVisibleStars(): number {
+    const f = this.filter;
+    const camPos = this.camera.position;
+    const absPos = this.catalog.positions;
+    const locPos = this._localPositions;
+    const { absmag, spectClass } = this.catalog;
+    const v = this.tmpCountVec;
+    let n = 0;
+    for (let i = 0; i < this.catalog.count; i++) {
+      const ax = absPos[i * 3 + 0];
+      const ay = absPos[i * 3 + 1];
+      const az = absPos[i * 3 + 2];
+      const distSol = Math.sqrt(ax * ax + ay * ay + az * az);
+      if (distSol < f.minDistSol || distSol > f.maxDistSol) continue;
+      const bit = 1 << (spectClass[i] | 0);
+      if (!(f.spectMask & bit)) continue;
+      const x = locPos[i * 3 + 0];
+      const y = locPos[i * 3 + 1];
+      const z = locPos[i * 3 + 2];
+      const dx = x - camPos.x;
+      const dy = y - camPos.y;
+      const dz = z - camPos.z;
+      const dCam = Math.max(Math.sqrt(dx * dx + dy * dy + dz * dz), DCAM_LOG_FLOOR_PC);
+      const appMag = absmag[i] + 5 * (Math.log10(dCam) - 1);
+      if (appMag > f.maxAppMag) continue;
+      v.set(x, y, z).project(this.camera);
+      if (v.x < -1 || v.x > 1 || v.y < -1 || v.y > 1 || v.z < -1 || v.z > 1) continue;
+      n++;
+    }
+    return n;
+  }
+  private tmpCountVec = new THREE.Vector3();
+
   pickStar(clientX: number, clientY: number, pixelThreshold = 16): number {
     const rect = this.renderer.domElement.getBoundingClientRect();
     const viewportW = rect.width;
