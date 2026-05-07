@@ -3458,13 +3458,13 @@ export class Stellata {
       // (focused starSystem) and destination approaches (warp-dest
       // starSystem). The pixel-gap visibility heuristic naturally
       // adapts as camera-to-host distance changes for each.
-      this.starSystem.update(this.camera, window.innerHeight);
+      this.starSystem.update(this.camera, window.innerHeight, undefined, this.getT());
       if (this.warpState.destKind === 'star') {
         const destLocal = this.starLocalPositionInto(
           this.warpState.destIdx,
           this._tmpLocalA,
         );
-        this.warpDestStarSystem.update(this.camera, window.innerHeight, destLocal);
+        this.warpDestStarSystem.update(this.camera, window.innerHeight, destLocal, this.getT());
       } else {
         // Cloud destination — no planet system to render.
         this.warpDestStarSystem.update(this.camera, window.innerHeight);
@@ -3472,7 +3472,7 @@ export class Stellata {
       this.clouds?.update(this.worldOffset, this.filter.showMolecularClouds);
       return;
     }
-    this.starSystem.update(this.camera, window.innerHeight);
+    this.starSystem.update(this.camera, window.innerHeight, undefined, this.getT());
     // Outside warp the destination layer is empty (cleared by
     // refreshWarpDestPlanetSystem on warp end) — calling update keeps
     // the group hidden via the no-system fast path.

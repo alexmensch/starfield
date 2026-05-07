@@ -239,6 +239,15 @@ export class StarSystem {
   // PlanetSystem.planets array ordering.
   private bodyLocalPositions: Float32Array | null = null;
   private currentPlanets: readonly Planet[] = [];
+  // Per-frame ephemeris drives bodyLocalPositions for hosts whose
+  // PlanetSystem provides positionsAt (Sol via JPL Standish in
+  // stellata-3re.3). Below: orientation quaternion + scratch buffer
+  // for the in-plane→ICRS rotation, plus the active resolver.
+  private currentPositionsAt: ((t: number, out: Float32Array) => void) | null = null;
+  private currentOrientation: THREE.Quaternion | null = null;
+  private positionsScratch: Float32Array | null = null;
+  // Reusable per-planet rotation scratch — avoids per-frame allocation.
+  private rotateTmp = new THREE.Vector3();
 
   constructor() {
     this.group = new THREE.Group();
@@ -264,6 +273,9 @@ export class StarSystem {
     this.disposeBody();
     this.bodyLocalPositions = null;
     this.currentPlanets = [];
+    this.currentPositionsAt = null;
+    this.currentOrientation = null;
+    this.positionsScratch = null;
     if (ps === null || ps.planets.length === 0) {
       this.group.visible = false;
       return;
@@ -280,7 +292,12 @@ export class StarSystem {
     // positions through planetLocalPosition() without re-deriving the
     // orientation. Stored alongside the precomputed body positions.
     this.currentPlanets = ps.planets;
+    this.currentOrientation = orientation;
+    this.currentPositionsAt = ps.positionsAt ?? null;
     this.bodyLocalPositions = new Float32Array(ps.planets.length * 3);
+    this.positionsScratch = ps.positionsAt
+      ? new Float32Array(ps.planets.length * 3)
+      : null;
 
     // Build orbit rings ----------------------------------------------------
     for (const planet of ps.planets) {
@@ -326,14 +343,25 @@ export class StarSystem {
     const radii = new Float32Array(n);
     const colours = new Float32Array(n * 3);
     const solidity = new Float32Array(n);
-    const tmpPos = new THREE.Vector3();
+    // Initial position fill — ephemeris path if positionsAt present,
+    // else the static placeholder eccentric-anomaly layout. The per-
+    // frame update() below refreshes the ephemeris path each tick.
+    if (ps.positionsAt && this.positionsScratch) {
+      ps.positionsAt(Date.now() / 1000, this.positionsScratch);
+      this.rotateInto(this.positionsScratch, positions, orientation);
+    } else {
+      const tmpPos = new THREE.Vector3();
+      for (let i = 0; i < n; i++) {
+        const p = ps.planets[i];
+        const t = placeholderEccentricAnomaly(i, n);
+        planetLocalPosition(p.semiMajorAxisAu, p.eccentricity, t, orientation, tmpPos);
+        positions[i * 3 + 0] = tmpPos.x;
+        positions[i * 3 + 1] = tmpPos.y;
+        positions[i * 3 + 2] = tmpPos.z;
+      }
+    }
     for (let i = 0; i < n; i++) {
       const p = ps.planets[i];
-      const t = placeholderEccentricAnomaly(i, n);
-      planetLocalPosition(p.semiMajorAxisAu, p.eccentricity, t, orientation, tmpPos);
-      positions[i * 3 + 0] = tmpPos.x;
-      positions[i * 3 + 1] = tmpPos.y;
-      positions[i * 3 + 2] = tmpPos.z;
       radii[i] = p.radiusKm * KM_PC;
       colours[i * 3 + 0] = p.colour[0];
       colours[i * 3 + 1] = p.colour[1];
@@ -405,6 +433,7 @@ export class StarSystem {
     camera: THREE.PerspectiveCamera,
     viewportHeightPx: number,
     hostLocalPos?: THREE.Vector3,
+    t?: number,
   ): void {
     if (this.hidden || this.mono || (this.rings.length === 0 && !this.bodyMesh)) {
       this.group.visible = false;
@@ -416,6 +445,24 @@ export class StarSystem {
       this.group.position.copy(hostLocalPos);
     } else {
       this.group.position.set(0, 0, 0);
+    }
+
+    // Refresh body positions from the host's ephemeris resolver, when
+    // present. Sol's positionsAt dispatches through ephemeris.ts which
+    // caches per minute-bucket of `t` — sub-minute calls return the
+    // same object reference, so the per-frame work is an 8-element
+    // array copy + 8 quaternion applications.
+    if (
+      this.currentPositionsAt &&
+      this.positionsScratch &&
+      this.bodyLocalPositions &&
+      this.currentOrientation &&
+      this.bodyGeometry
+    ) {
+      this.currentPositionsAt(t ?? Date.now() / 1000, this.positionsScratch);
+      this.rotateInto(this.positionsScratch, this.bodyLocalPositions, this.currentOrientation);
+      const iPosition = this.bodyGeometry.attributes.iPosition as THREE.InstancedBufferAttribute;
+      iPosition.needsUpdate = true;
     }
 
     const fovYRad = (camera.fov * Math.PI) / 180;
@@ -515,6 +562,26 @@ export class StarSystem {
   dispose(): void {
     this.disposeRings();
     this.disposeBody();
+  }
+
+  /** Apply the host's orbital-plane orientation to a flat xyz buffer.
+   *  The ephemeris path emits positions in the host's local plane
+   *  frame (xy planar, z perpendicular); this rotates them onto the
+   *  ICRS-aligned plane normal that the renderer's local frame uses.
+   *  Both buffers are float32 xyz triples of equal length. */
+  private rotateInto(
+    src: Float32Array,
+    dst: Float32Array,
+    orientation: THREE.Quaternion,
+  ): void {
+    const tmp = this.rotateTmp;
+    for (let i = 0; i < src.length; i += 3) {
+      tmp.set(src[i], src[i + 1], src[i + 2]);
+      tmp.applyQuaternion(orientation);
+      dst[i + 0] = tmp.x;
+      dst[i + 1] = tmp.y;
+      dst[i + 2] = tmp.z;
+    }
   }
 
   private disposeRings(): void {

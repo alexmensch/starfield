@@ -420,3 +420,64 @@ describe('StarSystem.anyRingVisible', () => {
     ss.dispose();
   });
 });
+
+describe('StarSystem ephemeris-driven body positions (3re.3)', () => {
+  it('calls ps.positionsAt on every update() and re-uploads the iPosition attribute', () => {
+    const ss = new StarSystem();
+    let lastT: number | null = null;
+    let calls = 0;
+    const ps: PlanetSystem = {
+      hostStarIdx: 0,
+      planets: [makePlanet({ semiMajorAxisAu: 1 }), makePlanet({ semiMajorAxisAu: 2 })],
+      positionsAt: (t, out) => {
+        lastT = t;
+        calls++;
+        // Encode `t` into the position so the test can verify the
+        // buffer reflects the latest call.
+        for (let i = 0; i < out.length; i += 3) {
+          out[i + 0] = t * 0.001 + i;
+          out[i + 1] = 0;
+          out[i + 2] = 0;
+        }
+      },
+    };
+    ss.setPlanetSystem(ps, 0);
+    // Initial fill from setPlanetSystem (Date.now()-driven).
+    expect(calls).toBeGreaterThanOrEqual(1);
+
+    const beforeUpdate = calls;
+    ss.update(makeCamera(5 * AU_PC), 800, undefined, 12345);
+    expect(calls).toBe(beforeUpdate + 1);
+    expect(lastT).toBe(12345);
+
+    // The bodyLocalPositions buffer should have updated x = t * 0.001
+    // for each planet (after the host's orientation rotation — for a
+    // non-Sol host the orientation rotates +z onto the galactic pole,
+    // which leaves +x close to itself for galactic-z-aligned input).
+    const positions = ss.getPlanetLocalPositions()!;
+    expect(positions).not.toBeNull();
+    expect(positions.length).toBe(6);
+    // Magnitude of each planet's xy projection should be near the
+    // encoded |x| value (rotation preserves length).
+    const mag0 = Math.hypot(positions[0], positions[1], positions[2]);
+    expect(mag0).toBeCloseTo(12345 * 0.001, 6);
+    ss.dispose();
+  });
+
+  it('falls back to placeholder positions when ps.positionsAt is undefined', () => {
+    const ss = new StarSystem();
+    const ps: PlanetSystem = {
+      hostStarIdx: 0,
+      planets: [makePlanet({ semiMajorAxisAu: 1 })],
+      // positionsAt intentionally absent
+    };
+    ss.setPlanetSystem(ps, 0);
+    const initial = Array.from(ss.getPlanetLocalPositions()!);
+    // Calling update with a wildly different `t` should NOT change the
+    // positions — the placeholder path is set-once.
+    ss.update(makeCamera(5 * AU_PC), 800, undefined, 1e9);
+    const after = Array.from(ss.getPlanetLocalPositions()!);
+    expect(after).toEqual(initial);
+    ss.dispose();
+  });
+});

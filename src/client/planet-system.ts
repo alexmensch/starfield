@@ -12,6 +12,7 @@
 // rather than checking "is this star Sol?" directly.
 
 import type { Catalog } from './catalog-loader';
+import { getPlanetPositions, PLANET_ORDER } from './ephemeris';
 
 export type PlanetType = 'rocky' | 'gas_giant' | 'ice_giant';
 
@@ -44,6 +45,32 @@ export interface PlanetSystem {
   // catalog instance is alive.
   readonly hostStarIdx: number;
   readonly planets: readonly Planet[];
+  /** Optional time-evolved position resolver. When present, the
+   *  renderer (`star-system.ts`) calls it each frame to refresh body
+   *  positions; when absent, the renderer falls back to the static
+   *  placeholder eccentric-anomaly layout from `placeholderEccentricAnomaly`.
+   *
+   *  Writes 3 floats per planet (xyz triples in the host's local
+   *  orbital-plane frame: x/y in-plane, z perpendicular) into `out`,
+   *  in `planets` array order. Units: parsecs. The renderer applies
+   *  the per-host orbital-plane orientation quaternion downstream to
+   *  rotate into ICRS — Sol's ecliptic frame becomes ICRS via the
+   *  same quaternion that orients its orbit rings (3re.8). */
+  positionsAt?: (t: number, out: Float32Array) => void;
+}
+
+/** Sol's positionsAt — JPL Standish ecliptic positions in parsecs,
+ *  written in the SOL_PLANETS / PLANET_ORDER ordering (Mercury through
+ *  Neptune). Pure dispatch into ephemeris.getPlanetPositions, which
+ *  caches per-`t`-bucket internally. */
+function solPositionsAt(t: number, out: Float32Array): void {
+  const positions = getPlanetPositions(t);
+  for (let i = 0; i < PLANET_ORDER.length; i++) {
+    const p = positions[PLANET_ORDER[i]];
+    out[i * 3 + 0] = p.x;
+    out[i * 3 + 1] = p.y;
+    out[i * 3 + 2] = p.z;
+  }
 }
 
 // Sol's eight planets. Radii from NASA planetary fact sheets (equatorial).
@@ -139,5 +166,9 @@ export async function getPlanetSystem(
   starIdx: number | null,
 ): Promise<PlanetSystem | null> {
   if (!hasPlanets(catalog, starIdx)) return null;
-  return { hostStarIdx: starIdx as number, planets: SOL_PLANETS };
+  return {
+    hostStarIdx: starIdx as number,
+    planets: SOL_PLANETS,
+    positionsAt: solPositionsAt,
+  };
 }
