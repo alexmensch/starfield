@@ -22,6 +22,7 @@ import { bindKeyboardShortcuts } from './keyboard-shortcuts';
 import { applyFromUrl, startUrlSync, type IdMaps } from './url-state';
 import { fmtDist } from './distance-util';
 import { setupDebug } from './debug';
+import { bindVisibleStarCount, type VisibleCountStats } from './visible-count';
 import { escapeHtml } from './dom-util';
 
 const HOVER_DELAY_MS = 280;
@@ -145,23 +146,22 @@ async function main() {
     // moved into the scale-bar widget's z-axis indicator, where it sits
     // alongside the camera-to-focus distance.
     const countLabel = `${catalog.count.toLocaleString()} stars`;
-    meta.innerHTML =
-      `<div class="meta-count">${escapeHtml(countLabel)}</div>` +
-      `<div class="meta-visible"></div>`;
-    const metaVisible = meta.querySelector<HTMLDivElement>('.meta-visible')!;
-    // Throttle to ~10 Hz: the count scan iterates the full catalog and
-    // the value is stable enough that per-frame is wasted work.
-    let lastVisibleTickMs = 0;
-    let lastVisible = -1;
-    stellata.onFrame(() => {
-      const now = performance.now();
-      if (now - lastVisibleTickMs < 100) return;
-      lastVisibleTickMs = now;
-      const n = stellata.countVisibleStars();
-      if (n === lastVisible) return;
-      lastVisible = n;
-      metaVisible.textContent = `${n.toLocaleString()} visible`;
-    });
+    meta.innerHTML = `<div class="meta-count">${escapeHtml(countLabel)}</div>`;
+    const visibleStats = bindVisibleStarCount(stellata, meta);
+    // window.debug.visibleCount() — print scan timings and dirty-gate
+    // skip ratio. Useful for confirming the gate is doing its job
+    // (skipped >> scans when idle).
+    (window as unknown as { debug: { visibleCount: () => VisibleCountStats } }).debug.visibleCount = () => {
+      console.table({
+        count: visibleStats.count,
+        lastMs: visibleStats.lastMs.toFixed(2),
+        avgMs: visibleStats.avgMs().toFixed(2),
+        scans: visibleStats.scans,
+        skipped: visibleStats.skipped,
+        totalMs: visibleStats.totalMs.toFixed(1),
+      });
+      return visibleStats;
+    };
 
     bindHoverTooltip(canvas, tooltip, stellata, describeStarDetailed, describeCloud);
 
