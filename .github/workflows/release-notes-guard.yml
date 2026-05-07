@@ -1,0 +1,46 @@
+name: release-notes-guard
+
+on:
+  pull_request:
+    branches: [main]
+    # `edited` so the check re-runs when the body is updated;
+    # `labeled` / `unlabeled` so the job-level skip re-evaluates
+    # when `skip-version-bump` is attached after PR open.
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+# Asserts the PR body contains a non-empty `## Release notes` section.
+# `deploy.yml` extracts that section and uses it as the GitHub release
+# notes for the version this PR ships, so an empty section means an
+# empty release page. Pure metadata PRs (`skip-version-bump` label)
+# don't ship a release and are exempt.
+
+jobs:
+  release-notes-guard:
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-version-bump') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check `## Release notes` section is present and non-empty
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PR_BODY:-}" ]; then
+            echo "::error::PR body is empty. Use the PR template — the '## Release notes' section is required."
+            exit 1
+          fi
+          section=$(printf '%s\n' "$PR_BODY" | awk '
+            /^## Release notes[[:space:]]*$/ { capture=1; next }
+            /^## / && capture { exit }
+            capture { print }
+          ')
+          # Strip HTML comments so leftover template scaffolding doesn't
+          # count as content.
+          stripped=$(printf '%s' "$section" | perl -0777 -pe 's/<!--.*?-->//gs')
+          if ! printf '%s' "$stripped" | grep -qE '[^[:space:]]'; then
+            echo "::error::PR body must include a non-empty '## Release notes' section (HTML comments don't count). Add bullets describing user-visible changes — they will appear on the GitHub release page for this version. Or attach the 'skip-version-bump' label for metadata-only PRs."
+            exit 1
+          fi
+          echo "Release notes section present and non-empty."
