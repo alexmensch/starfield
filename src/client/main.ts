@@ -11,6 +11,7 @@ import { createFocusRingOverlay } from './focus-ring-overlay';
 import { createPoiOverlay } from './poi-overlay';
 import { createPlanetLabels } from './planet-labels';
 import { createScaleBar } from './scale-bar';
+import { createTimeReadout } from './time-readout';
 import { bindUnitToggle } from './unit-toggle';
 import { registerThemeStellata } from './theme-toggle';
 import { bindChartMode } from './chart-mode';
@@ -134,6 +135,10 @@ async function main() {
     createPoiOverlay(stellata, starLabels);
     createPlanetLabels(stellata);
     createScaleBar(stellata, starLabels);
+    createTimeReadout({
+      el: document.getElementById('time-readout')!,
+      stellata,
+    });
     bindWarpButton(stellata);
     bindModeToggle(stellata);
 

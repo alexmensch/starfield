@@ -278,6 +278,16 @@ html, body {
 }
 .meta-count { color: var(--fg-dim); }
 
+/* Solar-system layer time readout (3re.11) — sits next to the scale-bar
+ * on the left of `.ui-bottom`. Same dim chrome tone as `.meta`; tabular
+ * digits keep the per-second tick from jittering the layout. */
+.time-readout {
+  color: var(--fg-dim);
+  font-size: 11px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+
 .panel {
   overflow: hidden;
   background: rgba(7, 9, 18, 0.85);
