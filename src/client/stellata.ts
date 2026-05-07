@@ -2488,10 +2488,9 @@ export class Stellata {
     const cursorY = clientY - rect.top;
 
     const camPos = this.camera.position;
-    // Absolute positions drive the distance-from-Sol filter; local-frame
-    // positions drive camera-relative math and screen projection (since the
-    // camera lives in local frame under the floating origin).
-    const absPos = this.catalog.positions;
+    // Local-frame positions drive camera-relative math and screen projection
+    // (the camera lives in local frame under the floating origin). distSol
+    // values are precomputed in sortedDistFromSol — no per-star sqrt needed.
     const locPos = this._localPositions;
     const { absmag, spectClass, amplitudeMag, periodDays } = this.catalog;
     const f = this.filter;
@@ -2505,6 +2504,28 @@ export class Stellata {
     // realistically land within.
     const MIN_DISC_HIT_RADIUS_PX = 4;
 
+    // Window the scan to the slice of sortedDistFromSol that lies inside
+    // the user's [minDistSol, maxDistSol] band. Mirrors the binary-search
+    // pattern used by the camera-vicinity gate (see hasStarWithin). Skips
+    // out-of-band stars without computing per-star sqrt(x²+y²+z²); also
+    // collapses the catalog to the visible distance window when the user
+    // has narrowed the slider.
+    const sortedDist = this.sortedDistFromSol;
+    const sortedIdx = this.sortedByDistFromSol;
+    const n = sortedDist.length;
+    let lo = 0, hi = n;
+    while (lo < hi) {
+      const m = (lo + hi) >>> 1;
+      if (sortedDist[m] < f.minDistSol) lo = m + 1; else hi = m;
+    }
+    const start = lo;
+    lo = start; hi = n;
+    while (lo < hi) {
+      const m = (lo + hi) >>> 1;
+      if (sortedDist[m] <= f.maxDistSol) lo = m + 1; else hi = m;
+    }
+    const end = lo;
+
     // Two-tier picking:
     //   1. Cursor inside a star's rendered disc → prime candidate. Among
     //      prime hits, closest-to-camera wins (foreground occludes).
@@ -2515,12 +2536,8 @@ export class Stellata {
     let fbIdx = -1;
     let fbBestScore = Infinity;
 
-    for (let i = 0; i < this.catalog.count; i++) {
-      const ax = absPos[i * 3 + 0];
-      const ay = absPos[i * 3 + 1];
-      const az = absPos[i * 3 + 2];
-      const distSol = Math.sqrt(ax * ax + ay * ay + az * az);
-      if (distSol < f.minDistSol || distSol > f.maxDistSol) continue;
+    for (let k = start; k < end; k++) {
+      const i = sortedIdx[k];
       const bit = 1 << (spectClass[i] | 0);
       if (!(f.spectMask & bit)) continue;
       const x = locPos[i * 3 + 0];
