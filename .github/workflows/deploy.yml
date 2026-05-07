@@ -19,8 +19,10 @@ concurrency:
 # and therefore don't redeploy.
 #
 # A successful deploy also tags v<version> and publishes a GitHub
-# release with auto-generated notes, replacing the manual sequence in
-# RELEASING.md.
+# release. Release notes come from the merging PR's body (the `##
+# Release notes` section, enforced by release-notes-guard.yml on PRs);
+# falls back to GitHub's auto-generated notes if the section can't be
+# found (e.g. non-squash merges, or pre-guard historical state).
 
 jobs:
   detect-version-change:
@@ -98,4 +100,38 @@ jobs:
           git config user.email 'github-actions[bot]@users.noreply.github.com'
           git tag -a "${tag}" -m "${tag}"
           git push origin "${tag}"
-          gh release create "${tag}" --title "${tag}" --generate-notes
+
+          # Extract release notes from the merging PR's body. Squash
+          # merges put '(#NN)' at the end of the commit subject; pull
+          # the last such number out and fetch its body via gh.
+          notes_file=""
+          subject=$(git log -1 --pretty=%s HEAD)
+          pr=$(printf '%s' "$subject" | grep -oE '#[0-9]+' | tail -1 | tr -d '#' || true)
+          if [ -n "${pr:-}" ]; then
+            body=$(gh pr view "$pr" --json body --jq .body 2>/dev/null || true)
+            if [ -n "${body:-}" ]; then
+              section=$(printf '%s\n' "$body" | awk '
+                /^## Release notes[[:space:]]*$/ { capture=1; next }
+                /^## / && capture { exit }
+                capture { print }
+              ')
+              stripped=$(printf '%s' "$section" | perl -0777 -pe 's/<!--.*?-->//gs')
+              if printf '%s' "$stripped" | grep -qE '[^[:space:]]'; then
+                notes_file=$(mktemp)
+                printf '%s' "$stripped" > "$notes_file"
+                echo "Using release notes from PR #${pr}."
+              else
+                echo "PR #${pr} body has no usable '## Release notes' section — falling back to --generate-notes."
+              fi
+            else
+              echo "Could not fetch body for PR #${pr} — falling back to --generate-notes."
+            fi
+          else
+            echo "No PR number in commit subject — falling back to --generate-notes."
+          fi
+
+          if [ -n "$notes_file" ]; then
+            gh release create "${tag}" --title "${tag}" --notes-file "$notes_file"
+          else
+            gh release create "${tag}" --title "${tag}" --generate-notes
+          fi
