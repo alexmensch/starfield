@@ -276,11 +276,9 @@ function getFocusContext(
   }
   const cloudIdx = stellata.getFocusedCloud();
   if (cloudIdx !== null) {
-    const p = stellata.cloudLocalPosition(cloudIdx);
-    if (!p) return null;
+    if (!stellata.cloudLocalPositionInto(cloudIdx, tmpFocusPos)) return null;
     const cat = stellata.getCloudCatalog();
     if (!cat) return null;
-    tmpFocusPos.copy(p);
     return { name: cat.clouds[cloudIdx].name, pos: tmpFocusPos };
   }
   return null;

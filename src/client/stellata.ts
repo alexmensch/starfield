@@ -961,11 +961,12 @@ export class Stellata {
   } | null {
     const w = this.warpState;
     if (!w) return null;
-    const B = w.destKind === 'star'
-      ? this.starLocalPosition(w.destIdx)
-      : this.cloudLocalPosition(w.destIdx);
-    if (!B) return null;
-    return { A: w.A, B, destKind: w.destKind, destIdx: w.destIdx };
+    const out = this._tmpWarpInfoB;
+    const ok = w.destKind === 'star'
+      ? (this.starLocalPositionInto(w.destIdx, out), true)
+      : this.cloudLocalPositionInto(w.destIdx, out);
+    if (!ok) return null;
+    return { A: w.A, B: out, destKind: w.destKind, destIdx: w.destIdx };
   }
 
   getCameraMode(): CameraMode { return this.cameraMode; }
@@ -2268,10 +2269,20 @@ export class Stellata {
   /** Local-frame position of a cloud's centroid. Returns null if the
    *  cloud layer hasn't been attached yet. */
   cloudLocalPosition(cloudIdx: number): THREE.Vector3 | null {
-    if (!this.clouds) return null;
+    const out = new THREE.Vector3();
+    return this.cloudLocalPositionInto(cloudIdx, out) ? out : null;
+  }
+
+  /** Non-allocating sibling of `cloudLocalPosition`: writes the cloud's
+   *  local-frame centroid into `out` when the cloud exists, returns
+   *  `true`. Returns `false` (and leaves `out` untouched) when no cloud
+   *  layer is attached or the index is out of range. */
+  cloudLocalPositionInto(cloudIdx: number, out: THREE.Vector3): boolean {
+    if (!this.clouds) return false;
     const c = this.clouds.clouds[cloudIdx];
-    if (!c) return null;
-    return c.centerAbs.clone().sub(this.worldOffset);
+    if (!c) return false;
+    out.copy(c.centerAbs).sub(this.worldOffset);
+    return true;
   }
 
   // Swing the camera to face the selected constellation while keeping the
@@ -2476,8 +2487,16 @@ export class Stellata {
   // use `catalog.positions[i*3..]` directly if you need absolute space
   // (e.g. distance-from-Sol labels).
   starLocalPosition(i: number): THREE.Vector3 {
+    return this.starLocalPositionInto(i, new THREE.Vector3());
+  }
+
+  /** Non-allocating sibling of `starLocalPosition`: writes the local-frame
+   *  position of star `i` into `out` and returns `out`. Use from per-frame
+   *  callers (animate, updateWarp, overlay updates); the allocating shim
+   *  above stays for cold paths and external API. */
+  starLocalPositionInto(i: number, out: THREE.Vector3): THREE.Vector3 {
     const p = this._localPositions;
-    return new THREE.Vector3(p[i * 3 + 0], p[i * 3 + 1], p[i * 3 + 2]);
+    return out.set(p[i * 3 + 0], p[i * 3 + 1], p[i * 3 + 2]);
   }
 
   pickStar(clientX: number, clientY: number, pixelThreshold = 16): number {
@@ -2707,8 +2726,8 @@ export class Stellata {
     if (!this.clouds) return 0;
     const cloud = this.clouds.clouds[cloudIdx];
     if (!cloud) return 0;
-    const local = this.cloudLocalPosition(cloudIdx);
-    if (!local) return 0;
+    const local = this._tmpLocalA;
+    if (!this.cloudLocalPositionInto(cloudIdx, local)) return 0;
     const camPos = this.camera.position;
     const dx = local.x - camPos.x;
     const dy = local.y - camPos.y;
@@ -2726,6 +2745,14 @@ export class Stellata {
     return renderedCloudSizePx(cloud, dCam, this.angularToPx(), this.tmpCloudDir);
   }
   private tmpCloudDir = new THREE.Vector3();
+  // Scratch slots for the non-allocating *LocalPositionInto helpers.
+  // _tmpLocalA is the general-purpose internal scratch (animate's
+  // focusedLocal pass-through, updateWarp's per-frame destination reads,
+  // renderedCloudSizePx). _tmpWarpInfoB is dedicated to the value
+  // returned from getWarpInfo so its single caller can use B without
+  // worrying about other internal Stellata calls clobbering it.
+  private _tmpLocalA = new THREE.Vector3();
+  private _tmpWarpInfoB = new THREE.Vector3();
 
   // Navigate-mode opacity for the focused-star reference arrows (Sol, GC,
   // distance-vector). Returns 1 outside navigate or when no star is focused.
@@ -3290,7 +3317,9 @@ export class Stellata {
     }
 
     const focusedLocal =
-      this.focusedStar !== null ? this.starLocalPosition(this.focusedStar) : null;
+      this.focusedStar !== null
+        ? this.starLocalPositionInto(this.focusedStar, this._tmpLocalA)
+        : null;
     const isSolFocus =
       this.focusedStar !== null && this.focusedStar === this.catalog.solIndex;
     // Compute the navigate-mode arrow fade alpha before the HUD render so
@@ -3356,10 +3385,11 @@ export class Stellata {
       const t = flyElapsed / state.durationMs;
       const f = t < 0.5 ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t);
       this.camera.position.lerpVectors(state.pStart, state.pEnd, f);
-      const B = state.destKind === 'star'
-        ? this.starLocalPosition(state.destIdx)
-        : this.cloudLocalPosition(state.destIdx);
-      if (B) this.camera.lookAt(B);
+      const out = this._tmpLocalA;
+      const ok = state.destKind === 'star'
+        ? (this.starLocalPositionInto(state.destIdx, out), true)
+        : this.cloudLocalPositionInto(state.destIdx, out);
+      if (ok) this.camera.lookAt(out);
       return;
     }
 
@@ -3374,9 +3404,11 @@ export class Stellata {
     // distant Milky Way stays roughly fixed.
     const postElapsed = flyElapsed - state.durationMs;
     if (postElapsed < state.postArrivalMs) {
-      const B = state.destKind === 'star'
-        ? this.starLocalPosition(state.destIdx)
-        : this.cloudLocalPosition(state.destIdx);
+      const out = this._tmpLocalA;
+      const ok = state.destKind === 'star'
+        ? (this.starLocalPositionInto(state.destIdx, out), true)
+        : this.cloudLocalPositionInto(state.destIdx, out);
+      const B = ok ? out : null;
       if (!state.flyEndQuaternion) {
         // Pin the camera to the canonical fly-end pose before snapshot
         // so the slerp doesn't inherit a half-stepped frame.

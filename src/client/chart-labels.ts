@@ -124,6 +124,10 @@ let eligibleDirty = true;
 // Precomputed once at chart entry; the GPU mirrors this via iDistSol.
 let distSolCache: Float32Array | null = null;
 let activeCtx: ChartModeContext | null = null;
+// Scratch slot for cloud-centroid local positions per chart-label tick.
+// Avoids a Vector3 allocation per cloud per frame in the chart-mode
+// labels pass (60+ allocs/sec at typical Zucker counts).
+const tmpCloudLocal = new THREE.Vector3();
 const pool = new Map<string, PooledText>();
 const ringPool = new Map<number, PooledCircle>();
 const wingPool = new Map<number, PooledLine>();
@@ -489,9 +493,8 @@ function tick(
   const clouds = stellata.getCloudCatalog();
   if (clouds && f.showMolecularClouds) {
     for (let i = 0; i < clouds.clouds.length; i++) {
-      const local = stellata.cloudLocalPosition(i);
-      if (!local) continue;
-      const xy = projectVec(local, camera, w, h);
+      if (!stellata.cloudLocalPositionInto(i, tmpCloudLocal)) continue;
+      const xy = projectVec(tmpCloudLocal, camera, w, h);
       if (!xy) continue;
       candidates.push({
         kind: 'cloud',
