@@ -254,23 +254,26 @@ void main() {
         radiusFactor = pow(10.0, -magMod / 5.0);
     }
 
-    // Interstellar-dust extinction. Local-frame positions → absolute for
-    // texture sampling (the dust grid is anchored to Sol, not the floating
-    // local origin). We compute A_V along the camera→star sightline, add
-    // it to appMag so the brightness filter behaves correctly (a 3 mag
-    // extincted star only passes if its pre-extinction appMag ≤ limit−3),
-    // and redden the colour by E(B-V) = A_V / R_V.
-    float absorbAV = dustExtinctionAV(worldPos + uWorldOffset, uCameraPos + uWorldOffset);
-    appMag += absorbAV;
-    float effectiveCi = iCi + absorbAV / R_V;
-
+    // Visibility prefilter — dust-independent. Spectral mask and distance
+    // band are absolute filters (not affected by extinction). The magnitude
+    // band is monotonic in dust: A_V ≥ 0, so a star whose unextincted
+    // appMag already sits above (uMaxAppMag + 0.5) cannot become visible
+    // after extinction. Skip the 48-tap dust raymarch for those stars —
+    // for the bulk of the catalog at typical magnitude limits this is the
+    // dominant per-frame vertex-shader saving (313k stars).
+    //
+    // DUST_AV_HEADROOM is the worst-case A_V we keep in the raymarch
+    // population on top of the +0.5 soft-taper window. 1.5 mag covers
+    // typical molecular cloud sightlines (the closer Zucker clouds peak
+    // at A_V ~ 1–2 mag through their cores; sparser ISM is well under
+    // 1 mag). A star whose unextincted appMag falls inside
+    // [uMaxAppMag + 0.5, uMaxAppMag + 0.5 + DUST_AV_HEADROOM] still
+    // gets the raymarch so the post-extinction magnitude can land in or
+    // out of the soft taper without popping as the slider moves.
+    const float DUST_AV_HEADROOM = 1.5;
     bool spectOk = (uSpectMask & (1u << uint(iSpectClass))) != 0u;
     bool distOk = iDistSol >= uMinDistSol && iDistSol <= uMaxDistSol;
-    // Soft taper: stars within +0.5 mag of the limit still pass through and
-    // render in the glow pass at fading intensity (frag shader handles the
-    // smoothstep), so the limit doesn't pop in/out as the slider moves.
-    bool magOk = appMag <= uMaxAppMag + 0.5;
-    bool visible = spectOk && distOk && magOk;
+    bool magOkPrelim = appMag <= uMaxAppMag + 0.5 + DUST_AV_HEADROOM;
 
     // Luminosity-class softness: linear from white dwarf (0) → hypergiant
     // (9). Unknown (iLumClass = 255) falls back to main-sequence-dwarf
@@ -279,7 +282,31 @@ void main() {
     float lumClass = iLumClass < 100.0 ? iLumClass : 2.0;
     float softness = clamp(lumClass / 9.0, 0.0, 1.0);
 
-    if (!visible) {
+    if (!(spectOk && distOk && magOkPrelim)) {
+        gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+        vAppMag = appMag;
+        vColor = vec3(0.0);
+        vUv = aCorner;
+        vPhysRatio = 0.0;
+        vSoftness = softness;
+        vAaWidth = 0.0;
+        return;
+    }
+
+    // Survivors only: integrate dust extinction along the camera→star
+    // sightline. Local-frame positions → absolute for texture sampling
+    // (the dust grid is anchored to Sol, not the floating local origin).
+    // A_V is added to appMag so the brightness filter sees the dimmed
+    // value, and the colour is reddened by E(B-V) = A_V / R_V.
+    float absorbAV = dustExtinctionAV(worldPos + uWorldOffset, uCameraPos + uWorldOffset);
+    appMag += absorbAV;
+    float effectiveCi = iCi + absorbAV / R_V;
+
+    // Final magnitude check with the extincted value. Soft taper: stars
+    // within +0.5 mag of the limit still pass through and render in the
+    // glow pass at fading intensity (frag shader handles the smoothstep),
+    // so the limit doesn't pop in/out as the slider moves.
+    if (appMag > uMaxAppMag + 0.5) {
         gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
         vAppMag = appMag;
         vColor = vec3(0.0);
