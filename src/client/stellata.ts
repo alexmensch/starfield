@@ -374,6 +374,30 @@ function sameTarget(a: Target | null, b: Target | null): boolean {
   return a.kind === b.kind && a.idx === b.idx;
 }
 
+// `[start, end)` half-open slice of `sortedDist` covering values in
+// `[minDist, maxDist]`. Lower-bound + upper-bound binary searches.
+// Shared between pickStar and hasStarWithin so the windowed-scan
+// pattern lives in one place.
+function sortedDistRange(
+  sortedDist: Float32Array,
+  minDist: number,
+  maxDist: number,
+): { start: number; end: number } {
+  const n = sortedDist.length;
+  let lo = 0, hi = n;
+  while (lo < hi) {
+    const m = (lo + hi) >>> 1;
+    if (sortedDist[m] < minDist) lo = m + 1; else hi = m;
+  }
+  const start = lo;
+  hi = n;
+  while (lo < hi) {
+    const m = (lo + hi) >>> 1;
+    if (sortedDist[m] <= maxDist) lo = m + 1; else hi = m;
+  }
+  return { start, end: lo };
+}
+
 // Disc-pass blending state. Applied at material construction and re-applied
 // on chart-mode -> colour-mode swap-back, since chart mode swaps the disc
 // material to MultiplyBlending. Single source of truth for the four
@@ -951,8 +975,11 @@ export class Stellata {
   // Warp endpoints + destination identity for read-only consumers (e.g.
   // the scale-bar focus indicator) that need to react to the in-flight
   // warp without subscribing to per-frame state. Returns null when no
-  // warp is active. A and B are returned as references to the
-  // warpState's stored vectors — callers must not mutate them.
+  // warp is active. A is the warpState's stored A vector; B is a shared
+  // scratch slot owned by Stellata. Callers must NOT mutate either, and
+  // must not retain B across frames — its value is only valid until the
+  // next getWarpInfo call (or until any other code path inside Stellata
+  // resolves a destination position).
   getWarpInfo(): {
     A: Readonly<THREE.Vector3>;
     B: Readonly<THREE.Vector3>;
@@ -962,10 +989,7 @@ export class Stellata {
     const w = this.warpState;
     if (!w) return null;
     const out = this._tmpWarpInfoB;
-    const ok = w.destKind === 'star'
-      ? (this.starLocalPositionInto(w.destIdx, out), true)
-      : this.cloudLocalPositionInto(w.destIdx, out);
-    if (!ok) return null;
+    if (!this.destLocalPositionInto(w.destKind, w.destIdx, out)) return null;
     return { A: w.A, B: out, destKind: w.destKind, destIdx: w.destIdx };
   }
 
@@ -2285,6 +2309,22 @@ export class Stellata {
     return true;
   }
 
+  // Unified destination resolver — writes the local-frame position of a
+  // warp destination (star or cloud) into `out`. Returns false only on
+  // a cloud index miss; star indices are always in range here because
+  // the warp state's destIdx came from a valid focus / search hit.
+  private destLocalPositionInto(
+    destKind: 'star' | 'cloud',
+    destIdx: number,
+    out: THREE.Vector3,
+  ): boolean {
+    if (destKind === 'star') {
+      this.starLocalPositionInto(destIdx, out);
+      return true;
+    }
+    return this.cloudLocalPositionInto(destIdx, out);
+  }
+
   // Swing the camera to face the selected constellation while keeping the
   // orbit target and orbit radius unchanged — only the camera's position on
   // the orbit sphere moves. The aim point is the brightness-weighted
@@ -2524,26 +2564,12 @@ export class Stellata {
     const MIN_DISC_HIT_RADIUS_PX = 4;
 
     // Window the scan to the slice of sortedDistFromSol that lies inside
-    // the user's [minDistSol, maxDistSol] band. Mirrors the binary-search
-    // pattern used by the camera-vicinity gate (see hasStarWithin). Skips
-    // out-of-band stars without computing per-star sqrt(x²+y²+z²); also
-    // collapses the catalog to the visible distance window when the user
-    // has narrowed the slider.
-    const sortedDist = this.sortedDistFromSol;
+    // the user's [minDistSol, maxDistSol] band. Skips out-of-band stars
+    // without computing per-star sqrt(x²+y²+z²); also collapses the
+    // catalog to the visible distance window when the user has narrowed
+    // the slider.
     const sortedIdx = this.sortedByDistFromSol;
-    const n = sortedDist.length;
-    let lo = 0, hi = n;
-    while (lo < hi) {
-      const m = (lo + hi) >>> 1;
-      if (sortedDist[m] < f.minDistSol) lo = m + 1; else hi = m;
-    }
-    const start = lo;
-    lo = start; hi = n;
-    while (lo < hi) {
-      const m = (lo + hi) >>> 1;
-      if (sortedDist[m] <= f.maxDistSol) lo = m + 1; else hi = m;
-    }
-    const end = lo;
+    const { start, end } = sortedDistRange(this.sortedDistFromSol, f.minDistSol, f.maxDistSol);
 
     // Two-tier picking:
     //   1. Cursor inside a star's rendered disc → prime candidate. Among
@@ -3183,23 +3209,8 @@ export class Stellata {
     const lo = camDistFromSol - dThresh;
     const hi = camDistFromSol + dThresh;
 
-    const sortedDist = this.sortedDistFromSol;
     const sortedIdx = this.sortedByDistFromSol;
-    const n = sortedDist.length;
-    // Lower bound: first index with sortedDist[i] >= lo.
-    let l = 0, r = n;
-    while (l < r) {
-      const m = (l + r) >>> 1;
-      if (sortedDist[m] < lo) l = m + 1; else r = m;
-    }
-    const start = l;
-    // Upper bound: first index with sortedDist[i] > hi.
-    l = start; r = n;
-    while (l < r) {
-      const m = (l + r) >>> 1;
-      if (sortedDist[m] <= hi) l = m + 1; else r = m;
-    }
-    const end = l;
+    const { start, end } = sortedDistRange(this.sortedDistFromSol, lo, hi);
 
     const positions = this._localPositions;
     const cx = this.camera.position.x;
@@ -3386,10 +3397,9 @@ export class Stellata {
       const f = t < 0.5 ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t);
       this.camera.position.lerpVectors(state.pStart, state.pEnd, f);
       const out = this._tmpLocalA;
-      const ok = state.destKind === 'star'
-        ? (this.starLocalPositionInto(state.destIdx, out), true)
-        : this.cloudLocalPositionInto(state.destIdx, out);
-      if (ok) this.camera.lookAt(out);
+      if (this.destLocalPositionInto(state.destKind, state.destIdx, out)) {
+        this.camera.lookAt(out);
+      }
       return;
     }
 
@@ -3405,10 +3415,7 @@ export class Stellata {
     const postElapsed = flyElapsed - state.durationMs;
     if (postElapsed < state.postArrivalMs) {
       const out = this._tmpLocalA;
-      const ok = state.destKind === 'star'
-        ? (this.starLocalPositionInto(state.destIdx, out), true)
-        : this.cloudLocalPositionInto(state.destIdx, out);
-      const B = ok ? out : null;
+      const B = this.destLocalPositionInto(state.destKind, state.destIdx, out) ? out : null;
       if (!state.flyEndQuaternion) {
         // Pin the camera to the canonical fly-end pose before snapshot
         // so the slerp doesn't inherit a half-stepped frame.
