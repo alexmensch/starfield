@@ -73,18 +73,14 @@ export function createDistanceVectorOverlay(
     if (fromStar !== null) {
       tmpA.set(positions[fromStar * 3], positions[fromStar * 3 + 1], positions[fromStar * 3 + 2]);
     } else if (fromCloud !== null) {
-      const p = stellata.cloudLocalPosition(fromCloud);
-      if (!p) { hide(); return; }
-      tmpA.copy(p);
+      if (!stellata.cloudLocalPositionInto(fromCloud, tmpA)) { hide(); return; }
     }
     let destLabel = '';
     if (toStar !== null) {
       tmpB.set(positions[toStar * 3], positions[toStar * 3 + 1], positions[toStar * 3 + 2]);
       destLabel = starLabels.get(toStar) ?? `Unnamed #${toStar}`;
     } else if (toCloud !== null) {
-      const p = stellata.cloudLocalPosition(toCloud);
-      if (!p) { hide(); return; }
-      tmpB.copy(p);
+      if (!stellata.cloudLocalPositionInto(toCloud, tmpB)) { hide(); return; }
       const cat = stellata.getCloudCatalog();
       destLabel = cat ? cat.clouds[toCloud].name : 'Cloud';
     }

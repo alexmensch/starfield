@@ -374,6 +374,30 @@ function sameTarget(a: Target | null, b: Target | null): boolean {
   return a.kind === b.kind && a.idx === b.idx;
 }
 
+// `[start, end)` half-open slice of `sortedDist` covering values in
+// `[minDist, maxDist]`. Lower-bound + upper-bound binary searches.
+// Shared between pickStar and hasStarWithin so the windowed-scan
+// pattern lives in one place.
+function sortedDistRange(
+  sortedDist: Float32Array,
+  minDist: number,
+  maxDist: number,
+): { start: number; end: number } {
+  const n = sortedDist.length;
+  let lo = 0, hi = n;
+  while (lo < hi) {
+    const m = (lo + hi) >>> 1;
+    if (sortedDist[m] < minDist) lo = m + 1; else hi = m;
+  }
+  const start = lo;
+  hi = n;
+  while (lo < hi) {
+    const m = (lo + hi) >>> 1;
+    if (sortedDist[m] <= maxDist) lo = m + 1; else hi = m;
+  }
+  return { start, end: lo };
+}
+
 // Disc-pass blending state. Applied at material construction and re-applied
 // on chart-mode -> colour-mode swap-back, since chart mode swaps the disc
 // material to MultiplyBlending. Single source of truth for the four
@@ -951,8 +975,11 @@ export class Stellata {
   // Warp endpoints + destination identity for read-only consumers (e.g.
   // the scale-bar focus indicator) that need to react to the in-flight
   // warp without subscribing to per-frame state. Returns null when no
-  // warp is active. A and B are returned as references to the
-  // warpState's stored vectors — callers must not mutate them.
+  // warp is active. A is the warpState's stored A vector; B is a shared
+  // scratch slot owned by Stellata. Callers must NOT mutate either, and
+  // must not retain B across frames — its value is only valid until the
+  // next getWarpInfo call (or until any other code path inside Stellata
+  // resolves a destination position).
   getWarpInfo(): {
     A: Readonly<THREE.Vector3>;
     B: Readonly<THREE.Vector3>;
@@ -961,11 +988,9 @@ export class Stellata {
   } | null {
     const w = this.warpState;
     if (!w) return null;
-    const B = w.destKind === 'star'
-      ? this.starLocalPosition(w.destIdx)
-      : this.cloudLocalPosition(w.destIdx);
-    if (!B) return null;
-    return { A: w.A, B, destKind: w.destKind, destIdx: w.destIdx };
+    const out = this._tmpWarpInfoB;
+    if (!this.destLocalPositionInto(w.destKind, w.destIdx, out)) return null;
+    return { A: w.A, B: out, destKind: w.destKind, destIdx: w.destIdx };
   }
 
   getCameraMode(): CameraMode { return this.cameraMode; }
@@ -2068,7 +2093,20 @@ export class Stellata {
     this.aimState = null;
     const AB = new THREE.Vector3().subVectors(B, A);
     const distPc = AB.length();
-    if (distPc < 1e-6) return;
+    if (distPc < 1e-6) {
+      // Source and destination share a world position — e.g. AT-HYG
+      // stores α Cen A (HIP 71683) and B (HIP 71681) at identical
+      // x0/y0/z0 because the ~17.6 AU separation is below catalog
+      // precision. The camera has nowhere to fly, but switching focus
+      // still gives the user feedback (search row, focus ring, scale
+      // bar, distance vector all retarget). setFocus(destIdx) bails
+      // observe → navigate when called from observe; that's the right
+      // outcome here since the destination anchor is the same point
+      // and there's no warp completion to come back through.
+      if (destKind === 'star') this.setFocus(destIdx);
+      else this.setFocusedCloud(destIdx);
+      return;
+    }
     const forward = AB.clone().divideScalar(distPc);
 
     // Reorient-end direction (from A): opposite to the travel direction, so
@@ -2255,10 +2293,36 @@ export class Stellata {
   /** Local-frame position of a cloud's centroid. Returns null if the
    *  cloud layer hasn't been attached yet. */
   cloudLocalPosition(cloudIdx: number): THREE.Vector3 | null {
-    if (!this.clouds) return null;
+    const out = new THREE.Vector3();
+    return this.cloudLocalPositionInto(cloudIdx, out) ? out : null;
+  }
+
+  /** Non-allocating sibling of `cloudLocalPosition`: writes the cloud's
+   *  local-frame centroid into `out` when the cloud exists, returns
+   *  `true`. Returns `false` (and leaves `out` untouched) when no cloud
+   *  layer is attached or the index is out of range. */
+  cloudLocalPositionInto(cloudIdx: number, out: THREE.Vector3): boolean {
+    if (!this.clouds) return false;
     const c = this.clouds.clouds[cloudIdx];
-    if (!c) return null;
-    return c.centerAbs.clone().sub(this.worldOffset);
+    if (!c) return false;
+    out.copy(c.centerAbs).sub(this.worldOffset);
+    return true;
+  }
+
+  // Unified destination resolver — writes the local-frame position of a
+  // warp destination (star or cloud) into `out`. Returns false only on
+  // a cloud index miss; star indices are always in range here because
+  // the warp state's destIdx came from a valid focus / search hit.
+  private destLocalPositionInto(
+    destKind: 'star' | 'cloud',
+    destIdx: number,
+    out: THREE.Vector3,
+  ): boolean {
+    if (destKind === 'star') {
+      this.starLocalPositionInto(destIdx, out);
+      return true;
+    }
+    return this.cloudLocalPositionInto(destIdx, out);
   }
 
   // Swing the camera to face the selected constellation while keeping the
@@ -2463,8 +2527,16 @@ export class Stellata {
   // use `catalog.positions[i*3..]` directly if you need absolute space
   // (e.g. distance-from-Sol labels).
   starLocalPosition(i: number): THREE.Vector3 {
+    return this.starLocalPositionInto(i, new THREE.Vector3());
+  }
+
+  /** Non-allocating sibling of `starLocalPosition`: writes the local-frame
+   *  position of star `i` into `out` and returns `out`. Use from per-frame
+   *  callers (animate, updateWarp, overlay updates); the allocating shim
+   *  above stays for cold paths and external API. */
+  starLocalPositionInto(i: number, out: THREE.Vector3): THREE.Vector3 {
     const p = this._localPositions;
-    return new THREE.Vector3(p[i * 3 + 0], p[i * 3 + 1], p[i * 3 + 2]);
+    return out.set(p[i * 3 + 0], p[i * 3 + 1], p[i * 3 + 2]);
   }
 
   pickStar(clientX: number, clientY: number, pixelThreshold = 16): number {
@@ -2475,10 +2547,9 @@ export class Stellata {
     const cursorY = clientY - rect.top;
 
     const camPos = this.camera.position;
-    // Absolute positions drive the distance-from-Sol filter; local-frame
-    // positions drive camera-relative math and screen projection (since the
-    // camera lives in local frame under the floating origin).
-    const absPos = this.catalog.positions;
+    // Local-frame positions drive camera-relative math and screen projection
+    // (the camera lives in local frame under the floating origin). distSol
+    // values are precomputed in sortedDistFromSol — no per-star sqrt needed.
     const locPos = this._localPositions;
     const { absmag, spectClass, amplitudeMag, periodDays } = this.catalog;
     const f = this.filter;
@@ -2492,6 +2563,14 @@ export class Stellata {
     // realistically land within.
     const MIN_DISC_HIT_RADIUS_PX = 4;
 
+    // Window the scan to the slice of sortedDistFromSol that lies inside
+    // the user's [minDistSol, maxDistSol] band. Skips out-of-band stars
+    // without computing per-star sqrt(x²+y²+z²); also collapses the
+    // catalog to the visible distance window when the user has narrowed
+    // the slider.
+    const sortedIdx = this.sortedByDistFromSol;
+    const { start, end } = sortedDistRange(this.sortedDistFromSol, f.minDistSol, f.maxDistSol);
+
     // Two-tier picking:
     //   1. Cursor inside a star's rendered disc → prime candidate. Among
     //      prime hits, closest-to-camera wins (foreground occludes).
@@ -2502,12 +2581,8 @@ export class Stellata {
     let fbIdx = -1;
     let fbBestScore = Infinity;
 
-    for (let i = 0; i < this.catalog.count; i++) {
-      const ax = absPos[i * 3 + 0];
-      const ay = absPos[i * 3 + 1];
-      const az = absPos[i * 3 + 2];
-      const distSol = Math.sqrt(ax * ax + ay * ay + az * az);
-      if (distSol < f.minDistSol || distSol > f.maxDistSol) continue;
+    for (let k = start; k < end; k++) {
+      const i = sortedIdx[k];
       const bit = 1 << (spectClass[i] | 0);
       if (!(f.spectMask & bit)) continue;
       const x = locPos[i * 3 + 0];
@@ -2677,8 +2752,8 @@ export class Stellata {
     if (!this.clouds) return 0;
     const cloud = this.clouds.clouds[cloudIdx];
     if (!cloud) return 0;
-    const local = this.cloudLocalPosition(cloudIdx);
-    if (!local) return 0;
+    const local = this._tmpLocalA;
+    if (!this.cloudLocalPositionInto(cloudIdx, local)) return 0;
     const camPos = this.camera.position;
     const dx = local.x - camPos.x;
     const dy = local.y - camPos.y;
@@ -2696,6 +2771,14 @@ export class Stellata {
     return renderedCloudSizePx(cloud, dCam, this.angularToPx(), this.tmpCloudDir);
   }
   private tmpCloudDir = new THREE.Vector3();
+  // Scratch slots for the non-allocating *LocalPositionInto helpers.
+  // _tmpLocalA is the general-purpose internal scratch (animate's
+  // focusedLocal pass-through, updateWarp's per-frame destination reads,
+  // renderedCloudSizePx). _tmpWarpInfoB is dedicated to the value
+  // returned from getWarpInfo so its single caller can use B without
+  // worrying about other internal Stellata calls clobbering it.
+  private _tmpLocalA = new THREE.Vector3();
+  private _tmpWarpInfoB = new THREE.Vector3();
 
   // Navigate-mode opacity for the focused-star reference arrows (Sol, GC,
   // distance-vector). Returns 1 outside navigate or when no star is focused.
@@ -2789,9 +2872,10 @@ export class Stellata {
   // magMod = -0.5·amp, so radiusFactor = 10^(amp/10). 1 for non-variables.
   // Used by the navigate-mode arrow-fade so the alpha gates on the peak
   // disc envelope, not on whatever the variable's current phase is —
-  // otherwise a high-amplitude pulsation would oscillate the alpha. The
-  // orbit-floor / parking-distance calibration (see beads stellata-a7d.2.x)
-  // does not yet feed off this; tracked separately.
+  // otherwise a high-amplitude pulsation would oscillate the alpha.
+  // Also feeds the orbit-floor and parking-distance calibration so the
+  // pulse peak (not the static R) hits ZOOM_FLOOR_FRACTION at closest
+  // approach and TARGET_PARK_FRACTION at warp arrival.
   private peakAmplitudeFactor(idx: number): number {
     const amp = this.catalog.amplitudeMag[idx];
     const period = this.catalog.periodDays[idx];
@@ -2802,12 +2886,16 @@ export class Stellata {
   // camera can orbit down to where the focused star's true angular disc
   // fills ZOOM_FLOOR_FRACTION of the viewport's minor axis — same on-
   // screen coverage for any star, regardless of physical radius. Solves
-  // for d in `2·atan(R/d) = ZOOM_FLOOR_FRACTION · fov_minor`. Binary
-  // companions still get the half-angle bump so the partner stays in
-  // frame.
+  // for d in `2·atan(R/d) = ZOOM_FLOOR_FRACTION · fov_minor`. For
+  // variables, R is bumped to peak-amplitude so the pulse peak hits
+  // ZOOM_FLOOR_FRACTION (and the trough is correspondingly smaller),
+  // rather than the static R hitting the floor and the peak overshooting
+  // the viewport. Binary companions still get the half-angle bump so the
+  // partner stays in frame.
   private minOrbitDistForStar(idx: number): number {
     const R = Math.max(this.catalog.physicalRadius[idx], 1e-9) * R_SUN_PC;
-    const base = distAtFillFraction(R, this.fovMinorRad(), ZOOM_FLOOR_FRACTION);
+    const Reff = R * this.peakAmplitudeFactor(idx);
+    const base = distAtFillFraction(Reff, this.fovMinorRad(), ZOOM_FLOOR_FRACTION);
     return Math.max(base, this.binaryCompanionFloorPc(idx));
   }
 
@@ -2829,14 +2917,18 @@ export class Stellata {
   // TARGET_PARK_FRACTION · fov_minor`, so every star fills the same
   // fraction of the viewport on arrival regardless of physical radius
   // (supergiants land much further out than dwarfs in absolute parsecs).
-  // Floored at twice the orbit floor so the parking distance always
-  // sits clearly above the manual-zoom limit. For binaries the result
-  // is bumped so the companion stays within the viewport half-angle.
+  // For variables, R is bumped to peak-amplitude so the parking pulse
+  // reads at TARGET_PARK_FRACTION on its peak (high-amplitude variables
+  // park further out than their static R alone would suggest). Floored
+  // at twice the orbit floor so the parking distance always sits
+  // clearly above the manual-zoom limit. For binaries the result is
+  // bumped so the companion stays within the viewport half-angle.
   minDistForStar(idx: number): number {
     const fovMinor = this.fovMinorRad();
     const R = Math.max(this.catalog.physicalRadius[idx], 1e-9) * R_SUN_PC;
-    const dPark = distAtFillFraction(R, fovMinor, TARGET_PARK_FRACTION);
-    const dMin = distAtFillFraction(R, fovMinor, ZOOM_FLOOR_FRACTION);
+    const Reff = R * this.peakAmplitudeFactor(idx);
+    const dPark = distAtFillFraction(Reff, fovMinor, TARGET_PARK_FRACTION);
+    const dMin = distAtFillFraction(Reff, fovMinor, ZOOM_FLOOR_FRACTION);
     return Math.max(dPark, 2 * dMin, this.binaryCompanionFloorPc(idx));
   }
 
@@ -3117,23 +3209,8 @@ export class Stellata {
     const lo = camDistFromSol - dThresh;
     const hi = camDistFromSol + dThresh;
 
-    const sortedDist = this.sortedDistFromSol;
     const sortedIdx = this.sortedByDistFromSol;
-    const n = sortedDist.length;
-    // Lower bound: first index with sortedDist[i] >= lo.
-    let l = 0, r = n;
-    while (l < r) {
-      const m = (l + r) >>> 1;
-      if (sortedDist[m] < lo) l = m + 1; else r = m;
-    }
-    const start = l;
-    // Upper bound: first index with sortedDist[i] > hi.
-    l = start; r = n;
-    while (l < r) {
-      const m = (l + r) >>> 1;
-      if (sortedDist[m] <= hi) l = m + 1; else r = m;
-    }
-    const end = l;
+    const { start, end } = sortedDistRange(this.sortedDistFromSol, lo, hi);
 
     const positions = this._localPositions;
     const cx = this.camera.position.x;
@@ -3251,7 +3328,9 @@ export class Stellata {
     }
 
     const focusedLocal =
-      this.focusedStar !== null ? this.starLocalPosition(this.focusedStar) : null;
+      this.focusedStar !== null
+        ? this.starLocalPositionInto(this.focusedStar, this._tmpLocalA)
+        : null;
     const isSolFocus =
       this.focusedStar !== null && this.focusedStar === this.catalog.solIndex;
     // Compute the navigate-mode arrow fade alpha before the HUD render so
@@ -3317,10 +3396,10 @@ export class Stellata {
       const t = flyElapsed / state.durationMs;
       const f = t < 0.5 ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t);
       this.camera.position.lerpVectors(state.pStart, state.pEnd, f);
-      const B = state.destKind === 'star'
-        ? this.starLocalPosition(state.destIdx)
-        : this.cloudLocalPosition(state.destIdx);
-      if (B) this.camera.lookAt(B);
+      const out = this._tmpLocalA;
+      if (this.destLocalPositionInto(state.destKind, state.destIdx, out)) {
+        this.camera.lookAt(out);
+      }
       return;
     }
 
@@ -3335,9 +3414,8 @@ export class Stellata {
     // distant Milky Way stays roughly fixed.
     const postElapsed = flyElapsed - state.durationMs;
     if (postElapsed < state.postArrivalMs) {
-      const B = state.destKind === 'star'
-        ? this.starLocalPosition(state.destIdx)
-        : this.cloudLocalPosition(state.destIdx);
+      const out = this._tmpLocalA;
+      const B = this.destLocalPositionInto(state.destKind, state.destIdx, out) ? out : null;
       if (!state.flyEndQuaternion) {
         // Pin the camera to the canonical fly-end pose before snapshot
         // so the slerp doesn't inherit a half-stepped frame.
