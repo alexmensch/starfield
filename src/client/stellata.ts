@@ -2068,7 +2068,20 @@ export class Stellata {
     this.aimState = null;
     const AB = new THREE.Vector3().subVectors(B, A);
     const distPc = AB.length();
-    if (distPc < 1e-6) return;
+    if (distPc < 1e-6) {
+      // Source and destination share a world position — e.g. AT-HYG
+      // stores α Cen A (HIP 71683) and B (HIP 71681) at identical
+      // x0/y0/z0 because the ~17.6 AU separation is below catalog
+      // precision. The camera has nowhere to fly, but switching focus
+      // still gives the user feedback (search row, focus ring, scale
+      // bar, distance vector all retarget). setFocus(destIdx) bails
+      // observe → navigate when called from observe; that's the right
+      // outcome here since the destination anchor is the same point
+      // and there's no warp completion to come back through.
+      if (destKind === 'star') this.setFocus(destIdx);
+      else this.setFocusedCloud(destIdx);
+      return;
+    }
     const forward = AB.clone().divideScalar(distPc);
 
     // Reorient-end direction (from A): opposite to the travel direction, so
@@ -2789,9 +2802,10 @@ export class Stellata {
   // magMod = -0.5·amp, so radiusFactor = 10^(amp/10). 1 for non-variables.
   // Used by the navigate-mode arrow-fade so the alpha gates on the peak
   // disc envelope, not on whatever the variable's current phase is —
-  // otherwise a high-amplitude pulsation would oscillate the alpha. The
-  // orbit-floor / parking-distance calibration (see beads stellata-a7d.2.x)
-  // does not yet feed off this; tracked separately.
+  // otherwise a high-amplitude pulsation would oscillate the alpha.
+  // Also feeds the orbit-floor and parking-distance calibration so the
+  // pulse peak (not the static R) hits ZOOM_FLOOR_FRACTION at closest
+  // approach and TARGET_PARK_FRACTION at warp arrival.
   private peakAmplitudeFactor(idx: number): number {
     const amp = this.catalog.amplitudeMag[idx];
     const period = this.catalog.periodDays[idx];
@@ -2802,12 +2816,16 @@ export class Stellata {
   // camera can orbit down to where the focused star's true angular disc
   // fills ZOOM_FLOOR_FRACTION of the viewport's minor axis — same on-
   // screen coverage for any star, regardless of physical radius. Solves
-  // for d in `2·atan(R/d) = ZOOM_FLOOR_FRACTION · fov_minor`. Binary
-  // companions still get the half-angle bump so the partner stays in
-  // frame.
+  // for d in `2·atan(R/d) = ZOOM_FLOOR_FRACTION · fov_minor`. For
+  // variables, R is bumped to peak-amplitude so the pulse peak hits
+  // ZOOM_FLOOR_FRACTION (and the trough is correspondingly smaller),
+  // rather than the static R hitting the floor and the peak overshooting
+  // the viewport. Binary companions still get the half-angle bump so the
+  // partner stays in frame.
   private minOrbitDistForStar(idx: number): number {
     const R = Math.max(this.catalog.physicalRadius[idx], 1e-9) * R_SUN_PC;
-    const base = distAtFillFraction(R, this.fovMinorRad(), ZOOM_FLOOR_FRACTION);
+    const Reff = R * this.peakAmplitudeFactor(idx);
+    const base = distAtFillFraction(Reff, this.fovMinorRad(), ZOOM_FLOOR_FRACTION);
     return Math.max(base, this.binaryCompanionFloorPc(idx));
   }
 
@@ -2829,14 +2847,18 @@ export class Stellata {
   // TARGET_PARK_FRACTION · fov_minor`, so every star fills the same
   // fraction of the viewport on arrival regardless of physical radius
   // (supergiants land much further out than dwarfs in absolute parsecs).
-  // Floored at twice the orbit floor so the parking distance always
-  // sits clearly above the manual-zoom limit. For binaries the result
-  // is bumped so the companion stays within the viewport half-angle.
+  // For variables, R is bumped to peak-amplitude so the parking pulse
+  // reads at TARGET_PARK_FRACTION on its peak (high-amplitude variables
+  // park further out than their static R alone would suggest). Floored
+  // at twice the orbit floor so the parking distance always sits
+  // clearly above the manual-zoom limit. For binaries the result is
+  // bumped so the companion stays within the viewport half-angle.
   minDistForStar(idx: number): number {
     const fovMinor = this.fovMinorRad();
     const R = Math.max(this.catalog.physicalRadius[idx], 1e-9) * R_SUN_PC;
-    const dPark = distAtFillFraction(R, fovMinor, TARGET_PARK_FRACTION);
-    const dMin = distAtFillFraction(R, fovMinor, ZOOM_FLOOR_FRACTION);
+    const Reff = R * this.peakAmplitudeFactor(idx);
+    const dPark = distAtFillFraction(Reff, fovMinor, TARGET_PARK_FRACTION);
+    const dMin = distAtFillFraction(Reff, fovMinor, ZOOM_FLOOR_FRACTION);
     return Math.max(dPark, 2 * dMin, this.binaryCompanionFloorPc(idx));
   }
 
