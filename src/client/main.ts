@@ -148,16 +148,16 @@ async function main() {
     const countLabel = `${catalog.count.toLocaleString()} stars`;
     meta.innerHTML = `<div class="meta-count">${escapeHtml(countLabel)}</div>`;
     const visibleStats = bindVisibleStarCount(stellata, meta);
-    // window.debug.visibleCount() — print scan timings and dirty-gate
-    // skip ratio. Useful for confirming the gate is doing its job
-    // (skipped >> scans when idle).
+    // window.debug.visibleCount() — scan timings. With the settle
+    // debounce, scans run only after the camera + filters are quiet
+    // for SETTLE_MS, so `scans` grows once per interaction, not per
+    // frame.
     (window as unknown as { debug: { visibleCount: () => VisibleCountStats } }).debug.visibleCount = () => {
       console.table({
         count: visibleStats.count,
         lastMs: visibleStats.lastMs.toFixed(2),
         avgMs: visibleStats.avgMs().toFixed(2),
         scans: visibleStats.scans,
-        skipped: visibleStats.skipped,
         totalMs: visibleStats.totalMs.toFixed(1),
       });
       return visibleStats;

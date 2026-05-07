@@ -485,6 +485,7 @@ export class Stellata {
   // scan into a few-hundred-element check.
   private sortedDistFromSol!: Float32Array;
   private sortedByDistFromSol!: Uint32Array;
+  private _distSolByIdx!: Float32Array;
 
   // Largest physicalRadius in the catalog, in pc. Drives shouldEnableCoreMask:
   // the core depth-mask only matters when at least one star's angular disc
@@ -661,6 +662,9 @@ export class Stellata {
     for (let i = 0; i < catalog.count; i++) {
       this.sortedDistFromSol[i] = distSol[this.sortedByDistFromSol[i]];
     }
+    // Per-index distSol kept for direct O(1) lookup (countVisibleStars
+    // and any future hot-path filter that wants to skip the sqrt).
+    this._distSolByIdx = distSol;
     // Instanced quads: one unit square per star, expanded in screen space in
     // the vertex shader. This replaces the earlier THREE.Points approach,
     // which was capped by the driver-defined gl_PointSize maximum (often
@@ -2548,38 +2552,60 @@ export class Stellata {
   // adjustment) — accurate to within a handful of stars near the
   // cutoff edge, and the HUD is a sense-of-scale readout, not an
   // instrument.
+  //
+  // Hot path. Optimisations vs. the obvious version:
+  //   - distSol cached per index (no sqrt for the distance-band check)
+  //   - dCam² + 2.5·log10(dCam²) form avoids a second sqrt per star
+  //   - inline projection: a single combined view·projection matrix is
+  //     read into 16 locals and applied as raw float math, with the
+  //     frustum test done in clip space (`|x|≤w, |y|≤w, |z|≤w, w>0`)
+  //     — no Vector3 allocation, no perspective divide.
   countVisibleStars(): number {
     const f = this.filter;
     const camPos = this.camera.position;
-    const absPos = this.catalog.positions;
     const locPos = this._localPositions;
     const { absmag, spectClass } = this.catalog;
-    const v = this.tmpCountVec;
+    const distSolByIdx = this._distSolByIdx;
+    const cam = this.camera;
+    cam.updateMatrixWorld();
+    const m = this._tmpVPMat.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse).elements;
+    const m0  = m[0],  m4  = m[4],  m8  = m[8],  m12 = m[12];
+    const m1  = m[1],  m5  = m[5],  m9  = m[9],  m13 = m[13];
+    const m2  = m[2],  m6  = m[6],  m10 = m[10], m14 = m[14];
+    const m3  = m[3],  m7  = m[7],  m11 = m[11], m15 = m[15];
+    const camX = camPos.x, camY = camPos.y, camZ = camPos.z;
+    const minD = f.minDistSol, maxD = f.maxDistSol;
+    const spectMask = f.spectMask, maxAppMag = f.maxAppMag;
+    const dCam2Floor = DCAM_LOG_FLOOR_PC * DCAM_LOG_FLOOR_PC;
+    const count = this.catalog.count;
     let n = 0;
-    for (let i = 0; i < this.catalog.count; i++) {
-      const ax = absPos[i * 3 + 0];
-      const ay = absPos[i * 3 + 1];
-      const az = absPos[i * 3 + 2];
-      const distSol = Math.sqrt(ax * ax + ay * ay + az * az);
-      if (distSol < f.minDistSol || distSol > f.maxDistSol) continue;
+    for (let i = 0; i < count; i++) {
+      const d = distSolByIdx[i];
+      if (d < minD || d > maxD) continue;
       const bit = 1 << (spectClass[i] | 0);
-      if (!(f.spectMask & bit)) continue;
-      const x = locPos[i * 3 + 0];
-      const y = locPos[i * 3 + 1];
-      const z = locPos[i * 3 + 2];
-      const dx = x - camPos.x;
-      const dy = y - camPos.y;
-      const dz = z - camPos.z;
-      const dCam = Math.max(Math.sqrt(dx * dx + dy * dy + dz * dz), DCAM_LOG_FLOOR_PC);
-      const appMag = absmag[i] + 5 * (Math.log10(dCam) - 1);
-      if (appMag > f.maxAppMag) continue;
-      v.set(x, y, z).project(this.camera);
-      if (v.x < -1 || v.x > 1 || v.y < -1 || v.y > 1 || v.z < -1 || v.z > 1) continue;
+      if (!(spectMask & bit)) continue;
+      const i3 = i * 3;
+      const x = locPos[i3], y = locPos[i3 + 1], z = locPos[i3 + 2];
+      const dx = x - camX, dy = y - camY, dz = z - camZ;
+      let dCam2 = dx * dx + dy * dy + dz * dz;
+      if (dCam2 < dCam2Floor) dCam2 = dCam2Floor;
+      // appMag = absmag + 5·log10(dCam) - 5
+      //        = absmag + 2.5·log10(dCam²) - 5
+      const appMag = absmag[i] + 2.5 * Math.log10(dCam2) - 5;
+      if (appMag > maxAppMag) continue;
+      const clipX = m0 * x + m4 * y + m8  * z + m12;
+      const clipW = m3 * x + m7 * y + m11 * z + m15;
+      if (clipW <= 0) continue;
+      if (clipX < -clipW || clipX > clipW) continue;
+      const clipY = m1 * x + m5 * y + m9 * z + m13;
+      if (clipY < -clipW || clipY > clipW) continue;
+      const clipZ = m2 * x + m6 * y + m10 * z + m14;
+      if (clipZ < -clipW || clipZ > clipW) continue;
       n++;
     }
     return n;
   }
-  private tmpCountVec = new THREE.Vector3();
+  private _tmpVPMat = new THREE.Matrix4();
 
   pickStar(clientX: number, clientY: number, pixelThreshold = 16): number {
     const rect = this.renderer.domElement.getBoundingClientRect();
