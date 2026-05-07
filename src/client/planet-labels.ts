@@ -92,6 +92,16 @@ export function createPlanetLabels(stellata: Stellata): void {
     setGroupVisible(true);
     for (let i = 0; i < entries.length; i++) {
       const e = entries[i];
+      // Sync label visibility with the planet's orbit ring. A ring
+      // suppressed by the pixel-gap heuristic at far framings means
+      // its body is floor-clamped sub-pixel anyway; a floating label
+      // attached to nothing visible reads as noise. Bodies still
+      // render (the floor keeps them visible) — only labels track the
+      // ring's "is this planet meaningfully resolvable?" answer.
+      if (!stellata.isOrbitRingVisible(i)) {
+        e.el.style.display = 'none';
+        continue;
+      }
       tmp.set(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
       tmp.applyMatrix4(camera.matrixWorldInverse);
       // Behind-or-at-near-plane points have no meaningful screen

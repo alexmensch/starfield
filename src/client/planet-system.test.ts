@@ -123,20 +123,6 @@ describe('SOL_PLANETS data', () => {
     }
   });
 
-  it('Earth, Venus, and the four giants flag hasAtmosphere; Mercury and Mars do not', () => {
-    const atm = Object.fromEntries(SOL_PLANETS.map(p => [p.name, p.hasAtmosphere]));
-    expect(atm).toEqual({
-      Mercury: false,
-      Venus: true,
-      Earth: true,
-      Mars: false,
-      Jupiter: true,
-      Saturn: true,
-      Uranus: true,
-      Neptune: true,
-    });
-  });
-
   it('radii match published equatorial values (within 1 km)', () => {
     const expected: Record<string, number> = {
       Mercury: 2440, Venus: 6052, Earth: 6371, Mars: 3390,

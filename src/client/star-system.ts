@@ -228,8 +228,8 @@ export class StarSystem {
   private mono = false;
   private hidden = false;
   // Planet body mesh — one InstancedBufferGeometry holding N quads, with
-  // per-instance position / radius / colour / solidity / atmosphere.
-  // null whenever no system is attached.
+  // per-instance position / radius / colour / solidity. null whenever
+  // no system is attached.
   private bodyMesh: THREE.Mesh | null = null;
   private bodyGeometry: THREE.InstancedBufferGeometry | null = null;
   private bodyMaterial: THREE.ShaderMaterial | null = null;
@@ -326,7 +326,6 @@ export class StarSystem {
     const radii = new Float32Array(n);
     const colours = new Float32Array(n * 3);
     const solidity = new Float32Array(n);
-    const atmosphere = new Float32Array(n);
     const tmpPos = new THREE.Vector3();
     for (let i = 0; i < n; i++) {
       const p = ps.planets[i];
@@ -340,7 +339,6 @@ export class StarSystem {
       colours[i * 3 + 1] = p.colour[1];
       colours[i * 3 + 2] = p.colour[2];
       solidity[i] = solidityForType(p.type);
-      atmosphere[i] = p.hasAtmosphere ? 1 : 0;
     }
 
     const bodyGeom = new THREE.InstancedBufferGeometry();
@@ -356,7 +354,6 @@ export class StarSystem {
     bodyGeom.setAttribute('iRadiusPc', new THREE.InstancedBufferAttribute(radii, 1));
     bodyGeom.setAttribute('iColour', new THREE.InstancedBufferAttribute(colours, 3));
     bodyGeom.setAttribute('iSolidity', new THREE.InstancedBufferAttribute(solidity, 1));
-    bodyGeom.setAttribute('iAtmosphere', new THREE.InstancedBufferAttribute(atmosphere, 1));
     bodyGeom.instanceCount = n;
     // Disable frustum culling — the camera can sit inside the bounding
     // sphere of the body cloud (e.g. between Jupiter and Saturn) where
@@ -440,6 +437,21 @@ export class StarSystem {
       if (r.line.visible) return true;
     }
     return false;
+  }
+
+  /**
+   * True when the orbit ring for planet `i` is currently rendering. The
+   * planet-labels overlay gates label visibility on this per-planet flag
+   * so labels appear only when their associated ring does — a ring
+   * suppressed by the pixel-gap heuristic at far framings would have
+   * meant a label floating in space attached to a body too tiny to
+   * read anyway. Bodies themselves stay rendered (they sit at the
+   * pixel-size floor); only the labels track the rings.
+   */
+  isRingVisible(i: number): boolean {
+    if (this.hidden || this.mono || !this.group.visible) return false;
+    if (i < 0 || i >= this.rings.length) return false;
+    return this.rings[i].line.visible;
   }
 
   /**

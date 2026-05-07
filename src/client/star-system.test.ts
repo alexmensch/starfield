@@ -24,7 +24,6 @@ function makePlanet(overrides: Partial<Planet> = {}): Planet {
     eccentricity: 0,
     type: 'rocky',
     colour: [1, 1, 1],
-    hasAtmosphere: false,
     ...overrides,
   };
 }
@@ -320,6 +319,35 @@ describe('StarSystem.anyRingVisible', () => {
     ss.update(makeCamera(5 * AU_PC), 800);
     ss.setMonochrome(true);
     expect(ss.anyRingVisible()).toBe(false);
+    ss.dispose();
+  });
+
+  it('isRingVisible is per-planet and tracks per-ring visibility', () => {
+    const ss = new StarSystem();
+    const ps: PlanetSystem = {
+      hostStarIdx: 0,
+      planets: [
+        makePlanet({ name: 'A', semiMajorAxisAu: 1 }),
+        makePlanet({ name: 'B', semiMajorAxisAu: 100 }),
+      ],
+    };
+    ss.setPlanetSystem(ps, 0);
+    // Mid-range camera distance — the inner ring's pixel radius collapses
+    // (pile-up against neighbour) while the outer ring remains spread.
+    // The exact heuristic outcome is exercised in `ringVisibility` tests
+    // above; here we just confirm the per-index API plumbs through.
+    ss.update(makeCamera(50 * AU_PC), 800);
+    const a = ss.isRingVisible(0);
+    const b = ss.isRingVisible(1);
+    expect(typeof a).toBe('boolean');
+    expect(typeof b).toBe('boolean');
+    // Out-of-range index is always false.
+    expect(ss.isRingVisible(2)).toBe(false);
+    expect(ss.isRingVisible(-1)).toBe(false);
+    // Hide layer → all rings report false.
+    ss.setHidden(true);
+    expect(ss.isRingVisible(0)).toBe(false);
+    expect(ss.isRingVisible(1)).toBe(false);
     ss.dispose();
   });
 

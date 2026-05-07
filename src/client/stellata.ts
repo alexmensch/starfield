@@ -1005,6 +1005,13 @@ export class Stellata {
   getFocusedPlanetLocalPositions(): Float32Array | null {
     return this.starSystem.getPlanetLocalPositions();
   }
+  /** True when the orbit ring for planet `i` is currently rendering on
+   *  the focused host. Used by planet-labels to hide labels in lockstep
+   *  with their associated rings — the body stays rendered at the
+   *  pixel-size floor regardless. */
+  isOrbitRingVisible(planetIdx: number): boolean {
+    return this.starSystem.isRingVisible(planetIdx);
+  }
   /** Absolute-space coordinate of the renderer's current local origin.
    *  Read-only snapshot; callers must not mutate. URL serialisation
    *  emits this so close-orbit unfocus poses (where worldOffset sits at

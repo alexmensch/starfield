@@ -31,14 +31,12 @@ export interface Planet {
   // perihelion lands later (alongside VSOP87 in stellata-3re.3).
   readonly eccentricity: number;
   readonly type: PlanetType;
-  // Representative single-colour RGB in linear-ish [0,1]. Per stellata-3re.4
-  // these are average tones — atmospheric scattering / banding belong to
-  // a future texture or shader pass.
+  // Representative single-colour RGB in linear-ish [0,1]. Average tones
+  // only — atmospheric scattering, banding, and surface texturing all
+  // depend on a future planet-selection / close-zoom affordance that
+  // doesn't exist yet, so per-planet appearance refinements are
+  // deferred until that lands.
   readonly colour: readonly [number, number, number];
-  // Drives the additive halo pass in 3re.4. True for atmospheres thick
-  // enough to read at typical zoom (Venus, Earth, the giants); Mars's
-  // thin CO₂ envelope is treated as cosmetic-only and stays false here.
-  readonly hasAtmosphere: boolean;
 }
 
 export interface PlanetSystem {
@@ -49,9 +47,11 @@ export interface PlanetSystem {
 }
 
 // Sol's eight planets. Radii from NASA planetary fact sheets (equatorial).
-// Semi-major axes from JPL DE440 mean elements at J2000. Colours are
-// observation-derived representative tones, not pixel-accurate samples —
-// stellata-3re.10 decides whether to upgrade to texture maps.
+// Semi-major axes and eccentricities from JPL DE440 mean elements at
+// J2000. Colours are observation-derived representative tones — pixel-
+// accurate texturing depends on the future planet-as-object epic
+// (stellata-2f6) clearing its design gate; for now bodies are flat-
+// coloured discs.
 export const SOL_PLANETS: readonly Planet[] = [
   {
     name: 'Mercury',
@@ -60,7 +60,6 @@ export const SOL_PLANETS: readonly Planet[] = [
     eccentricity: 0.2056,
     type: 'rocky',
     colour: [0.55, 0.47, 0.32],
-    hasAtmosphere: false,
   },
   {
     name: 'Venus',
@@ -69,7 +68,6 @@ export const SOL_PLANETS: readonly Planet[] = [
     eccentricity: 0.0068,
     type: 'rocky',
     colour: [0.91, 0.82, 0.60],
-    hasAtmosphere: true,
   },
   {
     name: 'Earth',
@@ -78,7 +76,6 @@ export const SOL_PLANETS: readonly Planet[] = [
     eccentricity: 0.0167,
     type: 'rocky',
     colour: [0.31, 0.49, 0.67],
-    hasAtmosphere: true,
   },
   {
     name: 'Mars',
@@ -87,7 +84,6 @@ export const SOL_PLANETS: readonly Planet[] = [
     eccentricity: 0.0934,
     type: 'rocky',
     colour: [0.76, 0.27, 0.05],
-    hasAtmosphere: false,
   },
   {
     name: 'Jupiter',
@@ -96,7 +92,6 @@ export const SOL_PLANETS: readonly Planet[] = [
     eccentricity: 0.0485,
     type: 'gas_giant',
     colour: [0.85, 0.72, 0.51],
-    hasAtmosphere: true,
   },
   {
     name: 'Saturn',
@@ -105,7 +100,6 @@ export const SOL_PLANETS: readonly Planet[] = [
     eccentricity: 0.0555,
     type: 'gas_giant',
     colour: [0.90, 0.79, 0.62],
-    hasAtmosphere: true,
   },
   {
     name: 'Uranus',
@@ -114,7 +108,6 @@ export const SOL_PLANETS: readonly Planet[] = [
     eccentricity: 0.0464,
     type: 'ice_giant',
     colour: [0.64, 0.85, 0.90],
-    hasAtmosphere: true,
   },
   {
     name: 'Neptune',
@@ -123,7 +116,6 @@ export const SOL_PLANETS: readonly Planet[] = [
     eccentricity: 0.0095,
     type: 'ice_giant',
     colour: [0.25, 0.37, 0.75],
-    hasAtmosphere: true,
   },
 ] as const;
 
