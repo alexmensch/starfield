@@ -1,6 +1,7 @@
 import { type FilterState, type Stellata, type MagPresetName, MAG_PRESETS, DEFAULT_FOV } from './stellata';
 import { sliderToDist, distToSlider, SLIDER_STEPS } from './controls';
 import { setUnit, getUnit, onUnitChange } from './distance-util';
+import { isLive } from './time';
 
 // URL state lives in a single opaque param: `?v=<base64url>`. The blob
 // is `[1 byte version] [3 bytes LE presence mask] [variable payload]`
@@ -134,6 +135,13 @@ export interface DecodedView {
    *  is the cam/tgt offset *within* the local frame, and that's
    *  encoded at full Float32 precision relative to the anchor. */
   worldOffset?: [number, number, number];
+  /** Wall-clock `t` (Unix-seconds, double precision) for the solar-
+   *  system layer. Emitted only when the user has scrubbed away from
+   *  "now"; absence ⇒ receiver resolves to their local wall-clock at
+   *  load time. v1 (stellata-3re.1) wires the path but never emits —
+   *  the time-scrubber epic (stellata-nmu) flips on emission by
+   *  introducing pinned-`t` state. */
+  t?: number;
 }
 
 const POI_MAX_COUNT = 16;
@@ -430,6 +438,16 @@ const FIELDS_V2: FieldSpec[] = [
   // gracefully degrades to "Sol-anchored" (the pre-fix default). Future
   // additions should follow the same append-only pattern.
   vec3Field(20, 'worldOffset'),
+  // Scrubber-pinned `t` (Unix-seconds, float64). Append-only per the
+  // worldOffset note above. Stale clients silently ignore it and
+  // resolve `t` to local wall-clock now — the same fallback as a URL
+  // without the field.
+  {
+    bit: 21, key: 't', ...fixed(8),
+    isPresent: v => v.t !== undefined,
+    encode: (v, dv, o) => { dv.setFloat64(o, v.t!, true); },
+    decode: (v, dv, o) => { v.t = dv.getFloat64(o, true); },
+  },
 ];
 
 function packFlags(v: DecodedView): number {
@@ -672,6 +690,13 @@ export function currentStateOf(stellata: Stellata, idMaps: IdMaps): DecodedView 
     view.up = [u.x, u.y, u.z];
   }
 
+  // Scrubber-pinned `t` only — when the user is on live wall-clock,
+  // omit so the share link resolves to the receiver's local now (the
+  // contract baked into stellata-3re.1). v1 always lands in the live
+  // branch; the gate flips on once stellata-nmu introduces pinning.
+  const tNow = stellata.getT();
+  if (!isLive(tNow)) view.t = tNow;
+
   return view;
 }
 
@@ -724,6 +749,11 @@ export function applyDecodedView(
   if (Object.keys(patch).length) stellata.setFilter(patch);
 
   if (view.fov !== undefined && view.fov > 0) stellata.setCameraFov(view.fov);
+
+  // Pinned `t` — only present when the sender's `t` was scrubbed away
+  // from live (the encoder gates emission on isLive). Apply before any
+  // ephemeris-driven reads downstream.
+  if (view.t !== undefined) stellata.setT(view.t);
 
   // Single dirty flag for everything that requires controls.update() at
   // the end of the camera-touching block. Each branch below that mutates

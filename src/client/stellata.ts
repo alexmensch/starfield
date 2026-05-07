@@ -511,6 +511,14 @@ export class Stellata {
   private observeTransition: ObserveTransitionState | null = null;
   private observeControls!: ObserveControls;
 
+  // Wall-clock time variable (Unix-seconds) for the solar-system layer
+  // (stellata-3re.1). null = "live" (track Date.now() each call); a number
+  // = "pinned" (the time-scrubber epic stellata-nmu sets this when the
+  // user scrubs away from now). v1 never pins — getT() always returns
+  // wall-clock now — but the setter exists so nmu plugs in without an
+  // API change.
+  private pinnedT: number | null = null;
+
   private focusedStar: number | null = null;
   // "Soft" focus on a molecular cloud — mutually exclusive with focusedStar.
   // Drives the focus search box and meta bar so the user-facing "what am I
@@ -1044,6 +1052,22 @@ export class Stellata {
   }
   getVectorTo(): number | null { return this.vectorTo; }
   getVectorToCloud(): number | null { return this.vectorToCloud; }
+
+  /** Wall-clock `t` (Unix-seconds) driving the solar-system layer.
+   *  Returns the pinned value if the time-scrubber epic has set one,
+   *  otherwise live `Date.now() / 1000`. Recomputed on every call —
+   *  callers that need a frame-stable value should snapshot at the
+   *  start of the frame. */
+  getT(): number {
+    return this.pinnedT ?? Date.now() / 1000;
+  }
+  /** Pin `t` to a specific Unix-seconds value, or pass `null` to
+   *  return to live tracking. Wired for the time-scrubber epic
+   *  (stellata-nmu); v1 never calls this from the UI. */
+  setT(t: number | null): void {
+    this.pinnedT = t;
+    this.fireStateChange();
+  }
   getMonochrome(): boolean { return this.monochrome; }
   getWarpActive(): boolean { return this.warpState !== null; }
 

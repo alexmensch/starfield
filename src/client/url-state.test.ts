@@ -575,6 +575,9 @@ describe('url-state', () => {
         getVectorToCloud: () => null,
         getCameraMode: () => mode,
         getPois: () => [],
+        // Live `t` — encoder gates emission on isLive(getT()), so returning
+        // wall-clock now keeps the existing assertions at "no t in URL".
+        getT: () => Date.now() / 1000,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         getWorldOffset: () => ({ x: 0, y: 0, z: 0 } as any),
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
