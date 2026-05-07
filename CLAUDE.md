@@ -216,6 +216,17 @@ Noted here so we don't re-debate scope:
   brightness change between R and T swings. Modelling T changes per
   variable type is more complexity than the visualisation warrants.
 
+## PR template — `## Release notes` block is required
+
+Every PR with a `package.json` version bump must fill the
+`## Release notes` block in the PR body (Summary / New features /
+Bugfixes / Changes). The deploy workflow extracts that block and
+publishes it to the GitHub release page for the version this PR
+ships, replacing the previous flat auto-generated notes. The
+`release-notes-guard` CI check fails the PR if the section is empty
+(HTML comments don't count). PRs labelled `skip-version-bump` are
+exempt. See `RELEASING.md` for detail.
+
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
 ## Beads Issue Tracker
