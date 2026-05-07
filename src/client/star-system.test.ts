@@ -351,6 +351,57 @@ describe('StarSystem.anyRingVisible', () => {
     ss.dispose();
   });
 
+  it('update positions the group at hostLocalPos when supplied', () => {
+    const ss = new StarSystem();
+    const ps: PlanetSystem = {
+      hostStarIdx: 0,
+      planets: [makePlanet({ semiMajorAxisAu: 1 })],
+    };
+    ss.setPlanetSystem(ps, 0);
+    const host = new THREE.Vector3(10, -3, 7);
+    ss.update(makeCamera(5 * AU_PC), 800, host);
+    expect(ss.group.position.x).toBe(10);
+    expect(ss.group.position.y).toBe(-3);
+    expect(ss.group.position.z).toBe(7);
+    ss.dispose();
+  });
+
+  it('update with hostLocalPos uses camera-to-host distance for the heuristic', () => {
+    // Two-ring system; with the host at the origin and the camera 5 AU
+    // away, the heuristic at this ring spread lets at least one through
+    // (small enough rings → suppressed; large outer ring with big gap →
+    // visible). Same camera position with the host placed AT the camera
+    // makes camera-to-host = 0 so the rings project to a degenerate
+    // angular size (atan saturates at π/2) and at least the outermost
+    // visibly registers; either way, the API is exercised — the precise
+    // outcome is covered in the `ringVisibility` pure-function tests.
+    const ss = new StarSystem();
+    const ps: PlanetSystem = {
+      hostStarIdx: 0,
+      planets: [
+        makePlanet({ name: 'A', semiMajorAxisAu: 1 }),
+        makePlanet({ name: 'B', semiMajorAxisAu: 50 }),
+      ],
+    };
+    ss.setPlanetSystem(ps, 0);
+    const cam = makeCamera(5 * AU_PC);
+    // Sanity check: with host at origin, the existing heuristic behaviour
+    // applies — at least one of these two well-spread rings should be
+    // visible at this distance.
+    ss.update(cam, 800);
+    const visibleAtOrigin = ss.isRingVisible(0) || ss.isRingVisible(1);
+    expect(visibleAtOrigin).toBe(true);
+    // Move the host far enough that the camera-to-host distance grows
+    // past the ring-gap collapse threshold (~7500 AU for these
+    // particular semi-major axes against a 6 px gap floor) — both
+    // rings should now collapse below the pixel-gap threshold.
+    const farHost = new THREE.Vector3(0, 0, 50_000 * AU_PC);
+    ss.update(cam, 800, farHost);
+    expect(ss.isRingVisible(0)).toBe(false);
+    expect(ss.isRingVisible(1)).toBe(false);
+    ss.dispose();
+  });
+
   it('returns false when every ring is suppressed by the pixel-gap heuristic', () => {
     // Two rings with semi-major axes very close together, viewed from far
     // enough that the projected pixel gap collapses below the threshold.

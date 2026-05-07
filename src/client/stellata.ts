@@ -573,6 +573,18 @@ export class Stellata {
   // pixel-gap visibility heuristic. Sol is the only populated host in
   // v1 — see star-system.ts.
   private starSystem: StarSystem;
+  // Second StarSystem instance used during warp to render the
+  // destination host's planet system alongside the focused (source)
+  // host's. Both stay visible for the duration of the warp animation
+  // — source recedes, destination approaches — and the pixel-gap
+  // heuristic naturally adapts as camera distance to each host
+  // changes. Cleared in finishWarp / cancelWarp via
+  // refreshWarpDestPlanetSystem().
+  private warpDestStarSystem: StarSystem;
+  // Stale-load guard for the warp destination's async PlanetSystem
+  // load — increments on every refresh so a quick cancel-then-retry
+  // doesn't double-apply.
+  private warpDestPlanetSystemToken = 0;
   private galacticGrid: GalacticGrid;
   private hudOverlay: HudOverlay;
 
@@ -884,11 +896,14 @@ export class Stellata {
     this.scene.add(this.galacticDisc.group);
     this.starSystem = new StarSystem();
     this.scene.add(this.starSystem.group);
+    this.warpDestStarSystem = new StarSystem();
+    this.scene.add(this.warpDestStarSystem.group);
     // Build/teardown rings whenever the focused star's planet data changes.
-    // The host always sits at the local origin under the floating-origin
-    // recenter from setFocus(idx), so the rings need no per-frame
-    // worldOffset bookkeeping — only the visibility heuristic ticks each
-    // frame in updateGalacticLayers().
+    // The focused host always sits at the local origin under the
+    // floating-origin recenter from setFocus(idx), so the focused
+    // starSystem's group stays at (0,0,0). The warp-destination layer
+    // is positioned per-frame in updateGalacticLayers() — its host is
+    // off-origin during a warp.
     this.onPlanetSystemChange((ps) => {
       this.starSystem.setPlanetSystem(ps, this.catalog.solIndex);
     });
@@ -1387,6 +1402,28 @@ export class Stellata {
     for (const h of this.onFocusHandlers) h(idx);
     this.refreshPlanetSystem(idx);
     this.fireStateChange();
+  }
+
+  // Sync the warp-destination StarSystem with the current warpState.
+  // Called whenever warpState transitions (start, finish, cancel) so
+  // the destination's rings + bodies appear during the animation and
+  // tear down on completion. No-op for cloud destinations.
+  private refreshWarpDestPlanetSystem(): void {
+    const token = ++this.warpDestPlanetSystemToken;
+    const ws = this.warpState;
+    if (!ws || ws.destKind !== 'star') {
+      this.warpDestStarSystem.setPlanetSystem(null, this.catalog.solIndex);
+      return;
+    }
+    const destIdx = ws.destIdx;
+    if (!hasPlanets(this.catalog, destIdx)) {
+      this.warpDestStarSystem.setPlanetSystem(null, this.catalog.solIndex);
+      return;
+    }
+    void getPlanetSystem(this.catalog, destIdx).then((ps) => {
+      if (token !== this.warpDestPlanetSystemToken) return;
+      this.warpDestStarSystem.setPlanetSystem(ps, this.catalog.solIndex);
+    });
   }
 
   // Reload the focused star's planet system. Called from every code path
@@ -2021,6 +2058,7 @@ export class Stellata {
     this.hudOverlay.setMonochrome(on);
     this.clouds?.setMonochrome(on);
     this.starSystem.setMonochrome(on);
+    this.warpDestStarSystem.setMonochrome(on);
     // The milky-way layer used to fully hide in chart mode, but Phase 8
     // re-purposes it to render an isobar contour. Visibility/contour
     // are now driven by the chart-mode orchestrator via
@@ -2269,6 +2307,11 @@ export class Stellata {
       startQuaternion: this.camera.quaternion.clone(),
       reorientEndQuaternion,
     };
+    // Populate the warp-destination StarSystem with the destination's
+    // planet data so its rings + bodies render alongside the source's
+    // for the duration of the animation. Sol is the only host with
+    // planets in v1, so this is a no-op unless dest is Sol.
+    this.refreshWarpDestPlanetSystem();
     for (const h of this.onWarpHandlers) h(true);
     this.fireStateChange();
   }
@@ -2290,6 +2333,7 @@ export class Stellata {
       // Cloud was detached mid-warp (shouldn't happen in practice); bail
       // gracefully to a clean state rather than NaN-ing the camera.
       this.warpState = null;
+      this.refreshWarpDestPlanetSystem();
       this.controls.enabled = true;
       for (const h of this.onWarpHandlers) h(false);
       return;
@@ -2352,6 +2396,7 @@ export class Stellata {
       this.controls.enabled = true;
       this.controls.update();
     }
+    this.refreshWarpDestPlanetSystem();
     for (const h of this.onWarpHandlers) h(false);
   }
 
@@ -3385,12 +3430,29 @@ export class Stellata {
       this.galacticDisc.group.visible = false;
       this.galacticGrid.group.visible = false;
       this.hudOverlay.setVisible(false);
-      this.starSystem.setHidden(true);
+      // StarSystem layers stay visible during warp: source recedes
+      // (focused starSystem) and destination approaches (warp-dest
+      // starSystem). The pixel-gap visibility heuristic naturally
+      // adapts as camera-to-host distance changes for each.
+      this.starSystem.update(this.camera, window.innerHeight);
+      if (this.warpState.destKind === 'star') {
+        const destLocal = this.starLocalPositionInto(
+          this.warpState.destIdx,
+          this._tmpLocalA,
+        );
+        this.warpDestStarSystem.update(this.camera, window.innerHeight, destLocal);
+      } else {
+        // Cloud destination — no planet system to render.
+        this.warpDestStarSystem.update(this.camera, window.innerHeight);
+      }
       this.clouds?.update(this.worldOffset, this.filter.showMolecularClouds);
       return;
     }
-    this.starSystem.setHidden(false);
     this.starSystem.update(this.camera, window.innerHeight);
+    // Outside warp the destination layer is empty (cleared by
+    // refreshWarpDestPlanetSystem on warp end) — calling update keeps
+    // the group hidden via the no-system fast path.
+    this.warpDestStarSystem.update(this.camera, window.innerHeight);
 
     // Refresh camera matrices before any SVG projection — controls.update()
     // mutates camera.position/quaternion but doesn't propagate to
@@ -3654,6 +3716,7 @@ export class Stellata {
     this.galacticDisc.dispose();
     this.galacticGrid.dispose();
     this.starSystem.dispose();
+    this.warpDestStarSystem.dispose();
     this.milkyway.dispose();
     // The dust voxel grid is the largest single GPU allocation in the app
     // (~128 MiB Data3DTexture). MilkyWay shares the same texture handle but

@@ -388,17 +388,35 @@ export class StarSystem {
   }
 
   /**
-   * Per-frame visibility update. Camera position is read in the local
-   * frame (host star at (0,0,0)); FOV and viewport height drive the
-   * pixel-gap heuristic. No-op when the layer is hidden or chart-mode
-   * is engaged.
+   * Per-frame visibility + position update.
+   *
+   * `hostLocalPos` (default origin) is the host star's position in the
+   * renderer's local frame. Steady-focus rendering keeps the host at
+   * (0,0,0) under the floating-origin recenter from setFocus(idx);
+   * during a warp the focused host stays at the origin while the warp
+   * *destination* sits at a non-zero offset from worldOffset, so the
+   * destination's StarSystem instance receives the destination's
+   * local position here. The pixel-gap visibility heuristic uses
+   * camera-to-host distance, so it naturally adapts: source rings
+   * collapse as the camera flies away, destination rings spread as
+   * it approaches.
    */
-  update(camera: THREE.PerspectiveCamera, viewportHeightPx: number): void {
+  update(
+    camera: THREE.PerspectiveCamera,
+    viewportHeightPx: number,
+    hostLocalPos?: THREE.Vector3,
+  ): void {
     if (this.hidden || this.mono || (this.rings.length === 0 && !this.bodyMesh)) {
       this.group.visible = false;
       return;
     }
     this.group.visible = true;
+
+    if (hostLocalPos) {
+      this.group.position.copy(hostLocalPos);
+    } else {
+      this.group.position.set(0, 0, 0);
+    }
 
     const fovYRad = (camera.fov * Math.PI) / 180;
 
@@ -411,7 +429,12 @@ export class StarSystem {
     }
 
     if (this.rings.length === 0) return;
-    const dPc = camera.position.length();
+    // Camera-to-host distance, not camera-to-origin: when the host sits
+    // off the local origin (warp destination case) the heuristic still
+    // reads the correct angular sizes.
+    const dPc = hostLocalPos
+      ? camera.position.distanceTo(hostLocalPos)
+      : camera.position.length();
     // px = θ · viewportHeight / fov_y ; θ ≈ atan(a/d). atan keeps the
     // approximation honest for the close-flyby regime where a ≳ d.
     const pxPerRad = viewportHeightPx / fovYRad;
