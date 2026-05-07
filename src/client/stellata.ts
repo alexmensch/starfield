@@ -21,6 +21,7 @@ import {
   varEffectiveAmplitude,
   distAtFillFraction,
 } from './star-geometry';
+import { getPlanetSystem, hasPlanets, type PlanetSystem } from './planet-system';
 
 export type MagPresetName = 'naked-eye' | 'binoculars' | 'all';
 
@@ -515,6 +516,19 @@ export class Stellata {
   // looking at" reads as the cloud name. Star-specific UI (focus ring,
   // distance vector, warp source, floating-origin recenter) ignores this.
   private focusedCloud: number | null = null;
+  // Planet system attached to the currently focused star, or null. v1 only
+  // populates this when Sol is focused; the solar-system rendering layers
+  // (3re.4 planet bodies, 3re.5 heliopause, 3re.7 orbit rings) read this
+  // through getFocusedPlanetSystem() instead of checking focusedStar against
+  // catalog.solIndex directly, so stellata-bk5 can extend planet support
+  // to other hosts without touching the renderers.
+  //
+  // Stale-load guard: refreshPlanetSystem awaits getPlanetSystem(); if the
+  // user re-focuses before that resolves, the in-flight result is dropped
+  // by comparing against planetSystemToken.
+  private focusedPlanetSystem: PlanetSystem | null = null;
+  private planetSystemToken = 0;
+  private onPlanetSystemHandlers: Array<(ps: PlanetSystem | null) => void> = [];
   // Distance-vector destination — at most one of these is non-null at a
   // time. Mutual exclusion is enforced by setVectorTo / setVectorToCloud
   // both clearing the other slot.
@@ -934,6 +948,12 @@ export class Stellata {
 
   onFocusChange(h: (starIndex: number | null) => void) { this.onFocusHandlers.push(h); }
   onCloudFocusChange(h: (cloudIndex: number | null) => void) { this.onCloudFocusHandlers.push(h); }
+  /** Subscribe to planet-system changes — fires whenever the focused star's
+   *  attached system loads, clears, or swaps. Renderers in the solar-system
+   *  layer hook here to (re)build their geometry / uniforms. */
+  onPlanetSystemChange(h: (ps: PlanetSystem | null) => void) {
+    this.onPlanetSystemHandlers.push(h);
+  }
   /** Subscribe to per-frame ticks. Returns a disposer that removes the
    *  handler when invoked — debug HUDs and other temporary subscribers
    *  call this on close so the closure doesn't accumulate across toggles. */
@@ -952,6 +972,11 @@ export class Stellata {
 
   getFocusedStar(): number | null { return this.focusedStar; }
   getFocusedCloud(): number | null { return this.focusedCloud; }
+  /** Planet system for the currently focused star, or null if the focus
+   *  has none (or has not finished loading). The solar-system rendering
+   *  layer gates on this — renderers also subscribe to
+   *  onPlanetSystemChange to react to focus swaps. */
+  getFocusedPlanetSystem(): PlanetSystem | null { return this.focusedPlanetSystem; }
   /** Absolute-space coordinate of the renderer's current local origin.
    *  Read-only snapshot; callers must not mutate. URL serialisation
    *  emits this so close-orbit unfocus poses (where worldOffset sits at
@@ -1325,7 +1350,31 @@ export class Stellata {
       this.controls.minDistance = Math.min(GLOBAL_MIN_DIST_PC, eye);
     }
     for (const h of this.onFocusHandlers) h(idx);
+    this.refreshPlanetSystem(idx);
     this.fireStateChange();
+  }
+
+  // Reload the focused star's planet system. Called from every code path
+  // that mutates focusedStar (setFocus + swapObserveAnchor). The token
+  // guard drops a previous in-flight load if the focus changes again
+  // before the Promise resolves — relevant once stellata-bk5 introduces
+  // truly async fetches; for Sol the resolve happens on the next
+  // microtask, ahead of the next animation frame.
+  private refreshPlanetSystem(idx: number | null) {
+    const token = ++this.planetSystemToken;
+    if (idx === null || !hasPlanets(this.catalog, idx)) {
+      if (this.focusedPlanetSystem !== null) {
+        this.focusedPlanetSystem = null;
+        for (const h of this.onPlanetSystemHandlers) h(null);
+      }
+      return;
+    }
+    void getPlanetSystem(this.catalog, idx).then((ps) => {
+      if (token !== this.planetSystemToken) return;
+      if (this.focusedPlanetSystem === ps) return;
+      this.focusedPlanetSystem = ps;
+      for (const h of this.onPlanetSystemHandlers) h(ps);
+    });
   }
 
   /**
@@ -2287,6 +2336,7 @@ export class Stellata {
     // from the post-arrival slerp end state.
     this.camera.position.set(0, 0, 0);
     for (const h of this.onFocusHandlers) h(newIdx);
+    this.refreshPlanetSystem(newIdx);
     this.fireStateChange();
   }
 

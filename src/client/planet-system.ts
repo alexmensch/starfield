@@ -1,0 +1,137 @@
+// Per-star planet data model for the solar-system layer (stellata-3re).
+//
+// This module is intentionally generic: any focusable star *may* carry a
+// planet system, even though Sol is the only one populated in v1. The
+// future exoplanet epic (stellata-bk5) plugs additional hosts in by
+// extending the resolver below, without changing the shape consumed by
+// renderers (`PlanetSystem`, `Planet`, the `hasPlanets`/`getPlanetSystem`
+// pair).
+//
+// Rendering layers (3re.4 planet bodies, 3re.7 orbit rings, 3re.5
+// heliopause, etc.) gate themselves on `Stellata.getFocusedPlanetSystem()`
+// rather than checking "is this star Sol?" directly.
+
+import type { Catalog } from './catalog-loader';
+
+export type PlanetType = 'rocky' | 'gas_giant' | 'ice_giant';
+
+export interface Planet {
+  readonly name: string;
+  // Equatorial radius in km. Conversion to parsecs (for `θ = 2·atan(R/d)`
+  // disc sizing) is the renderer's responsibility — keep the canonical
+  // unit human-readable here.
+  readonly radiusKm: number;
+  // Semi-major axis in AU. Real orbital phase is deferred to stellata-3re.3
+  // (VSOP87 ephemerides); placeholder positions in 3re.4 use this alone.
+  readonly semiMajorAxisAu: number;
+  readonly type: PlanetType;
+  // Representative single-colour RGB in linear-ish [0,1]. Per stellata-3re.4
+  // these are average tones — atmospheric scattering / banding belong to
+  // a future texture or shader pass.
+  readonly colour: readonly [number, number, number];
+  // Drives the additive halo pass in 3re.4. True for atmospheres thick
+  // enough to read at typical zoom (Venus, Earth, the giants); Mars's
+  // thin CO₂ envelope is treated as cosmetic-only and stays false here.
+  readonly hasAtmosphere: boolean;
+}
+
+export interface PlanetSystem {
+  // Catalog index of the host star. Stable for as long as the loaded
+  // catalog instance is alive.
+  readonly hostStarIdx: number;
+  readonly planets: readonly Planet[];
+}
+
+// Sol's eight planets. Radii from NASA planetary fact sheets (equatorial).
+// Semi-major axes from JPL DE440 mean elements at J2000. Colours are
+// observation-derived representative tones, not pixel-accurate samples —
+// stellata-3re.10 decides whether to upgrade to texture maps.
+export const SOL_PLANETS: readonly Planet[] = [
+  {
+    name: 'Mercury',
+    radiusKm: 2440,
+    semiMajorAxisAu: 0.387,
+    type: 'rocky',
+    colour: [0.55, 0.47, 0.32],
+    hasAtmosphere: false,
+  },
+  {
+    name: 'Venus',
+    radiusKm: 6052,
+    semiMajorAxisAu: 0.723,
+    type: 'rocky',
+    colour: [0.91, 0.82, 0.60],
+    hasAtmosphere: true,
+  },
+  {
+    name: 'Earth',
+    radiusKm: 6371,
+    semiMajorAxisAu: 1.000,
+    type: 'rocky',
+    colour: [0.31, 0.49, 0.67],
+    hasAtmosphere: true,
+  },
+  {
+    name: 'Mars',
+    radiusKm: 3390,
+    semiMajorAxisAu: 1.524,
+    type: 'rocky',
+    colour: [0.76, 0.27, 0.05],
+    hasAtmosphere: false,
+  },
+  {
+    name: 'Jupiter',
+    radiusKm: 69911,
+    semiMajorAxisAu: 5.203,
+    type: 'gas_giant',
+    colour: [0.85, 0.72, 0.51],
+    hasAtmosphere: true,
+  },
+  {
+    name: 'Saturn',
+    radiusKm: 58232,
+    semiMajorAxisAu: 9.537,
+    type: 'gas_giant',
+    colour: [0.90, 0.79, 0.62],
+    hasAtmosphere: true,
+  },
+  {
+    name: 'Uranus',
+    radiusKm: 25362,
+    semiMajorAxisAu: 19.191,
+    type: 'ice_giant',
+    colour: [0.64, 0.85, 0.90],
+    hasAtmosphere: true,
+  },
+  {
+    name: 'Neptune',
+    radiusKm: 24622,
+    semiMajorAxisAu: 30.069,
+    type: 'ice_giant',
+    colour: [0.25, 0.37, 0.75],
+    hasAtmosphere: true,
+  },
+] as const;
+
+// Sync probe — does this star have a planet system at all?
+//
+// v1 hardwires "planets ⇔ Sol". When stellata-bk5 lands an exoplanet
+// flag bit on the catalog record, this becomes a flag check; callers
+// stay unchanged.
+export function hasPlanets(catalog: Catalog, starIdx: number | null): boolean {
+  if (starIdx === null || starIdx < 0) return false;
+  return starIdx === catalog.solIndex;
+}
+
+// Async resolver — supplies the `PlanetSystem` for `starIdx`, or null if
+// the star has no planets. Sol resolves with already-in-memory data;
+// stellata-bk5 is expected to extend this to fetch a per-star JSON
+// shard lazily, caching by index. The Promise wrapper keeps the API
+// stable across that transition.
+export async function getPlanetSystem(
+  catalog: Catalog,
+  starIdx: number | null,
+): Promise<PlanetSystem | null> {
+  if (!hasPlanets(catalog, starIdx)) return null;
+  return { hostStarIdx: starIdx as number, planets: SOL_PLANETS };
+}
