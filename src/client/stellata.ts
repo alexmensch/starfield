@@ -998,6 +998,13 @@ export class Stellata {
    *  `onFrame` handlers, so overlays driven by the frame loop (focus
    *  ring, etc.) read current-frame data. */
   anyOrbitRingVisible(): boolean { return this.starSystem.anyRingVisible(); }
+  /** Local-frame positions of the focused host's planets (xyz triples,
+   *  length 3·N), or null if no system is attached. Returned buffer is
+   *  the live cache — overlays must not mutate. Used by planet-labels
+   *  to project bodies to screen space. */
+  getFocusedPlanetLocalPositions(): Float32Array | null {
+    return this.starSystem.getPlanetLocalPositions();
+  }
   /** Absolute-space coordinate of the renderer's current local origin.
    *  Read-only snapshot; callers must not mutate. URL serialisation
    *  emits this so close-orbit unfocus poses (where worldOffset sits at

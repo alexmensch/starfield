@@ -1,10 +1,12 @@
-// Generic per-host orbit-rings layer (stellata-3re.7).
+// Generic per-host star-system rendering layer (stellata-3re.7, .4).
 //
-// Renders elliptical orbital rings around the focused host star whenever
-// it carries a PlanetSystem. The host is at the local origin under the
-// floating-origin recenter from setFocus(idx), so all geometry sits in
-// the local frame at (0,0,0) — no per-frame world-offset bookkeeping
-// needed (unlike GalacticDisc, which lives in absolute space).
+// Renders the focused host star's planet system: per-planet orbital
+// ellipse rings (3re.7) and the bodies themselves as billboarded
+// quads (3re.4). The host is at the local origin under the
+// floating-origin recenter from setFocus(idx), so all geometry sits
+// in the local frame at (0,0,0) — no per-frame world-offset
+// bookkeeping needed (unlike GalacticDisc, which lives in absolute
+// space).
 //
 // Sol is the only host with planet data populated in v1, but the layer
 // is intentionally host-agnostic: stellata-bk5 will plug exoplanet
@@ -13,17 +15,36 @@
 // resolved per-host via orbitalPlaneNormalFor() — Sol's ecliptic vs
 // every other host's galactic plane (stellata-3re.8).
 //
+// Body positions in v1 are placeholders — each planet sits on its
+// own orbit ring at an evenly-spaced eccentric anomaly so eight
+// bodies don't pile up on the +x axis. Real time-varying positions
+// land with stellata-3re.3 (VSOP87 ephemerides via astronomia).
+//
 // Sibling Sol-only decorations (heliopause shell, 1 AU/50 AU scale
 // rings — stellata-3re.5) live in their own layers; this file stays
 // generic so it works for any planet-bearing host.
 
 import * as THREE from 'three';
-import type { PlanetSystem, Planet } from './planet-system';
+import type { PlanetSystem, Planet, PlanetType } from './planet-system';
 import { GALACTIC_NORTH_POLE_ICRS } from './galactic-coords';
+import planetVert from './shaders/planet.vert.glsl?raw';
+import planetFrag from './shaders/planet.frag.glsl?raw';
 
 // 1 AU expressed in parsecs.
 // Source: IAU 2012 — 1 pc / 648000 / π ≈ 4.8481368e-6 pc/AU.
 export const AU_PC = 4.8481368e-6;
+
+// 1 km expressed in parsecs (= AU_PC / 1.495978707e8 km/AU).
+// Used to convert per-planet equatorial radii (km) into the parsec
+// scale the rest of the renderer works in.
+export const KM_PC = AU_PC / 1.495978707e8;
+
+// Pixel floor for the planet-disc shader, mirroring the star pipeline's
+// appSize floor. Smaller than the star floor (which can be 2-24 px from
+// the size slider) — planets are secondary visual content; we don't
+// want a sub-pixel Mercury to bloom into a 6-px disc that competes
+// with the bodies that genuinely deserve attention.
+const PLANET_DISC_MIN_PX = 2.0;
 
 // J2000 obliquity of the ecliptic (IAU). Sol's orbital plane is tilted
 // from the ICRS equatorial plane by this angle around the +X (vernal
@@ -143,17 +164,91 @@ export function buildEllipsePoints(
   }
 }
 
+/**
+ * Placeholder eccentric anomaly for the i-th planet of an N-planet
+ * system. Spreads bodies evenly around their respective orbits so all
+ * eight don't pile up at perihelion (+x). Deterministic — re-running
+ * with the same i and N produces the same angle, so labels and
+ * future tests can rely on a stable layout. Replaced when stellata-3re.3
+ * lands real VSOP87 mean anomalies.
+ */
+export function placeholderEccentricAnomaly(i: number, n: number): number {
+  if (n <= 0) return 0;
+  return (i / n) * Math.PI * 2;
+}
+
+/**
+ * Local-frame position of a planet at a given eccentric anomaly.
+ * Pure helper — used both by the body-instance builder and by the
+ * planet-labels overlay so they read the same parametrisation. After
+ * stellata-3re.3 this becomes the entry point for VSOP87 positions
+ * (the orientation quaternion stays identical; only the in-plane
+ * (x, y) computation changes).
+ *
+ * `out` is mutated and returned for convenience.
+ */
+export function planetLocalPosition(
+  semiMajorAxisAu: number,
+  eccentricity: number,
+  eccentricAnomaly: number,
+  orientation: THREE.Quaternion,
+  out: THREE.Vector3,
+): THREE.Vector3 {
+  const a = semiMajorAxisAu * AU_PC;
+  const b = a * Math.sqrt(1 - eccentricity * eccentricity);
+  const c = a * eccentricity;
+  out.set(
+    a * Math.cos(eccentricAnomaly) - c,
+    b * Math.sin(eccentricAnomaly),
+    0,
+  );
+  out.applyQuaternion(orientation);
+  return out;
+}
+
+/**
+ * Map a Sol-internal planet type to a shader solidity factor. The
+ * fragment shader interpolates the inner-edge fade window between
+ * fadeStart=0.5 (gas-giant softness) and fadeStart=0.95 (rocky-body
+ * sharpness) on this value. Ice giants land between the two — a
+ * rocky-ish core with thick gaseous mantle reads as slightly soft
+ * but not as diffuse as Jupiter's banded silhouette.
+ */
+export function solidityForType(type: PlanetType): number {
+  switch (type) {
+    case 'rocky': return 1.0;
+    case 'ice_giant': return 0.4;
+    case 'gas_giant': return 0.0;
+  }
+}
+
 export class StarSystem {
   readonly group: THREE.Group;
   private rings: PlanetRing[] = [];
   private mono = false;
   private hidden = false;
+  // Planet body mesh — one InstancedBufferGeometry holding N quads, with
+  // per-instance position / radius / colour / solidity / atmosphere.
+  // null whenever no system is attached.
+  private bodyMesh: THREE.Mesh | null = null;
+  private bodyGeometry: THREE.InstancedBufferGeometry | null = null;
+  private bodyMaterial: THREE.ShaderMaterial | null = null;
+  // Exposed for overlays (planet-labels) so they can read planet
+  // positions without re-running the placeholder math themselves.
+  // Length = 3·planetCount; null when no system. Layout matches the
+  // PlanetSystem.planets array ordering.
+  private bodyLocalPositions: Float32Array | null = null;
+  private currentPlanets: readonly Planet[] = [];
 
   constructor() {
     this.group = new THREE.Group();
-    // Render after the star disc / glow passes (renderOrder 0/1) and the
-    // galactic disc (-1) so rings overlay the ambient backdrop but lose
-    // the depth fight to bright stars at the same pixel.
+    // Rings sit below the bodies so a ring crossing in front of (or
+    // behind) a planet doesn't paint over the body silhouette. Order:
+    //   -1  galactic disc
+    //    0  star discs
+    //    1  star glow
+    //    2  orbit rings (this layer's ring children)
+    //    3  planet bodies (this layer's body mesh)
     this.group.renderOrder = 2;
     this.group.visible = false;
   }
@@ -166,6 +261,9 @@ export class StarSystem {
    */
   setPlanetSystem(ps: PlanetSystem | null, solIndex: number): void {
     this.disposeRings();
+    this.disposeBody();
+    this.bodyLocalPositions = null;
+    this.currentPlanets = [];
     if (ps === null || ps.planets.length === 0) {
       this.group.visible = false;
       return;
@@ -177,6 +275,14 @@ export class StarSystem {
       planeNormal,
     );
 
+    // Cache the planets list and host orientation so the labels overlay
+    // (and any future consumer) can compute the same placeholder
+    // positions through planetLocalPosition() without re-deriving the
+    // orientation. Stored alongside the precomputed body positions.
+    this.currentPlanets = ps.planets;
+    this.bodyLocalPositions = new Float32Array(ps.planets.length * 3);
+
+    // Build orbit rings ----------------------------------------------------
     for (const planet of ps.planets) {
       const aPc = planet.semiMajorAxisAu * AU_PC;
       const verts = new Float32Array(RING_SEGMENTS * 3);
@@ -210,6 +316,77 @@ export class StarSystem {
       this.group.add(line);
       this.rings.push({ planet, line, material: mat, semiMajorPc: aPc });
     }
+
+    // Build planet bodies --------------------------------------------------
+    // One quad per planet via InstancedBufferGeometry — same pattern as
+    // the main star pipeline, scaled down to N=8. The vertex shader
+    // expands the unit quad into a billboard sized by θ·viewportH/fov.
+    const n = ps.planets.length;
+    const positions = this.bodyLocalPositions;
+    const radii = new Float32Array(n);
+    const colours = new Float32Array(n * 3);
+    const solidity = new Float32Array(n);
+    const atmosphere = new Float32Array(n);
+    const tmpPos = new THREE.Vector3();
+    for (let i = 0; i < n; i++) {
+      const p = ps.planets[i];
+      const t = placeholderEccentricAnomaly(i, n);
+      planetLocalPosition(p.semiMajorAxisAu, p.eccentricity, t, orientation, tmpPos);
+      positions[i * 3 + 0] = tmpPos.x;
+      positions[i * 3 + 1] = tmpPos.y;
+      positions[i * 3 + 2] = tmpPos.z;
+      radii[i] = p.radiusKm * KM_PC;
+      colours[i * 3 + 0] = p.colour[0];
+      colours[i * 3 + 1] = p.colour[1];
+      colours[i * 3 + 2] = p.colour[2];
+      solidity[i] = solidityForType(p.type);
+      atmosphere[i] = p.hasAtmosphere ? 1 : 0;
+    }
+
+    const bodyGeom = new THREE.InstancedBufferGeometry();
+    bodyGeom.setAttribute(
+      'aCorner',
+      new THREE.BufferAttribute(
+        new Float32Array([-0.5, -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, 0.5]),
+        2,
+      ),
+    );
+    bodyGeom.setIndex([0, 1, 2, 1, 3, 2]);
+    bodyGeom.setAttribute('iPosition', new THREE.InstancedBufferAttribute(positions, 3));
+    bodyGeom.setAttribute('iRadiusPc', new THREE.InstancedBufferAttribute(radii, 1));
+    bodyGeom.setAttribute('iColour', new THREE.InstancedBufferAttribute(colours, 3));
+    bodyGeom.setAttribute('iSolidity', new THREE.InstancedBufferAttribute(solidity, 1));
+    bodyGeom.setAttribute('iAtmosphere', new THREE.InstancedBufferAttribute(atmosphere, 1));
+    bodyGeom.instanceCount = n;
+    // Disable frustum culling — the camera can sit inside the bounding
+    // sphere of the body cloud (e.g. between Jupiter and Saturn) where
+    // three.js's auto-bounding gets the cull wrong. Per-fragment depth
+    // and the disc fade-out handle the rest.
+    bodyGeom.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
+
+    const bodyMat = new THREE.ShaderMaterial({
+      glslVersion: THREE.GLSL3,
+      vertexShader: planetVert,
+      fragmentShader: planetFrag,
+      transparent: true,
+      depthTest: true,
+      depthWrite: false,
+      uniforms: {
+        uViewportH: { value: 1 },
+        uFovYRad: { value: 1 },
+        uMinPxSize: { value: PLANET_DISC_MIN_PX },
+      },
+    });
+
+    const mesh = new THREE.Mesh(bodyGeom, bodyMat);
+    mesh.frustumCulled = false;
+    mesh.renderOrder = this.group.renderOrder + 1;
+    this.group.add(mesh);
+
+    this.bodyGeometry = bodyGeom;
+    this.bodyMaterial = bodyMat;
+    this.bodyMesh = mesh;
+
     this.group.visible = !this.hidden && !this.mono;
   }
 
@@ -220,14 +397,24 @@ export class StarSystem {
    * is engaged.
    */
   update(camera: THREE.PerspectiveCamera, viewportHeightPx: number): void {
-    if (this.hidden || this.mono || this.rings.length === 0) {
+    if (this.hidden || this.mono || (this.rings.length === 0 && !this.bodyMesh)) {
       this.group.visible = false;
       return;
     }
     this.group.visible = true;
 
-    const dPc = camera.position.length();
     const fovYRad = (camera.fov * Math.PI) / 180;
+
+    // Push viewport / FOV to the body shader once per frame. The shader
+    // does the per-instance angular-diameter math itself; we just feed
+    // it the screen-space rate (pxPerRad = viewportH / fovY).
+    if (this.bodyMaterial) {
+      this.bodyMaterial.uniforms.uViewportH.value = viewportHeightPx;
+      this.bodyMaterial.uniforms.uFovYRad.value = fovYRad;
+    }
+
+    if (this.rings.length === 0) return;
+    const dPc = camera.position.length();
     // px = θ · viewportHeight / fov_y ; θ ≈ atan(a/d). atan keeps the
     // approximation honest for the close-flyby regime where a ≳ d.
     const pxPerRad = viewportHeightPx / fovYRad;
@@ -275,8 +462,24 @@ export class StarSystem {
     if (on) this.group.visible = false;
   }
 
+  /**
+   * Read access to the cached planet list and their local-frame
+   * positions, for overlays (planet-labels, future hover/picking) that
+   * need to project planets to screen space without re-running the
+   * placeholder math. Returned `positions` is the live buffer — callers
+   * must not mutate. Both `null` whenever no system is attached.
+   */
+  getPlanets(): readonly Planet[] {
+    return this.currentPlanets;
+  }
+
+  getPlanetLocalPositions(): Float32Array | null {
+    return this.bodyLocalPositions;
+  }
+
   dispose(): void {
     this.disposeRings();
+    this.disposeBody();
   }
 
   private disposeRings(): void {
@@ -286,5 +489,14 @@ export class StarSystem {
       r.material.dispose();
     }
     this.rings = [];
+  }
+
+  private disposeBody(): void {
+    if (this.bodyMesh) this.group.remove(this.bodyMesh);
+    this.bodyGeometry?.dispose();
+    this.bodyMaterial?.dispose();
+    this.bodyMesh = null;
+    this.bodyGeometry = null;
+    this.bodyMaterial = null;
   }
 }

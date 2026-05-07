@@ -9,6 +9,7 @@ import { createDiscMask } from './disc-mask';
 import { createDistanceVectorOverlay } from './distance-vector-overlay';
 import { createFocusRingOverlay } from './focus-ring-overlay';
 import { createPoiOverlay } from './poi-overlay';
+import { createPlanetLabels } from './planet-labels';
 import { createScaleBar } from './scale-bar';
 import { bindUnitToggle } from './unit-toggle';
 import { registerThemeStellata } from './theme-toggle';
@@ -131,6 +132,7 @@ async function main() {
     createDistanceVectorOverlay(stellata, starLabels);
     createFocusRingOverlay(stellata);
     createPoiOverlay(stellata, starLabels);
+    createPlanetLabels(stellata);
     createScaleBar(stellata, starLabels);
     bindWarpButton(stellata);
     bindModeToggle(stellata);

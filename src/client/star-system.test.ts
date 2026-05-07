@@ -2,12 +2,16 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import {
   AU_PC,
+  KM_PC,
   ECLIPTIC_NORTH_POLE_ICRS,
   RING_VISIBILITY_THRESHOLD_PX,
   StarSystem,
   buildEllipsePoints,
   orbitalPlaneNormalFor,
+  placeholderEccentricAnomaly,
+  planetLocalPosition,
   ringVisibility,
+  solidityForType,
 } from './star-system';
 import { GALACTIC_NORTH_POLE_ICRS } from './galactic-coords';
 import type { Planet, PlanetSystem } from './planet-system';
@@ -160,6 +164,102 @@ describe('RING_VISIBILITY_THRESHOLD_PX', () => {
   it('is a small positive pixel count consistent with the bead recommendation', () => {
     expect(RING_VISIBILITY_THRESHOLD_PX).toBeGreaterThanOrEqual(4);
     expect(RING_VISIBILITY_THRESHOLD_PX).toBeLessThanOrEqual(8);
+  });
+});
+
+describe('KM_PC', () => {
+  it('relates to AU_PC via 1 AU = 149597870.7 km', () => {
+    expect(KM_PC * 1.495978707e8).toBeCloseTo(AU_PC, 12);
+  });
+
+  it('agrees with the published 1 km ≈ 3.241e-14 pc figure', () => {
+    expect(KM_PC).toBeCloseTo(3.2407793e-14, 18);
+  });
+});
+
+describe('placeholderEccentricAnomaly', () => {
+  it('spreads N planets evenly around their orbits', () => {
+    expect(placeholderEccentricAnomaly(0, 8)).toBe(0);
+    expect(placeholderEccentricAnomaly(2, 8)).toBeCloseTo(Math.PI / 2, 12);
+    expect(placeholderEccentricAnomaly(4, 8)).toBeCloseTo(Math.PI, 12);
+    expect(placeholderEccentricAnomaly(7, 8)).toBeCloseTo((7 * Math.PI) / 4, 12);
+  });
+
+  it('returns zero on a degenerate (empty) system without dividing by zero', () => {
+    expect(placeholderEccentricAnomaly(0, 0)).toBe(0);
+    expect(placeholderEccentricAnomaly(3, 0)).toBe(0);
+  });
+
+  it('is deterministic — same (i, n) always returns the same angle', () => {
+    expect(placeholderEccentricAnomaly(3, 8)).toBe(placeholderEccentricAnomaly(3, 8));
+  });
+});
+
+describe('planetLocalPosition', () => {
+  const identity = new THREE.Quaternion();
+  const out = new THREE.Vector3();
+
+  it('lands at perihelion for eccentricAnomaly = 0', () => {
+    // a = 1 pc-equivalent, e = 0.5 ; perihelion at +x = a − c = 0.5.
+    planetLocalPosition(1 / AU_PC, 0.5, 0, identity, out);
+    expect(out.x).toBeCloseTo(0.5, 6);
+    expect(out.y).toBeCloseTo(0, 6);
+    expect(out.z).toBe(0);
+  });
+
+  it('lands at aphelion for eccentricAnomaly = π', () => {
+    planetLocalPosition(1 / AU_PC, 0.5, Math.PI, identity, out);
+    expect(out.x).toBeCloseTo(-1.5, 6);
+    expect(out.y).toBeCloseTo(0, 6);
+  });
+
+  it('lies in the local xy plane before any orientation rotation', () => {
+    for (let t = 0; t < 6; t++) {
+      planetLocalPosition(1, 0.3, t, identity, out);
+      expect(out.z).toBe(0);
+    }
+  });
+
+  it('a circular orbit (e = 0) traces a true circle of radius a', () => {
+    const aPc = 0.001;
+    for (let t = 0; t < 8; t++) {
+      const angle = (t / 8) * Math.PI * 2;
+      planetLocalPosition(aPc / AU_PC, 0, angle, identity, out);
+      expect(Math.hypot(out.x, out.y)).toBeCloseTo(aPc, 9);
+    }
+  });
+
+  it('respects the orientation quaternion', () => {
+    // Rotate +z onto +y; an in-plane perihelion (+x, 0, 0) should stay
+    // on +x (rotation around +z by 0 in our case is identity, but a 90°
+    // rotation around +x takes y to z).
+    const q = new THREE.Quaternion().setFromAxisAngle(
+      new THREE.Vector3(1, 0, 0),
+      Math.PI / 2,
+    );
+    // semiMajorAxisAu = 1/AU_PC means a = 1 pc internally; eccentricAnomaly
+    // = π/2 with e=0 yields the in-plane (0, 1, 0) point.
+    planetLocalPosition(1 / AU_PC, 0, Math.PI / 2, q, out);
+    // Pre-rotation: (0, 1, 0). Post 90° around +x: (0, 0, 1).
+    expect(out.x).toBeCloseTo(0, 6);
+    expect(out.y).toBeCloseTo(0, 6);
+    expect(out.z).toBeCloseTo(1, 6);
+  });
+});
+
+describe('solidityForType', () => {
+  it('rocky bodies have full solidity (hard disc edge)', () => {
+    expect(solidityForType('rocky')).toBe(1);
+  });
+
+  it('gas giants have zero solidity (broad gradient)', () => {
+    expect(solidityForType('gas_giant')).toBe(0);
+  });
+
+  it('ice giants sit between rocky and gas giants', () => {
+    const v = solidityForType('ice_giant');
+    expect(v).toBeGreaterThan(0);
+    expect(v).toBeLessThan(1);
   });
 });
 
