@@ -6,10 +6,10 @@
 // Apex direction: solar apex of motion through the local interstellar
 // medium, ICRS RA 17h53m, Dec +27.4° per Frisch & Slavin (2013).
 //
-// Construction: unit sphere → wireframe → scale to (115, 115, 161) AU →
-// translate centre by 39 AU toward antiapex → rotate +Z onto antiapex
-// in ICRS. Result: upwind apex lands at +122 AU along apex; downwind
-// at -200 AU along apex.
+// Construction: unit sphere → solid translucent shell → scale to
+// (115, 115, 161) AU → translate centre by 39 AU toward antiapex →
+// rotate +Z onto antiapex in ICRS. Result: upwind apex lands at
+// +122 AU along apex; downwind at -200 AU along apex.
 //
 // Static geometry — no `t` dependence on human timescales. Visibility
 // gated on focused star = Sol (the only planet-bearing host in v1).
@@ -38,15 +38,18 @@ const SEMI_MAJOR_AU = 161;
 const CENTRE_OFFSET_AU = 39;
 const UPWIND_APEX_AU = SEMI_MAJOR_AU - CENTRE_OFFSET_AU; // 122
 
-// Wireframe granularity. 16 longitudes × 8 latitudes reads as a
-// recognisable globe-style mesh without becoming triangle noise.
-const SPHERE_W_SEGMENTS = 16;
-const SPHERE_H_SEGMENTS = 8;
+// Sphere tessellation. 32 longitudes × 16 latitudes gives a smooth
+// silhouette as the camera orbits — coarser segments betray the egg
+// shape's facets where light hits a tangent.
+const SPHERE_W_SEGMENTS = 32;
+const SPHERE_H_SEGMENTS = 16;
 
 // Same dim chrome family as the per-planet orbit rings (3re.7) so the
-// solar-system layer reads as a single coherent visual layer.
+// solar-system layer reads as a single coherent visual layer. Low alpha
+// keeps the shell readable from outside without burying the planets
+// when the camera sits inside the heliopause.
 const COLOUR = 0xc8d6ff;
-const OPACITY = 0.18;
+const OPACITY = 0.10;
 
 /** Upwind apex point in the Sol-anchored local frame (parsecs). The
  *  label overlay reads this to project the "Heliopause" tag to screen.
@@ -58,9 +61,9 @@ export const HELIOPAUSE_APEX_LOCAL_PC: Readonly<THREE.Vector3> =
 
 export class Heliopause {
   readonly group: THREE.Group;
-  private mesh: THREE.LineSegments;
-  private wireframeGeom: THREE.WireframeGeometry;
-  private material: THREE.LineBasicMaterial;
+  private mesh: THREE.Mesh;
+  private geometry: THREE.SphereGeometry;
+  private material: THREE.MeshBasicMaterial;
   private hidden = true;
   private mono = false;
 
@@ -80,17 +83,18 @@ export class Heliopause {
       antiapex,
     );
 
-    const sphere = new THREE.SphereGeometry(1, SPHERE_W_SEGMENTS, SPHERE_H_SEGMENTS);
-    this.wireframeGeom = new THREE.WireframeGeometry(sphere);
-    sphere.dispose();
-
-    this.material = new THREE.LineBasicMaterial({
+    this.geometry = new THREE.SphereGeometry(1, SPHERE_W_SEGMENTS, SPHERE_H_SEGMENTS);
+    this.material = new THREE.MeshBasicMaterial({
       color: COLOUR,
       transparent: true,
       opacity: OPACITY,
       depthWrite: false,
+      // Render both faces — the camera can be either inside the shell
+      // (focused on Sol, zoomed in) or outside (zoomed past 200 AU). A
+      // back-face-culled shell would vanish from the inside view.
+      side: THREE.DoubleSide,
     });
-    this.mesh = new THREE.LineSegments(this.wireframeGeom, this.material);
+    this.mesh = new THREE.Mesh(this.geometry, this.material);
     // The ellipsoid is huge (~hundreds of AU) and the camera can sit
     // inside it; auto-bounding sphere culling gets confused. Skip cull.
     this.mesh.frustumCulled = false;
@@ -120,7 +124,7 @@ export class Heliopause {
   }
 
   dispose(): void {
-    this.wireframeGeom.dispose();
+    this.geometry.dispose();
     this.material.dispose();
   }
 }

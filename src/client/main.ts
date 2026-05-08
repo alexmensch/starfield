@@ -137,10 +137,6 @@ async function main() {
     createPlanetLabels(stellata);
     createHeliopauseLabel(stellata);
     createScaleBar(stellata, starLabels);
-    createTimeReadout({
-      el: document.getElementById('time-readout')!,
-      stellata,
-    });
     bindWarpButton(stellata);
     bindModeToggle(stellata);
 
@@ -149,11 +145,20 @@ async function main() {
     applyFromUrl(stellata, idMaps);
     startUrlSync(stellata, idMaps);
 
-    // Bottom-right meta: just the catalog count. The focused-object name
-    // moved into the scale-bar widget's z-axis indicator, where it sits
-    // alongside the camera-to-focus distance.
+    // Bottom-right meta: catalog count + (when focused on a planet host)
+    // the live UTC timestamp the planet positions correspond to. The
+    // focused-object name moved into the scale-bar widget's z-axis
+    // indicator, where it sits alongside the camera-to-focus distance.
     const countLabel = `${catalog.count.toLocaleString()} stars`;
-    meta.innerHTML = `<div class="meta-count">${escapeHtml(countLabel)}</div>`;
+    meta.innerHTML =
+      `<div class="meta-count">${escapeHtml(countLabel)}</div>` +
+      `<div id="time-readout" class="time-readout" hidden></div>`;
+    // After meta.innerHTML — createTimeReadout binds to the #time-readout
+    // child the line above just minted.
+    createTimeReadout({
+      el: document.getElementById('time-readout')!,
+      stellata,
+    });
 
     bindHoverTooltip(canvas, tooltip, stellata, describeStarDetailed, describeCloud);
 
