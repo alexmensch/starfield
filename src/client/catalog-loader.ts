@@ -1,4 +1,14 @@
-import { FLAG_HAS_NAME, FLAG_IS_SOL } from '../../scripts/catalog-pure';
+import {
+  FLAG_HAS_NAME,
+  FLAG_IS_SOL,
+  HEADER_LAYOUT,
+  RECORD_LAYOUT,
+  HEADER_SIZE,
+  RECORD_SIZE,
+  BINARY_VERSION,
+  MAGIC,
+  NO_COMPANION,
+} from '../../scripts/catalog-pure';
 
 export interface Constellation {
   code: string;
@@ -32,12 +42,6 @@ export interface Catalog {
   solIndex: number;              // -1 if not found
   constellations: Constellation[];
 }
-
-const HEADER_SIZE = 32;
-const RECORD_SIZE = 44;
-const EXPECTED_VERSION = 4;
-const EXPECTED_MAGIC = 'HYG4';
-const NO_COMPANION = 0xffffffff;
 
 export interface LoadProgress {
   bytes: number;
@@ -92,15 +96,15 @@ async function fetchBinary(
 
 export function parseBinary(ab: ArrayBuffer, constellations: Constellation[]): Catalog {
   const view = new DataView(ab);
-  const magic = new TextDecoder().decode(new Uint8Array(ab, 0, 4));
-  if (magic !== EXPECTED_MAGIC) throw new Error(`Bad magic: ${magic}`);
-  const version = view.getUint32(4, true);
-  if (version !== EXPECTED_VERSION) {
-    throw new Error(`Unsupported catalog version: ${version} (expected ${EXPECTED_VERSION})`);
+  const magic = new TextDecoder().decode(new Uint8Array(ab, HEADER_LAYOUT.magic, 4));
+  if (magic !== MAGIC) throw new Error(`Bad magic: ${magic}`);
+  const version = view.getUint32(HEADER_LAYOUT.version, true);
+  if (version !== BINARY_VERSION) {
+    throw new Error(`Unsupported catalog version: ${version} (expected ${BINARY_VERSION})`);
   }
-  const count = view.getUint32(8, true);
-  const nameTableOffset = view.getUint32(12, true);
-  const nameTableLength = view.getUint32(16, true);
+  const count = view.getUint32(HEADER_LAYOUT.count, true);
+  const nameTableOffset = view.getUint32(HEADER_LAYOUT.nameTableOffset, true);
+  const nameTableLength = view.getUint32(HEADER_LAYOUT.nameTableLength, true);
 
   const positions = new Float32Array(count * 3);
   const absmag = new Float32Array(count);
@@ -119,25 +123,22 @@ export function parseBinary(ab: ArrayBuffer, constellations: Constellation[]): C
   let solIndex = -1;
   for (let i = 0; i < count; i++) {
     const off = HEADER_SIZE + i * RECORD_SIZE;
-    positions[i * 3 + 0] = view.getFloat32(off + 0, true);
-    positions[i * 3 + 1] = view.getFloat32(off + 4, true);
-    positions[i * 3 + 2] = view.getFloat32(off + 8, true);
-    absmag[i] = view.getFloat32(off + 12, true);
-    ci[i] = view.getFloat32(off + 16, true);
-    physicalRadius[i] = view.getFloat32(off + 20, true);
-    const comp = view.getUint32(off + 24, true);
+    positions[i * 3 + 0] = view.getFloat32(off + RECORD_LAYOUT.x, true);
+    positions[i * 3 + 1] = view.getFloat32(off + RECORD_LAYOUT.y, true);
+    positions[i * 3 + 2] = view.getFloat32(off + RECORD_LAYOUT.z, true);
+    absmag[i] = view.getFloat32(off + RECORD_LAYOUT.absmag, true);
+    ci[i] = view.getFloat32(off + RECORD_LAYOUT.ci, true);
+    physicalRadius[i] = view.getFloat32(off + RECORD_LAYOUT.physRadius, true);
+    const comp = view.getUint32(off + RECORD_LAYOUT.companion, true);
     companion[i] = comp === NO_COMPANION ? -1 : comp;
-    nameOffsetArr[i] = view.getUint32(off + 28, true);
-    spectClass[i] = view.getUint8(off + 32);
-    luminosityClass[i] = view.getUint8(off + 33);
-    constellation[i] = view.getUint8(off + 34);
-    flags[i] = view.getUint8(off + 35);
-    // Variability (v3): amplitude in 0.05 mag units, period in 0.1 days.
-    // Zero period = not a known variable. (byte 37 is padding for 16-bit
-    // alignment of the period uint16 at byte 38.)
-    amplitudeMag[i] = view.getUint8(off + 36) * 0.05;
-    periodDays[i] = view.getUint16(off + 38, true) * 0.1;
-    hip[i] = view.getUint32(off + 40, true);
+    nameOffsetArr[i] = view.getUint32(off + RECORD_LAYOUT.nameOffset, true);
+    spectClass[i] = view.getUint8(off + RECORD_LAYOUT.spectClass);
+    luminosityClass[i] = view.getUint8(off + RECORD_LAYOUT.lumClass);
+    constellation[i] = view.getUint8(off + RECORD_LAYOUT.conIndex);
+    flags[i] = view.getUint8(off + RECORD_LAYOUT.flags);
+    amplitudeMag[i] = view.getUint8(off + RECORD_LAYOUT.ampUnits) * 0.05;
+    periodDays[i] = view.getUint16(off + RECORD_LAYOUT.period, true) * 0.1;
+    hip[i] = view.getUint32(off + RECORD_LAYOUT.hip, true);
     if (flags[i] & FLAG_IS_SOL) solIndex = i;
   }
 

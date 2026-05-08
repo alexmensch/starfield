@@ -203,13 +203,102 @@ export function parseGcvsNumber(s: string): number | null {
   return Number.isFinite(v) ? v : null;
 }
 
+// ---- Binary catalog format ----------------------------------------------
+
+// Single source of truth for the catalog.bin file layout, shared by the
+// writer (scripts/build-catalog), the runtime reader
+// (src/client/catalog-loader), and the verify tool (scripts/verify-catalog).
+//
+// Adding/changing a field means: bump BINARY_VERSION + MAGIC, extend
+// RECORD_LAYOUT with the new offset, update RECORD_SIZE, and the writer +
+// reader pick the change up automatically.
+//
+// File structure
+// --------------
+//   [0,                       HEADER_SIZE)                              header
+//   [HEADER_SIZE,             HEADER_SIZE + count*RECORD_SIZE)          records
+//   [HEADER_SIZE + count*RECORD_SIZE,                       end)        name table
+//
+// Header (HEADER_SIZE = 32 bytes, little-endian)
+// ----------------------------------------------
+//    0..3    magic            4-char ASCII tag (MAGIC)
+//    4..7    version          uint32 (BINARY_VERSION)
+//    8..11   recordCount      uint32
+//   12..15   nameTableOffset  uint32, byte offset of the name table
+//   16..19   nameTableLength  uint32, byte length of the name table
+//   20..31   reserved         12 bytes, currently zero-filled
+//
+// Record (RECORD_SIZE = 44 bytes, little-endian; offsets in RECORD_LAYOUT)
+// -----------------------------------------------------------------------
+//    0..3    x                float32, parsec, galactic XYZ
+//    4..7    y                float32
+//    8..11   z                float32
+//   12..15   absmag           float32
+//   16..19   ci               float32, B-V colour index
+//   20..23   physRadius       float32, R/R_sun
+//   24..27   companion        uint32, record index of nearest neighbour;
+//                                     NO_COMPANION = none
+//   28..31   nameOffset       uint32, byte offset into name table; 0 = unnamed
+//   32       spectClass       uint8
+//   33       lumClass         uint8
+//   34       conIndex         uint8, 0..87 IAU constellation, 255 = none
+//   35       flags            uint8, FLAG_* bitfield
+//   36       ampUnits         uint8, GCVS amplitude in 0.05 mag units;
+//                                    0 = not variable
+//   37       reserved         uint8 (future: variability type)
+//   38..39   period           uint16, GCVS period in 0.1 days; 0 = not variable
+//   40..43   hip              uint32, Hipparcos number; 0 = no HIP
+//
+// Name table (variable length)
+// ----------------------------
+// Two zero bytes of padding so name offset 0 reads as the "no name" sentinel,
+// followed by length-prefixed UTF-8 strings: uint16 byteLen, then byteLen
+// bytes.
+
+export const MAGIC = 'HYG4';
+export const BINARY_VERSION = 4;
+export const HEADER_SIZE = 32;
+export const RECORD_SIZE = 44;
+export const NO_COMPANION = 0xffffffff;
+
+export const HEADER_LAYOUT = {
+  magic: 0,            // 4 bytes ASCII
+  version: 4,          // uint32
+  count: 8,            // uint32
+  nameTableOffset: 12, // uint32
+  nameTableLength: 16, // uint32
+  // bytes 20..31 reserved
+} as const;
+
+export const RECORD_LAYOUT = {
+  x: 0,           // float32
+  y: 4,           // float32
+  z: 8,           // float32
+  absmag: 12,     // float32
+  ci: 16,         // float32
+  physRadius: 20, // float32
+  companion: 24,  // uint32 (NO_COMPANION = none)
+  nameOffset: 28, // uint32 (0 = unnamed)
+  spectClass: 32, // uint8
+  lumClass: 33,   // uint8
+  conIndex: 34,   // uint8 (255 = none)
+  flags: 35,      // uint8 (FLAG_*)
+  ampUnits: 36,   // uint8 (×0.05 mag)
+  // byte 37 reserved (variability type)
+  period: 38,     // uint16 (×0.1 days)
+  hip: 40,        // uint32 (0 = no HIP)
+} as const;
+
 // ---- Catalog flag bits --------------------------------------------------
 
-// Per-star bitfield in the binary catalog. Bit 3 (0x08) is reserved for
-// future use. Single source of truth for both writers (scripts/build-catalog,
-// scripts/catalog-pure inferBinaries) and readers (catalog-loader,
-// chart-labels, verify-catalog). Adding a bit means adding a name here, not
-// sprinkling another magic number.
+// Per-star bitfield stored at RECORD_LAYOUT.flags. Single source of truth
+// for both writers (scripts/build-catalog, scripts/catalog-pure
+// inferBinaries) and readers (catalog-loader, chart-labels,
+// verify-catalog). Adding a bit means adding a name here, not sprinkling
+// another magic number.
+//
+// Reserved bits available without a binary-version bump:
+//   0x08, 0x20, 0x40, 0x80
 export const FLAG_HAS_NAME = 0x01;
 export const FLAG_IS_SOL = 0x02;
 export const FLAG_HAS_BAYER = 0x04;

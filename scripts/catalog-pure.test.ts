@@ -12,7 +12,14 @@ import {
   markPrimaryIfUnflagged,
   applyDoublesFlag,
   BINARY_MAX_SEP_PC,
+  FLAG_HAS_NAME,
+  FLAG_IS_SOL,
+  FLAG_HAS_BAYER,
   FLAG_BINARY_PRIMARY,
+  HEADER_LAYOUT,
+  RECORD_LAYOUT,
+  HEADER_SIZE,
+  RECORD_SIZE,
   type SpectralInfo,
   type BinaryStar,
   type DoublesStar,
@@ -606,3 +613,73 @@ describe('catalog-pure / applyDoublesFlag', () => {
   });
 });
 
+// Pin the v4 byte layout. The writer (build-catalog.ts) and the readers
+// (catalog-loader.ts, verify-catalog.ts) all index off these constants;
+// drift between the two would silently produce a corrupt binary, so the
+// constants themselves get the regression coverage.
+describe('catalog-pure / binary-format constants', () => {
+  it('header offsets are non-overlapping uint32 slots within HEADER_SIZE', () => {
+    const fields = Object.entries(HEADER_LAYOUT);
+    // First field is `magic` (4 ASCII bytes), the rest are uint32s.
+    const sizes: Record<string, number> = {
+      magic: 4, version: 4, count: 4, nameTableOffset: 4, nameTableLength: 4,
+    };
+    for (const [name, off] of fields) {
+      expect(sizes[name]).toBeDefined();
+      expect(off + sizes[name]).toBeLessThanOrEqual(HEADER_SIZE);
+    }
+    // Pairwise non-overlap.
+    for (let i = 0; i < fields.length; i++) {
+      for (let j = i + 1; j < fields.length; j++) {
+        const [na, oa] = fields[i];
+        const [nb, ob] = fields[j];
+        const ea = oa + sizes[na];
+        const eb = ob + sizes[nb];
+        const overlap = oa < eb && ob < ea;
+        expect(overlap, `${na}@${oa}+${sizes[na]} overlaps ${nb}@${ob}+${sizes[nb]}`).toBe(false);
+      }
+    }
+  });
+
+  it('record offsets are non-overlapping and fit within RECORD_SIZE', () => {
+    const sizes: Record<string, number> = {
+      x: 4, y: 4, z: 4, absmag: 4, ci: 4, physRadius: 4,
+      companion: 4, nameOffset: 4,
+      spectClass: 1, lumClass: 1, conIndex: 1, flags: 1, ampUnits: 1,
+      period: 2, hip: 4,
+    };
+    const fields = Object.entries(RECORD_LAYOUT);
+    for (const [name, off] of fields) {
+      expect(sizes[name]).toBeDefined();
+      expect(off + sizes[name]).toBeLessThanOrEqual(RECORD_SIZE);
+    }
+    for (let i = 0; i < fields.length; i++) {
+      for (let j = i + 1; j < fields.length; j++) {
+        const [na, oa] = fields[i];
+        const [nb, ob] = fields[j];
+        const ea = oa + sizes[na];
+        const eb = ob + sizes[nb];
+        const overlap = oa < eb && ob < ea;
+        expect(overlap, `${na}@${oa}+${sizes[na]} overlaps ${nb}@${ob}+${sizes[nb]}`).toBe(false);
+      }
+    }
+  });
+
+  it('record fields cover the v4 byte plan (one byte 37 reserved)', () => {
+    // hip is the last field; with its 4 bytes the record fills exactly
+    // RECORD_SIZE except for byte 37 (reserved for future variability type).
+    expect(RECORD_LAYOUT.hip + 4).toBe(RECORD_SIZE);
+    // Reserved byte 37 sits between ampUnits (36) and period (38).
+    expect(RECORD_LAYOUT.ampUnits + 1).toBe(37);
+    expect(RECORD_LAYOUT.period).toBe(38);
+  });
+
+  it('flag bits are distinct powers of two', () => {
+    const flags = [FLAG_HAS_NAME, FLAG_IS_SOL, FLAG_HAS_BAYER, FLAG_BINARY_PRIMARY];
+    for (const f of flags) {
+      expect(f).toBeGreaterThan(0);
+      expect((f & (f - 1))).toBe(0); // single-bit
+    }
+    expect(new Set(flags).size).toBe(flags.length);
+  });
+});
