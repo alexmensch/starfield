@@ -26,10 +26,10 @@
 
 import * as THREE from 'three';
 import type { Stellata } from './stellata';
+import { AU_PC } from './ephemeris';
+import { LABEL_OFFSET_PX } from './planet-labels';
 import heliopauseVert from './shaders/heliopause.vert.glsl?raw';
 import heliopauseFrag from './shaders/heliopause.frag.glsl?raw';
-
-const AU_PC = 1 / 206264.80624709636;
 
 // Solar apex (upwind) direction in ICRS Cartesian. Pure unit vector.
 const APEX_RA_RAD = (17 + 53 / 60) * 15 * Math.PI / 180; // 268.25°
@@ -197,12 +197,6 @@ const SAMPLE_POINTS_LOCAL: readonly THREE.Vector3[] = (() => {
   arr.push(new THREE.Vector3(0, 0, cz - c).applyQuaternion(GROUP_QUATERNION));
   return arr;
 })();
-
-// Pixel gap between the silhouette curve and the label's top-left
-// corner, measured along the chosen offset direction. Matches the
-// planet-label offset so the two label families read at the same
-// distance from their referents.
-const LABEL_OFFSET_PX = 10;
 
 // Screen-space direction the label sits along, as a unit vector.
 // (1, 1)/√2 — bottom-right diagonal in CSS coords (where +y is down).

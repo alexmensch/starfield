@@ -26,13 +26,14 @@
 
 import * as THREE from 'three';
 import type { PlanetSystem, Planet, PlanetType } from './planet-system';
+import { AU_PC, type OrbitOrientationRad } from './ephemeris';
 import { GALACTIC_NORTH_POLE_ICRS } from './galactic-coords';
 import planetVert from './shaders/planet.vert.glsl?raw';
 import planetFrag from './shaders/planet.frag.glsl?raw';
 
-// 1 AU expressed in parsecs.
-// Source: IAU 2012 — 1 pc / 648000 / π ≈ 4.8481368e-6 pc/AU.
-export const AU_PC = 4.8481368e-6;
+// Re-export AU_PC for tests + downstream callers that already imported
+// it from this module. Canonical definition lives in ephemeris.ts.
+export { AU_PC };
 
 // 1 km expressed in parsecs (= AU_PC / 1.495978707e8 km/AU).
 // Used to convert per-planet equatorial radii (km) into the parsec
@@ -222,6 +223,31 @@ export function solidityForType(type: PlanetType): number {
   }
 }
 
+const COMPOSE_ORBIT_Z = new THREE.Vector3(0, 0, 1);
+const COMPOSE_ORBIT_X = new THREE.Vector3(1, 0, 0);
+const _composeQNode = new THREE.Quaternion();
+const _composeQIncl = new THREE.Quaternion();
+const _composeQPeri = new THREE.Quaternion();
+
+/**
+ * Compose `Rz(Ω)·Rx(I)·Rz(ω)` — the standard orbital-frame → host-plane
+ * rotation — into `out`. Same composition `ephemeris.planetEclipticAU`
+ * applies to in-plane (x', y') scalars; lifted here so ring vertices
+ * (in `setPlanetSystem`) and any test mirroring the math share one
+ * implementation. Returns `out` for convenience. Not allocation-free
+ * across calls (uses module-level scratch quaternions); single-threaded
+ * caller.
+ */
+export function composeOrbitOrientationQuat(
+  oi: OrbitOrientationRad,
+  out: THREE.Quaternion,
+): THREE.Quaternion {
+  _composeQNode.setFromAxisAngle(COMPOSE_ORBIT_Z, oi.longAscNode);
+  _composeQIncl.setFromAxisAngle(COMPOSE_ORBIT_X, oi.inclination);
+  _composeQPeri.setFromAxisAngle(COMPOSE_ORBIT_Z, oi.argPerihelion);
+  return out.copy(_composeQNode).multiply(_composeQIncl).multiply(_composeQPeri);
+}
+
 export class StarSystem {
   readonly group: THREE.Group;
   private rings: PlanetRing[] = [];
@@ -300,15 +326,8 @@ export class StarSystem {
       : null;
 
     // Build orbit rings ----------------------------------------------------
-    // Reused per-planet rotation scratch quaternions. Allocated once
-    // outside the loop so we don't churn the GC for what's a one-shot
-    // attach-time rebuild anyway.
-    const Z_AXIS = new THREE.Vector3(0, 0, 1);
-    const X_AXIS = new THREE.Vector3(1, 0, 0);
-    const qNode = new THREE.Quaternion();
-    const qIncl = new THREE.Quaternion();
-    const qPeri = new THREE.Quaternion();
     const ringQuat = new THREE.Quaternion();
+    const planeQuat = new THREE.Quaternion();
     for (let pIdx = 0; pIdx < ps.planets.length; pIdx++) {
       const planet = ps.planets[pIdx];
       const aPc = planet.semiMajorAxisAu * AU_PC;
@@ -323,10 +342,7 @@ export class StarSystem {
       ringQuat.copy(orientation);
       const o = ps.orbitOrientations?.[pIdx];
       if (o) {
-        qNode.setFromAxisAngle(Z_AXIS, o.longAscNode);
-        qIncl.setFromAxisAngle(X_AXIS, o.inclination);
-        qPeri.setFromAxisAngle(Z_AXIS, o.argPerihelion);
-        ringQuat.multiply(qNode).multiply(qIncl).multiply(qPeri);
+        ringQuat.multiply(composeOrbitOrientationQuat(o, planeQuat));
       }
       const tmp = new THREE.Vector3();
       for (let i = 0; i < RING_SEGMENTS; i++) {
@@ -523,7 +539,7 @@ export class StarSystem {
    * itself when the orbit rings are already identifying the focused
    * host — both indicators on the same star is redundant chrome.
    */
-  anyRingVisible(): boolean {
+  anyOrbitRingVisible(): boolean {
     if (this.hidden || this.mono || !this.group.visible) return false;
     for (const r of this.rings) {
       if (r.line.visible) return true;
@@ -540,7 +556,7 @@ export class StarSystem {
    * read anyway. Bodies themselves stay rendered (they sit at the
    * pixel-size floor); only the labels track the rings.
    */
-  isRingVisible(i: number): boolean {
+  isOrbitRingVisible(i: number): boolean {
     if (this.hidden || this.mono || !this.group.visible) return false;
     if (i < 0 || i >= this.rings.length) return false;
     return this.rings[i].line.visible;

@@ -11,6 +11,7 @@ import {
   _resetCacheForTests,
   type Vec3,
 } from './ephemeris';
+import { composeOrbitOrientationQuat } from './star-system';
 
 // J2000.0 in Unix-seconds: 2000-01-01T12:00:00 (TT, but treated as UTC
 // here — TT-UTC offset of ~64s collapses well below any test threshold).
@@ -248,8 +249,7 @@ describe('getPlanetOrbitOrientations', () => {
     // directly call planetEclipticAU on a temporary ElementSet whose
     // mean longitude is set so M=0 → E=0 at T=0.
     const T = 0;
-    const Z = new THREE.Vector3(0, 0, 1);
-    const X = new THREE.Vector3(1, 0, 0);
+    const composedQuat = new THREE.Quaternion();
     for (let i = 0; i < ELEMENTS.length; i++) {
       const e = ELEMENTS[i];
       // Skip outer planets — non-zero b/c/s/f shifts M away from L−ϖ
@@ -259,11 +259,11 @@ describe('getPlanetOrbitOrientations', () => {
       const oi = o[i];
       // Synthesised perihelion point at (a(1-e), 0, 0).
       const p = new THREE.Vector3(e.a * (1 - e.e), 0, 0);
-      // Apply Rz(Ω)·Rx(I)·Rz(ω) (composition matches star-system.ts).
-      const qN = new THREE.Quaternion().setFromAxisAngle(Z, oi.longAscNode);
-      const qI = new THREE.Quaternion().setFromAxisAngle(X, oi.inclination);
-      const qP = new THREE.Quaternion().setFromAxisAngle(Z, oi.argPerihelion);
-      p.applyQuaternion(qP).applyQuaternion(qI).applyQuaternion(qN);
+      // Apply Rz(Ω)·Rx(I)·Rz(ω) via the shared helper that star-system
+      // also uses — verifying the composition is consistent across both
+      // call sites and the matrix-form expansion in planetEclipticAU.
+      composeOrbitOrientationQuat(oi, composedQuat);
+      p.applyQuaternion(composedQuat);
       // Compute body position with M=0 (set L = ϖ so M = L-ϖ = 0).
       const eMod = { ...e, L: e.longperi, LDot: 0 };
       const ecl: Vec3 = { x: 0, y: 0, z: 0 };

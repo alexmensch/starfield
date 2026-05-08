@@ -14,10 +14,14 @@
 import * as THREE from 'three';
 import type { Stellata } from './stellata';
 
-// Pixel offset from the projected planet centre to the label baseline.
-// 12 px diagonal → label rides outside the body's quad-oversize halo
-// at typical close-zoom framings without overlapping the body itself.
-const LABEL_OFFSET_PX = 10;
+// Pixel offset from the projected planet centre to the label baseline,
+// applied as both the x and y component (so the diagonal magnitude is
+// LABEL_OFFSET_PX·√2 ≈ 14 px). Lets the label ride outside the body's
+// quad-oversize halo at typical close-zoom framings without overlapping
+// the body itself. Heliopause uses the same constant as a unit-vector
+// magnitude so the two label families read at a similar visual gap from
+// their referents.
+export const LABEL_OFFSET_PX = 10;
 
 interface Entry {
   el: SVGTextElement;

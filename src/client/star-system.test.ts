@@ -262,10 +262,10 @@ describe('solidityForType', () => {
   });
 });
 
-describe('StarSystem.anyRingVisible', () => {
+describe('StarSystem.anyOrbitRingVisible', () => {
   it('returns false with no planet system attached', () => {
     const ss = new StarSystem();
-    expect(ss.anyRingVisible()).toBe(false);
+    expect(ss.anyOrbitRingVisible()).toBe(false);
     ss.dispose();
   });
 
@@ -279,7 +279,7 @@ describe('StarSystem.anyRingVisible', () => {
     // Camera at 5 AU from the (origin) host. A lone ring has no
     // neighbours, so the gap heuristic always lets it render.
     ss.update(makeCamera(5 * AU_PC), 800);
-    expect(ss.anyRingVisible()).toBe(true);
+    expect(ss.anyOrbitRingVisible()).toBe(true);
     ss.dispose();
   });
 
@@ -292,7 +292,7 @@ describe('StarSystem.anyRingVisible', () => {
     ss.setPlanetSystem(ps, 0);
     ss.update(makeCamera(5 * AU_PC), 800);
     ss.setPlanetSystem(null, 0);
-    expect(ss.anyRingVisible()).toBe(false);
+    expect(ss.anyOrbitRingVisible()).toBe(false);
     ss.dispose();
   });
 
@@ -305,7 +305,7 @@ describe('StarSystem.anyRingVisible', () => {
     ss.setPlanetSystem(ps, 0);
     ss.update(makeCamera(5 * AU_PC), 800);
     ss.setHidden(true);
-    expect(ss.anyRingVisible()).toBe(false);
+    expect(ss.anyOrbitRingVisible()).toBe(false);
     ss.dispose();
   });
 
@@ -318,11 +318,11 @@ describe('StarSystem.anyRingVisible', () => {
     ss.setPlanetSystem(ps, 0);
     ss.update(makeCamera(5 * AU_PC), 800);
     ss.setMonochrome(true);
-    expect(ss.anyRingVisible()).toBe(false);
+    expect(ss.anyOrbitRingVisible()).toBe(false);
     ss.dispose();
   });
 
-  it('isRingVisible is per-planet and tracks per-ring visibility', () => {
+  it('isOrbitRingVisible is per-planet and tracks per-ring visibility', () => {
     const ss = new StarSystem();
     const ps: PlanetSystem = {
       hostStarIdx: 0,
@@ -337,17 +337,17 @@ describe('StarSystem.anyRingVisible', () => {
     // The exact heuristic outcome is exercised in `ringVisibility` tests
     // above; here we just confirm the per-index API plumbs through.
     ss.update(makeCamera(50 * AU_PC), 800);
-    const a = ss.isRingVisible(0);
-    const b = ss.isRingVisible(1);
+    const a = ss.isOrbitRingVisible(0);
+    const b = ss.isOrbitRingVisible(1);
     expect(typeof a).toBe('boolean');
     expect(typeof b).toBe('boolean');
     // Out-of-range index is always false.
-    expect(ss.isRingVisible(2)).toBe(false);
-    expect(ss.isRingVisible(-1)).toBe(false);
+    expect(ss.isOrbitRingVisible(2)).toBe(false);
+    expect(ss.isOrbitRingVisible(-1)).toBe(false);
     // Hide layer → all rings report false.
     ss.setHidden(true);
-    expect(ss.isRingVisible(0)).toBe(false);
-    expect(ss.isRingVisible(1)).toBe(false);
+    expect(ss.isOrbitRingVisible(0)).toBe(false);
+    expect(ss.isOrbitRingVisible(1)).toBe(false);
     ss.dispose();
   });
 
@@ -389,7 +389,7 @@ describe('StarSystem.anyRingVisible', () => {
     // applies — at least one of these two well-spread rings should be
     // visible at this distance.
     ss.update(cam, 800);
-    const visibleAtOrigin = ss.isRingVisible(0) || ss.isRingVisible(1);
+    const visibleAtOrigin = ss.isOrbitRingVisible(0) || ss.isOrbitRingVisible(1);
     expect(visibleAtOrigin).toBe(true);
     // Move the host far enough that the camera-to-host distance grows
     // past the ring-gap collapse threshold (~7500 AU for these
@@ -397,8 +397,8 @@ describe('StarSystem.anyRingVisible', () => {
     // rings should now collapse below the pixel-gap threshold.
     const farHost = new THREE.Vector3(0, 0, 50_000 * AU_PC);
     ss.update(cam, 800, farHost);
-    expect(ss.isRingVisible(0)).toBe(false);
-    expect(ss.isRingVisible(1)).toBe(false);
+    expect(ss.isOrbitRingVisible(0)).toBe(false);
+    expect(ss.isOrbitRingVisible(1)).toBe(false);
     ss.dispose();
   });
 
@@ -416,7 +416,7 @@ describe('StarSystem.anyRingVisible', () => {
     ss.setPlanetSystem(ps, 0);
     // 1e6 pc is absurdly far; both ring projections shrink to indistinguishable.
     ss.update(makeCamera(1e6), 800);
-    expect(ss.anyRingVisible()).toBe(false);
+    expect(ss.anyOrbitRingVisible()).toBe(false);
     ss.dispose();
   });
 });

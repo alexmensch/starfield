@@ -1032,7 +1032,7 @@ export class Stellata {
    *  ring. Frame-coherent — `updateGalacticLayers()` runs before
    *  `onFrame` handlers, so overlays driven by the frame loop (focus
    *  ring, etc.) read current-frame data. */
-  anyOrbitRingVisible(): boolean { return this.starSystem.anyRingVisible(); }
+  anyOrbitRingVisible(): boolean { return this.starSystem.anyOrbitRingVisible(); }
   /** Local-frame positions of the focused host's planets (xyz triples,
    *  length 3·N), or null if no system is attached. Returned buffer is
    *  the live cache — overlays must not mutate. Used by planet-labels
@@ -1045,7 +1045,7 @@ export class Stellata {
    *  with their associated rings — the body stays rendered at the
    *  pixel-size floor regardless. */
   isOrbitRingVisible(planetIdx: number): boolean {
-    return this.starSystem.isRingVisible(planetIdx);
+    return this.starSystem.isOrbitRingVisible(planetIdx);
   }
   /** Absolute-space coordinate of the renderer's current local origin.
    *  Read-only snapshot; callers must not mutate. URL serialisation
@@ -2920,7 +2920,7 @@ export class Stellata {
     if (!this.clouds) return 0;
     const cloud = this.clouds.clouds[cloudIdx];
     if (!cloud) return 0;
-    const local = this._tmpLocalA;
+    const local = this._tmpRenderLocal;
     if (!this.cloudLocalPositionInto(cloudIdx, local)) return 0;
     const camPos = this.camera.position;
     const dx = local.x - camPos.x;
@@ -2940,12 +2940,25 @@ export class Stellata {
   }
   private tmpCloudDir = new THREE.Vector3();
   // Scratch slots for the non-allocating *LocalPositionInto helpers.
-  // _tmpLocalA is the general-purpose internal scratch (animate's
-  // focusedLocal pass-through, updateWarp's per-frame destination reads,
-  // renderedCloudSizePx). _tmpWarpInfoB is dedicated to the value
-  // returned from getWarpInfo so its single caller can use B without
-  // worrying about other internal Stellata calls clobbering it.
-  private _tmpLocalA = new THREE.Vector3();
+  // Each is owned by one call-stack scope; values are valid only inside
+  // that scope and must not be retained across method calls.
+  //
+  //  - _tmpAnimateLocal: owned by animate() and the methods it calls
+  //    in sequence (updateWarp, updateGalacticLayers). Three writers
+  //    share the slot; the call ordering (updateWarp returns before
+  //    updateGalacticLayers reads its first time, updateGalacticLayers
+  //    early-returns on warp-active before the focusedLocal write) keeps
+  //    them non-overlapping. Adding a new writer that retains the value
+  //    across another animate-stack method violates the contract.
+  //  - _tmpRenderLocal: owned by per-call read methods invoked outside
+  //    the animate stack (renderedCloudSizePx, etc.). Independent of
+  //    _tmpAnimateLocal; never observed by code that holds a reference
+  //    across calls.
+  //  - _tmpWarpInfoB: dedicated to getWarpInfo's return-value position
+  //    so its single external caller can use B without worrying about
+  //    other internal Stellata calls clobbering it.
+  private _tmpAnimateLocal = new THREE.Vector3();
+  private _tmpRenderLocal = new THREE.Vector3();
   private _tmpWarpInfoB = new THREE.Vector3();
 
   // Navigate-mode opacity for the focused-star reference arrows (Sol, GC,
@@ -3475,7 +3488,7 @@ export class Stellata {
       if (this.warpState.destKind === 'star') {
         const destLocal = this.starLocalPositionInto(
           this.warpState.destIdx,
-          this._tmpLocalA,
+          this._tmpAnimateLocal,
         );
         this.warpDestStarSystem.update(this.camera, window.innerHeight, destLocal, this.getT());
       } else {
@@ -3517,7 +3530,7 @@ export class Stellata {
 
     const focusedLocal =
       this.focusedStar !== null
-        ? this.starLocalPositionInto(this.focusedStar, this._tmpLocalA)
+        ? this.starLocalPositionInto(this.focusedStar, this._tmpAnimateLocal)
         : null;
     const isSolFocus =
       this.focusedStar !== null && this.focusedStar === this.catalog.solIndex;
@@ -3584,7 +3597,7 @@ export class Stellata {
       const t = flyElapsed / state.durationMs;
       const f = t < 0.5 ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t);
       this.camera.position.lerpVectors(state.pStart, state.pEnd, f);
-      const out = this._tmpLocalA;
+      const out = this._tmpAnimateLocal;
       if (this.destLocalPositionInto(state.destKind, state.destIdx, out)) {
         this.camera.lookAt(out);
       }
@@ -3602,7 +3615,7 @@ export class Stellata {
     // distant Milky Way stays roughly fixed.
     const postElapsed = flyElapsed - state.durationMs;
     if (postElapsed < state.postArrivalMs) {
-      const out = this._tmpLocalA;
+      const out = this._tmpAnimateLocal;
       const B = this.destLocalPositionInto(state.destKind, state.destIdx, out) ? out : null;
       if (!state.flyEndQuaternion) {
         // Pin the camera to the canonical fly-end pose before snapshot
