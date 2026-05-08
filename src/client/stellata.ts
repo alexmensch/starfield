@@ -31,7 +31,8 @@ import {
   peakAmplitudeFactor,
 } from './star-geometry';
 import { getPlanetSystem, hasPlanets, type PlanetSystem } from './planet-system';
-import { StarSystem } from './star-system';
+import { OrbitRingsLayer } from './orbit-rings-layer';
+import { PlanetBodyField } from './planet-body-field';
 import { Heliopause } from './heliopause';
 
 export type MagPresetName = 'naked-eye' | 'binoculars' | 'all';
@@ -587,23 +588,17 @@ export class Stellata {
   // `filter.showHud`. Mono mode swaps strokes to a paper-chart palette via
   // setMonochrome on each layer (HUD is CSS-only).
   private galacticDisc: GalacticDisc;
-  // Generic per-host orbit-rings layer. Geometry rebuilds whenever the
-  // focused star's PlanetSystem changes; per-frame tick drives the
-  // pixel-gap visibility heuristic. Sol is the only populated host in
-  // v1 — see star-system.ts.
-  private starSystem: StarSystem;
-  // Second StarSystem instance used during warp to render the
-  // destination host's planet system alongside the focused (source)
-  // host's. Both stay visible for the duration of the warp animation
-  // — source recedes, destination approaches — and the pixel-gap
-  // heuristic naturally adapts as camera distance to each host
-  // changes. Cleared in finishWarp / cancelWarp via
-  // refreshWarpDestPlanetSystem().
-  private warpDestStarSystem: StarSystem;
-  // Stale-load guard for the warp destination's async PlanetSystem
-  // load — increments on every refresh so a quick cancel-then-retry
-  // doesn't double-apply.
-  private warpDestPlanetSystemToken = 0;
+  // Per-host orbit-rings layer. Geometry rebuilds whenever the focused
+  // star's PlanetSystem changes; per-frame tick drives the pixel-gap
+  // visibility heuristic. Representational layer — only renders when
+  // the host is the focused star (stellata-3re.15 / unfocus-split).
+  private orbitRingsLayer: OrbitRingsLayer;
+  // Global planet-body field. Holds every attached host's planet
+  // bodies (Sol in v1, exoplanet hosts in stellata-bk5). Bodies are
+  // physical objects: they render whenever attached, regardless of
+  // which host the camera is focused on, gated only by per-planet
+  // apparent-magnitude (stellata-3re.16) and per-host distance cull.
+  private planetBodyField: PlanetBodyField;
   // Heliopause boundary (3re.5). Sol-anchored asymmetric wireframe
   // ellipsoid; visible only when Sol is the focused host.
   private heliopause: Heliopause;
@@ -916,28 +911,42 @@ export class Stellata {
     // styling and inherits the `body.warping` hide rule for free.
     this.galacticDisc = new GalacticDisc();
     this.scene.add(this.galacticDisc.group);
-    this.starSystem = new StarSystem(sharedUniforms);
-    this.scene.add(this.starSystem.group);
-    this.warpDestStarSystem = new StarSystem(sharedUniforms);
-    this.scene.add(this.warpDestStarSystem.group);
+    this.orbitRingsLayer = new OrbitRingsLayer();
+    this.scene.add(this.orbitRingsLayer.group);
+    this.planetBodyField = new PlanetBodyField(sharedUniforms);
+    this.scene.add(this.planetBodyField.group);
     // Heliopause is Sol-anchored — added once, visibility gated on
     // focused star = Sol via the planet-system event below.
     this.heliopause = new Heliopause();
     this.scene.add(this.heliopause.group);
-    // Build/teardown rings whenever the focused star's planet data changes.
-    // The focused host always sits at the local origin under the
-    // floating-origin recenter from setFocus(idx), so the focused
-    // starSystem's group stays at (0,0,0). The warp-destination layer
-    // is positioned per-frame in updateGalacticLayers() — its host is
-    // off-origin during a warp. Heliopause shows iff the focal host
-    // is Sol — only Sol's heliopause is meaningful, and we render it
-    // in the Sol-centric local frame so it must be hidden under any
-    // other focus (which would put world-origin elsewhere).
+    // Build/teardown orbit rings + heliopause whenever the focused
+    // star's planet data changes. Both are representational layers
+    // gated on host-focused (stellata-3re.15). Planet bodies live in
+    // PlanetBodyField — they're physical objects, attached once at
+    // startup (below) and rendered whenever the camera is within
+    // their per-host cull distance, regardless of focus.
     this.onPlanetSystemChange((ps) => {
-      const hostAbsmag = ps ? this.catalog.absmag[ps.hostStarIdx] : 0;
-      this.starSystem.setPlanetSystem(ps, hostAbsmag, this.catalog.solIndex);
+      this.orbitRingsLayer.setPlanetSystem(ps, this.catalog.solIndex);
       this.heliopause.setVisible(ps !== null && ps.hostStarIdx === this.catalog.solIndex);
     });
+    // Attach Sol's planet system to the global body field once at
+    // startup. Bodies render from now on independent of focus, gated
+    // only by apparent-mag visibility + the per-host distance cull.
+    if (catalog.solIndex >= 0 && hasPlanets(catalog, catalog.solIndex)) {
+      const solIdx = catalog.solIndex;
+      const solAbs = new THREE.Vector3(
+        catalog.positions[solIdx * 3],
+        catalog.positions[solIdx * 3 + 1],
+        catalog.positions[solIdx * 3 + 2],
+      );
+      void getPlanetSystem(catalog, solIdx).then((ps) => {
+        if (ps !== null) {
+          this.planetBodyField.attachHost(
+            solIdx, ps, catalog.absmag[solIdx], solAbs, solIdx,
+          );
+        }
+      });
+    }
     this.galacticGrid = new GalacticGrid();
     this.scene.add(this.galacticGrid.group);
     const hudRing = document.getElementById('hud-ring') as unknown as SVGCircleElement;
@@ -1039,20 +1048,23 @@ export class Stellata {
    *  ring. Frame-coherent — `updateGalacticLayers()` runs before
    *  `onFrame` handlers, so overlays driven by the frame loop (focus
    *  ring, etc.) read current-frame data. */
-  anyOrbitRingVisible(): boolean { return this.starSystem.anyOrbitRingVisible(); }
+  anyOrbitRingVisible(): boolean { return this.orbitRingsLayer.anyOrbitRingVisible(); }
   /** Local-frame positions of the focused host's planets (xyz triples,
-   *  length 3·N), or null if no system is attached. Returned buffer is
-   *  the live cache — overlays must not mutate. Used by planet-labels
-   *  to project bodies to screen space. */
+   *  length 3·N), or null if no system is attached. Reads from the
+   *  global PlanetBodyField — overlays must not mutate. Used by
+   *  planet-labels to project bodies to screen space. */
   getFocusedPlanetLocalPositions(): Float32Array | null {
-    return this.starSystem.getPlanetLocalPositions();
+    if (!this.focusedPlanetSystem) return null;
+    return this.planetBodyField.getHostLocalPositions(
+      this.focusedPlanetSystem.hostStarIdx,
+    );
   }
   /** True when the orbit ring for planet `i` is currently rendering on
    *  the focused host. Used by planet-labels to hide labels in lockstep
-   *  with their associated rings — the body stays rendered at the
-   *  pixel-size floor regardless. */
+   *  with their associated rings — the body stays rendered (subject to
+   *  apparent-mag visibility) regardless. */
   isOrbitRingVisible(planetIdx: number): boolean {
-    return this.starSystem.isOrbitRingVisible(planetIdx);
+    return this.orbitRingsLayer.isOrbitRingVisible(planetIdx);
   }
   /** Absolute-space coordinate of the renderer's current local origin.
    *  Read-only snapshot; callers must not mutate. URL serialisation
@@ -1447,29 +1459,6 @@ export class Stellata {
     this.fireStateChange();
   }
 
-  // Sync the warp-destination StarSystem with the current warpState.
-  // Called whenever warpState transitions (start, finish, cancel) so
-  // the destination's rings + bodies appear during the animation and
-  // tear down on completion. No-op for cloud destinations.
-  private refreshWarpDestPlanetSystem(): void {
-    const token = ++this.warpDestPlanetSystemToken;
-    const ws = this.warpState;
-    if (!ws || ws.destKind !== 'star') {
-      this.warpDestStarSystem.setPlanetSystem(null, 0, this.catalog.solIndex);
-      return;
-    }
-    const destIdx = ws.destIdx;
-    if (!hasPlanets(this.catalog, destIdx)) {
-      this.warpDestStarSystem.setPlanetSystem(null, 0, this.catalog.solIndex);
-      return;
-    }
-    const destAbsmag = this.catalog.absmag[destIdx];
-    void getPlanetSystem(this.catalog, destIdx).then((ps) => {
-      if (token !== this.warpDestPlanetSystemToken) return;
-      this.warpDestStarSystem.setPlanetSystem(ps, destAbsmag, this.catalog.solIndex);
-    });
-  }
-
   // Reload the focused star's planet system. Called from every code path
   // that mutates focusedStar (setFocus + swapObserveAnchor). The token
   // guard drops a previous in-flight load if the focus changes again
@@ -1554,6 +1543,9 @@ export class Stellata {
     // Shader needs the world offset to reconstruct absolute positions for
     // dust-texture sampling (local-frame iPosition + uWorldOffset).
     (this.material.uniforms.uWorldOffset.value as THREE.Vector3).copy(newOrigin);
+    // Each attached host's iHostLocalPos = hostAbs - worldOffset; refresh
+    // them so the planet shader sees correct local-frame host positions.
+    this.planetBodyField.recenter(newOrigin);
   }
 
   // Wire a loaded DustField into the star shader. Safe to call after the
@@ -1922,6 +1914,10 @@ export class Stellata {
     u.uSizeMin.value = this.filter.sizeMin;
     u.uSizeMax.value = this.filter.sizeMax;
     u.uSizeSpan.value = this.filter.sizeSpan;
+    // Per-host distance cull on the planet body field is closed-form
+    // in maxAppMag — refresh the cached cullDistancePc whenever the
+    // slider moves so distant hosts stay culled at the new threshold.
+    this.planetBodyField.setMaxAppMag(this.filter.maxAppMag);
     this.milkyway.setEnabled(this.filter.showMilkyway);
     for (const h of this.onFilterHandlers) h(this.filter);
     this.fireStateChange();
@@ -2108,8 +2104,8 @@ export class Stellata {
     this.galacticGrid.setMonochrome(on);
     this.hudOverlay.setMonochrome(on);
     this.clouds?.setMonochrome(on);
-    this.starSystem.setMonochrome(on);
-    this.warpDestStarSystem.setMonochrome(on);
+    this.orbitRingsLayer.setMonochrome(on);
+    this.planetBodyField.setMonochrome(on);
     this.heliopause.setMonochrome(on);
     // The milky-way layer used to fully hide in chart mode, but chart
     // mode re-purposes it to render an isobar contour. Visibility/contour
@@ -2359,11 +2355,11 @@ export class Stellata {
       startQuaternion: this.camera.quaternion.clone(),
       reorientEndQuaternion,
     };
-    // Populate the warp-destination StarSystem with the destination's
-    // planet data so its rings + bodies render alongside the source's
-    // for the duration of the animation. Sol is the only host with
-    // planets in v1, so this is a no-op unless dest is Sol.
-    this.refreshWarpDestPlanetSystem();
+    // Planet bodies belong to the global PlanetBodyField — destination
+    // hosts already render whenever the camera is within their cull
+    // distance. Orbit rings stay focus-only by design, so a warp doesn't
+    // preview the destination's rings — only the bodies fade in as the
+    // camera approaches.
     for (const h of this.onWarpHandlers) h(true);
     this.fireStateChange();
   }
@@ -2385,7 +2381,6 @@ export class Stellata {
       // Cloud was detached mid-warp (shouldn't happen in practice); bail
       // gracefully to a clean state rather than NaN-ing the camera.
       this.warpState = null;
-      this.refreshWarpDestPlanetSystem();
       this.controls.enabled = true;
       for (const h of this.onWarpHandlers) h(false);
       return;
@@ -2448,7 +2443,6 @@ export class Stellata {
       this.controls.enabled = true;
       this.controls.update();
     }
-    this.refreshWarpDestPlanetSystem();
     for (const h of this.onWarpHandlers) h(false);
   }
 
@@ -3496,31 +3490,18 @@ export class Stellata {
       this.galacticDisc.group.visible = false;
       this.galacticGrid.group.visible = false;
       this.hudOverlay.setVisible(false);
-      // StarSystem layers stay visible during warp: source recedes
-      // (focused starSystem) and destination approaches (warp-dest
-      // starSystem). The pixel-gap visibility heuristic naturally
-      // adapts as camera-to-host distance changes for each.
-      this.starSystem.update(this.camera, window.innerHeight, undefined, this.getT());
-      if (this.warpState.destKind === 'star') {
-        const destLocal = this.starLocalPositionInto(
-          this.warpState.destIdx,
-          this._tmpAnimateLocal,
-        );
-        this.warpDestStarSystem.update(this.camera, window.innerHeight, destLocal, this.getT());
-      } else {
-        // Cloud destination — no planet system to render.
-        this.warpDestStarSystem.update(this.camera, window.innerHeight);
-      }
+      // Orbit rings are focus-only — no warp-destination ring preview.
+      // Planet bodies belong to the global PlanetBodyField; they fade
+      // in naturally as the camera nears each host's cull distance.
+      this.orbitRingsLayer.update(this.camera, window.innerHeight);
+      this.planetBodyField.update(this.camera, this.getT());
       // Cloud layer is shelved for v1.0 (CLAUDE.md): visible=false. Flip
       // to true (or restore a FilterState flag) when re-enabling.
       this.clouds?.update(this.worldOffset, false);
       return;
     }
-    this.starSystem.update(this.camera, window.innerHeight, undefined, this.getT());
-    // Outside warp the destination layer is empty (cleared by
-    // refreshWarpDestPlanetSystem on warp end) — calling update keeps
-    // the group hidden via the no-system fast path.
-    this.warpDestStarSystem.update(this.camera, window.innerHeight);
+    this.orbitRingsLayer.update(this.camera, window.innerHeight);
+    this.planetBodyField.update(this.camera, this.getT());
 
     // Refresh camera matrices before any SVG projection — controls.update()
     // mutates camera.position/quaternion but doesn't propagate to
@@ -3785,8 +3766,8 @@ export class Stellata {
     this.clouds?.dispose();
     this.galacticDisc.dispose();
     this.galacticGrid.dispose();
-    this.starSystem.dispose();
-    this.warpDestStarSystem.dispose();
+    this.orbitRingsLayer.dispose();
+    this.planetBodyField.dispose();
     this.heliopause.dispose();
     this.milkyway.dispose();
     // The dust voxel grid is the largest single GPU allocation in the app

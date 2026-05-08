@@ -10,10 +10,8 @@ precision highp float;
 in vec2 aCorner;
 
 // Per-instance:
-//   iHostLocalPos — host position in the renderer's local frame. In
-//     commit 2 (single-host StarSystem layer with group.position =
-//     hostLocalPos) this is always (0,0,0); commit 3 populates it
-//     for real when planet bodies become a global PlanetBodyField.
+//   iHostLocalPos — host position in the renderer's local frame.
+//     Refreshed on every floating-origin recenter; static otherwise.
 //   iLocalRel     — planet position relative to host, in the host's
 //     local plane frame, post-orientation. Sum (iHostLocalPos +
 //     iLocalRel) gives the planet's renderer-local position.

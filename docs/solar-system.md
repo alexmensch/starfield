@@ -81,25 +81,69 @@ must never read from `t`.
 
 ## Planet rendering
 
-`star-system.ts` owns the per-host orbit rings + planet bodies layer.
-Each frame, when a planet system is attached:
+Planet rendering splits across two layers (stellata-3re.15):
 
-1. Call the system's `positionsAt(t, scratch)` to refresh local-frame
-   positions (or fall back to a static placeholder if absent).
-2. Apply the per-host orientation quaternion to rotate from local
-   orbital-plane → ICRS.
-3. Upload positions to the planet billboard mesh as instance
-   attributes.
+- **`planet-body-field.ts`** — global, instanced mesh holding every
+  attached host's planet bodies. Sol attaches once at startup; bk5
+  will iterate exoplanet hosts in. Bodies are physical objects:
+  they render whenever attached, regardless of which host the camera
+  is focused on. Each frame, for each host:
 
-Planets are rendered as billboarded discs (similar to stars). The
-fragment shader hard-edges the disc — no halo, no extended
-atmosphere, no banding, no axial-tilt cue. Detail rendering is
-**deliberately deferred** to the planet-zoom epic (`stellata-2f6`):
-at every camera-to-body distance the user can currently reach, every
-planet floors at the disc-pixel minimum (~2 px), so per-texture
-detail would be invisible regardless of how much shader work goes
-into it. See the `defer-detail-until-zoom-affordance` rule in
-`CLAUDE.md`.
+  1. Skip the work entirely if the camera is past the host's
+     `cullDistancePc` — the closed-form distance at which its
+     brightest planet would just cross the magnitude slider.
+  2. Otherwise call `positionsAt(t, scratch)` to refresh local-frame
+     positions, apply the per-host orientation quaternion, and write
+     into the host's iLocalRel slot in the global instance buffer.
+
+- **`orbit-rings-layer.ts`** — per-host orbit-ring layer. Geometry
+  rebuilds whenever the focused star's PlanetSystem changes; per-frame
+  tick drives the pixel-gap visibility heuristic. Representational
+  only — rings hide when the host loses focus.
+
+Bodies render as billboarded discs through the same perceptual-disc
+abstraction the star pipeline uses (`shaders/perceptual-disc.glsl`).
+Apparent magnitude is computed in the vertex shader from reflected
+host-star light through a Lambertian phase function. The slider
+visibility cutoff applies — sub-cutoff planets fade naturally, no
+unconditional pixel floor. Three-pass parity with stars (depth-mask +
+disc + glow). Surface detail (textures, atmospheric haloes, banding,
+axial-tilt cue) stays **deliberately deferred** to the planet-zoom
+epic (`stellata-2f6`); see the `defer-detail-until-zoom-affordance`
+rule in `CLAUDE.md`.
+
+### Apparent-magnitude formula
+
+For a planet of geometric albedo `p` and equatorial radius `R`, with
+the viewer at distance `d_vp` from the planet, `d_vh` from the host,
+and `d_hp` from the host to the planet:
+
+```
+m_host_at_viewer = M_host + 5·log10(d_vh / 10pc)
+m_planet         = m_host_at_viewer
+                 − 2.5·log10( p · (R/d_vp)² · (d_vh/d_hp)² · φ(α) )
+```
+
+where `α = ∠(viewer–planet–host)` is the phase angle and
+`φ(α) = (sin α + (π − α)·cos α) / π` is the Lambertian phase function.
+Verified Jupiter values: −2.7 from Earth at opposition, +5.2 from
+~150 AU outside the heliopause, +21 from α Cen at 1.34 pc.
+
+### Per-host distance cull
+
+Closed-form bound on the visibility distance for the brightest
+planet of an attached host:
+
+```
+d_cull = 10 pc · √(p · (R/a)²) · 10^((maxAppMag − M_host) / 5)
+```
+
+where `(R/a)` for the brightest planet (proxy for "roundtrip flux")
+makes the formula geometry-independent. Sol's Jupiter under naked-eye
+preset gives ~290 AU — confirming that any non-Sol focus already
+collapses Sol's bodies far past the cull distance, exactly as
+intended. `PlanetBodyField.setMaxAppMag` recomputes the cache on
+every slider move.
 
 `planet-labels.ts` draws per-planet body-anchored SVG labels above
 the canvas. The label engine is independent of the chart-mode label
@@ -109,7 +153,7 @@ contract isn't doubled up.
 
 ## Orbit rings
 
-The orbit-ring layer (`star-system.ts` again) draws each planet's
+The orbit-ring layer (`orbit-rings-layer.ts`) draws each planet's
 orbit as an ellipse with the host star at one focus. Geometry:
 `b = a · √(1 − e²)`, focal offset `c = a · e`. v1 places the
 perihelion along the local +x axis as a placeholder; per-planet
@@ -210,8 +254,13 @@ so very-close planet inspection isn't culled. The strict-less-than
 - `ephemeris.ts` — JPL Standish positions; `getPlanetPositions(t)`.
 - `time.ts` — `t` helpers (`tToJDE`, `isLive`).
 - `time-readout.ts` — bottom-right UTC readout binding.
-- `planet-system.ts` — `PlanetSystem` data model; `SOL_PLANETS`.
-- `star-system.ts` — orbit-rings + planet-bodies render layer.
+- `planet-system.ts` — `PlanetSystem` data model; `SOL_PLANETS` (radii,
+  semi-major axes, eccentricities, types, colours, geometric albedos).
+- `orbit-rings-layer.ts` — per-host orbit-ring renderer (focus-only).
+- `planet-body-field.ts` — global instanced planet-body field with
+  per-host distance cull (focus-independent).
+- `perceptual-magnitude.ts` — pure helpers for the apparent-mag /
+  disc-pixel mapping shared with the star pipeline; vitest-covered.
 - `planet-labels.ts` — per-planet SVG labels.
 - `heliopause.ts` — heliopause shell + apex label hook.
 - `shaders/heliopause.{vert,frag}.glsl` — Fresnel-limbed shell.

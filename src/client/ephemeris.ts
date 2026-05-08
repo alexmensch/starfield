@@ -12,7 +12,7 @@
 // narrower validity window. Deep-time follow-up: stellata-1gh.
 //
 // Returned positions are heliocentric **ecliptic** parsecs, NOT ICRS —
-// the rotation onto ICRS happens in the caller (star-system.ts) via the
+// the rotation onto ICRS happens in the caller (planet-body-field.ts) via the
 // per-host orbital-plane orientation quaternion, so Sol naturally lands
 // in the ecliptic and other hosts (stellata-bk5 exoplanets) land in the
 // galactic plane per stellata-3re.8.
@@ -56,7 +56,7 @@ interface ElementSet {
 }
 
 // Order matches PlanetName below — getPlanetPositions returns a same-
-// order tuple so the renderer (star-system.ts) can iterate without a
+// order tuple so the renderer (planet-body-field.ts) can iterate without a
 // per-frame name lookup.
 const ELEMENTS: ElementSet[] = [
   // Mercury

@@ -55,7 +55,7 @@ export interface PlanetSystem {
   readonly hostStarIdx: number;
   readonly planets: readonly Planet[];
   /** Optional time-evolved position resolver. When present, the
-   *  renderer (`star-system.ts`) calls it each frame to refresh body
+   *  renderer (`planet-body-field.ts`) calls it each frame to refresh body
    *  positions; when absent, the renderer falls back to the static
    *  placeholder eccentric-anomaly layout from `placeholderEccentricAnomaly`.
    *
