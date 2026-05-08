@@ -916,9 +916,9 @@ export class Stellata {
     // styling and inherits the `body.warping` hide rule for free.
     this.galacticDisc = new GalacticDisc();
     this.scene.add(this.galacticDisc.group);
-    this.starSystem = new StarSystem();
+    this.starSystem = new StarSystem(sharedUniforms);
     this.scene.add(this.starSystem.group);
-    this.warpDestStarSystem = new StarSystem();
+    this.warpDestStarSystem = new StarSystem(sharedUniforms);
     this.scene.add(this.warpDestStarSystem.group);
     // Heliopause is Sol-anchored — added once, visibility gated on
     // focused star = Sol via the planet-system event below.
@@ -934,7 +934,8 @@ export class Stellata {
     // in the Sol-centric local frame so it must be hidden under any
     // other focus (which would put world-origin elsewhere).
     this.onPlanetSystemChange((ps) => {
-      this.starSystem.setPlanetSystem(ps, this.catalog.solIndex);
+      const hostAbsmag = ps ? this.catalog.absmag[ps.hostStarIdx] : 0;
+      this.starSystem.setPlanetSystem(ps, hostAbsmag, this.catalog.solIndex);
       this.heliopause.setVisible(ps !== null && ps.hostStarIdx === this.catalog.solIndex);
     });
     this.galacticGrid = new GalacticGrid();
@@ -1454,17 +1455,18 @@ export class Stellata {
     const token = ++this.warpDestPlanetSystemToken;
     const ws = this.warpState;
     if (!ws || ws.destKind !== 'star') {
-      this.warpDestStarSystem.setPlanetSystem(null, this.catalog.solIndex);
+      this.warpDestStarSystem.setPlanetSystem(null, 0, this.catalog.solIndex);
       return;
     }
     const destIdx = ws.destIdx;
     if (!hasPlanets(this.catalog, destIdx)) {
-      this.warpDestStarSystem.setPlanetSystem(null, this.catalog.solIndex);
+      this.warpDestStarSystem.setPlanetSystem(null, 0, this.catalog.solIndex);
       return;
     }
+    const destAbsmag = this.catalog.absmag[destIdx];
     void getPlanetSystem(this.catalog, destIdx).then((ps) => {
       if (token !== this.warpDestPlanetSystemToken) return;
-      this.warpDestStarSystem.setPlanetSystem(ps, this.catalog.solIndex);
+      this.warpDestStarSystem.setPlanetSystem(ps, destAbsmag, this.catalog.solIndex);
     });
   }
 

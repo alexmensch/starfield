@@ -28,6 +28,7 @@ import * as THREE from 'three';
 import type { PlanetSystem, Planet, PlanetType } from './planet-system';
 import { AU_PC, type OrbitOrientationRad } from './ephemeris';
 import { GALACTIC_NORTH_POLE_ICRS } from './galactic-coords';
+import { applyDiscBlendDefaults } from './stellata';
 import planetVert from './shaders/planet.vert.glsl?raw';
 import planetFrag from './shaders/planet.frag.glsl?raw';
 
@@ -40,12 +41,35 @@ export { AU_PC };
 // scale the rest of the renderer works in.
 export const KM_PC = AU_PC / 1.495978707e8;
 
-// Pixel floor for the planet-disc shader, mirroring the star pipeline's
-// appSize floor. Smaller than the star floor (which can be 2-24 px from
-// the size slider) — planets are secondary visual content; we don't
-// want a sub-pixel Mercury to bloom into a 6-px disc that competes
-// with the bodies that genuinely deserve attention.
-const PLANET_DISC_MIN_PX = 2.0;
+/**
+ * Shared per-frame uniforms the planet body materials read from. The
+ * star pipeline owns the canonical references (initialized once in
+ * stellata.ts and mutated as state changes); the body materials hold
+ * pointers to the same `{ value }` objects so a single update on the
+ * star side propagates everywhere — visibility cutoff, viewport
+ * resize, FOV change, debug-panel knobs.
+ *
+ * Splitting into a typed shape keeps the constructor surface readable
+ * and pins the names so a rename on the star side fails fast here.
+ */
+export interface PlanetMaterialUniforms {
+  uMaxAppMag: { value: number };
+  uSizeMin: { value: number };
+  uSizeMax: { value: number };
+  uSizeSpan: { value: number };
+  uSizeKnee: { value: number };
+  uVisibleThreshold: { value: number };
+  uVisibleK: { value: number };
+  uCoreThreshold: { value: number };
+  uDiscardThreshold: { value: number };
+  uDistNMin: { value: number };
+  uDistNMax: { value: number };
+  uLumBiasMin: { value: number };
+  uLumBiasMax: { value: number };
+  uViewport: { value: THREE.Vector2 };
+  uPixelRatio: { value: number };
+  uFovYRad: { value: number };
+}
 
 // J2000 obliquity of the ecliptic (IAU). Sol's orbital plane is tilted
 // from the ICRS equatorial plane by this angle around the +X (vernal
@@ -253,12 +277,18 @@ export class StarSystem {
   private rings: PlanetRing[] = [];
   private mono = false;
   private hidden = false;
-  // Planet body mesh — one InstancedBufferGeometry holding N quads, with
-  // per-instance position / radius / colour / solidity. null whenever
-  // no system is attached.
-  private bodyMesh: THREE.Mesh | null = null;
+  // Planet body meshes — three passes mirroring the star pipeline:
+  // depth-only core mask, per-channel-max disc, additive glow. All
+  // three share one InstancedBufferGeometry; the material's
+  // uRenderMode picks the pass-specific behaviour. null whenever no
+  // system is attached.
+  private bodyMeshDisc: THREE.Mesh | null = null;
+  private bodyMeshGlow: THREE.Mesh | null = null;
+  private bodyMeshCore: THREE.Mesh | null = null;
+  private bodyMatDisc: THREE.ShaderMaterial | null = null;
+  private bodyMatGlow: THREE.ShaderMaterial | null = null;
+  private bodyMatCore: THREE.ShaderMaterial | null = null;
   private bodyGeometry: THREE.InstancedBufferGeometry | null = null;
-  private bodyMaterial: THREE.ShaderMaterial | null = null;
   // Exposed for overlays (planet-labels) so they can read planet
   // positions without re-running the placeholder math themselves.
   // Length = 3·planetCount; null when no system. Layout matches the
@@ -274,8 +304,12 @@ export class StarSystem {
   private positionsScratch: Float32Array | null = null;
   // Reusable per-planet rotation scratch — avoids per-frame allocation.
   private rotateTmp = new THREE.Vector3();
+  // Shared magnitude / viewport uniforms. Held by reference so any
+  // mutation on the star pipeline side propagates automatically.
+  private readonly magnitudeShared: PlanetMaterialUniforms;
 
-  constructor() {
+  constructor(magnitudeShared: PlanetMaterialUniforms) {
+    this.magnitudeShared = magnitudeShared;
     this.group = new THREE.Group();
     // Rings sit below the bodies so a ring crossing in front of (or
     // behind) a planet doesn't paint over the body silhouette. Order:
@@ -283,7 +317,11 @@ export class StarSystem {
     //    0  star discs
     //    1  star glow
     //    2  orbit rings (this layer's ring children)
-    //    3  planet bodies (this layer's body mesh)
+    //    3  planet bodies — disc pass
+    //    4  planet bodies — glow pass
+    //   -4  planet bodies — core depth mask (sibling to star core mask,
+    //       before background layers so they depth-fail behind close
+    //       planet cores)
     this.group.renderOrder = 2;
     this.group.visible = false;
   }
@@ -293,8 +331,13 @@ export class StarSystem {
    * (e.g. when focus clears or moves to a host without planets).
    * Geometry and materials are disposed eagerly — Three.js doesn't
    * reclaim them otherwise.
+   *
+   * `hostAbsmag` is the host star's catalog absolute magnitude — fed
+   * to the planet vertex shader as a per-instance attribute so the
+   * reflected-light apparent-magnitude formula (3re.16) can resolve.
+   * Ignored when `ps` is null.
    */
-  setPlanetSystem(ps: PlanetSystem | null, solIndex: number): void {
+  setPlanetSystem(ps: PlanetSystem | null, hostAbsmag: number, solIndex: number): void {
     this.disposeRings();
     this.disposeBody();
     this.bodyLocalPositions = null;
@@ -375,12 +418,24 @@ export class StarSystem {
     // Build planet bodies --------------------------------------------------
     // One quad per planet via InstancedBufferGeometry — same pattern as
     // the main star pipeline, scaled down to N=8. The vertex shader
-    // expands the unit quad into a billboard sized by θ·viewportH/fov.
+    // expands the unit quad into a billboard sized by θ·viewport.y/fov.
+    //
+    // Three materials share the geometry: depth-only core mask + disc +
+    // additive glow. uRenderMode is the only divergent uniform; everything
+    // else (apparent-mag math, view-space distances, perceptual-disc
+    // shaping) is the same per-instance work done once per quad.
     const n = ps.planets.length;
     const positions = this.bodyLocalPositions;
     const radii = new Float32Array(n);
     const colours = new Float32Array(n * 3);
     const solidity = new Float32Array(n);
+    const albedo = new Float32Array(n);
+    const hostAbsmagAttr = new Float32Array(n);
+    // iHostLocalPos always (0,0,0) in commit 2 — the StarSystem layer
+    // anchors host = group origin via group.position = hostLocalPos.
+    // Commit 3 (PlanetBodyField) populates this with the host's actual
+    // renderer-local position so all attached hosts can share one mesh.
+    const hostLocal = new Float32Array(n * 3);
     // Initial position fill — ephemeris path if positionsAt present,
     // else the static placeholder eccentric-anomaly layout. The per-
     // frame update() below refreshes the ephemeris path each tick.
@@ -405,6 +460,8 @@ export class StarSystem {
       colours[i * 3 + 1] = p.colour[1];
       colours[i * 3 + 2] = p.colour[2];
       solidity[i] = solidityForType(p.type);
+      albedo[i] = p.albedo;
+      hostAbsmagAttr[i] = hostAbsmag;
     }
 
     const bodyGeom = new THREE.InstancedBufferGeometry();
@@ -416,10 +473,13 @@ export class StarSystem {
       ),
     );
     bodyGeom.setIndex([0, 1, 2, 1, 3, 2]);
-    bodyGeom.setAttribute('iPosition', new THREE.InstancedBufferAttribute(positions, 3));
+    bodyGeom.setAttribute('iLocalRel', new THREE.InstancedBufferAttribute(positions, 3));
+    bodyGeom.setAttribute('iHostLocalPos', new THREE.InstancedBufferAttribute(hostLocal, 3));
     bodyGeom.setAttribute('iRadiusPc', new THREE.InstancedBufferAttribute(radii, 1));
     bodyGeom.setAttribute('iColour', new THREE.InstancedBufferAttribute(colours, 3));
     bodyGeom.setAttribute('iSolidity', new THREE.InstancedBufferAttribute(solidity, 1));
+    bodyGeom.setAttribute('iAlbedoP', new THREE.InstancedBufferAttribute(albedo, 1));
+    bodyGeom.setAttribute('iHostAbsmag', new THREE.InstancedBufferAttribute(hostAbsmagAttr, 1));
     bodyGeom.instanceCount = n;
     // Disable frustum culling — the camera can sit inside the bounding
     // sphere of the body cloud (e.g. between Jupiter and Saturn) where
@@ -427,28 +487,82 @@ export class StarSystem {
     // and the disc fade-out handle the rest.
     bodyGeom.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
 
-    const bodyMat = new THREE.ShaderMaterial({
+    const sm = this.magnitudeShared;
+    const sharedPlanetUniforms = {
+      uMaxAppMag: sm.uMaxAppMag,
+      uSizeMin: sm.uSizeMin,
+      uSizeMax: sm.uSizeMax,
+      uSizeSpan: sm.uSizeSpan,
+      uSizeKnee: sm.uSizeKnee,
+      uVisibleThreshold: sm.uVisibleThreshold,
+      uVisibleK: sm.uVisibleK,
+      uCoreThreshold: sm.uCoreThreshold,
+      uDiscardThreshold: sm.uDiscardThreshold,
+      uDistNMin: sm.uDistNMin,
+      uDistNMax: sm.uDistNMax,
+      uLumBiasMin: sm.uLumBiasMin,
+      uLumBiasMax: sm.uLumBiasMax,
+      uViewport: sm.uViewport,
+      uPixelRatio: sm.uPixelRatio,
+      uFovYRad: sm.uFovYRad,
+    };
+
+    // Disc pass — per-channel-max blending so two close planets'
+    // halos don't sum (mirrors the star disc-pass rationale).
+    this.bodyMatDisc = new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3,
       vertexShader: planetVert,
       fragmentShader: planetFrag,
       transparent: true,
-      depthTest: true,
+      uniforms: { ...sharedPlanetUniforms, uRenderMode: { value: 1 } },
+    });
+    applyDiscBlendDefaults(this.bodyMatDisc);
+
+    // Glow pass — additive so distant point-glow planets accumulate.
+    // No depth write so multiple glows at the same pixel all
+    // contribute; depth test on so glows behind a closer planet's
+    // disc are correctly occluded.
+    this.bodyMatGlow = new THREE.ShaderMaterial({
+      glslVersion: THREE.GLSL3,
+      vertexShader: planetVert,
+      fragmentShader: planetFrag,
+      transparent: true,
       depthWrite: false,
-      uniforms: {
-        uViewportH: { value: 1 },
-        uFovYRad: { value: 1 },
-        uMinPxSize: { value: PLANET_DISC_MIN_PX },
-      },
+      depthTest: true,
+      blending: THREE.AdditiveBlending,
+      uniforms: { ...sharedPlanetUniforms, uRenderMode: { value: 0 } },
     });
 
-    const mesh = new THREE.Mesh(bodyGeom, bodyMat);
-    mesh.frustumCulled = false;
-    mesh.renderOrder = this.group.renderOrder + 1;
-    this.group.add(mesh);
+    // Core depth-mask. Writes near depth at disc cores so background
+    // layers (Milky Way etc.) depth-fail behind close planet cores.
+    // Sibling to the star pipeline's core-mask draw at renderOrder=-4.
+    this.bodyMatCore = new THREE.ShaderMaterial({
+      glslVersion: THREE.GLSL3,
+      vertexShader: planetVert,
+      fragmentShader: planetFrag,
+      depthWrite: true,
+      depthTest: true,
+      colorWrite: false,
+      uniforms: { ...sharedPlanetUniforms, uRenderMode: { value: 2 } },
+    });
+
+    this.bodyMeshDisc = new THREE.Mesh(bodyGeom, this.bodyMatDisc);
+    this.bodyMeshDisc.frustumCulled = false;
+    this.bodyMeshDisc.renderOrder = 3;
+
+    this.bodyMeshGlow = new THREE.Mesh(bodyGeom, this.bodyMatGlow);
+    this.bodyMeshGlow.frustumCulled = false;
+    this.bodyMeshGlow.renderOrder = 4;
+
+    this.bodyMeshCore = new THREE.Mesh(bodyGeom, this.bodyMatCore);
+    this.bodyMeshCore.frustumCulled = false;
+    this.bodyMeshCore.renderOrder = -4;
+
+    this.group.add(this.bodyMeshCore);
+    this.group.add(this.bodyMeshDisc);
+    this.group.add(this.bodyMeshGlow);
 
     this.bodyGeometry = bodyGeom;
-    this.bodyMaterial = bodyMat;
-    this.bodyMesh = mesh;
 
     this.group.visible = !this.hidden && !this.mono;
   }
@@ -473,7 +587,7 @@ export class StarSystem {
     hostLocalPos?: THREE.Vector3,
     t?: number,
   ): void {
-    if (this.hidden || this.mono || (this.rings.length === 0 && !this.bodyMesh)) {
+    if (this.hidden || this.mono || (this.rings.length === 0 && !this.bodyMeshDisc)) {
       this.group.visible = false;
       return;
     }
@@ -499,19 +613,14 @@ export class StarSystem {
     ) {
       this.currentPositionsAt(t ?? Date.now() / 1000, this.positionsScratch);
       this.rotateInto(this.positionsScratch, this.bodyLocalPositions, this.currentOrientation);
-      const iPosition = this.bodyGeometry.attributes.iPosition as THREE.InstancedBufferAttribute;
-      iPosition.needsUpdate = true;
+      const iLocalRel = this.bodyGeometry.attributes.iLocalRel as THREE.InstancedBufferAttribute;
+      iLocalRel.needsUpdate = true;
     }
+
+    // Viewport / FOV / pixel-ratio are pushed by the star pipeline
+    // through the shared uniforms map — no per-frame mirroring needed.
 
     const fovYRad = (camera.fov * Math.PI) / 180;
-
-    // Push viewport / FOV to the body shader once per frame. The shader
-    // does the per-instance angular-diameter math itself; we just feed
-    // it the screen-space rate (pxPerRad = viewportH / fovY).
-    if (this.bodyMaterial) {
-      this.bodyMaterial.uniforms.uViewportH.value = viewportHeightPx;
-      this.bodyMaterial.uniforms.uFovYRad.value = fovYRad;
-    }
 
     if (this.rings.length === 0) return;
     // Camera-to-host distance, not camera-to-origin: when the host sits
@@ -632,11 +741,19 @@ export class StarSystem {
   }
 
   private disposeBody(): void {
-    if (this.bodyMesh) this.group.remove(this.bodyMesh);
+    if (this.bodyMeshDisc) this.group.remove(this.bodyMeshDisc);
+    if (this.bodyMeshGlow) this.group.remove(this.bodyMeshGlow);
+    if (this.bodyMeshCore) this.group.remove(this.bodyMeshCore);
     this.bodyGeometry?.dispose();
-    this.bodyMaterial?.dispose();
-    this.bodyMesh = null;
+    this.bodyMatDisc?.dispose();
+    this.bodyMatGlow?.dispose();
+    this.bodyMatCore?.dispose();
+    this.bodyMeshDisc = null;
+    this.bodyMeshGlow = null;
+    this.bodyMeshCore = null;
     this.bodyGeometry = null;
-    this.bodyMaterial = null;
+    this.bodyMatDisc = null;
+    this.bodyMatGlow = null;
+    this.bodyMatCore = null;
   }
 }

@@ -43,6 +43,10 @@ export interface Planet {
   // doesn't exist yet, so per-planet appearance refinements are
   // deferred until that lands.
   readonly colour: readonly [number, number, number];
+  // Geometric albedo (V-band). Drives the apparent-magnitude
+  // calculation in the planet pipeline (3re.16). Mallama 2018 +
+  // NASA fact-sheet values.
+  readonly albedo: number;
 }
 
 export interface PlanetSystem {
@@ -100,6 +104,7 @@ export const SOL_PLANETS: readonly Planet[] = [
     eccentricity: 0.2056,
     type: 'rocky',
     colour: [0.55, 0.47, 0.32],
+    albedo: 0.142,
   },
   {
     name: 'Venus',
@@ -108,6 +113,7 @@ export const SOL_PLANETS: readonly Planet[] = [
     eccentricity: 0.0068,
     type: 'rocky',
     colour: [0.91, 0.82, 0.60],
+    albedo: 0.689,
   },
   {
     name: 'Earth',
@@ -116,6 +122,7 @@ export const SOL_PLANETS: readonly Planet[] = [
     eccentricity: 0.0167,
     type: 'rocky',
     colour: [0.31, 0.49, 0.67],
+    albedo: 0.434,
   },
   {
     name: 'Mars',
@@ -124,6 +131,7 @@ export const SOL_PLANETS: readonly Planet[] = [
     eccentricity: 0.0934,
     type: 'rocky',
     colour: [0.76, 0.27, 0.05],
+    albedo: 0.170,
   },
   {
     name: 'Jupiter',
@@ -132,6 +140,7 @@ export const SOL_PLANETS: readonly Planet[] = [
     eccentricity: 0.0485,
     type: 'gas_giant',
     colour: [0.85, 0.72, 0.51],
+    albedo: 0.538,
   },
   {
     name: 'Saturn',
@@ -140,6 +149,7 @@ export const SOL_PLANETS: readonly Planet[] = [
     eccentricity: 0.0555,
     type: 'gas_giant',
     colour: [0.90, 0.79, 0.62],
+    albedo: 0.499,
   },
   {
     name: 'Uranus',
@@ -148,6 +158,7 @@ export const SOL_PLANETS: readonly Planet[] = [
     eccentricity: 0.0464,
     type: 'ice_giant',
     colour: [0.64, 0.85, 0.90],
+    albedo: 0.488,
   },
   {
     name: 'Neptune',
@@ -156,12 +167,14 @@ export const SOL_PLANETS: readonly Planet[] = [
     eccentricity: 0.0095,
     type: 'ice_giant',
     colour: [0.25, 0.37, 0.75],
+    albedo: 0.442,
   },
   // Pluto — mean radius from New Horizons 2015 reconnaissance. Type
   // 'rocky' is the closest match in our existing tri-state; Pluto is
   // really an icy-rocky body but bins with the inner terrestrials for
   // disc-rendering purposes (sharp silhouette, not a gas-giant gradient).
-  // Tan-pink colour reflects New Horizons MVIC imagery.
+  // Tan-pink colour reflects New Horizons MVIC imagery. Albedo from
+  // HST + New Horizons reconnaissance.
   {
     name: 'Pluto',
     radiusKm: 1188,
@@ -169,6 +182,7 @@ export const SOL_PLANETS: readonly Planet[] = [
     eccentricity: 0.2488,
     type: 'rocky',
     colour: [0.78, 0.62, 0.49],
+    albedo: 0.49,
   },
 ] as const;
 

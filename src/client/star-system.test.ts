@@ -24,7 +24,33 @@ function makePlanet(overrides: Partial<Planet> = {}): Planet {
     eccentricity: 0,
     type: 'rocky',
     colour: [1, 1, 1],
+    albedo: 0.5,
     ...overrides,
+  };
+}
+
+// Default-valued shared uniforms for StarSystem tests. The body
+// pipeline reads these at material-construct time and during render;
+// none of the planet-ring tests below ever attach a renderer, so the
+// values just need to be present and well-typed.
+function makeMagShared() {
+  return {
+    uMaxAppMag: { value: 6.5 },
+    uSizeMin: { value: 2 },
+    uSizeMax: { value: 24 },
+    uSizeSpan: { value: 8 },
+    uSizeKnee: { value: 16 },
+    uVisibleThreshold: { value: 0.2 },
+    uVisibleK: { value: -Math.log(0.2) },
+    uCoreThreshold: { value: 0.4 },
+    uDiscardThreshold: { value: 0.02 },
+    uDistNMin: { value: 2.2 },
+    uDistNMax: { value: 10.0 },
+    uLumBiasMin: { value: 1.0 },
+    uLumBiasMax: { value: 0.6 },
+    uViewport: { value: new THREE.Vector2(800, 600) },
+    uPixelRatio: { value: 1 },
+    uFovYRad: { value: (60 * Math.PI) / 180 },
   };
 }
 
@@ -264,18 +290,18 @@ describe('solidityForType', () => {
 
 describe('StarSystem.anyOrbitRingVisible', () => {
   it('returns false with no planet system attached', () => {
-    const ss = new StarSystem();
+    const ss = new StarSystem(makeMagShared());
     expect(ss.anyOrbitRingVisible()).toBe(false);
     ss.dispose();
   });
 
   it('returns true after a tick that lets at least one ring through the heuristic', () => {
-    const ss = new StarSystem();
+    const ss = new StarSystem(makeMagShared());
     const ps: PlanetSystem = {
       hostStarIdx: 0,
       planets: [makePlanet({ name: 'Alpha', semiMajorAxisAu: 1 })],
     };
-    ss.setPlanetSystem(ps, 0);
+    ss.setPlanetSystem(ps, 0, 0);
     // Camera at 5 AU from the (origin) host. A lone ring has no
     // neighbours, so the gap heuristic always lets it render.
     ss.update(makeCamera(5 * AU_PC), 800);
@@ -284,25 +310,25 @@ describe('StarSystem.anyOrbitRingVisible', () => {
   });
 
   it('returns false after the planet system is cleared', () => {
-    const ss = new StarSystem();
+    const ss = new StarSystem(makeMagShared());
     const ps: PlanetSystem = {
       hostStarIdx: 0,
       planets: [makePlanet()],
     };
-    ss.setPlanetSystem(ps, 0);
+    ss.setPlanetSystem(ps, 0, 0);
     ss.update(makeCamera(5 * AU_PC), 800);
-    ss.setPlanetSystem(null, 0);
+    ss.setPlanetSystem(null, 0, 0);
     expect(ss.anyOrbitRingVisible()).toBe(false);
     ss.dispose();
   });
 
   it('returns false when warp-hidden, even with rings still in the heuristic', () => {
-    const ss = new StarSystem();
+    const ss = new StarSystem(makeMagShared());
     const ps: PlanetSystem = {
       hostStarIdx: 0,
       planets: [makePlanet()],
     };
-    ss.setPlanetSystem(ps, 0);
+    ss.setPlanetSystem(ps, 0, 0);
     ss.update(makeCamera(5 * AU_PC), 800);
     ss.setHidden(true);
     expect(ss.anyOrbitRingVisible()).toBe(false);
@@ -310,12 +336,12 @@ describe('StarSystem.anyOrbitRingVisible', () => {
   });
 
   it('returns false in chart (mono) mode', () => {
-    const ss = new StarSystem();
+    const ss = new StarSystem(makeMagShared());
     const ps: PlanetSystem = {
       hostStarIdx: 0,
       planets: [makePlanet()],
     };
-    ss.setPlanetSystem(ps, 0);
+    ss.setPlanetSystem(ps, 0, 0);
     ss.update(makeCamera(5 * AU_PC), 800);
     ss.setMonochrome(true);
     expect(ss.anyOrbitRingVisible()).toBe(false);
@@ -323,7 +349,7 @@ describe('StarSystem.anyOrbitRingVisible', () => {
   });
 
   it('isOrbitRingVisible is per-planet and tracks per-ring visibility', () => {
-    const ss = new StarSystem();
+    const ss = new StarSystem(makeMagShared());
     const ps: PlanetSystem = {
       hostStarIdx: 0,
       planets: [
@@ -331,7 +357,7 @@ describe('StarSystem.anyOrbitRingVisible', () => {
         makePlanet({ name: 'B', semiMajorAxisAu: 100 }),
       ],
     };
-    ss.setPlanetSystem(ps, 0);
+    ss.setPlanetSystem(ps, 0, 0);
     // Mid-range camera distance — the inner ring's pixel radius collapses
     // (pile-up against neighbour) while the outer ring remains spread.
     // The exact heuristic outcome is exercised in `ringVisibility` tests
@@ -352,12 +378,12 @@ describe('StarSystem.anyOrbitRingVisible', () => {
   });
 
   it('update positions the group at hostLocalPos when supplied', () => {
-    const ss = new StarSystem();
+    const ss = new StarSystem(makeMagShared());
     const ps: PlanetSystem = {
       hostStarIdx: 0,
       planets: [makePlanet({ semiMajorAxisAu: 1 })],
     };
-    ss.setPlanetSystem(ps, 0);
+    ss.setPlanetSystem(ps, 0, 0);
     const host = new THREE.Vector3(10, -3, 7);
     ss.update(makeCamera(5 * AU_PC), 800, host);
     expect(ss.group.position.x).toBe(10);
@@ -375,7 +401,7 @@ describe('StarSystem.anyOrbitRingVisible', () => {
     // angular size (atan saturates at π/2) and at least the outermost
     // visibly registers; either way, the API is exercised — the precise
     // outcome is covered in the `ringVisibility` pure-function tests.
-    const ss = new StarSystem();
+    const ss = new StarSystem(makeMagShared());
     const ps: PlanetSystem = {
       hostStarIdx: 0,
       planets: [
@@ -383,7 +409,7 @@ describe('StarSystem.anyOrbitRingVisible', () => {
         makePlanet({ name: 'B', semiMajorAxisAu: 50 }),
       ],
     };
-    ss.setPlanetSystem(ps, 0);
+    ss.setPlanetSystem(ps, 0, 0);
     const cam = makeCamera(5 * AU_PC);
     // Sanity check: with host at origin, the existing heuristic behaviour
     // applies — at least one of these two well-spread rings should be
@@ -405,7 +431,7 @@ describe('StarSystem.anyOrbitRingVisible', () => {
   it('returns false when every ring is suppressed by the pixel-gap heuristic', () => {
     // Two rings with semi-major axes very close together, viewed from far
     // enough that the projected pixel gap collapses below the threshold.
-    const ss = new StarSystem();
+    const ss = new StarSystem(makeMagShared());
     const ps: PlanetSystem = {
       hostStarIdx: 0,
       planets: [
@@ -413,7 +439,7 @@ describe('StarSystem.anyOrbitRingVisible', () => {
         makePlanet({ name: 'B', semiMajorAxisAu: 1.001 }),
       ],
     };
-    ss.setPlanetSystem(ps, 0);
+    ss.setPlanetSystem(ps, 0, 0);
     // 1e6 pc is absurdly far; both ring projections shrink to indistinguishable.
     ss.update(makeCamera(1e6), 800);
     expect(ss.anyOrbitRingVisible()).toBe(false);
@@ -423,7 +449,7 @@ describe('StarSystem.anyOrbitRingVisible', () => {
 
 describe('StarSystem ephemeris-driven body positions (3re.3)', () => {
   it('calls ps.positionsAt on every update() and re-uploads the iPosition attribute', () => {
-    const ss = new StarSystem();
+    const ss = new StarSystem(makeMagShared());
     let lastT: number | null = null;
     let calls = 0;
     const ps: PlanetSystem = {
@@ -441,7 +467,7 @@ describe('StarSystem ephemeris-driven body positions (3re.3)', () => {
         }
       },
     };
-    ss.setPlanetSystem(ps, 0);
+    ss.setPlanetSystem(ps, 0, 0);
     // Initial fill from setPlanetSystem (Date.now()-driven).
     expect(calls).toBeGreaterThanOrEqual(1);
 
@@ -465,13 +491,13 @@ describe('StarSystem ephemeris-driven body positions (3re.3)', () => {
   });
 
   it('falls back to placeholder positions when ps.positionsAt is undefined', () => {
-    const ss = new StarSystem();
+    const ss = new StarSystem(makeMagShared());
     const ps: PlanetSystem = {
       hostStarIdx: 0,
       planets: [makePlanet({ semiMajorAxisAu: 1 })],
       // positionsAt intentionally absent
     };
-    ss.setPlanetSystem(ps, 0);
+    ss.setPlanetSystem(ps, 0, 0);
     const initial = Array.from(ss.getPlanetLocalPositions()!);
     // Calling update with a wildly different `t` should NOT change the
     // positions — the placeholder path is set-once.
@@ -488,7 +514,7 @@ describe('StarSystem orbit-ring orientation (3re.13)', () => {
     // sit on a plane tilted 30° from the host plane (which for a
     // non-Sol host is the galactic plane). The ring's z-extent in
     // the host plane frame should be a·sin(30°) = 0.5·a.
-    const ss = new StarSystem();
+    const ss = new StarSystem(makeMagShared());
     const ps: PlanetSystem = {
       hostStarIdx: 1,
       planets: [makePlanet({ semiMajorAxisAu: 1, eccentricity: 0 })],
@@ -498,7 +524,7 @@ describe('StarSystem orbit-ring orientation (3re.13)', () => {
         argPerihelion: 0,
       }],
     };
-    ss.setPlanetSystem(ps, 0);
+    ss.setPlanetSystem(ps, 0, 0);
     // Rummage in the scene graph for the ring's position buffer.
     const ringLine = ss.group.children.find(
       (c) => (c as THREE.LineLoop).isLineLoop,
@@ -528,12 +554,12 @@ describe('StarSystem orbit-ring orientation (3re.13)', () => {
     // Same setup as above but no orbitOrientations field — ring
     // collapses to the host-plane disc; the host-normal projection
     // should be ~zero across all vertices.
-    const ss = new StarSystem();
+    const ss = new StarSystem(makeMagShared());
     const ps: PlanetSystem = {
       hostStarIdx: 1,
       planets: [makePlanet({ semiMajorAxisAu: 1, eccentricity: 0 })],
     };
-    ss.setPlanetSystem(ps, 0);
+    ss.setPlanetSystem(ps, 0, 0);
     const ringLine = ss.group.children.find(
       (c) => (c as THREE.LineLoop).isLineLoop,
     ) as THREE.LineLoop | undefined;
