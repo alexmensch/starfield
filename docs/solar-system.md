@@ -171,17 +171,30 @@ geometry to read.
 
 ## First-load default and `minDistance` relaxation
 
-When the URL carries no view state, `stellata.ts` parks the camera at
-`SOL_FIRST_LOAD_PARK_PC = 4 * AU_PC` from Sol. 4 AU sits just inside
-Jupiter's orbit so the inner planets (Mercury through Mars) frame
-the scene with Jupiter on the rim — an empirical "you are here"
-anchor at first load. The prior auto-park (TARGET_PARK_FRACTION-
-derived) sat at ~0.11 AU, *inside* Mercury's orbit, with Sol filling
-~10% of the FOV but no other body visible.
+When the URL carries no view state, `first-load.ts` applies a
+canonical `FIRST_LOAD_VIEW`: camera parked at exactly **5 AU** from
+Sol along a hand-tuned direction that frames Orion in the
+background, with the HUD ring on and Orion highlighted. Sol stays
+the default focus and the constellation overlay is on by default,
+so Orion's stick figure renders without an explicit toggle. The
+view is applied via `applyDecodedView` from `url-state.ts` — the
+same pipeline used for `?v=` URL restores — which keeps the
+"first interaction is the first URL write" contract intact:
+`startUrlSync` seeds its frame-tracking baseline from the live
+camera state on registration, so the URL stays empty until the
+user actually moves the camera or changes a setting.
+
+`stellata.ts` also has a constructor-side baseline park at
+`SOL_FIRST_LOAD_PARK_PC = 4 * AU_PC` (set right after the initial
+`setFocus(solIndex)`). For the no-URL path this gets overwritten by
+`applyFirstLoadView` before first paint; the baseline still does
+useful work for URL-driven loads that carry a focus but no `cam` —
+those land at the 4 AU baseline rather than the camera ctor's
+30 pc default.
 
 Other arrival flows (warp, observe-exit, search-select) still use
 `minDistForStar` — only the no-URL bootstrap reads
-`SOL_FIRST_LOAD_PARK_PC`.
+`first-load.ts` / `SOL_FIRST_LOAD_PARK_PC`.
 
 When focused on Sol, `controls.minDistance` drops to
 `minOrbitDistForStar(Sol) ≈ 0.011 AU` so the user can fly into the
