@@ -155,26 +155,46 @@ export class Heliopause {
   }
 }
 
-// 8 corners of the heliopause's local-frame AABB (mesh-centred at
-// (0, 0, CENTRE_OFFSET_AU), scaled to ±SEMI_EQUATORIAL_AU on x/y and
-// ±SEMI_MAJOR_AU on z), pre-rotated through the group quaternion into
-// the Sol-anchored local frame. Projecting these to screen each frame
-// gives a bounding box that strictly encloses the egg's silhouette.
-// Computed once at module load — geometry is static.
+// Sample points distributed on the heliopause's ellipsoid surface,
+// pre-rotated through the group quaternion into the Sol-anchored
+// local frame. Projecting these to screen each frame gives a screen-
+// space bounding box that hugs the egg's silhouette tightly — within
+// the tessellation precision of the sample grid. Computed once at
+// module load; geometry is static.
+//
+// Surface points (not AABB corners) — points off the surface sit
+// further from the centre than the silhouette and produce a loose
+// bbox that reads as "label floating in space." For the (115, 115,
+// 161) AU ellipsoid the AABB corners sit at √(a² + a² + c²) ≈ 229 AU
+// from centre, ~40% beyond the actual silhouette extent.
 const SAMPLE_POINTS_LOCAL: readonly THREE.Vector3[] = (() => {
   const arr: THREE.Vector3[] = [];
   const cz = CENTRE_OFFSET_AU * AU_PC;
   const a = SEMI_EQUATORIAL_AU * AU_PC;
   const c = SEMI_MAJOR_AU * AU_PC;
-  for (const sx of [-1, 1]) {
-    for (const sy of [-1, 1]) {
-      for (const sz of [-1, 1]) {
-        const v = new THREE.Vector3(sx * a, sy * a, cz + sz * c);
-        v.applyQuaternion(GROUP_QUATERNION);
-        arr.push(v);
-      }
+  // 12 longitudes × 5 mid-latitudes + 2 poles = 62 points. Plenty
+  // dense for a tight silhouette bbox; cost is 62 vec3 transforms
+  // per frame.
+  const N_LONGS = 12;
+  const N_LATS = 5;
+  for (let i = 0; i < N_LATS; i++) {
+    const theta = (i + 0.5) / N_LATS * Math.PI; // avoid degenerate poles here
+    const sinT = Math.sin(theta);
+    const cosT = Math.cos(theta);
+    for (let j = 0; j < N_LONGS; j++) {
+      const phi = (j / N_LONGS) * 2 * Math.PI;
+      const v = new THREE.Vector3(
+        a * sinT * Math.cos(phi),
+        a * sinT * Math.sin(phi),
+        cz + c * cosT,
+      );
+      v.applyQuaternion(GROUP_QUATERNION);
+      arr.push(v);
     }
   }
+  // Antiapex/apex tips at the poles.
+  arr.push(new THREE.Vector3(0, 0, cz + c).applyQuaternion(GROUP_QUATERNION));
+  arr.push(new THREE.Vector3(0, 0, cz - c).applyQuaternion(GROUP_QUATERNION));
   return arr;
 })();
 
@@ -225,7 +245,7 @@ export function createHeliopauseLabel(stellata: Stellata): void {
     for (const sample of SAMPLE_POINTS_LOCAL) {
       tmp.copy(sample);
       tmp.applyMatrix4(camera.matrixWorldInverse);
-      // Any corner behind the near plane = the egg straddles the
+      // Any sample behind the near plane = the egg straddles the
       // camera (the user is inside or partially inside the bubble).
       // The projection wraps around in that regime; bail rather than
       // anchor to a smeared bbox. This subsumes the prior explicit
