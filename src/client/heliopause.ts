@@ -72,6 +72,34 @@ const FRESNEL_POWER = 2.5;
 export const HELIOPAUSE_APEX_LOCAL_PC: Readonly<THREE.Vector3> =
   APEX_DIR_ICRS.clone().multiplyScalar(UPWIND_APEX_AU * AU_PC);
 
+// Group quaternion that rotates +Z onto the antiapex direction in ICRS.
+// Same value the Heliopause instance applies to its group; precomputed
+// at module load so the label overlay can reuse it for the inside-the-
+// shell test without depending on the live class instance.
+const GROUP_QUATERNION = new THREE.Quaternion().setFromUnitVectors(
+  new THREE.Vector3(0, 0, 1),
+  APEX_DIR_ICRS.clone().negate(),
+);
+const GROUP_QUATERNION_INV = GROUP_QUATERNION.clone().invert();
+
+/** True when `localPos` (Sol-anchored local frame, parsecs) sits inside
+ *  the heliopause ellipsoid. Used by the label overlay to mirror the
+ *  shell's own visibility: FrontSide back-face culling makes the shell
+ *  vanish when the camera is inside, so the label hides too rather
+ *  than floating against an invisible referent. */
+export function isInsideHeliopause(
+  localPos: THREE.Vector3,
+  scratch: THREE.Vector3 = new THREE.Vector3(),
+): boolean {
+  scratch.copy(localPos).applyQuaternion(GROUP_QUATERNION_INV);
+  // Mesh sits at +Z = CENTRE_OFFSET_AU AU inside the rotated group.
+  scratch.z -= CENTRE_OFFSET_AU * AU_PC;
+  const nx = scratch.x / (SEMI_EQUATORIAL_AU * AU_PC);
+  const ny = scratch.y / (SEMI_EQUATORIAL_AU * AU_PC);
+  const nz = scratch.z / (SEMI_MAJOR_AU * AU_PC);
+  return nx * nx + ny * ny + nz * nz < 1;
+}
+
 export class Heliopause {
   readonly group: THREE.Group;
   private mesh: THREE.Mesh;
@@ -90,11 +118,7 @@ export class Heliopause {
     // Rotate the entire group so its local +Z aligns with the antiapex
     // direction in ICRS. The mesh inside scales + translates within
     // that rotated frame.
-    const antiapex = APEX_DIR_ICRS.clone().negate();
-    this.group.quaternion.setFromUnitVectors(
-      new THREE.Vector3(0, 0, 1),
-      antiapex,
-    );
+    this.group.quaternion.copy(GROUP_QUATERNION);
 
     this.geometry = new THREE.SphereGeometry(1, SPHERE_W_SEGMENTS, SPHERE_H_SEGMENTS);
     this.material = new THREE.ShaderMaterial({
@@ -158,6 +182,7 @@ export function createHeliopauseLabel(stellata: Stellata): void {
   if (!text) return;
 
   const tmp = new THREE.Vector3();
+  const insideScratch = new THREE.Vector3();
   let visible = false;
   const setVisible = (on: boolean): void => {
     if (on === visible) return;
@@ -172,9 +197,17 @@ export function createHeliopauseLabel(stellata: Stellata): void {
       setVisible(false);
       return;
     }
+    const camera = stellata.camera;
+    // Mirror the shell's own visibility: FrontSide culling hides the
+    // mesh whenever the camera is inside the bubble, so the label
+    // hides too rather than pointing at an invisible referent. Same
+    // pattern the planet labels use against `isOrbitRingVisible(i)`.
+    if (isInsideHeliopause(camera.position, insideScratch)) {
+      setVisible(false);
+      return;
+    }
     // Project the upwind apex point (Sol-anchored local frame) to
     // screen via the same path planet-labels uses.
-    const camera = stellata.camera;
     tmp.copy(HELIOPAUSE_APEX_LOCAL_PC);
     tmp.applyMatrix4(camera.matrixWorldInverse);
     if (tmp.z >= -camera.near) {
