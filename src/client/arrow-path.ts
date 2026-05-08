@@ -53,6 +53,39 @@ export const ARROW_LABEL_OFFSET_PX = 12;
 export const ARROW_LABEL_PADDING_PX = 50;
 
 /**
+ * Screen-space unit direction for an arrow originating at (cx, cy) and
+ * pointing toward a world target. Two-tier cascade:
+ *
+ *   1. If the target's screen projection is non-null and is more than a
+ *      pixel away from (cx, cy), use the screen-space delta directly —
+ *      the natural direction.
+ *   2. Otherwise (target behind the camera, or projects on top of the
+ *      origin) fall back to viewSpaceScreenDir on the world direction.
+ *      That one is robust to behind-camera targets because view-space xy
+ *      sidesteps the projection's z-divide.
+ *
+ * Returns null only when both paths fail — `worldDir` along the camera
+ * axis with the target either coincident with the origin or producing no
+ * screen offset. No screen direction can be defined in that case and the
+ * caller hides the arrow.
+ */
+export function screenDirToTarget(
+  cx: number,
+  cy: number,
+  targetScreen: [number, number] | null,
+  worldDir: THREE.Vector3,
+  camera: THREE.Camera,
+): [number, number] | null {
+  if (targetScreen) {
+    const tdx = targetScreen[0] - cx;
+    const tdy = targetScreen[1] - cy;
+    const tlen = Math.hypot(tdx, tdy);
+    if (tlen >= 1) return [tdx / tlen, tdy / tlen];
+  }
+  return viewSpaceScreenDir(worldDir, camera);
+}
+
+/**
  * Build an SVG path for a single arrow given the shaft's start and the
  * arrowhead tip in screen-space pixels. Returns an empty string only when
  * the segment has zero length.

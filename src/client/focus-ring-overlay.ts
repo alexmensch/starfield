@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { Stellata } from './stellata';
+import { projectToScreen } from './overlay-project';
 
 const RADIUS_PX = 24;
 
@@ -72,16 +73,15 @@ export function createFocusRingOverlay(stellata: Stellata) {
     // the shrinking/growing ring still has a sensible centre.
     const positions = stellata.localPositions;
     v.set(positions[idx * 3], positions[idx * 3 + 1], positions[idx * 3 + 2]);
-    v.applyMatrix4(camera.matrixWorldInverse);
+    const projected = projectToScreen(v, camera, window.innerWidth, window.innerHeight);
     let sx: number, sy: number;
-    if (v.z > -camera.near) {
+    if (!projected) {
       if (!transition) { hide(); return; }
       sx = window.innerWidth * 0.5;
       sy = window.innerHeight * 0.5;
     } else {
-      v.applyMatrix4(camera.projectionMatrix);
-      sx = (v.x + 1) * 0.5 * window.innerWidth;
-      sy = (1 - v.y) * 0.5 * window.innerHeight;
+      sx = projected[0];
+      sy = projected[1];
     }
 
     if (ring.style.display === 'none') show();

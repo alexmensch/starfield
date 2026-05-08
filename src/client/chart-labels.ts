@@ -3,6 +3,7 @@ import type { Stellata } from './stellata';
 import type { ChartModeContext } from './chart-mode';
 import { mark as perfMark, measure as perfMeasure } from './perf-hud';
 import { FLAG_BINARY_PRIMARY } from '../../scripts/catalog-pure';
+import { projectToScreen } from './overlay-project';
 
 // Chart-mode label engine. Per-frame, projects every candidate
 // label (proper-named star, Bayer-letter star, constellation Latin name,
@@ -136,9 +137,6 @@ const wingPool = new Map<number, PooledLine>();
 // browser would treat the write as a no-op anyway (after re-parsing).
 const ATTR_DIRTY_PX = 0.05;
 const tmpV3 = new THREE.Vector3();
-// Dedicated scratch for projectVec — never aliased with tmpV3 (which is
-// owned by projectStar's caller path) so the two can be in flight together.
-const projVec = new THREE.Vector3();
 
 export function startChartLabels(
   stellata: Stellata,
@@ -488,10 +486,12 @@ function tick(
   perfMeasure('chart.constellations');
 
   // 4) Molecular clouds — name labels at the cloud centroid. Cheap to
-  // iterate (count is in the hundreds at most).
+  // iterate (count is in the hundreds at most). Cloud layer is shelved
+  // for v1.0 (CLAUDE.md) so this block is dead until re-enabled; the
+  // chart-labels integration is preserved against `clouds` non-null.
   perfMark('chart.clouds');
   const clouds = stellata.getCloudCatalog();
-  if (clouds && f.showMolecularClouds) {
+  if (clouds) {
     for (let i = 0; i < clouds.clouds.length; i++) {
       if (!stellata.cloudLocalPositionInto(i, tmpCloudLocal)) continue;
       const xy = projectVec(tmpCloudLocal, camera, w, h);
@@ -742,19 +742,15 @@ export function projectVec(
   w: number,
   h: number,
 ): [number, number] | null {
-  // Near-clip-safe matrix transform; same shape as constellation-overlay /
-  // hud-overlay. Uses a module-level scratch to avoid the per-call
-  // Vector3 allocation — the chart-mode tick projects 5–15k vectors per
-  // frame and the GC pressure from clone() showed up directly in 1%-low
-  // FPS during long observe sessions.
-  projVec.copy(p).applyMatrix4(camera.matrixWorldInverse);
-  if (projVec.z >= -camera.near) return null;
-  projVec.applyMatrix4(camera.projectionMatrix);
-  const x = (projVec.x + 1) * 0.5 * w;
-  const y = (1 - projVec.y) * 0.5 * h;
-  // Drop labels well outside the viewport — saves measurement cost.
-  if (x < -200 || x > w + 200 || y < -100 || y > h + 100) return null;
-  return [x, y];
+  // Shared near-clip-safe projection (overlay-project), with chart-mode's
+  // viewport-margin cull on top — labels well outside the viewport are
+  // dropped here so downstream measurement cost stays off the hot path.
+  // The overlay-project scratch is fresh on every call, so the shared
+  // module-level scratch costs no allocation.
+  const xy = projectToScreen(p, camera, w, h);
+  if (!xy) return null;
+  if (xy[0] < -200 || xy[0] > w + 200 || xy[1] < -100 || xy[1] > h + 100) return null;
+  return xy;
 }
 
 // Apparent magnitude from absolute magnitude + distance-modulus (no dust;

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { Stellata } from './stellata';
+import { projectToScreen } from './overlay-project';
 
 // Pixel radius left blank around every figure-star so lines don't obscure
 // the star glyph.
@@ -54,10 +55,7 @@ export function createConstellationOverlay(stellata: Stellata) {
         // Project each vertex; null if behind the near plane.
         const projected: Array<[number, number] | null> = polyline.map((i) => {
           v.set(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
-          v.applyMatrix4(camera.matrixWorldInverse);
-          if (v.z > -camera.near) return null;
-          v.applyMatrix4(camera.projectionMatrix);
-          return [(v.x + 1) * 0.5 * w, (1 - v.y) * 0.5 * h];
+          return projectToScreen(v, camera, w, h);
         });
 
         for (let j = 0; j < projected.length - 1; j++) {
