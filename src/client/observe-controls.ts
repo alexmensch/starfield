@@ -59,10 +59,10 @@ export class ObserveControls {
   // resume doesn't apply one giant rotation.
   private static MOMENTUM_MAX_STEP_SEC = 0.1;
 
-  private canvas: HTMLCanvasElement;
-  private camera: THREE.PerspectiveCamera;
-  private setFov: (fov: number) => void;
-  private getFov: () => number;
+  private readonly canvas: HTMLCanvasElement;
+  private readonly camera: THREE.PerspectiveCamera;
+  private readonly setFov: (fov: number) => void;
+  private readonly getFov: () => number;
 
   private enabled = false;
   private dragging = false;
@@ -105,10 +105,15 @@ export class ObserveControls {
   enable() {
     if (this.enabled) return;
     this.enabled = true;
+    // pointerdown captures the pointer to the canvas via setPointerCapture
+    // (in onPointerDown), so subsequent pointermove/up/cancel for that
+    // pointer are routed to the canvas regardless of cursor position. No
+    // need for window-level move listeners — the captured-pointer events
+    // arrive even when the cursor leaves the canvas mid-drag.
     this.canvas.addEventListener('pointerdown', this.onPointerDown);
-    window.addEventListener('pointerup', this.onPointerUp);
-    window.addEventListener('pointercancel', this.onPointerCancel);
-    window.addEventListener('pointermove', this.onPointerMove);
+    this.canvas.addEventListener('pointermove', this.onPointerMove);
+    this.canvas.addEventListener('pointerup', this.onPointerUp);
+    this.canvas.addEventListener('pointercancel', this.onPointerCancel);
     // Cmd-Tab / app-switcher / tab-hide can preempt the drag without ever
     // delivering pointerup or pointercancel. On return, dragging would
     // resume from a stale dGrabbed and the next pointermove would whip
@@ -122,9 +127,9 @@ export class ObserveControls {
     if (!this.enabled) return;
     this.enabled = false;
     this.canvas.removeEventListener('pointerdown', this.onPointerDown);
-    window.removeEventListener('pointerup', this.onPointerUp);
-    window.removeEventListener('pointercancel', this.onPointerCancel);
-    window.removeEventListener('pointermove', this.onPointerMove);
+    this.canvas.removeEventListener('pointermove', this.onPointerMove);
+    this.canvas.removeEventListener('pointerup', this.onPointerUp);
+    this.canvas.removeEventListener('pointercancel', this.onPointerCancel);
     window.removeEventListener('blur', this.onWindowBlur);
     document.removeEventListener('visibilitychange', this.onVisibilityChange);
     this.canvas.removeEventListener('wheel', this.onWheel);
@@ -137,10 +142,25 @@ export class ObserveControls {
   // onPointerUp does not call this because release legitimately promotes
   // the last per-event rotation to a momentum velocity.
   private cancelDrag() {
+    if (this.activePointerId !== null) this.releaseCapture(this.activePointerId);
     this.dragging = false;
     this.activePointerId = null;
     this.momentumSpeed = 0;
     this.lastRotAngle = 0;
+  }
+
+  // Best-effort pointer-capture release. Wrapped because hasPointerCapture
+  // can be false (capture was already released by the browser, e.g. on
+  // pointercancel) and releasePointerCapture throws if the pointer wasn't
+  // captured by this element.
+  private releaseCapture(pointerId: number) {
+    try {
+      if (this.canvas.hasPointerCapture(pointerId)) {
+        this.canvas.releasePointerCapture(pointerId);
+      }
+    } catch {
+      // ignore — capture state is best-effort cleanup
+    }
   }
 
   /**
@@ -177,6 +197,10 @@ export class ObserveControls {
     if (e.button !== 0) return;
     this.dragging = true;
     this.activePointerId = e.pointerId;
+    // Capture the pointer to the canvas so subsequent move/up/cancel for
+    // this pointer fire on the canvas even when the cursor leaves it.
+    // Replaces the prior window-level listener routing.
+    try { this.canvas.setPointerCapture(e.pointerId); } catch { /* not all envs support it */ }
     this.pixelToWorldDir(e.clientX, e.clientY, this.dGrabbed);
     // New grab cancels any in-flight momentum and resets the per-event
     // rotation tracker so a subsequent quick release doesn't inherit a
@@ -187,6 +211,7 @@ export class ObserveControls {
 
   private onPointerUp = (e: PointerEvent) => {
     if (this.activePointerId !== null && e.pointerId !== this.activePointerId) return;
+    this.releaseCapture(e.pointerId);
     this.dragging = false;
     this.activePointerId = null;
     // Promote the last per-event rotation to an angular velocity if the
