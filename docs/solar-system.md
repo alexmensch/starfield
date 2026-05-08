@@ -171,17 +171,27 @@ geometry to read.
 
 ## First-load default and `minDistance` relaxation
 
-When the URL carries no view state, `stellata.ts` parks the camera at
-`SOL_FIRST_LOAD_PARK_PC = 4 * AU_PC` from Sol. 4 AU sits just inside
-Jupiter's orbit so the inner planets (Mercury through Mars) frame
-the scene with Jupiter on the rim — an empirical "you are here"
-anchor at first load. The prior auto-park (TARGET_PARK_FRACTION-
-derived) sat at ~0.11 AU, *inside* Mercury's orbit, with Sol filling
-~10% of the FOV but no other body visible.
+When the URL carries no view state, `first-load.ts` applies a
+canonical `FIRST_LOAD_VIEW`: camera parked at exactly **5 AU** from
+Sol aimed at the galactic centre, with the HUD ring on. Sol stays
+the default focus; no constellation highlight is set so the bulge
+shines through cleanly without an asterism layered over the brightest
+patch of sky. The view is applied via `applyDecodedView` from
+`url-state.ts` — the same pipeline used for `?v=` URL restores —
+which keeps the "first interaction is the first URL write" contract
+intact: `startUrlSync` seeds its frame-tracking baseline from the
+live camera state on registration, so the URL stays empty until the
+user actually moves the camera or changes a setting.
 
-Other arrival flows (warp, observe-exit, search-select) still use
-`minDistForStar` — only the no-URL bootstrap reads
-`SOL_FIRST_LOAD_PARK_PC`.
+The Stellata constructor calls `setFocus(catalog.solIndex)` to
+recentre the local frame on Sol but does not park the camera —
+both bootstrap paths (`applyFirstLoadView` for the bare URL, and
+`applyFromUrl` for `?v=` URLs) own the cam pose end-to-end and
+run before first paint in `main.ts`.
+
+Other arrival flows (warp, observe-exit, search-select) use
+`minDistForStar` — only the bare-URL bootstrap reads
+`first-load.ts`.
 
 When focused on Sol, `controls.minDistance` drops to
 `minOrbitDistForStar(Sol) ≈ 0.011 AU` so the user can fly into the

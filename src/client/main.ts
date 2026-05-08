@@ -23,6 +23,7 @@ import { maybeShowInfoModal } from './info-modal';
 import { bindBrandModals } from './brand-modal';
 import { bindKeyboardShortcuts } from './keyboard-shortcuts';
 import { applyFromUrl, startUrlSync, type IdMaps } from './url-state';
+import { applyFirstLoadView } from './first-load';
 import { fmtDist } from './distance-util';
 import { setupDebug } from './debug';
 import { escapeHtml } from './dom-util';
@@ -141,8 +142,12 @@ async function main() {
     bindModeToggle(stellata);
 
     // Apply any URL state before starting the URL writer so we don't echo
-    // the same params back into history on load.
-    applyFromUrl(stellata, idMaps);
+    // the same params back into history on load. With no `?v=`, fall back
+    // to the canonical first-load view (Sol focus, parked at 5 AU framing
+    // Orion, HUD on, Orion highlighted) — stellata-vjm.
+    if (!applyFromUrl(stellata, idMaps)) {
+      applyFirstLoadView(stellata, idMaps);
+    }
     startUrlSync(stellata, idMaps);
 
     // Bottom-right meta: catalog count + (when focused on a planet host)

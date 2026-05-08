@@ -873,16 +873,21 @@ function writeUrl(stellata: Stellata, idMaps: IdMaps): void {
   }
 }
 
-export function applyFromUrl(stellata: Stellata, idMaps: IdMaps): void {
+// Returns true when a `?v=` blob was present and applied (regardless of
+// schema version). The caller uses the false branch to fall back to the
+// canonical first-load view (stellata-vjm). A malformed blob also
+// returns false so the user lands on the framed default rather than the
+// unframed canvas-default pose.
+export function applyFromUrl(stellata: Stellata, idMaps: IdMaps): boolean {
   const params = new URLSearchParams(location.search);
   const blob = params.get(PARAM_NAME);
-  if (!blob) return;
+  if (!blob) return false;
   let decoded: DecodedBlob;
   try {
     decoded = decodeBlob(blob);
   } catch (err) {
     console.warn('Failed to decode ?v= URL state:', err);
-    return;
+    return false;
   }
   applyDecodedView(stellata, decoded.view, idMaps);
   // Auto-upgrade legacy URLs: after the same debounce we already use for
@@ -893,16 +898,24 @@ export function applyFromUrl(stellata: Stellata, idMaps: IdMaps): void {
   if (decoded.version !== SCHEMA_VERSION) {
     setTimeout(() => writeUrl(stellata, idMaps), DEBOUNCE_MS);
   }
+  return true;
 }
 
 export function startUrlSync(stellata: Stellata, idMaps: IdMaps): void {
   let timer: number | undefined;
   // Scratch for the per-frame camera/target/up change detector. Layout:
   //   [0..2] camera.position, [3..5] controls.target, [6..8] camera.up
-  // Initialised to NaN so every comparison on the first frame is false
-  // (NaN < x is always false), which triggers the initial schedule.
+  // Seeded from the live camera state at registration time so the first
+  // frame doesn't trigger a write — the URL stays empty (or in sync with
+  // whatever applyFromUrl/applyFirstLoadView just applied) until the
+  // user actually moves the camera or changes a setting.
   const lastCam = new Float64Array(9);
-  lastCam.fill(NaN);
+  const c0 = stellata.camera.position;
+  const t0 = stellata.controls.target;
+  const u0 = stellata.camera.up;
+  lastCam[0] = c0.x; lastCam[1] = c0.y; lastCam[2] = c0.z;
+  lastCam[3] = t0.x; lastCam[4] = t0.y; lastCam[5] = t0.z;
+  lastCam[6] = u0.x; lastCam[7] = u0.y; lastCam[8] = u0.z;
 
   const schedule = () => {
     if (timer !== undefined) clearTimeout(timer);
