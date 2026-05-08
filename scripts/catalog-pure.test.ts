@@ -10,10 +10,12 @@ import {
   inferBinaries,
   markPrimary,
   markPrimaryIfUnflagged,
+  applyDoublesFlag,
   BINARY_MAX_SEP_PC,
   FLAG_BINARY_PRIMARY,
   type SpectralInfo,
   type BinaryStar,
+  type DoublesStar,
 } from './catalog-pure';
 
 describe('catalog-pure / spectClassIndex', () => {
@@ -512,6 +514,95 @@ describe("catalog-pure / markPrimaryIfUnflagged", () => {
     // stars[0] was brighter but must remain unflagged because stars[1]
     // already carried the bit.
     expect(stars[0].flags).toBe(0);
+  });
+});
+
+describe('catalog-pure / applyDoublesFlag', () => {
+  // Mini Star fixture with just the fields applyDoublesFlag reads/writes.
+  function s(absmag: number, hip: number | null, flags = 0): DoublesStar {
+    return { absmag, hip, flags };
+  }
+
+  it('flags the brightest in-catalog member of each group', () => {
+    // Three stars; the group covers them all. Lowest absmag (=brightest)
+    // should get FLAG_BINARY_PRIMARY; the others stay clean.
+    const stars: DoublesStar[] = [s(4, 100), s(2, 200), s(6, 300)];
+    const r = applyDoublesFlag(stars, [[100, 200, 300]]);
+    expect(r.systems).toBe(1);
+    expect(r.flagged).toBe(1);
+    expect(stars[1].flags).toBe(FLAG_BINARY_PRIMARY);
+    expect(stars[0].flags).toBe(0);
+    expect(stars[2].flags).toBe(0);
+  });
+
+  it('silently drops groups whose HIPs are all missing from the catalog', () => {
+    const stars: DoublesStar[] = [s(4, 100), s(5, 200)];
+    const r = applyDoublesFlag(stars, [[999, 1000]]);
+    expect(r.systems).toBe(0);
+    expect(r.flagged).toBe(0);
+    expect(stars[0].flags).toBe(0);
+    expect(stars[1].flags).toBe(0);
+  });
+
+  it('counts a system but does not re-flag when a member already has the bit', () => {
+    // Geometric pass already flagged the dimmer star; CCDM pass would
+    // pick the brighter one but must defer per markPrimaryIfUnflagged's
+    // contract.
+    const stars: DoublesStar[] = [s(2, 100), s(5, 200, FLAG_BINARY_PRIMARY)];
+    const r = applyDoublesFlag(stars, [[100, 200]]);
+    expect(r.systems).toBe(1);
+    expect(r.flagged).toBe(0);
+    expect(stars[0].flags).toBe(0);                    // not re-flagged
+    expect(stars[1].flags).toBe(FLAG_BINARY_PRIMARY);  // pre-existing bit preserved
+  });
+
+  it('flags one primary per group across multiple groups', () => {
+    const stars: DoublesStar[] = [
+      s(2, 100), s(3, 101), // group A — 100 brightest
+      s(5, 200), s(4, 201), // group B — 201 brightest
+    ];
+    const r = applyDoublesFlag(stars, [[100, 101], [200, 201]]);
+    expect(r.systems).toBe(2);
+    expect(r.flagged).toBe(2);
+    expect(stars[0].flags).toBe(FLAG_BINARY_PRIMARY); // 100 won group A
+    expect(stars[3].flags).toBe(FLAG_BINARY_PRIMARY); // 201 won group B
+    expect(stars[1].flags).toBe(0);
+    expect(stars[2].flags).toBe(0);
+  });
+
+  it('handles override-style groups (curated visual doubles) the same as CCDM groups', () => {
+    // The build-catalog wrapper unions CCDM-from-file groups and the
+    // KNOWN_VISUAL_DOUBLES list before calling this; here we verify both
+    // sources behave identically once unioned.
+    const stars: DoublesStar[] = [s(3, 100), s(2, 101)];
+    // Pretend the CCDM pass produced one group, the override another.
+    const r = applyDoublesFlag(stars, [[100], [101]]);
+    expect(r.systems).toBe(2);
+    expect(r.flagged).toBe(2);
+    // Each single-member group flags its own brightest (and only)
+    // component.
+    expect(stars[0].flags).toBe(FLAG_BINARY_PRIMARY);
+    expect(stars[1].flags).toBe(FLAG_BINARY_PRIMARY);
+  });
+
+  it('skips HIP=0 / null records when building the lookup', () => {
+    const stars: DoublesStar[] = [s(2, null), s(4, 0), s(3, 100)];
+    const r = applyDoublesFlag(stars, [[100]]);
+    expect(r.systems).toBe(1);
+    expect(stars[2].flags).toBe(FLAG_BINARY_PRIMARY);
+    // The 0/null-HIP rows must never be hit by HIP→index lookup.
+    expect(stars[0].flags).toBe(0);
+    expect(stars[1].flags).toBe(0);
+  });
+
+  it('is idempotent under re-application', () => {
+    const stars: DoublesStar[] = [s(2, 100), s(5, 200)];
+    applyDoublesFlag(stars, [[100, 200]]);
+    const flagsBefore = stars.map((x) => x.flags);
+    applyDoublesFlag(stars, [[100, 200]]);
+    // Second pass sees the existing primary bit and bails — no
+    // additional bits set.
+    expect(stars.map((x) => x.flags)).toEqual(flagsBefore);
   });
 });
 
