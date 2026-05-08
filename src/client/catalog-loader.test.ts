@@ -5,6 +5,12 @@ import {
   FLAG_IS_SOL,
   FLAG_HAS_BAYER,
   FLAG_BINARY_PRIMARY,
+  HEADER_LAYOUT,
+  RECORD_LAYOUT,
+  HEADER_SIZE,
+  RECORD_SIZE,
+  MAGIC,
+  BINARY_VERSION,
 } from '../../scripts/catalog-pure';
 
 interface StarRecord {
@@ -22,11 +28,6 @@ interface StarRecord {
   periodRaw: number;       // uint16 (×0.1 to get days)
   hip: number;             // 0 = none
 }
-
-const HEADER_SIZE = 32;
-const RECORD_SIZE = 44;
-const MAGIC = 'HYG4';
-const VERSION = 4;
 
 // Build a synthetic catalog buffer matching the v4 format. Tests construct
 // the smallest reasonable catalogs (a few stars + optional name table) so
@@ -50,33 +51,33 @@ function buildCatalog(
   const u8 = new Uint8Array(ab);
 
   // Header
-  for (let i = 0; i < 4; i++) u8[i] = MAGIC.charCodeAt(i);
-  dv.setUint32(4, VERSION, true);
-  dv.setUint32(8, records.length, true);
+  for (let i = 0; i < 4; i++) u8[HEADER_LAYOUT.magic + i] = MAGIC.charCodeAt(i);
+  dv.setUint32(HEADER_LAYOUT.version, BINARY_VERSION, true);
+  dv.setUint32(HEADER_LAYOUT.count, records.length, true);
   const nameTableOffset = encodedNames.length > 0
     ? HEADER_SIZE + records.length * RECORD_SIZE
     : 0;
-  dv.setUint32(12, nameTableOffset, true);
-  dv.setUint32(16, encodedNames.length > 0 ? nameTableLength : 0, true);
+  dv.setUint32(HEADER_LAYOUT.nameTableOffset, nameTableOffset, true);
+  dv.setUint32(HEADER_LAYOUT.nameTableLength, encodedNames.length > 0 ? nameTableLength : 0, true);
 
   // Records
   records.forEach((r, i) => {
     const off = HEADER_SIZE + i * RECORD_SIZE;
-    dv.setFloat32(off + 0, r.pos[0], true);
-    dv.setFloat32(off + 4, r.pos[1], true);
-    dv.setFloat32(off + 8, r.pos[2], true);
-    dv.setFloat32(off + 12, r.absmag, true);
-    dv.setFloat32(off + 16, r.ci, true);
-    dv.setFloat32(off + 20, r.physicalRadius, true);
-    dv.setUint32(off + 24, r.companion >>> 0, true);
-    dv.setUint32(off + 28, r.nameOffset >>> 0, true);
-    dv.setUint8(off + 32, r.spectClass);
-    dv.setUint8(off + 33, r.luminosityClass);
-    dv.setUint8(off + 34, r.constellation);
-    dv.setUint8(off + 35, r.flags);
-    dv.setUint8(off + 36, r.amplitudeRaw);
-    dv.setUint16(off + 38, r.periodRaw, true);
-    dv.setUint32(off + 40, r.hip, true);
+    dv.setFloat32(off + RECORD_LAYOUT.x, r.pos[0], true);
+    dv.setFloat32(off + RECORD_LAYOUT.y, r.pos[1], true);
+    dv.setFloat32(off + RECORD_LAYOUT.z, r.pos[2], true);
+    dv.setFloat32(off + RECORD_LAYOUT.absmag, r.absmag, true);
+    dv.setFloat32(off + RECORD_LAYOUT.ci, r.ci, true);
+    dv.setFloat32(off + RECORD_LAYOUT.physRadius, r.physicalRadius, true);
+    dv.setUint32(off + RECORD_LAYOUT.companion, r.companion >>> 0, true);
+    dv.setUint32(off + RECORD_LAYOUT.nameOffset, r.nameOffset >>> 0, true);
+    dv.setUint8(off + RECORD_LAYOUT.spectClass, r.spectClass);
+    dv.setUint8(off + RECORD_LAYOUT.lumClass, r.luminosityClass);
+    dv.setUint8(off + RECORD_LAYOUT.conIndex, r.constellation);
+    dv.setUint8(off + RECORD_LAYOUT.flags, r.flags);
+    dv.setUint8(off + RECORD_LAYOUT.ampUnits, r.amplitudeRaw);
+    dv.setUint16(off + RECORD_LAYOUT.period, r.periodRaw, true);
+    dv.setUint32(off + RECORD_LAYOUT.hip, r.hip, true);
   });
 
   // Name table (after records)
@@ -144,7 +145,7 @@ describe('catalog-loader / parseBinary', () => {
 
     it('rejects unsupported version', () => {
       const buf = buildCatalog([]);
-      new DataView(buf).setUint32(4, 99, true);
+      new DataView(buf).setUint32(HEADER_LAYOUT.version, 99, true);
       expect(() => parseBinary(buf, blankConstellations)).toThrow(/version: 99/);
     });
 

@@ -54,8 +54,17 @@ Amplitude encoding saturates at 255 × 0.05 = 12.75 mag; periods over
 majority of real variables (a few multi-decade symbiotics and extreme
 eclipsers clip but those render imperceptibly slowly anyway).
 
-If you add fields, keep the 44-byte stride (pad as needed) and **bump
-`version`** (and the matching magic) in both the writer and reader.
+The byte plan above is encoded once in `scripts/catalog-pure.ts` as
+`HEADER_LAYOUT`, `RECORD_LAYOUT`, `HEADER_SIZE`, `RECORD_SIZE`, `MAGIC`,
+`BINARY_VERSION`, and `NO_COMPANION`. Writer (`scripts/build-catalog.ts`),
+runtime reader (`src/client/catalog-loader.ts`), and the verify tool
+(`scripts/verify-catalog.ts`) all index off those constants — there are
+no inline byte offsets to drift apart. If you add fields, keep the
+44-byte stride (pad as needed), extend `RECORD_LAYOUT`, and **bump
+`BINARY_VERSION` + `MAGIC`** in `catalog-pure.ts`. Free flag bits today
+are `0x08`, `0x20`, `0x40`, `0x80` (see `FLAG_*` exports). Layout
+consistency is pinned by the `binary-format constants` block in
+`scripts/catalog-pure.test.ts`.
 
 ## Search index (`public/search-index.json`)
 
