@@ -2,8 +2,8 @@ import Fuse from 'fuse.js';
 import type { Stellata } from './stellata';
 import type { Catalog } from './catalog-loader';
 import type { CloudCatalog } from './cloud-loader';
-import { applyHoverClass, TYPEAHEAD_MAX_RESULTS } from './typeahead-util';
-import { escapeHtml } from './dom-util';
+import { TYPEAHEAD_MAX_RESULTS } from './typeahead-util';
+import { Typeahead, TypeaheadGroup } from './typeahead';
 
 export interface SearchIndexEntry {
   i: number;
@@ -26,125 +26,6 @@ interface FuzzyEntry {
   label: string;        // what Fuse matches on
   primary: string;      // shown in dropdown primary line
   displayCon: string;   // shown in dropdown secondary line
-}
-
-let activeBox: SearchBox | null = null;
-
-class SearchBox {
-  private displayName = '';
-  private results: FuzzyEntry[] = [];
-  private hoverIdx = -1;
-
-  constructor(
-    readonly input: HTMLInputElement,
-    private clearBtn: HTMLButtonElement,
-    private resultsEl: HTMLUListElement,
-    private runQuery: (q: string) => FuzzyEntry[],
-    private onSelect: (entry: FuzzyEntry) => void,
-    private onClear: () => void,
-  ) {
-    input.addEventListener('input', () => this.render(input.value));
-    input.addEventListener('focus', () => {
-      activeBox = this;
-      if (input.value) this.render(input.value);
-    });
-    input.addEventListener('blur', () => {
-      setTimeout(() => {
-        if (activeBox === this) {
-          resultsEl.hidden = true;
-          activeBox = null;
-        }
-        this.restore();
-      }, 140);
-    });
-    input.addEventListener('keydown', (e) => this.handleKey(e));
-    clearBtn.addEventListener('click', () => {
-      this.onClear();
-      input.focus();
-    });
-  }
-
-  setName(name: string) {
-    this.displayName = name;
-    if (activeBox !== this) this.input.value = name;
-    this.clearBtn.hidden = !name;
-  }
-
-  private restore() {
-    this.input.value = this.displayName;
-  }
-
-  private render(query: string) {
-    const q = query.trim();
-    if (!q) {
-      this.resultsEl.hidden = true;
-      this.results = [];
-      this.hoverIdx = -1;
-      return;
-    }
-    this.results = this.runQuery(q);
-    // Rebuild rows with no active class, then route the initial hover
-    // through setHover so applyHoverClass owns the scroll-into-view
-    // for both rebuild and arrow-nav. Pre-baking the class here would
-    // skip the scroll path and silently break the moment a rebuild
-    // preserves resultsEl.scrollTop.
-    this.hoverIdx = -1;
-    this.renderResultsDom();
-    if (this.results.length > 0) this.setHover(0);
-    this.resultsEl.hidden = this.results.length === 0;
-    const row = this.input.closest('.search-row') as HTMLElement | null;
-    if (row) {
-      this.resultsEl.style.top = row.offsetTop + row.offsetHeight + 'px';
-    }
-  }
-
-  private renderResultsDom() {
-    this.resultsEl.innerHTML = '';
-    for (let i = 0; i < this.results.length; i++) {
-      const e = this.results[i];
-      const li = document.createElement('li');
-      // No active class here — render() calls setHover(0) after the
-      // rebuild so the initial highlight goes through applyHoverClass
-      // (which also handles scroll-into-view).
-      li.className = '';
-      li.innerHTML = `<span>${escapeHtml(e.primary)}</span><span class="sub">${escapeHtml(e.displayCon || '—')}</span>`;
-      li.addEventListener('mousedown', (ev) => {
-        ev.preventDefault();
-        this.pick(i);
-      });
-      this.resultsEl.appendChild(li);
-    }
-  }
-
-  private setHover(newIdx: number) {
-    applyHoverClass(this.resultsEl, this.hoverIdx, newIdx);
-    this.hoverIdx = newIdx;
-  }
-
-  private pick(i: number) {
-    const e = this.results[i];
-    if (!e) return;
-    this.onSelect(e);
-    this.resultsEl.hidden = true;
-    this.input.blur();
-  }
-
-  private handleKey(e: KeyboardEvent) {
-    if (this.results.length === 0) return;
-    if (e.key === 'ArrowDown') {
-      this.setHover((this.hoverIdx + 1) % this.results.length);
-      e.preventDefault();
-    } else if (e.key === 'ArrowUp') {
-      this.setHover((this.hoverIdx - 1 + this.results.length) % this.results.length);
-      e.preventDefault();
-    } else if (e.key === 'Enter') {
-      if (this.hoverIdx >= 0) this.pick(this.hoverIdx);
-      e.preventDefault();
-    } else if (e.key === 'Escape') {
-      this.resultsEl.hidden = true;
-      this.input.blur();
-    }
-  }
 }
 
 // Canonical Greek letter forms keyed by AT-HYG's 3-letter Latin abbreviation.
@@ -483,12 +364,36 @@ export function bindSearch(
     return all;
   };
 
-  const focusBox = new SearchBox(
-    focusInput,
-    focusClear,
+  // Both inputs share the single resultsEl, so they share a group too —
+  // the group's "active" slot keeps blur-defer from hiding the dropdown
+  // when focus moves between focus + to.
+  const group = new TypeaheadGroup();
+
+  // Empty constellation falls back to an em-dash so the secondary
+  // column never collapses (rows without a constellation still need a
+  // baseline).
+  const rowFor = (e: FuzzyEntry) => ({
+    primary: e.primary,
+    sub: e.displayCon || '—',
+  });
+
+  // Anchor the floating dropdown under whichever search row triggered
+  // it. Both the focus + to inputs share a single absolutely-positioned
+  // resultsEl, so its `top` has to be re-computed on every render.
+  const positionUnder = (input: HTMLInputElement) => () => {
+    const row = input.closest('.search-row') as HTMLElement | null;
+    if (row) {
+      resultsEl.style.top = row.offsetTop + row.offsetHeight + 'px';
+    }
+  };
+
+  const focusBox = new Typeahead<FuzzyEntry>({
+    input: focusInput,
     resultsEl,
-    focusRunQuery,
-    (entry) => {
+    clearBtn: focusClear,
+    runQuery: focusRunQuery,
+    rowFor,
+    onSelect: (entry) => {
       if (entry.kind === 'cloud') {
         stellata.flyToCloud(entry.index);
       } else if (stellata.getCameraMode() === 'observe') {
@@ -500,27 +405,32 @@ export function bindSearch(
         stellata.focusStar(entry.index);
       }
     },
-    () => stellata.unfocus(),
-  );
+    onClear: () => stellata.unfocus(),
+    positionResults: positionUnder(focusInput),
+    group,
+  });
 
   // Distance-vector destination — accepts both star and cloud entries.
   // The pick handler dispatches to the appropriate setter; the two
   // mutually exclude in Stellata, so flipping between a star and a
   // cloud destination clears the previous one.
-  const toBox = new SearchBox(
-    toInput,
-    toClear,
+  const toBox = new Typeahead<FuzzyEntry>({
+    input: toInput,
     resultsEl,
+    clearBtn: toClear,
     runQuery,
-    (entry) => {
+    rowFor,
+    onSelect: (entry) => {
       if (entry.kind === 'cloud') stellata.setVectorToCloud(entry.index);
       else stellata.setVectorTo(entry.index);
     },
-    () => {
+    onClear: () => {
       stellata.setVectorTo(null);
       stellata.setVectorToCloud(null);
     },
-  );
+    positionResults: positionUnder(toInput),
+    group,
+  });
 
   // Single sync for both star and cloud focus — the two are mutually
   // exclusive (setting either clears the other in Stellata), so the

@@ -54,9 +54,9 @@ export function bindKeyboardShortcuts(stellata: Stellata) {
 
     if (e.key === 'Escape') {
       // Highest priority: an open kb-modal (Go / Constellation) closes
-      // even if its input has focus. SearchBox / typeahead bail their own
-      // ESC when the dropdown has no results (empty input), so we own ESC
-      // for the kb-modal regardless.
+      // even if its input has focus. The Typeahead class bails its own
+      // ESC when the dropdown has no results (empty input), so we own
+      // ESC for the kb-modal regardless.
       const kbModal = document.getElementById('kb-modal');
       if (kbModal && !kbModal.hidden) {
         goModal.close();
@@ -210,7 +210,7 @@ interface RelocateModalOptions {
 // container (#kb-modal) is reused across the two pickers — only one
 // can be open at a time anyway. Close triggers: backdrop click, input
 // blur (covers ESC-inside-input, click-outside, and pick-then-blur via
-// SearchBox.pick()).
+// Typeahead's pick()).
 function bindRelocateModal(
   opts: RelocateModalOptions,
 ): { open: () => void; close: () => void } {
@@ -225,10 +225,10 @@ function bindRelocateModal(
   let pendingClose: number | null = null;
 
   const onInputBlur = () => {
-    // Defer slightly so a result mousedown inside SearchBox.pick() — which
-    // calls input.blur() right after firing onSelect — finishes its state
-    // changes before we tear down the modal. SearchBox itself uses a 140ms
-    // deferral; we sit just after it.
+    // Defer slightly so a result mousedown inside Typeahead's pick() —
+    // which calls input.blur() right after firing onSelect — finishes
+    // its state changes before we tear down the modal. Typeahead itself
+    // uses a 140ms deferral; we sit just after it.
     if (pendingClose !== null) clearTimeout(pendingClose);
     pendingClose = window.setTimeout(() => {
       pendingClose = null;
@@ -236,7 +236,7 @@ function bindRelocateModal(
     }, 180);
   };
   const onInputFocus = () => {
-    // X-clear inside SearchBox refocuses the input synchronously after
+    // The typeahead's X-clear refocuses the input synchronously after
     // blurring — cancel the pending close so the modal doesn't disappear
     // mid-edit.
     if (pendingClose !== null) {
@@ -257,10 +257,10 @@ function bindRelocateModal(
       // through `onInputBlur`'s deferred timer.
       openInput.removeEventListener('blur', onInputBlur);
       openInput.removeEventListener('focus', onInputFocus);
-      // Synchronously blur the input so the SearchBox / typeahead
-      // restore-on-blur listener fires. Without this, the DOM move below
-      // can drop focus silently and the input keeps any half-typed value
-      // the user just abandoned with ESC.
+      // Synchronously blur the input so the Typeahead's restore-on-blur
+      // listener fires. Without this, the DOM move below can drop focus
+      // silently and the input keeps any half-typed value the user just
+      // abandoned with ESC.
       openInput.blur();
       openInput = null;
     }

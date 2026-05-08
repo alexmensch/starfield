@@ -72,6 +72,7 @@ src/
     info-modal.ts         first-visit welcome modal (localStorage opt-out)
     brand-modal.ts        about / credits modals from the top-left brand box
     constellation-typeahead.ts  filter-by-name+code picker for #con-input
+    typeahead.ts          generic Typeahead<T> + TypeaheadGroup (used by search.ts and constellation-typeahead.ts)
     typeahead-util.ts     shared helpers for the two typeaheads (cap, hover-class swap)
     dom-util.ts           shared escapeHtml for innerHTML splicing
     panel-layout.ts       top-level + per-group collapse for the settings panel
