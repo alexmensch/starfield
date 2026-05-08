@@ -6,10 +6,18 @@
 // Apex direction: solar apex of motion through the local interstellar
 // medium, ICRS RA 17h53m, Dec +27.4° per Frisch & Slavin (2013).
 //
-// Construction: unit sphere → solid translucent shell → scale to
+// Construction: unit sphere → ShaderMaterial with Fresnel limb
+// darkening (alpha peaks at the silhouette where the view ray grazes
+// the surface, drops toward `FACE_ON_FLOOR` at the apex) → scale to
 // (115, 115, 161) AU → translate centre by 39 AU toward antiapex →
 // rotate +Z onto antiapex in ICRS. Result: upwind apex lands at
 // +122 AU along apex; downwind at -200 AU along apex.
+//
+// Front-side rendering: the camera sees the near hemisphere's front
+// faces from outside, and back-face culling hides the entire shell
+// when the camera sits inside (Sol focus, zoomed in). The shell only
+// reads as a 3D volume from the outside — by design, since from
+// inside there's nothing geometrically informative to show anyway.
 //
 // Static geometry — no `t` dependence on human timescales. Visibility
 // gated on focused star = Sol (the only planet-bearing host in v1).
@@ -18,6 +26,8 @@
 
 import * as THREE from 'three';
 import type { Stellata } from './stellata';
+import heliopauseVert from './shaders/heliopause.vert.glsl?raw';
+import heliopauseFrag from './shaders/heliopause.frag.glsl?raw';
 
 const AU_PC = 1 / 206264.80624709636;
 
@@ -38,18 +48,21 @@ const SEMI_MAJOR_AU = 161;
 const CENTRE_OFFSET_AU = 39;
 const UPWIND_APEX_AU = SEMI_MAJOR_AU - CENTRE_OFFSET_AU; // 122
 
-// Sphere tessellation. 32 longitudes × 16 latitudes gives a smooth
-// silhouette as the camera orbits — coarser segments betray the egg
-// shape's facets where light hits a tangent.
-const SPHERE_W_SEGMENTS = 32;
-const SPHERE_H_SEGMENTS = 16;
+// Sphere tessellation. 64 longitudes × 32 latitudes — silhouette reads
+// smooth at any zoom we afford. Cost is negligible (one mesh, one
+// draw call), so there's no reason to ride a tighter budget here.
+const SPHERE_W_SEGMENTS = 64;
+const SPHERE_H_SEGMENTS = 32;
 
 // Same dim chrome family as the per-planet orbit rings (3re.7) so the
-// solar-system layer reads as a single coherent visual layer. Low alpha
-// keeps the shell readable from outside without burying the planets
-// when the camera sits inside the heliopause.
-const COLOUR = 0xc8d6ff;
-const OPACITY = 0.10;
+// solar-system layer reads as a single coherent visual layer. Limb
+// (silhouette) alpha is the peak; face-on geometry receives only a
+// small fraction of it so the upwind apex region doesn't paint the
+// shell as a flat disc against the starfield.
+const COLOUR = new THREE.Color(0xc8d6ff);
+const ALPHA_LIMB = 0.45;
+const FACE_ON_FLOOR = 0.04;
+const FRESNEL_POWER = 2.5;
 
 /** Upwind apex point in the Sol-anchored local frame (parsecs). The
  *  label overlay reads this to project the "Heliopause" tag to screen.
@@ -63,7 +76,7 @@ export class Heliopause {
   readonly group: THREE.Group;
   private mesh: THREE.Mesh;
   private geometry: THREE.SphereGeometry;
-  private material: THREE.MeshBasicMaterial;
+  private material: THREE.ShaderMaterial;
   private hidden = true;
   private mono = false;
 
@@ -84,15 +97,23 @@ export class Heliopause {
     );
 
     this.geometry = new THREE.SphereGeometry(1, SPHERE_W_SEGMENTS, SPHERE_H_SEGMENTS);
-    this.material = new THREE.MeshBasicMaterial({
-      color: COLOUR,
+    this.material = new THREE.ShaderMaterial({
+      glslVersion: THREE.GLSL3,
+      vertexShader: heliopauseVert,
+      fragmentShader: heliopauseFrag,
       transparent: true,
-      opacity: OPACITY,
       depthWrite: false,
-      // Render both faces — the camera can be either inside the shell
-      // (focused on Sol, zoomed in) or outside (zoomed past 200 AU). A
-      // back-face-culled shell would vanish from the inside view.
-      side: THREE.DoubleSide,
+      // FrontSide so the inside of the shell back-face-culls when the
+      // camera sits inside the heliopause (Sol focus, zoomed in to
+      // sub-100 AU). From outside the shell, the near hemisphere's
+      // front faces render with the Fresnel limb-darkening below.
+      side: THREE.FrontSide,
+      uniforms: {
+        uColour: { value: COLOUR },
+        uAlphaLimb: { value: ALPHA_LIMB },
+        uFaceOnFloor: { value: FACE_ON_FLOOR },
+        uFresnelPower: { value: FRESNEL_POWER },
+      },
     });
     this.mesh = new THREE.Mesh(this.geometry, this.material);
     // The ellipsoid is huge (~hundreds of AU) and the camera can sit
