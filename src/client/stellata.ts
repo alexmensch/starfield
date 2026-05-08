@@ -24,6 +24,7 @@ import {
 import { getPlanetSystem, hasPlanets, type PlanetSystem } from './planet-system';
 import { StarSystem } from './star-system';
 import { Heliopause } from './heliopause';
+import { AU_PC } from './ephemeris';
 
 export type MagPresetName = 'naked-eye' | 'binoculars' | 'all';
 
@@ -222,6 +223,18 @@ const PIN_ENGAGE_THRESHOLD_SQ_PC = 1e-12;
 // without dominating the frame, leaving room to see the surrounding
 // star field. Drives minDistForStar.
 const TARGET_PARK_FRACTION = 0.10;
+
+// First-load park distance for Sol when the URL carries no view state.
+// 4 AU sits just inside Jupiter's orbit — the frustum opens onto
+// Mercury through Mars at default FOV with Jupiter on the rim, giving
+// the visitor an immediate "you are here" anchor. The prior auto-park
+// (TARGET_PARK_FRACTION-derived, ~0.11 AU for Sol) sat the camera
+// *inside* Mercury's orbit with Sol filling ~10% of the FOV — visually
+// striking but with no scale context, so the rest of the solar system
+// (the actual headline of the new layer) wasn't visible at all on
+// first load. Other arrival flows (warp, observe-exit, search) still
+// use minDistForStar — only the no-URL bootstrap reads this.
+const SOL_FIRST_LOAD_PARK_PC = 4 * AU_PC;
 
 // Default vertical FOV (degrees). User-tunable via the FOV slider; the
 // reset button snaps back to this value.
@@ -971,11 +984,11 @@ export class Stellata {
     if (catalog.solIndex >= 0) {
       this.setFocus(catalog.solIndex);
       // After setFocus, the local-frame origin is Sol and controls.target is
-      // (0,0,0). Park camera at the unified auto-arrival distance — same as
-      // every other minDistForStar landing — instead of the (0,0,30) seed
-      // value above, so first-load matches a fresh warp-back-to-Sol.
-      const d = this.minDistForStar(catalog.solIndex);
-      this.camera.position.set(0, 0, d);
+      // (0,0,0). Park camera at SOL_FIRST_LOAD_PARK_PC so the no-URL bootstrap
+      // drops the visitor into the inner-solar-system framing. URL-driven
+      // loads overwrite this in applyFromUrl; warp / observe-exit / search
+      // landings remain minDistForStar-driven.
+      this.camera.position.set(0, 0, SOL_FIRST_LOAD_PARK_PC);
       this.controls.update();
     }
 
