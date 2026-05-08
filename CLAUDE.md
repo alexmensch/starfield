@@ -142,15 +142,22 @@ Claude Code should read on demand when working on the relevant area.
 - **`docs/galactic-overlay.md`** — galactic disc outline, coordinate
   sphere (b/l grid), Sol/GC SVG arrows, HUD ring, navigate↔observe
   shaft-start lerp. Read when touching any of those layers.
-- **`docs/molecular-clouds.md`** — Phase 3a cloud ellipsoids: data,
-  shader, the unified cloud-as-focus / cloud-as-vector-tip click and
-  warp UX. Read when touching `molecular-clouds.ts` or cloud picking.
-- **`docs/milky-way.md`** — Phase 5 volumetric disc + bulge: density
+- **`docs/molecular-clouds.md`** — cloud ellipsoids: data, shader,
+  the unified cloud-as-focus / cloud-as-vector-tip click and warp UX.
+  Read when touching `molecular-clouds.ts` or cloud picking.
+- **`docs/milky-way.md`** — volumetric disc + bulge: density
   profiles, magnitude-consistency conversion, analytical-only dust,
   render-order placement, brightness/glow calibration. Read when
   tuning `milkyway.{ts,frag.glsl}`.
-- **`docs/chart-mode.md`** — Phase 8 paper aesthetic: flat
-  hard-edged discs, isobar contours for MW + clouds, the per-frame
+- **`docs/solar-system.md`** — solar-system layer (`stellata-3re`):
+  JPL Standish ephemerides, planet-bodies + orbit-rings + heliopause
+  rendering, ecliptic-vs-galactic-plane orientation rule, time `t`
+  and the UTC readout, Sol-focus minDistance relaxation, first-load
+  4 AU park. Read when touching `ephemeris.ts`, `time.ts`,
+  `planet-system.ts`, `star-system.ts`, `planet-labels.ts`,
+  `heliopause.ts`, or any `planet.*.glsl` / `heliopause.*.glsl`.
+- **`docs/chart-mode.md`** — paper aesthetic: flat hard-edged discs,
+  isobar contours for MW + clouds, the per-frame
   label / glyph engine, picking under chart mode. Read when touching
   `chart-mode.ts`, `chart-labels.ts`, or any chart-specific shader
   branch.

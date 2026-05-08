@@ -58,7 +58,7 @@ async function main() {
       fetch(`${import.meta.env.BASE_URL}search-index.json`).then(
         (r) => r.json() as Promise<SearchIndexEntry[]>,
       ),
-      // Molecular clouds (Phase 3a). Fetched in parallel with the catalog —
+      // Molecular clouds. Fetched in parallel with the catalog —
       // a few hundred KB; null if the artifact is missing (fresh checkout
       // without `npm run build:clouds`).
       loadClouds(`${import.meta.env.BASE_URL}clouds.json`),

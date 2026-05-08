@@ -207,9 +207,9 @@ the Sol/GC arrows so all three on-screen arrows share one silhouette,
 one chevron size (5 × 4 px), and one label-placement convention. Also
 exports `ARROW_LABEL_OFFSET_PX` and `ARROW_LABEL_PADDING_PX`.
 
-The **distance vector** (`distance-vector-overlay.ts`) was unified onto
-the same path during Phase 4c — it's now a solid shaft + chevron rather
-than a chain of repeated chevrons. Symmetric 28 px insets from each
+The **distance vector** (`distance-vector-overlay.ts`) was unified
+onto the same path — it's now a solid shaft + chevron rather than a
+chain of repeated chevrons. Symmetric 28 px insets from each
 star (was asymmetric 28/14). Label format unified to
 `<destination name> · <distance>` (matches Sol/GC's `<target> ·
 <distance>` form), and the label is anchored at the chevron tip with

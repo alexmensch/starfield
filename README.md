@@ -1,10 +1,21 @@
 # Stellata
 
-A browser-based interactive 3D star catalog viewer. Loads the classic-IDs
-subset of the [AT-HYG catalog](https://codeberg.org/astronexus/athyg)
-(~313k stars) and renders it on the GPU with per-frame, camera-relative
-apparent magnitude, filterable by distance, magnitude, spectral class,
-and constellation.
+An observational 3D model of our galaxy at every scale we've measured
+it — from individual stars and their planets, through the local
+interstellar medium, out to the structure of the galactic disc.
+Built entirely on observation. Every object in Stellata comes from a
+published observational catalogue or direct in-situ measurement: if
+we've measured it, it's here. Theoretical predictions and conjectured
+structures (the Oort cloud, anything beyond Gaia's reach) aren't.
+The model's scope is bounded only by what observation has touched,
+and grows as observation does.
+
+Loads the classic-IDs subset of the [AT-HYG
+catalog](https://codeberg.org/astronexus/athyg) (~313k stars) and
+renders it on the GPU with per-frame, camera-relative apparent
+magnitude, filterable by distance, magnitude, spectral class, and
+constellation. Around Sol, the eight planets and Pluto render at
+their live heliocentric positions inside the heliopause boundary.
 
 Stack: TypeScript, Three.js (WebGL2), Vite, Cloudflare Workers.
 
@@ -36,6 +47,17 @@ Stack: TypeScript, Three.js (WebGL2), Vite, Cloudflare Workers.
   O}`) so wide line-of-sight optical pairs (Vega, Pollux, …) don't
   flag. When focused on a geometrically-paired binary member,
   `minDistance` bumps so both components stay in the viewport.
+- **Solar system layer around Sol.** The eight planets and Pluto
+  render at their live heliocentric positions, computed from the JPL
+  Standish 1992 Keplerian-elements approximation (sub-arcminute
+  accurate 3000 BC – 3000 AD). Faint orbit rings on the ecliptic plane
+  surface the geometry of the system; the heliopause appears as an
+  asymmetric translucent shell at ~122 AU upwind, ~115 AU at the
+  flanks, ~200 AU into the heliotail (Voyager 1/2 + IBEX). A discreet
+  bottom-right time readout shows the live UTC moment the positions
+  correspond to. The default first-load view parks the camera at 4 AU
+  from Sol so the inner planets (Mercury through Mars) frame the
+  scene with Jupiter on the rim.
 - Filter by distance from Sol, maximum apparent magnitude (with `naked eye` /
   `binoculars` / `all` presets), spectral class, and constellation. The
   presets carry physically calibrated angular star sizes (Gaussian-PSF
@@ -227,11 +249,16 @@ is moderate even on mobile networks.
 | `data/crossid.txt` | GCVS ↔ Hip/HD cross-references | same as above | ~12 MB, LFS |
 | `data/stellarium-modern-skyculture.json` | Classical constellation stick figures | [Stellarium modern sky culture](https://github.com/Stellarium/stellarium/tree/master/skycultures/modern) | ~200 KB |
 | `data/dust/chunk_*.bin` + `manifest.json` + `particles.bin` | Resampled 3D interstellar-dust grid for per-star extinction | [Edenhofer et al. 2023](https://doi.org/10.5281/zenodo.8187943) (Zenodo) — fetched via the `dustmaps` Python package and resampled by `scripts/build-dust.py` | ~120 MiB total, LFS |
+| _(in-source)_ | Planet positions | [JPL Standish 1992 Keplerian elements](https://ssd.jpl.nasa.gov/planets/approx_pos.html) — Table 2a/2b values inlined in `src/client/ephemeris.ts` | <1 KB |
+| _(in-source)_ | Planet bodies | [NASA Planetary Fact Sheets](https://nssdc.gsfc.nasa.gov/planetary/factsheet/) (radii) + JPL DE440 mean elements at J2000 (semi-major axes, eccentricities); Pluto from New Horizons 2015 | <1 KB |
+| _(in-source)_ | Heliopause boundary | Voyager 1/2 termination-shock crossings (122 / 115 AU) + IBEX/Cassini ENA estimates for the heliotail (200 AU); apex direction after Frisch & Slavin 2013 | <1 KB |
 
 The larger catalogue files are tracked via Git LFS so they don't balloon
 the git pack. Small files (Stellarium JSON) stay as regular blobs.
-Builds are fully self-contained — refresh from upstream is a manual,
-infrequent step, not a build dependency.
+Solar-system data is small enough that it lives directly in source
+rather than as a separate file. Builds are fully self-contained —
+refresh from upstream is a manual, infrequent step, not a build
+dependency.
 
 The AT-HYG **classic-IDs** subset selects stars that have at least one
 classical designation (IAU proper name, Bayer, Flamsteed, HIP, HD, HR, or

@@ -1,4 +1,4 @@
-# Chart mode (Phase 8)
+# Chart mode
 
 Paper-aesthetic alternate render path inspired by Sky Atlas 2000.0
 (chart 22 reference). Activated by `M` keyboard or

@@ -7,9 +7,9 @@ dust-extinction read. The other rendering subsystems live in sibling
 docs:
 
 - `docs/galactic-overlay.md` — disc + sphere grid + Sol/GC arrows + HUD ring
-- `docs/molecular-clouds.md` — Phase 3a cloud ellipsoids
-- `docs/milky-way.md` — Phase 5 volumetric disc / bulge
-- `docs/chart-mode.md` — Phase 8 paper aesthetic (flat discs, isobars, labels)
+- `docs/molecular-clouds.md` — cloud ellipsoids
+- `docs/milky-way.md` — volumetric disc / bulge
+- `docs/chart-mode.md` — paper aesthetic (flat discs, isobars, labels)
 
 For the underlying physics and density profiles, see `SCIENCE.md`.
 
@@ -80,7 +80,7 @@ otherwise produces. See `docs/architecture.md` § Pin-to-center
 uniforms and bitwise ops for the spectral-class mask. Do **not** downgrade to
 GLSL1 — the mask logic would need to be rewritten as per-class bools.
 
-Chart mode (Phase 8) swaps both star materials to `MultiplyBlending` +
+Chart mode swaps both star materials to `MultiplyBlending` +
 disables depth for an ink-on-paper look against the light canvas, and
 replaces the super-Gaussian profile with flat hard-edged discs sized
 linearly by magnitude. See `docs/chart-mode.md` for the full feature.

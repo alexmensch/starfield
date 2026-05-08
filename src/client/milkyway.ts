@@ -4,7 +4,7 @@ import milkywayFrag from './shaders/milkyway.frag.glsl?raw';
 import { GAL_TO_ICRS, GALACTIC_CENTRE_PC, R0_PC } from './galactic-coords';
 import type { DustField } from './dust-loader';
 
-// Phase 5 (rev 4) — bounded volumetric raymarch through proxy meshes.
+// Bounded volumetric raymarch through proxy meshes.
 //
 // Two proxy meshes (a flattened disc + an oblate bulge) define
 // integration volumes centred on the galactic centre. For each
@@ -112,7 +112,7 @@ const GLOW_MAG_OFFSET = 15.0;
 const DEFAULT_EXTINCTION_STRENGTH = 0.45;
 
 // Raymarch step count is fixed in the shader (32 steps). Performance
-// has been fine through phase 5 even with two materials each running
+// has been fine in practice even with two materials each running
 // 32 steps; bump up if the user reports stutter.
 
 // --- Frame transform constants ----------------------------------------
