@@ -12,11 +12,11 @@ describe('first-load', () => {
       expect(r).toBeCloseTo(5 * AU_PC, 14);
     });
 
-    it('preserves the hand-tuned direction toward Orion', () => {
+    it('preserves the hand-tuned direction toward the galactic centre', () => {
       // The share URL the user picked encoded these (unnormalised) cam
       // components. Renormalising to 5 AU must not change their
       // direction beyond float precision.
-      const RAW = [-5.56898521608673e-6, -2.3649381546420045e-5, -1.088494059331424e-6];
+      const RAW = [-1.5599102880514693e-6, 1.9162944226991385e-5, 1.4444859516515862e-5];
       const rawLen = Math.hypot(...RAW);
       const cam = FIRST_LOAD_VIEW.cam!;
       const camLen = Math.hypot(cam[0], cam[1], cam[2]);
@@ -25,8 +25,10 @@ describe('first-load', () => {
       }
     });
 
-    it('highlights Orion (constellation index 59)', () => {
-      expect(FIRST_LOAD_VIEW.con).toBe(59);
+    it('does not highlight any constellation', () => {
+      // Was Orion in an earlier draft; user dropped the highlight to
+      // keep the first-paint screen quieter.
+      expect(FIRST_LOAD_VIEW.con).toBeUndefined();
     });
 
     it('turns on the HUD', () => {

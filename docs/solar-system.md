@@ -173,15 +173,14 @@ geometry to read.
 
 When the URL carries no view state, `first-load.ts` applies a
 canonical `FIRST_LOAD_VIEW`: camera parked at exactly **5 AU** from
-Sol along a hand-tuned direction that frames Orion in the
-background, with the HUD ring on and Orion highlighted. Sol stays
-the default focus and the constellation overlay is on by default,
-so Orion's stick figure renders without an explicit toggle. The
-view is applied via `applyDecodedView` from `url-state.ts` — the
-same pipeline used for `?v=` URL restores — which keeps the
-"first interaction is the first URL write" contract intact:
-`startUrlSync` seeds its frame-tracking baseline from the live
-camera state on registration, so the URL stays empty until the
+Sol aimed at the galactic centre, with the HUD ring on. Sol stays
+the default focus; no constellation highlight is set so the bulge
+shines through cleanly without an asterism layered over the brightest
+patch of sky. The view is applied via `applyDecodedView` from
+`url-state.ts` — the same pipeline used for `?v=` URL restores —
+which keeps the "first interaction is the first URL write" contract
+intact: `startUrlSync` seeds its frame-tracking baseline from the
+live camera state on registration, so the URL stays empty until the
 user actually moves the camera or changes a setting.
 
 The Stellata constructor calls `setFocus(catalog.solIndex)` to

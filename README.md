@@ -56,8 +56,7 @@ Stack: TypeScript, Three.js (WebGL2), Vite, Cloudflare Workers.
   flanks, ~200 AU into the heliotail (Voyager 1/2 + IBEX). A discreet
   bottom-right time readout shows the live UTC moment the positions
   correspond to. The default first-load view parks the camera at 5 AU
-  from Sol along a direction that frames Orion in the background,
-  with the HUD ring on and Orion's stick figure highlighted — an
+  from Sol aimed at the galactic centre, with the HUD ring on — an
   immediate "you are here, that's our system, now look around" anchor.
 - Filter by distance from Sol, maximum apparent magnitude (with `naked eye` /
   `binoculars` / `all` presets), spectral class, and constellation. The
