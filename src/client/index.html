@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Stellata — An Observational 3D Model of Our Galaxy</title>
+    <title>Stellata — Observational 3D Model of our Galaxy</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
@@ -117,19 +117,23 @@
         <button class="modal-close" id="info-close" type="button" aria-label="Close">×</button>
         <h2 id="info-title">Welcome to Stellata</h2>
         <p>
-          Stellata is an observational 3D model of our galaxy.
-          <span id="info-star-count">—</span> real stars,
-          the eight planets and Pluto around Sol, the local
-          interstellar dust, the heliopause, the Milky Way backdrop —
+          Stellata is a physics-based, empirical 3D model
+          of our galaxy that simulates what it would be like to actually
+          <em>be there</em>. <span id="info-star-count">—</span>
+          real stars, the planets of our Solar System, the Sun's heliopause,
+          local interstellar dust, and the Milky Way backdrop:
           every object comes from a published observational catalogue
-          or direct measurement. If we've measured it, it's here. If
-          it's only theoretically predicted, it isn't.
+          or direct measurement.
         </p>
         <p>
-          Drag to orbit, scroll to zoom, hover for a name. Click a star to
-          focus it, click a second to measure the distance, then click the
-          far end to travel there. Search &ldquo;Sol&rdquo; to come home,
-          or press ? for keyboard shortcuts.
+          Drag to orbit, scroll to zoom, and hover for more information.
+          Click a star to focus it, click a second star to measure the distance
+          between them, and click the far end to travel there. Search &ldquo;Sol&rdquo; to come home, and press ? for keyboard shortcuts.
+        </p>
+        <p>
+          Explore and you'll find variable and multiple star systems,
+          all represented as if you were actually there. Try observing the sky
+          from a focused star, pull up sky charts, or warp between the stars.
         </p>
         <label class="modal-dismiss">
           <input type="checkbox" id="info-dontshow" /> Don't show this again
@@ -143,47 +147,43 @@
         <button class="modal-close" type="button" data-modal-dismiss aria-label="Close">×</button>
         <h2 id="about-title">About Stellata</h2>
         <p>
-          Stellata is an observational 3D model of our galaxy at every
-          scale we've measured it — from individual stars and their
-          planets, through the local interstellar medium, out to the
-          structure of the galactic disc. Every object comes from a
-          published observational catalogue or direct in-situ
-          measurement. If we've measured it, it's here. Theoretical
-          predictions and conjectured structures (the Oort cloud,
-          anything beyond Gaia's reach) aren't. The model's scope is
-          bounded only by what observation has touched, and grows as
-          observation does.
+          Stellata is an observational 3D model of our local part of 
+          the galaxy at every scale we've measured it. From individual
+          stars and their planets, through the local interstellar medium,
+          out to the structure of the galactic disc. Every object in Stellata
+          comes from databases of direct, empirical measurement. Theoretical
+          predictions and conjectured structures are excluded. The goal of
+          Stellata is to continue to build observational data into the model
+          as we continue to expand our knowledge of our galactic home.
         </p>
         <p>
           Each star is rendered at the colour and apparent brightness
           you would actually see from any given point in space,
           including the effects of dust extinction and reddening
-          through the local Milky Way. Known variable stars pulsate at
+          through the interstellar medium. Known variable stars pulsate at
           their catalogue period. When focused on Sol, the eight
           planets and Pluto render at their heliocentric positions for
-          the current wall-clock time, with faint orbit rings on the
-          ecliptic plane and the heliopause as an asymmetric shell at
+          the current wall-clock time, with faint orbit rings shown for
+          reference. The heliopause is represented as an asymmetric shell at
           ~122 AU upwind, ~200 AU into the heliotail.
         </p>
         <p>
-          ~313,000 stars come from AT-HYG v3.3, cross-matched with the
-          GCVS variable-star catalogue and the Hipparcos CCDM list of
+          ~313,000 stars come from the AT-HYG v3.3 catalogue, cross-matched
+          with the GCVS variable-star catalogue and the Hipparcos CCDM list of
           visual binaries. Planet positions come from JPL Standish 1992
-          Keplerian elements; heliopause sizing from Voyager 1/2 and
+          Keplerian elements, and heliopause sizing derives from Voyager 1 &amp; 2 and
           IBEX measurements. The Milky Way's volumetric backdrop is
           drawn from published density profiles. See Credits for the
           full list and more details.
         </p>
         <p>
-          Two camera modes: Navigate orbits, zooms, and warps between
-          stars; Observe stands at a chosen vantage point and lets you
-          look around. Press M while observing to switch to a Sky Atlas–
-          style monochrome chart with proper-name and Bayer labels. Press
-          ? for the full keyboard reference.
+          There are two camera modes: <strong>Navigate</strong> orbits, zooms,
+          and warps betweenstars; <strong>Observe</strong> parks the camera's
+          vantage point at the focused star and lets you look around. Press M while observing to switch to a Star Atlas–style monochrome chart with
+          proper name and Bayer labels. Press ? for the full keyboard reference.
         </p>
         <p>
-          Created by <a href="https://alxm.me" target="_blank" rel="noopener noreferrer">Alex Marshall</a>
-          and released under AGPL-3.0.
+          Created by <a href="https://alxm.me" target="_blank" rel="noopener noreferrer">Alex Marshall</a> and released under AGPL-3.0.
         </p>
         <div class="about-footer">
           <a href="https://github.com/alexmensch/stellata" target="_blank" rel="noopener noreferrer">View source on GitHub →</a>
@@ -198,14 +198,14 @@
         <button class="modal-close" type="button" data-modal-dismiss aria-label="Close">×</button>
         <h2 id="credits-title">Credits</h2>
         <p>
-          Stellata is built on a stack of open astronomy data. Every
+          Stellata is built on a stack of real astronomical data. Every
           catalogue and dataset used to render the scene is listed below.
         </p>
         <div class="modal-credits">
           <div class="credit-entry">
             <div class="credit-label">Stars</div>
             <a href="https://codeberg.org/astronexus/athyg" target="_blank" rel="noopener noreferrer">AT-HYG v3.3</a>
-            — David Nash. Combined Tycho-2 / Hipparcos / Gaia DR3 catalogue
+            — David Nash, combined Tycho-2 / Hipparcos / Gaia DR3 catalogue
           </div>
           <div class="credit-entry">
             <div class="credit-label">Variable stars</div>
@@ -229,7 +229,7 @@
           <div class="credit-entry">
             <div class="credit-label">Planet positions</div>
             <a href="https://ssd.jpl.nasa.gov/planets/approx_pos.html" target="_blank" rel="noopener noreferrer">JPL Standish 1992</a>
-            — Keplerian-elements approximation, valid 3000 BC – 3000 AD
+            — Keplerian-elements approximation, valid 3000 BCE – 3000 CE
           </div>
           <div class="credit-entry">
             <div class="credit-label">Planet bodies</div>
@@ -238,13 +238,13 @@
           </div>
           <div class="credit-entry">
             <div class="credit-label">Heliopause boundary</div>
-            <a href="https://voyager.jpl.nasa.gov/" target="_blank" rel="noopener noreferrer">Voyager 1/2</a>
+            <a href="https://voyager.jpl.nasa.gov/" target="_blank" rel="noopener noreferrer">Voyager 1 &amp; 2</a>
             crossings (2012, 2018) and IBEX/Cassini ENA estimates for the heliotail
           </div>
           <div class="credit-entry">
             <div class="credit-label">Solar apex direction</div>
             <a href="https://doi.org/10.1146/annurev-astro-082312-140843" target="_blank" rel="noopener noreferrer">Frisch &amp; Slavin 2013</a>
-            — direction of solar motion through the local interstellar medium
+            - direction of solar motion through the local interstellar medium
           </div>
         </div>
         <p style="margin-top: 16px;">
