@@ -212,6 +212,14 @@ const LABEL_OFFSET_PX = 10;
 const LABEL_DIR_X = Math.SQRT1_2;
 const LABEL_DIR_Y = Math.SQRT1_2;
 
+// Temporal smoothing factor — fraction of the gap to the new target
+// covered each frame. The support point is one of 62 discrete samples,
+// so it switches abruptly between neighbours as the camera rotates;
+// per-frame lerp turns those discrete jumps into a smooth chase. 0.25
+// settles in ~4-5 frames (~70 ms at 60 fps), short enough to feel
+// responsive on continuous camera motion.
+const LABEL_LERP = 0.25;
+
 /** Mount the SVG "Heliopause" label and bind per-frame projection.
  *  Visibility tracks the same predicate the planet labels use —
  *  `stellata.anyOrbitRingVisible()` — so the heliopause label appears
@@ -225,10 +233,19 @@ export function createHeliopauseLabel(stellata: Stellata): void {
 
   const tmp = new THREE.Vector3();
   let visible = false;
+  // Smoothed screen position, null while hidden so the next show
+  // snaps to the current target instead of sliding from the last
+  // visible position.
+  let smoothedX: number | null = null;
+  let smoothedY: number | null = null;
   const setVisible = (on: boolean): void => {
     if (on === visible) return;
     text.style.display = on ? '' : 'none';
     visible = on;
+    if (!on) {
+      smoothedX = null;
+      smoothedY = null;
+    }
   };
   setVisible(false);
 
@@ -280,8 +297,18 @@ export function createHeliopauseLabel(stellata: Stellata): void {
         bestY = sy;
       }
     }
+    const targetX = bestX + LABEL_OFFSET_PX * LABEL_DIR_X;
+    const targetY = bestY + LABEL_OFFSET_PX * LABEL_DIR_Y;
+    if (smoothedX === null || smoothedY === null) {
+      // First visible frame after a hide — snap.
+      smoothedX = targetX;
+      smoothedY = targetY;
+    } else {
+      smoothedX += (targetX - smoothedX) * LABEL_LERP;
+      smoothedY += (targetY - smoothedY) * LABEL_LERP;
+    }
     setVisible(true);
-    text.setAttribute('x', (bestX + LABEL_OFFSET_PX * LABEL_DIR_X).toFixed(1));
-    text.setAttribute('y', (bestY + LABEL_OFFSET_PX * LABEL_DIR_Y).toFixed(1));
+    text.setAttribute('x', smoothedX.toFixed(1));
+    text.setAttribute('y', smoothedY.toFixed(1));
   });
 }
