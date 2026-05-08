@@ -198,18 +198,27 @@ const SAMPLE_POINTS_LOCAL: readonly THREE.Vector3[] = (() => {
   return arr;
 })();
 
-// Padding from the silhouette's screen bounding box to the label
-// baseline. Matches the planet-label offset (10 px) plus a couple of
-// pixels for the chrome's stroke halo.
-const LABEL_PADDING_PX = 12;
+// Pixel gap between the silhouette curve and the label's top-left
+// corner, measured along the chosen offset direction. Matches the
+// planet-label offset so the two label families read at the same
+// distance from their referents.
+const LABEL_OFFSET_PX = 10;
+
+// Screen-space direction the label sits along, as a unit vector.
+// (1, 1)/√2 — bottom-right diagonal in CSS coords (where +y is down).
+// Constant direction → the gap to the silhouette stays the same as
+// the camera orbits, instead of varying with the rotated ellipse's
+// bbox-vs-curve mismatch.
+const LABEL_DIR_X = Math.SQRT1_2;
+const LABEL_DIR_Y = Math.SQRT1_2;
 
 /** Mount the SVG "Heliopause" label and bind per-frame projection.
  *  Visibility tracks the same predicate the planet labels use —
  *  `stellata.anyOrbitRingVisible()` — so the heliopause label appears
  *  whenever any planet ring would draw and vanishes in lockstep with
- *  the last planet label. The label anchors to the bottom-right
- *  corner of the egg's projected silhouette so it sits outside the
- *  rendered shell without arbitrarily picking a fixed apex. */
+ *  the last planet label. The label hugs the bottom-right of the
+ *  egg's projected silhouette at a constant 10 px gap, computed each
+ *  frame from the silhouette's support point in that direction. */
 export function createHeliopauseLabel(stellata: Stellata): void {
   const text = document.getElementById('heliopause-label') as unknown as SVGTextElement | null;
   if (!text) return;
@@ -240,16 +249,23 @@ export function createHeliopauseLabel(stellata: Stellata): void {
     const camera = stellata.camera;
     const w = window.innerWidth;
     const h = window.innerHeight;
-    let minX = Infinity, minY = Infinity;
-    let maxX = -Infinity, maxY = -Infinity;
+    // Find the silhouette's *support point* in the chosen offset
+    // direction — the surface sample whose screen position projects
+    // furthest along (LABEL_DIR_X, LABEL_DIR_Y). The label then sits
+    // at support + LABEL_OFFSET_PX in that same direction, giving a
+    // constant gap from the silhouette curve regardless of camera
+    // angle. (Bbox-corner placement gives a gap that varies because
+    // the ellipse curves inward from the corner — for a circle the
+    // corner is √2·r from centre while the curve is at r, so the
+    // gap balloons by ~41% relative to a true tangent offset.)
+    let bestProj = -Infinity;
+    let bestX = 0, bestY = 0;
     for (const sample of SAMPLE_POINTS_LOCAL) {
       tmp.copy(sample);
       tmp.applyMatrix4(camera.matrixWorldInverse);
       // Any sample behind the near plane = the egg straddles the
-      // camera (the user is inside or partially inside the bubble).
-      // The projection wraps around in that regime; bail rather than
-      // anchor to a smeared bbox. This subsumes the prior explicit
-      // `isInsideHeliopause` test.
+      // camera (user inside or partially inside the bubble); the
+      // projection wraps around in that regime, so bail.
       if (tmp.z >= -camera.near) {
         setVisible(false);
         return;
@@ -257,13 +273,15 @@ export function createHeliopauseLabel(stellata: Stellata): void {
       tmp.applyMatrix4(camera.projectionMatrix);
       const sx = (tmp.x + 1) * 0.5 * w;
       const sy = (1 - tmp.y) * 0.5 * h;
-      if (sx < minX) minX = sx;
-      if (sy < minY) minY = sy;
-      if (sx > maxX) maxX = sx;
-      if (sy > maxY) maxY = sy;
+      const proj = sx * LABEL_DIR_X + sy * LABEL_DIR_Y;
+      if (proj > bestProj) {
+        bestProj = proj;
+        bestX = sx;
+        bestY = sy;
+      }
     }
     setVisible(true);
-    text.setAttribute('x', (maxX + LABEL_PADDING_PX).toFixed(1));
-    text.setAttribute('y', (maxY + LABEL_PADDING_PX).toFixed(1));
+    text.setAttribute('x', (bestX + LABEL_OFFSET_PX * LABEL_DIR_X).toFixed(1));
+    text.setAttribute('y', (bestY + LABEL_OFFSET_PX * LABEL_DIR_Y).toFixed(1));
   });
 }
