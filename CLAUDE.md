@@ -153,8 +153,8 @@ Claude Code should read on demand when working on the relevant area.
   JPL Standish ephemerides, planet-bodies + orbit-rings + heliopause
   rendering, ecliptic-vs-galactic-plane orientation rule, time `t`
   and the UTC readout, Sol-focus minDistance relaxation, the canonical
-  no-URL first-load view (5 AU Orion-framed park via `first-load.ts`,
-  4 AU constructor baseline). Read when touching `ephemeris.ts`,
+  no-URL first-load view (5 AU Orion-framed park via `first-load.ts`).
+  Read when touching `ephemeris.ts`,
   `time.ts`, `planet-system.ts`, `star-system.ts`, `planet-labels.ts`,
   `heliopause.ts`, `first-load.ts`, or any `planet.*.glsl` /
   `heliopause.*.glsl`.

@@ -184,17 +184,15 @@ same pipeline used for `?v=` URL restores — which keeps the
 camera state on registration, so the URL stays empty until the
 user actually moves the camera or changes a setting.
 
-`stellata.ts` also has a constructor-side baseline park at
-`SOL_FIRST_LOAD_PARK_PC = 4 * AU_PC` (set right after the initial
-`setFocus(solIndex)`). For the no-URL path this gets overwritten by
-`applyFirstLoadView` before first paint; the baseline still does
-useful work for URL-driven loads that carry a focus but no `cam` —
-those land at the 4 AU baseline rather than the camera ctor's
-30 pc default.
+The Stellata constructor calls `setFocus(catalog.solIndex)` to
+recentre the local frame on Sol but does not park the camera —
+both bootstrap paths (`applyFirstLoadView` for the bare URL, and
+`applyFromUrl` for `?v=` URLs) own the cam pose end-to-end and
+run before first paint in `main.ts`.
 
-Other arrival flows (warp, observe-exit, search-select) still use
-`minDistForStar` — only the no-URL bootstrap reads
-`first-load.ts` / `SOL_FIRST_LOAD_PARK_PC`.
+Other arrival flows (warp, observe-exit, search-select) use
+`minDistForStar` — only the bare-URL bootstrap reads
+`first-load.ts`.
 
 When focused on Sol, `controls.minDistance` drops to
 `minOrbitDistForStar(Sol) ≈ 0.011 AU` so the user can fly into the
