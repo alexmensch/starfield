@@ -1,4 +1,4 @@
-# Molecular cloud overlay (Phase 3a)
+# Molecular cloud overlay
 
 > **Status (v1.0):** Shelved. `FilterState.showMolecularClouds` defaults
 > to `false`, the user-facing toggle is removed from the panel, and the

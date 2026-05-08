@@ -3,7 +3,7 @@ import type { BayerInfo } from './search';
 import { applyTheme } from './theme-toggle';
 import { startChartLabels, stopChartLabels } from './chart-labels';
 
-// Phase 8 — star chart mode orchestrator.
+// Star chart mode orchestrator.
 //
 // Activation predicate:  cameraMode === 'observe'  &&  filter.chart
 //

@@ -20,7 +20,7 @@ html, body {
   /* Pure black behind the canvas — the canvas's WebGL clear is already
      transparent black, so this becomes the visible "no light reaches us"
      background. The earlier blue radial gradient was a stylistic vignette
-     that fights the Phase 5 Milky Way: the analytic glow is supposed to
+     that fights the Milky Way analytic background: the analytic glow is supposed to
      supply all the off-band sky luminance. */
   background: #000;
   color: var(--fg);
@@ -1043,7 +1043,7 @@ body.monochrome #con-results {
   color: var(--fg);
 }
 
-/* ---- Chart-mode labels (Phase 8) ---- */
+/* ---- Chart-mode labels ---- */
 /* Single SVG <g id="chart-labels"> container holds every dynamic label
    rendered while chart mode is active. Outside chart mode the layer is
    hidden via display:none from chart-labels.ts; CSS only defines the
@@ -1093,7 +1093,7 @@ body.monochrome #con-results {
   cursor: not-allowed;
 }
 
-/* ---- Chart-mode glyphs (Phase 8 v2) ---- */
+/* ---- Chart-mode glyphs ---- */
 /* Sibling SVG <g id="chart-glyphs"> holds Sky Atlas-style overlays that
    ride alongside the GPU-rendered star discs:
      - .chart-variable-ring — thin circle at the max-brightness extreme

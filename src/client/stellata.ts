@@ -60,15 +60,15 @@ export interface FilterState {
   // HUD: Sol/GC locator arrows in both navigate + observe modes, plus the
   // OBSERVE-mode screen-centred ring. Future HUD widgets hang off this flag.
   showHud: boolean;
-  // Molecular cloud overlay (Phase 3a). Default-on; toggle suppresses both
+  // Molecular cloud overlay. Default-on; toggle suppresses both
   // 3D rendering and hover/pick.
   showMolecularClouds: boolean;
-  // Milky Way analytic background (Phase 5). Default-on; in chart mode
+  // Milky Way analytic background. Default-on; in chart mode
   // it switches to outline-only rendering (gated on this same toggle).
   // May be force-flipped off by the FPS probe on the first few frames
   // if the device can't sustain ≥30 fps with it on.
   showMilkyway: boolean;
-  // Star chart mode (Phase 8). Only meaningful while cameraMode==='observe';
+  // Star chart mode. Only meaningful while cameraMode==='observe';
   // chart-mode orchestrator (chart-mode.ts) ignores it otherwise. Drives
   // the paper-aesthetic palette, label rendering, isobar outlines on
   // cloud / milkyway, and flat-disc star rendering.
@@ -584,7 +584,7 @@ export class Stellata {
   private static OBSERVE_DBL_CLICK_DIST_PX_SQ = 8 * 8;
   private static POI_HARD_CAP = 16;
 
-  // Galactic reference layers (Phase 4c). Disc fades in by camera-distance
+  // Galactic reference layers. Disc fades in by camera-distance
   // from Sol and is always-on. Grid is gated by `filter.showGalacticGrid`.
   // The HUD (Sol/GC arrows + OBSERVE-mode ring) is gated by
   // `filter.showHud`. Mono mode swaps strokes to a paper-chart palette via
@@ -613,12 +613,12 @@ export class Stellata {
   private galacticGrid: GalacticGrid;
   private hudOverlay: HudOverlay;
 
-  // Molecular cloud overlay (Phase 3a). null until attachClouds() runs;
+  // Molecular cloud overlay. null until attachClouds() runs;
   // the layer loads asynchronously after the catalog and search index so
   // first paint isn't gated on it.
   private clouds: MolecularClouds | null = null;
 
-  // Milky Way analytic background (Phase 5). Constructed eagerly so the
+  // Milky Way analytic background. Constructed eagerly so the
   // band is on during first paint. Dust is wired in once the volumetric
   // texture attaches. The composite mesh lives in `this.scene` at
   // renderOrder = -2 so it draws behind everything; the analytic raymarch
@@ -767,7 +767,7 @@ export class Stellata {
       uSizeMax: { value: this.filter.sizeMax },
       uSizeSpan: { value: this.filter.sizeSpan },
       uMonochrome: { value: 0 },
-      // Chart-mode disc sizing (Phase 8 v2). Pixel range + bright-end
+      // Chart-mode disc sizing. Pixel range + bright-end
       // magnitude reference; vertex shader uses these only when
       // uMonochrome > 0.5. The same constants are read JS-side by
       // chart-labels.ts to size variable rings + binary wings.
@@ -2109,8 +2109,8 @@ export class Stellata {
     this.starSystem.setMonochrome(on);
     this.warpDestStarSystem.setMonochrome(on);
     this.heliopause.setMonochrome(on);
-    // The milky-way layer used to fully hide in chart mode, but Phase 8
-    // re-purposes it to render an isobar contour. Visibility/contour
+    // The milky-way layer used to fully hide in chart mode, but chart
+    // mode re-purposes it to render an isobar contour. Visibility/contour
     // are now driven by the chart-mode orchestrator via
     // `setMilkywayIsobar` and `setCloudsIsobar` below — call them
     // alongside setMonochrome.

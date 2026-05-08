@@ -3,7 +3,7 @@ precision highp float;
 #include <common>
 #include <logdepthbuf_pars_fragment>
 
-// Phase 5 (rev 4) — bounded volumetric raymarch through proxy meshes.
+// Bounded volumetric raymarch through proxy meshes.
 //
 // Two proxy meshes (a flattened disc, an oblate bulge) define
 // integration volumes centred on the galactic centre. For each

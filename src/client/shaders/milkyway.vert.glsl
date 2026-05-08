@@ -3,7 +3,7 @@ precision highp float;
 #include <common>
 #include <logdepthbuf_pars_vertex>
 
-// Phase 5 (rev 4) — volumetric raymarch through proxy meshes.
+// Volumetric raymarch through proxy meshes.
 //
 // Each mesh (disc + bulge) is a unit sphere scaled non-uniformly into
 // the component's volume in galactic-frame parsecs, then rotated by

@@ -18,8 +18,8 @@ per-star `minOrbitDistForStar` floor (sub-pc for Sol-class) plus the
 § Pin-to-center) which sidesteps the float32 cancellation entirely. The near plane must stay
 **strictly less** than the closest orbit distance, otherwise a centered
 star lands on the clip plane at max zoom and gets culled. The log depth
-buffer (Phase 0, `logarithmicDepthBuffer: true` on the WebGL renderer)
-gives this configuration uniform precision in `log(z)`, so the
+buffer (`logarithmicDepthBuffer: true` on the WebGL renderer) gives this
+configuration uniform precision in `log(z)`, so the
 multi-decade range from sub-AU close approach to 100 kpc background
 renders without z-fighting.
 

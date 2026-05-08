@@ -12,7 +12,7 @@ const SEGMENTS_LAT = 16;
 
 // Naturalistic dark-mode palette: a warm reddish-brown reminiscent of
 // reddened starlight passing through dust. Real ISM dust is dark and
-// extincts rather than emits, but the per-star extinction layer (Phase 1)
+// extincts rather than emits, but the per-star extinction layer
 // already represents that physically; this overlay is the "where the dust
 // is" decoration mode the user explicitly chose, so additive warm tones
 // are the right stylization. Opacity tuned low (0.18) so even overlapping
@@ -23,7 +23,7 @@ const DARK_OPACITY_DEFAULT = 0.18;
 // Chart/mono mode: solid black ink so the isobar contour reads as a
 // definite chart annotation against the paper background. Single-line
 // isobar pass uses uMonoColor at full alpha; the older shaded mono path
-// (now unused by Phase 8) carried the same colour at lower opacity.
+// (now unused by chart mode) carried the same colour at lower opacity.
 const MONO_COLOR_DEFAULT = 0x000000;
 const MONO_OPACITY_DEFAULT = 0.95;
 

@@ -4,7 +4,7 @@ import type { ChartModeContext } from './chart-mode';
 import { mark as perfMark, measure as perfMeasure } from './perf-hud';
 import { FLAG_BINARY_PRIMARY } from '../../scripts/catalog-pure';
 
-// Phase 8 — chart-mode label engine. Per-frame, projects every candidate
+// Chart-mode label engine. Per-frame, projects every candidate
 // label (proper-named star, Bayer-letter star, constellation Latin name,
 // molecular cloud) through the camera, prioritises by (kind, brightness),
 // runs a greedy collision pass against an axis-aligned screen-rect index,

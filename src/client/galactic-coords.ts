@@ -10,7 +10,7 @@ const ALPHA_NGP = (192.85948 * Math.PI) / 180;
 const DELTA_NGP = (27.12825 * Math.PI) / 180;
 
 // Distance from Sol to the galactic centre. R₀ = 8.122 kpc per GRAVITY 2018,
-// adopted here so Phase 5's planned analytic background can reuse this
+// adopted here so the Milky Way analytic background can reuse this
 // constant directly without a second source of truth.
 export const R0_PC = 8122.0;
 

@@ -1,4 +1,4 @@
-# Milky Way volumetric disc (Phase 5)
+# Milky Way volumetric disc
 
 `milkyway.ts` + `shaders/milkyway.{vert,frag}.glsl` render the integrated
 surface brightness of unresolved Galactic stars by raymarching through
@@ -109,8 +109,8 @@ false` (the local bounding sphere is at origin but world position is
 GALACTIC_CENTRE_PC - worldOffset). Render order:
 - `-4` Star core depth-mask (depth-only, gated on close-star presence)
 - `-3` Milky Way disc + bulge (this layer)
-- `-2` Molecular clouds (Phase 3a)
-- `-1` Galactic disc + grid reference rings (Phase 4c)
+- `-2` Molecular clouds
+- `-1` Galactic disc + grid reference rings
 - `0` Star disc pass
 - `1` Star glow pass
 

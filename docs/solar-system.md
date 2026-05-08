@@ -1,6 +1,6 @@
 # Solar-system layer
 
-Phase 12a (`stellata-3re`). When a focusable star carries a planet
+Solar-system layer (`stellata-3re`). When a focusable star carries a planet
 system, Stellata renders the planets as billboarded discs at their
 heliocentric positions, faint orbit rings on the host's orbital plane,
 and (Sol only) the heliopause boundary as a translucent asymmetric
