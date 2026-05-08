@@ -157,6 +157,19 @@ export const SOL_PLANETS: readonly Planet[] = [
     type: 'ice_giant',
     colour: [0.25, 0.37, 0.75],
   },
+  // Pluto — mean radius from New Horizons 2015 reconnaissance. Type
+  // 'rocky' is the closest match in our existing tri-state; Pluto is
+  // really an icy-rocky body but bins with the inner terrestrials for
+  // disc-rendering purposes (sharp silhouette, not a gas-giant gradient).
+  // Tan-pink colour reflects New Horizons MVIC imagery.
+  {
+    name: 'Pluto',
+    radiusKm: 1188,
+    semiMajorAxisAu: 39.482,
+    eccentricity: 0.2488,
+    type: 'rocky',
+    colour: [0.78, 0.62, 0.49],
+  },
 ] as const;
 
 // Sync probe — does this star have a planet system at all?

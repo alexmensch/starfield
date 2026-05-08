@@ -74,9 +74,10 @@ describe('SOL_PLANETS data', () => {
   const expectedNames = [
     'Mercury', 'Venus', 'Earth', 'Mars',
     'Jupiter', 'Saturn', 'Uranus', 'Neptune',
+    'Pluto',
   ];
 
-  it('lists all eight planets in heliocentric order', () => {
+  it('lists all nine bodies in heliocentric order (eight planets + Pluto)', () => {
     expect(SOL_PLANETS.map(p => p.name)).toEqual(expectedNames);
   });
 
@@ -87,30 +88,31 @@ describe('SOL_PLANETS data', () => {
     }
   });
 
-  it('every planet has a positive radius and orbit', () => {
+  it('every body has a positive radius and orbit', () => {
     for (const p of SOL_PLANETS) {
       expect(p.radiusKm).toBeGreaterThan(0);
       expect(p.semiMajorAxisAu).toBeGreaterThan(0);
     }
   });
 
-  it('eccentricities are in [0, 1) and Mercury is the most eccentric', () => {
-    let mostEccentric = SOL_PLANETS[0];
+  it('eccentricities are in [0, 1); Pluto is most eccentric, Mercury second', () => {
+    const sorted = [...SOL_PLANETS].sort((a, b) => b.eccentricity - a.eccentricity);
     for (const p of SOL_PLANETS) {
       expect(p.eccentricity).toBeGreaterThanOrEqual(0);
       expect(p.eccentricity).toBeLessThan(1);
-      if (p.eccentricity > mostEccentric.eccentricity) mostEccentric = p;
     }
-    expect(mostEccentric.name).toBe('Mercury');
+    expect(sorted[0].name).toBe('Pluto');
+    expect(sorted[1].name).toBe('Mercury');
   });
 
-  it('classifies inner four as rocky and outer four as giants', () => {
+  it('classifies inner four as rocky, two gas giants, two ice giants, Pluto rocky', () => {
     const types = SOL_PLANETS.map(p => p.type);
     expect(types.slice(0, 4)).toEqual(['rocky', 'rocky', 'rocky', 'rocky']);
     expect(types[4]).toBe('gas_giant');
     expect(types[5]).toBe('gas_giant');
     expect(types[6]).toBe('ice_giant');
     expect(types[7]).toBe('ice_giant');
+    expect(types[8]).toBe('rocky');
   });
 
   it('colour channels are normalised RGB triples in [0,1]', () => {
@@ -123,10 +125,11 @@ describe('SOL_PLANETS data', () => {
     }
   });
 
-  it('radii match published equatorial values (within 1 km)', () => {
+  it('radii match published equatorial / mean values (within 1 km)', () => {
     const expected: Record<string, number> = {
       Mercury: 2440, Venus: 6052, Earth: 6371, Mars: 3390,
       Jupiter: 69911, Saturn: 58232, Uranus: 25362, Neptune: 24622,
+      Pluto: 1188,
     };
     for (const p of SOL_PLANETS) {
       expect(p.radiusKm).toBeCloseTo(expected[p.name], 0);

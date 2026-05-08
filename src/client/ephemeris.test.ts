@@ -21,11 +21,12 @@ beforeEach(() => {
 });
 
 describe('ELEMENTS table', () => {
-  it('has eight planets in heliocentric order', () => {
-    expect(ELEMENTS.length).toBe(8);
+  it('has nine bodies in heliocentric order (eight planets + Pluto)', () => {
+    expect(ELEMENTS.length).toBe(9);
     expect(PLANET_ORDER).toEqual([
       'mercury', 'venus', 'earth', 'mars',
       'jupiter', 'saturn', 'uranus', 'neptune',
+      'pluto',
     ]);
   });
 
@@ -35,8 +36,8 @@ describe('ELEMENTS table', () => {
     }
   });
 
-  it('inner planets have zero perturbation terms (b/c/s/f)', () => {
-    for (let i = 0; i < 4; i++) {
+  it('inner planets + Pluto have zero perturbation terms (b/c/s/f)', () => {
+    for (const i of [0, 1, 2, 3, 8]) {
       expect(ELEMENTS[i].b).toBe(0);
       expect(ELEMENTS[i].c).toBe(0);
       expect(ELEMENTS[i].s).toBe(0);
@@ -86,13 +87,17 @@ describe('planetEclipticAU at J2000.0 (T = 0) — geometric sanity', () => {
     }
   });
 
-  it('outer-planet z stays small relative to a (low-inclination orbits)', () => {
-    // Inclinations are all < 8°, so |z| / |r| ≤ sin(8°) ≈ 0.14.
+  it('z component is bounded by sin(I) for each body (rotation-matrix sanity)', () => {
+    // |z| / |r| ≤ sin(I) — directly follows from the orbital-plane
+    // rotation. Generous +0.01 slack absorbs roundoff. Catches a
+    // sign-flipped or transposed rotation matrix, which would mix
+    // x/y into z and break the bound.
     const out: Vec3 = { x: 0, y: 0, z: 0 };
     for (let i = 0; i < PLANET_ORDER.length; i++) {
       planetEclipticAU(ELEMENTS[i], 0, out);
       const r = Math.hypot(out.x, out.y, out.z);
-      expect(Math.abs(out.z) / r).toBeLessThan(0.15);
+      const sinI = Math.sin(ELEMENTS[i].I * Math.PI / 180);
+      expect(Math.abs(out.z) / r).toBeLessThanOrEqual(Math.abs(sinI) + 0.01);
     }
   });
 });

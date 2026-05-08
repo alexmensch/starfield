@@ -139,15 +139,33 @@ const ELEMENTS: ElementSet[] = [
     longnode: 131.78635853,   longnodeDot: -0.00606302,
     b: -0.00041348, c: 0.68346318, s: -0.10162547, f: 7.67025000,
   },
+  // Pluto. Standish & Williams 2010 J2000 mean elements + linear rates.
+  // JPL removed Pluto from its approx_pos.html table when the IAU
+  // reclassified it; values below are the canonical pre-removal row,
+  // also reproduced in NASA's planetary fact sheet derivation. We
+  // accept linear-element validity (~few centuries of arcsec accuracy)
+  // and skip the Standish 1992 cubic 3:2-resonance correction — at
+  // billboarded-disc render scale the residual is invisible.
+  {
+    a: 39.48211675,   aDot: -0.00031596,
+    e: 0.24882730,    eDot:  0.00005170,
+    I: 17.14001206,   IDot:  0.00004818,
+    L: 238.92903833,  LDot:  145.20780515,
+    longperi: 224.06891629,   longperiDot: -0.04062942,
+    longnode: 110.30393684,   longnodeDot: -0.01183482,
+    b: 0, c: 0, s: 0, f: 0,
+  },
 ];
 
 export type PlanetName =
   | 'mercury' | 'venus' | 'earth' | 'mars'
-  | 'jupiter' | 'saturn' | 'uranus' | 'neptune';
+  | 'jupiter' | 'saturn' | 'uranus' | 'neptune'
+  | 'pluto';
 
 export const PLANET_ORDER: readonly PlanetName[] = [
   'mercury', 'venus', 'earth', 'mars',
   'jupiter', 'saturn', 'uranus', 'neptune',
+  'pluto',
 ];
 
 export interface Vec3 { x: number; y: number; z: number; }
