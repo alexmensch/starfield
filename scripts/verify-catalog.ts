@@ -1,26 +1,29 @@
 import { readFile } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { FLAG_HAS_NAME } from './catalog-pure';
+import {
+  FLAG_HAS_NAME,
+  HEADER_LAYOUT,
+  RECORD_LAYOUT,
+  HEADER_SIZE,
+  RECORD_SIZE,
+  NO_COMPANION,
+} from './catalog-pure';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
 const BIN = resolve(ROOT, 'public/catalog.bin');
 const CON = resolve(ROOT, 'public/constellations.json');
 
-const HEADER_SIZE = 32;
-const RECORD_SIZE = 44;
-const NO_COMPANION = 0xffffffff;
-
 const buf = await readFile(BIN);
 const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
 const view = new DataView(ab);
 
-const magic = new TextDecoder().decode(new Uint8Array(ab, 0, 4));
-const version = view.getUint32(4, true);
-const count = view.getUint32(8, true);
-const nameTableOffset = view.getUint32(12, true);
-const nameTableLength = view.getUint32(16, true);
+const magic = new TextDecoder().decode(new Uint8Array(ab, HEADER_LAYOUT.magic, 4));
+const version = view.getUint32(HEADER_LAYOUT.version, true);
+const count = view.getUint32(HEADER_LAYOUT.count, true);
+const nameTableOffset = view.getUint32(HEADER_LAYOUT.nameTableOffset, true);
+const nameTableLength = view.getUint32(HEADER_LAYOUT.nameTableLength, true);
 
 console.log(`magic=${magic} version=${version} count=${count}`);
 console.log(`nameTableOffset=${nameTableOffset} nameTableLength=${nameTableLength}`);
@@ -46,27 +49,27 @@ const nameAt = new Map<number, string>();
 
 function readRecord(i: number) {
   const off = HEADER_SIZE + i * RECORD_SIZE;
-  const flags = view.getUint8(off + 35);
-  const nameOffset = view.getUint32(off + 28, true);
+  const flags = view.getUint8(off + RECORD_LAYOUT.flags);
+  const nameOffset = view.getUint32(off + RECORD_LAYOUT.nameOffset, true);
   const name = flags & FLAG_HAS_NAME ? nameAt.get(nameOffset) : null;
-  const comp = view.getUint32(off + 24, true);
-  const conIdx = view.getUint8(off + 34);
-  const hip = view.getUint32(off + 40, true);
+  const comp = view.getUint32(off + RECORD_LAYOUT.companion, true);
+  const conIdx = view.getUint8(off + RECORD_LAYOUT.conIndex);
+  const hip = view.getUint32(off + RECORD_LAYOUT.hip, true);
   return {
     i,
-    x: view.getFloat32(off + 0, true),
-    y: view.getFloat32(off + 4, true),
-    z: view.getFloat32(off + 8, true),
-    absmag: view.getFloat32(off + 12, true),
-    ci: view.getFloat32(off + 16, true),
-    physicalRadius: view.getFloat32(off + 20, true),
+    x: view.getFloat32(off + RECORD_LAYOUT.x, true),
+    y: view.getFloat32(off + RECORD_LAYOUT.y, true),
+    z: view.getFloat32(off + RECORD_LAYOUT.z, true),
+    absmag: view.getFloat32(off + RECORD_LAYOUT.absmag, true),
+    ci: view.getFloat32(off + RECORD_LAYOUT.ci, true),
+    physicalRadius: view.getFloat32(off + RECORD_LAYOUT.physRadius, true),
     companion: comp === NO_COMPANION ? null : comp,
-    spectClass: view.getUint8(off + 32),
-    lumClass: view.getUint8(off + 33),
+    spectClass: view.getUint8(off + RECORD_LAYOUT.spectClass),
+    lumClass: view.getUint8(off + RECORD_LAYOUT.lumClass),
     conIndex: conIdx,
     flags: flags.toString(2).padStart(8, '0'),
-    amplitudeMag: view.getUint8(off + 36) * 0.05,
-    periodDays: view.getUint16(off + 38, true) * 0.1,
+    amplitudeMag: view.getUint8(off + RECORD_LAYOUT.ampUnits) * 0.05,
+    periodDays: view.getUint16(off + RECORD_LAYOUT.period, true) * 0.1,
     hip: hip === 0 ? null : hip,
     name,
     con: conIdx === 255 ? null : constellations[conIdx]?.code,
