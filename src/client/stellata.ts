@@ -4,8 +4,16 @@ import type { Catalog } from './catalog-loader';
 import type { DustField, DustParticleData } from './dust-loader';
 import vertexShader from './shaders/star.vert.glsl?raw';
 import fragmentShader from './shaders/star.frag.glsl?raw';
+import perceptualDiscChunk from './shaders/perceptual-disc.glsl?raw';
 import dustParticleVert from './shaders/dust-particle.vert.glsl?raw';
 import dustParticleFrag from './shaders/dust-particle.frag.glsl?raw';
+
+// Register the perceptual-disc chunk so star.{vert,frag} (and any
+// future point-source layer) can `#include <stellata_perceptual_disc>`
+// via three.js's standard ShaderChunk preprocessor. Side-effect at
+// module load — runs once before any material compiles.
+(THREE.ShaderChunk as Record<string, string>)['stellata_perceptual_disc'] =
+  perceptualDiscChunk;
 import { GalacticDisc } from './galactic-disc';
 import { GalacticGrid } from './galactic-grid';
 import { HudOverlay } from './hud-overlay';

@@ -2,6 +2,10 @@ precision highp float;
 
 #include <common>
 #include <logdepthbuf_pars_vertex>
+// Shared apparent-magnitude → disc-pixel-size mapping. Same physics
+// for any point of light (stars, planets, ...). See the chunk header
+// for what perceptualDmEff / perceptualAppSizePx do.
+#include <stellata_perceptual_disc>
 
 uniform vec3 uCameraPos;
 uniform float uMaxAppMag;
@@ -26,17 +30,10 @@ uniform float uPixelRatio;
 uniform float uSizeMin;
 uniform float uSizeMax;
 uniform float uSizeSpan;
-// Soft-knee saturation extent (magnitudes). The Gaussian-PSF model
-// r = σ·√(1.84·Δm) is unbounded in Δm, so above the visible-population
-// window (Δm > uSizeSpan) we used to hard-clamp brightness to 1, making
-// every super-bright star render at uSizeMax. That broke ratios in the
-// close-approach regime — Sol and Barnard's Star at 5e-3 pc both pinned
-// to the cap despite a 2300× flux ratio. The knee replaces the clamp
-// with a rational asymptote: identity below uSizeSpan, smoothly bending
-// to a ceiling of (uSizeSpan + uSizeKnee) above. uSizeKnee = 0 recovers
-// the old hard-clamp; larger values let bright stars keep growing
-// before saturation locks in (perceptually honest — eye + screen DO
-// saturate, just not abruptly).
+// Soft-knee saturation extent (magnitudes). 0 = hard-clamp at sizeSpan
+// (legacy); larger values let bright stars keep growing past the
+// linear ceiling. See the perceptual-disc chunk for the formula and
+// the rationale (Sol-vs-Barnard ratio at close approach).
 uniform float uSizeKnee;
 // Chart-mode disc sizing. Stars render as flat hard-edged discs whose
 // pixel diameter spreads linearly between [Min, Max] across the visible
@@ -339,29 +336,11 @@ void main() {
         // mode this is computed below from physSize/appSize.)
         vPhysRatio = 1.0;
     } else {
-        // Apparent-magnitude size term (CSS pixels). The √Δm curve comes
-        // from a Gaussian PSF model: perceived radius ∝ √(magnitudes
-        // above threshold) because the visible footprint of a star is
-        // "where intensity > detection threshold" and that grows as the
-        // square root of brightness above threshold. Linear-in-mag would
-        // compress bright stars too far; √Δm keeps Sirius distinctively
-        // larger than the field.
-        // Gaussian-PSF disc with soft-knee saturation. dM is magnitudes
-        // above the visibility threshold; below uSizeSpan we use the
-        // canonical √(Δm/sizeSpan) curve unchanged. Above, dMEff bends
-        // through a Michaelis-Menten asymptote: dMEff → uSizeSpan +
-        // uSizeKnee as dM → ∞. The disc keeps growing past uSizeMax for
-        // very bright stars, then levels off — preserving Sol-vs-Barnard
-        // ratio at close approach without unbounded growth.
-        float dM = uMaxAppMag - appMag;
-        float dMEff;
-        if (dM <= uSizeSpan) {
-            dMEff = max(dM, 0.0);
-        } else {
-            float over = dM - uSizeSpan;
-            dMEff = uSizeSpan + uSizeKnee * over / max(uSizeKnee + over, 1e-6);
-        }
-        float appSize = mix(uSizeMin, uSizeMax, sqrt(dMEff / max(uSizeSpan, 0.001)));
+        // Apparent-magnitude size term — the perceptual-disc abstraction.
+        // Same √Δm + soft-knee mapping a planet would use (3re.16); the
+        // chunk owns the math + rationale.
+        float dMEff = perceptualDmEff(appMag, uMaxAppMag, uSizeSpan, uSizeKnee);
+        float appSize = perceptualAppSizePx(dMEff, uSizeMin, uSizeMax, uSizeSpan);
 
         // Physical-size term. True angular diameter projected to pixels:
         // 2·atan(R/d) is the angle the disc subtends at the camera,
