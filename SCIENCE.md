@@ -233,6 +233,91 @@ Implementation: `src/client/shaders/star.vert.glsl` and
 `docs/build-and-data.md` §GCVS variability cross-match for the
 build-time matching rules.
 
+## Solar system
+
+When a host star with planets is focused, Stellata renders the eight
+planets, Pluto, faint orbit rings, and the heliopause boundary in the
+local frame around the host. Sol is the only populated host in v1; the
+machinery is generic so future exoplanet-host work (`stellata-bk5`)
+can plug in without changing the renderer.
+
+**Planet positions.** Heliocentric ecliptic positions are computed
+from the **JPL Standish 1992 Keplerian-elements approximation**
+(https://ssd.jpl.nasa.gov/planets/approx_pos.html), with the cubic
+correction terms for Jupiter through Neptune that extend the validity
+window to 3000 BC – 3000 AD at sub-arcminute accuracy. Implementation
+in `src/client/ephemeris.ts` works directly from the published JPL
+Table 2a/2b values — no external library, no network fetch.
+
+VSOP87 was the originally-planned ephemeris model and would offer
+sub-arcsecond accuracy ±4000 years from J2000. We dropped it during
+implementation: planets render as billboarded discs at a pixel-size
+floor, and sub-arcminute precision is invisible at every zoom the
+user can reach. The Standish approximation is ~50 lines of code over
+an 8-row element table, with no dependency cost. Deep-time follow-up
+is filed as `stellata-1gh`.
+
+**Planet physical data.** Equatorial radii from NASA Planetary Fact
+Sheets (https://nssdc.gsfc.nasa.gov/planetary/factsheet/). Semi-major
+axes and eccentricities from JPL DE440 mean elements at J2000. Pluto
+data from New Horizons 2015 reconnaissance (mean radius 1188 km,
+tan-pink colour from MVIC imagery). Representative single-colour RGB
+values per planet are observation-derived; pixel-accurate texturing,
+banding, and atmospheric haloes are deferred to the planet-zoom
+affordance epic (`stellata-2f6`) — at the camera-to-body distances
+the user can currently reach, every planet floors at ~2 px and per-
+texture detail would be invisible.
+
+**Orbital plane orientation.** Sol's planet system is rendered in its
+native ecliptic plane (J2000 obliquity ε = 23.4392911°), so the ring
+layout matches what an observer at Sol sees on the sky. For all
+*other* host stars (future exoplanets via `stellata-bk5`), ring
+planes default to the galactic plane — exoplanet-system orientations
+are generally unknown, and aligning to the galactic plane gives the
+user a consistent visual cue that a focused star has planets without
+implying a measured orientation we don't have. The per-host-plane →
+ICRS rotation is composed once at attach and reused by the orbit-ring
+and planet-body renderers (`src/client/star-system.ts`).
+
+**Time `t`.** All planet positions are evaluated at a wall-clock `t`
+(Unix seconds, double). In v1 `t` is pinned to "now" with no scrubber
+UI; the bottom-right time readout displays the live UTC timestamp the
+positions correspond to. `t` is independent of the cosmetic `uTime`
+clock that drives variable-star pulsation — they don't share a value.
+
+Per-`t` cache granularity is 60 seconds: at billboarded-disc pixel
+scale, sub-minute planet motion is invisible (Mercury moves ~3e-5 rad
+seen from Earth in 60s ≈ 8″, well below pixel resolution at any
+zoom). Future time-scrubber UI (`stellata-nmu`) plugs in by overriding
+`Stellata.setT()`.
+
+**Heliopause boundary.** Modelled as an asymmetric ellipsoid centred
+on Sol, aligned to the solar apex of motion through the local
+interstellar medium. Geometry:
+
+- Upwind boundary at **122 AU** — Voyager 1 termination-shock
+  crossing, 2012-08-25.
+- Flank boundaries at **115 AU** — Voyager 2 crossing, 2018-11-05.
+- Heliotail at **200 AU** — IBEX / Cassini ENA observations.
+- Apex direction: ICRS RA 17h53m, Dec +27.4°, after Frisch &
+  Slavin 2013.
+
+Construction: a unit sphere scaled to (115, 115, 161) AU with the
+ellipsoid centre offset 39 AU toward the antiapex, then rotated so +Z
+lands on the antiapex. Result: upwind apex at +122 AU, downwind at
+−200 AU along the apex axis. The shell is rendered as a translucent
+Fresnel-limbed surface — alpha peaks at the silhouette and falls to a
+small floor face-on, so the upwind apex region doesn't paint the
+shell as a flat disc against the starfield.
+
+The heliopause is **static on human timescales**. Solar-cycle
+variations in the upwind distance are at the few-AU level across the
+11-year cycle, well below the 122 AU upwind anchor; we don't animate
+the boundary.
+
+Implementation: `src/client/heliopause.ts` and
+`src/client/shaders/heliopause.{vert,frag}.glsl`.
+
 ## Galactic coordinate system
 
 The shared module `src/client/galactic-coords.ts` exports two constants
@@ -382,3 +467,20 @@ science it relates to.
   split the brightness change between R and T swings. Modelling T
   changes per variable type is more complexity than the visualisation
   warrants.
+- **Moons.** Earth's Moon, the Galilean satellites, Titan, Triton, etc.
+  The Standish ephemerides cover only the eight major planets +
+  Earth-Moon barycentre stand-in for Earth. Adding satellite
+  ephemerides is a separate effort and out of scope at the camera
+  framings v1 affords.
+- **Asteroids and minor planets.** Ceres, Vesta, the Trojans, NEOs.
+  Same reason as moons — separate ephemeris source and not visible
+  as discs at any camera distance the app currently exposes.
+- **Time-evolving heliopause shape.** Solar-cycle variation in the
+  upwind boundary is real (~few AU peak-to-peak) but well below the
+  layer's coarse 122-AU anchor; we treat the shell as static.
+- **Planet textures, banding, atmospheric haloes, ring systems,
+  axial-tilt cues, day-night phase shading.** All deferred to the
+  planet-as-object zoom-in epic (`stellata-2f6`) — at the user-
+  reachable camera distances every planet floors at the disc-pixel
+  minimum, so detail rendering would be invisible. See the
+  `defer-detail-until-zoom-affordance` rule in CLAUDE.md.

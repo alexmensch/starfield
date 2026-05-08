@@ -149,6 +149,13 @@ Claude Code should read on demand when working on the relevant area.
   profiles, magnitude-consistency conversion, analytical-only dust,
   render-order placement, brightness/glow calibration. Read when
   tuning `milkyway.{ts,frag.glsl}`.
+- **`docs/solar-system.md`** — Phase 12a (`stellata-3re`) layer:
+  JPL Standish ephemerides, planet-bodies + orbit-rings + heliopause
+  rendering, ecliptic-vs-galactic-plane orientation rule, time `t`
+  and the UTC readout, Sol-focus minDistance relaxation, first-load
+  4 AU park. Read when touching `ephemeris.ts`, `time.ts`,
+  `planet-system.ts`, `star-system.ts`, `planet-labels.ts`,
+  `heliopause.ts`, or any `planet.*.glsl` / `heliopause.*.glsl`.
 - **`docs/chart-mode.md`** — Phase 8 paper aesthetic: flat
   hard-edged discs, isobar contours for MW + clouds, the per-frame
   label / glyph engine, picking under chart mode. Read when touching
