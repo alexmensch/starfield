@@ -12,7 +12,12 @@
 // rather than checking "is this star Sol?" directly.
 
 import type { Catalog } from './catalog-loader';
-import { getPlanetPositions, PLANET_ORDER } from './ephemeris';
+import {
+  getPlanetOrbitOrientations,
+  getPlanetPositions,
+  PLANET_ORDER,
+  type OrbitOrientationRad,
+} from './ephemeris';
 
 export type PlanetType = 'rocky' | 'gas_giant' | 'ice_giant';
 
@@ -57,6 +62,14 @@ export interface PlanetSystem {
    *  rotate into ICRS — Sol's ecliptic frame becomes ICRS via the
    *  same quaternion that orients its orbit rings (3re.8). */
   positionsAt?: (t: number, out: Float32Array) => void;
+  /** Optional per-planet orbital-frame orientation in the host's local
+   *  plane frame, indexed parallel to `planets`. The ring renderer
+   *  composes each entry's Rz(Ω)·Rx(I)·Rz(ω) before the host plane→ICRS
+   *  rotation, so rings line up with the body positions emitted by
+   *  `positionsAt` (which apply the same composition internally).
+   *  When absent, rings sit flat on the host plane with perihelion at
+   *  +x — the pre-3re.13 placeholder behaviour. */
+  orbitOrientations?: readonly OrbitOrientationRad[];
 }
 
 /** Sol's positionsAt — JPL Standish ecliptic positions in parsecs,
@@ -170,5 +183,8 @@ export async function getPlanetSystem(
     hostStarIdx: starIdx as number,
     planets: SOL_PLANETS,
     positionsAt: solPositionsAt,
+    // Evaluated once at attach. Drift is sub-degree per millennium —
+    // the orbit-ring renderer keeps these frozen for the session.
+    orbitOrientations: getPlanetOrbitOrientations(Date.now() / 1000),
   };
 }

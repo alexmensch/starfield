@@ -300,16 +300,38 @@ export class StarSystem {
       : null;
 
     // Build orbit rings ----------------------------------------------------
-    for (const planet of ps.planets) {
+    // Reused per-planet rotation scratch quaternions. Allocated once
+    // outside the loop so we don't churn the GC for what's a one-shot
+    // attach-time rebuild anyway.
+    const Z_AXIS = new THREE.Vector3(0, 0, 1);
+    const X_AXIS = new THREE.Vector3(1, 0, 0);
+    const qNode = new THREE.Quaternion();
+    const qIncl = new THREE.Quaternion();
+    const qPeri = new THREE.Quaternion();
+    const ringQuat = new THREE.Quaternion();
+    for (let pIdx = 0; pIdx < ps.planets.length; pIdx++) {
+      const planet = ps.planets[pIdx];
       const aPc = planet.semiMajorAxisAu * AU_PC;
       const verts = new Float32Array(RING_SEGMENTS * 3);
       buildEllipsePoints(aPc, planet.eccentricity, RING_SEGMENTS, verts);
-      // Rotate every vertex from the local xy plane into the host's
-      // orbital plane in one pass; no per-frame matrix work after this.
+      // Compose per-planet in-plane→host-plane rotation Rz(Ω)·Rx(I)·Rz(ω)
+      // (matching the body-position math in ephemeris.planetEclipticAU)
+      // with the host plane→ICRS orientation, so a single applyQuaternion
+      // takes a local-xy ellipse vertex straight to ICRS-aligned local
+      // space. Without the per-planet step, rings sit flat on the host
+      // plane with perihelion at +x — wrong for any non-zero I or ϖ.
+      ringQuat.copy(orientation);
+      const o = ps.orbitOrientations?.[pIdx];
+      if (o) {
+        qNode.setFromAxisAngle(Z_AXIS, o.longAscNode);
+        qIncl.setFromAxisAngle(X_AXIS, o.inclination);
+        qPeri.setFromAxisAngle(Z_AXIS, o.argPerihelion);
+        ringQuat.multiply(qNode).multiply(qIncl).multiply(qPeri);
+      }
       const tmp = new THREE.Vector3();
       for (let i = 0; i < RING_SEGMENTS; i++) {
         tmp.set(verts[i * 3], verts[i * 3 + 1], verts[i * 3 + 2]);
-        tmp.applyQuaternion(orientation);
+        tmp.applyQuaternion(ringQuat);
         verts[i * 3 + 0] = tmp.x;
         verts[i * 3 + 1] = tmp.y;
         verts[i * 3 + 2] = tmp.z;

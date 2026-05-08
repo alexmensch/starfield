@@ -258,6 +258,43 @@ export function getPlanetPositions(t: number): PlanetPositions {
   return out;
 }
 
+/** Per-planet orbital-frame orientation, expressed as the three Euler
+ *  angles that rotate the canonical in-plane ellipse (perihelion at +x,
+ *  z=0) into the ecliptic frame. The composition is Rz(Ω)·Rx(I)·Rz(ω)
+ *  — same as `planetEclipticAU` applies to the in-plane (x', y'). */
+export interface OrbitOrientationRad {
+  /** Inclination from the ecliptic (radians). */
+  inclination: number;
+  /** Longitude of ascending node Ω (radians). */
+  longAscNode: number;
+  /** Argument of perihelion ω = ϖ − Ω (radians). */
+  argPerihelion: number;
+}
+
+/** Per-planet orbit orientations at Unix-seconds `t`, in PLANET_ORDER.
+ *
+ *  The orbit-ring renderer reads this once per attach to align each
+ *  ring with its actual orbital plane (inclination + node + perihelion
+ *  direction); without it, all rings sit flat on the ecliptic and miss
+ *  Mercury's 7° tilt and 77° perihelion offset entirely. Drift across
+ *  ±3000 years is bounded (≲5°) and ignored — rings stay frozen at
+ *  attach-time orientation for the rest of the session. */
+export function getPlanetOrbitOrientations(t: number): OrbitOrientationRad[] {
+  const T = (tToJDE(t) - J2000_JD) / 36525;
+  const out: OrbitOrientationRad[] = [];
+  for (let i = 0; i < ELEMENTS.length; i++) {
+    const e = ELEMENTS[i];
+    const longnode = (e.longnode + e.longnodeDot * T) * DEG;
+    const longperi = (e.longperi + e.longperiDot * T) * DEG;
+    out.push({
+      inclination: (e.I + e.IDot * T) * DEG,
+      longAscNode: longnode,
+      argPerihelion: longperi - longnode,
+    });
+  }
+  return out;
+}
+
 /** Reset the per-`t` cache. Test-only — production callers never need
  *  this; the cache invalidates naturally as `t` advances. */
 export function _resetCacheForTests(): void {

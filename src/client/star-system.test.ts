@@ -481,3 +481,74 @@ describe('StarSystem ephemeris-driven body positions (3re.3)', () => {
     ss.dispose();
   });
 });
+
+describe('StarSystem orbit-ring orientation (3re.13)', () => {
+  it('a non-zero inclination tilts the ring out of the host plane', () => {
+    // Inclination 30°, no node / argperi rotation. The ring should
+    // sit on a plane tilted 30° from the host plane (which for a
+    // non-Sol host is the galactic plane). The ring's z-extent in
+    // the host plane frame should be a·sin(30°) = 0.5·a.
+    const ss = new StarSystem();
+    const ps: PlanetSystem = {
+      hostStarIdx: 1,
+      planets: [makePlanet({ semiMajorAxisAu: 1, eccentricity: 0 })],
+      orbitOrientations: [{
+        inclination: 30 * Math.PI / 180,
+        longAscNode: 0,
+        argPerihelion: 0,
+      }],
+    };
+    ss.setPlanetSystem(ps, 0);
+    // Rummage in the scene graph for the ring's position buffer.
+    const ringLine = ss.group.children.find(
+      (c) => (c as THREE.LineLoop).isLineLoop,
+    ) as THREE.LineLoop | undefined;
+    expect(ringLine).toBeDefined();
+    const positions = (ringLine!.geometry as THREE.BufferGeometry)
+      .getAttribute('position').array as Float32Array;
+    // Compute max |z'| where z' is the host-plane-normal component.
+    // For a galactic-pole-normal host plane the normal is the galactic
+    // north pole; project each vertex onto it.
+    const normal = GALACTIC_NORTH_POLE_ICRS.clone();
+    let maxAbsZ = 0;
+    for (let i = 0; i < positions.length; i += 3) {
+      const dot = positions[i] * normal.x
+        + positions[i + 1] * normal.y
+        + positions[i + 2] * normal.z;
+      maxAbsZ = Math.max(maxAbsZ, Math.abs(dot));
+    }
+    // Expect ~0.5 × 1 AU. Tolerance loose enough to absorb the 128-
+    // segment discretisation (≈cos error well below 1%).
+    expect(maxAbsZ / AU_PC).toBeGreaterThan(0.49);
+    expect(maxAbsZ / AU_PC).toBeLessThan(0.51);
+    ss.dispose();
+  });
+
+  it('without orbitOrientations the ring sits flat on the host plane', () => {
+    // Same setup as above but no orbitOrientations field — ring
+    // collapses to the host-plane disc; the host-normal projection
+    // should be ~zero across all vertices.
+    const ss = new StarSystem();
+    const ps: PlanetSystem = {
+      hostStarIdx: 1,
+      planets: [makePlanet({ semiMajorAxisAu: 1, eccentricity: 0 })],
+    };
+    ss.setPlanetSystem(ps, 0);
+    const ringLine = ss.group.children.find(
+      (c) => (c as THREE.LineLoop).isLineLoop,
+    ) as THREE.LineLoop | undefined;
+    expect(ringLine).toBeDefined();
+    const positions = (ringLine!.geometry as THREE.BufferGeometry)
+      .getAttribute('position').array as Float32Array;
+    const normal = GALACTIC_NORTH_POLE_ICRS.clone();
+    let maxAbsZ = 0;
+    for (let i = 0; i < positions.length; i += 3) {
+      const dot = positions[i] * normal.x
+        + positions[i + 1] * normal.y
+        + positions[i + 2] * normal.z;
+      maxAbsZ = Math.max(maxAbsZ, Math.abs(dot));
+    }
+    expect(maxAbsZ).toBeLessThan(1e-9);
+    ss.dispose();
+  });
+});
