@@ -282,6 +282,51 @@ export function markPrimaryIfUnflagged(
   return markPrimary(stars, indices);
 }
 
+// Apply FLAG_BINARY_PRIMARY across an iterable of HIP-indexed groups. Each
+// group's brightest in-catalog component (lowest absmag) gets the bit,
+// idempotent with any pre-existing flags from `inferBinaries` (the
+// geometric mutual-pair pass can have already marked one member). Groups
+// with no in-catalog members are silently skipped.
+//
+// The `groups` iterable is the union of CCDM groups parsed from the
+// Hipparcos cross-reference and the curated `KNOWN_VISUAL_DOUBLES`
+// overrides — the caller (build-catalog) constructs the union; this
+// helper just walks it.
+//
+// Returns:
+//   systems  — count of groups that resolved at least one in-catalog HIP.
+//   flagged  — count of groups where this pass set a fresh primary
+//              (i.e. excludes groups whose primary was already set by a
+//              prior pass).
+//
+// Mutates `stars[i].flags` in place via `markPrimaryIfUnflagged`. Pure
+// otherwise — does not read or write any other fields.
+export interface DoublesStar { absmag: number; flags: number; hip: number | null; }
+export function applyDoublesFlag(
+  stars: DoublesStar[],
+  groups: Iterable<Iterable<number>>,
+): { systems: number; flagged: number } {
+  const hipToIndex = new Map<number, number>();
+  for (let i = 0; i < stars.length; i++) {
+    const h = stars[i].hip;
+    if (h !== null && h > 0) hipToIndex.set(h, i);
+  }
+
+  let systems = 0;
+  let flagged = 0;
+  for (const hips of groups) {
+    const indices: number[] = [];
+    for (const h of hips) {
+      const idx = hipToIndex.get(h);
+      if (idx !== undefined) indices.push(idx);
+    }
+    if (indices.length === 0) continue;
+    systems++;
+    if (markPrimaryIfUnflagged(stars, indices) >= 0) flagged++;
+  }
+  return { systems, flagged };
+}
+
 // Spatial-grid nearest-neighbour pass. For each star, find its nearest
 // neighbour within BINARY_MAX_SEP_PC and record it as `companionIdx`.
 // `companionIdx` is the **directed** nearest neighbour (A's nearest may

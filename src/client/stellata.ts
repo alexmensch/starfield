@@ -20,6 +20,7 @@ import {
   physSizePx,
   varEffectiveAmplitude,
   distAtFillFraction,
+  peakAmplitudeFactor,
 } from './star-geometry';
 import { getPlanetSystem, hasPlanets, type PlanetSystem } from './planet-system';
 import { StarSystem } from './star-system';
@@ -59,9 +60,11 @@ export interface FilterState {
   // HUD: Sol/GC locator arrows in both navigate + observe modes, plus the
   // OBSERVE-mode screen-centred ring. Future HUD widgets hang off this flag.
   showHud: boolean;
-  // Molecular cloud overlay. Default-on; toggle suppresses both
-  // 3D rendering and hover/pick.
-  showMolecularClouds: boolean;
+  // (showMolecularClouds removed: cloud layer is shelved for v1.0 — see
+  // CLAUDE.md. The render machinery / picking helpers stay; they no-op
+  // when the cloud catalog isn't attached. Re-enabling means restoring
+  // the FilterState field, the URL flag bit 2 reservation, and the
+  // load+attach call in main.ts.)
   // Milky Way analytic background. Default-on; in chart mode
   // it switches to outline-only rendering (gated on this same toggle).
   // May be force-flipped off by the FPS probe on the first few frames
@@ -434,7 +437,6 @@ export const DEFAULT_FILTER: FilterState = {
   showConstellation: true,
   showGalacticGrid: false,
   showHud: false,
-  showMolecularClouds: false,
   showMilkyway: true,
   chart: false,
 };
@@ -1550,6 +1552,13 @@ export class Stellata {
   // null to detach (e.g. to disable extinction for a mode toggle).
   attachDust(dust: DustField | null) {
     const u = this.material.uniforms;
+    // Re-attach with a different DustField? Release the previous one's
+    // ~128 MiB Data3DTexture before swapping the reference, otherwise
+    // the old texture would leak. attachDust is called exactly once
+    // today, so this guard is defensive — but the contract reads as
+    // "the most recent dust wins" and that contract should hold without
+    // tying it to caller discipline.
+    if (this.dust !== null && this.dust !== dust) this.dust.dispose();
     this.dust = dust;
     if (dust === null) {
       u.uDustTexture.value = null;
@@ -1613,7 +1622,7 @@ export class Stellata {
    *  cursor. Always returns null when the layer is hidden by the toggle
    *  or warping. */
   pickCloud(clientX: number, clientY: number): number | null {
-    if (!this.clouds || !this.filter.showMolecularClouds || this.warpState) return null;
+    if (!this.clouds || this.warpState) return null;
     const rect = this.renderer.domElement.getBoundingClientRect();
     const ndc = this.tmpNdc.set(
       ((clientX - rect.left) / rect.width) * 2 - 1,
@@ -3054,9 +3063,10 @@ export class Stellata {
   // pulse peak (not the static R) hits ZOOM_FLOOR_FRACTION at closest
   // approach and TARGET_PARK_FRACTION at warp arrival.
   private peakAmplitudeFactor(idx: number): number {
-    const amp = this.catalog.amplitudeMag[idx];
-    const period = this.catalog.periodDays[idx];
-    return period > 0 && amp > 0 ? Math.pow(10, amp / 10) : 1;
+    return peakAmplitudeFactor(
+      this.catalog.amplitudeMag[idx],
+      this.catalog.periodDays[idx],
+    );
   }
 
   // Manual-zoom floor for TrackballControls when a star is focused. The
@@ -3491,7 +3501,9 @@ export class Stellata {
         // Cloud destination — no planet system to render.
         this.warpDestStarSystem.update(this.camera, window.innerHeight);
       }
-      this.clouds?.update(this.worldOffset, this.filter.showMolecularClouds);
+      // Cloud layer is shelved for v1.0 (CLAUDE.md): visible=false. Flip
+      // to true (or restore a FilterState flag) when re-enabling.
+      this.clouds?.update(this.worldOffset, false);
       return;
     }
     this.starSystem.update(this.camera, window.innerHeight, undefined, this.getT());
@@ -3549,7 +3561,9 @@ export class Stellata {
       h: window.innerHeight,
     });
 
-    this.clouds?.update(this.worldOffset, this.filter.showMolecularClouds);
+    // Cloud layer is shelved for v1.0 (CLAUDE.md): visible=false. Flip
+    // to true (or restore a FilterState flag) when re-enabling.
+    this.clouds?.update(this.worldOffset, false);
   }
 
   private updateWarp() {

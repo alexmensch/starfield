@@ -4,6 +4,7 @@ import {
   physSizePx,
   varEffectiveAmplitude,
   distAtFillFraction,
+  peakAmplitudeFactor,
 } from './star-geometry';
 
 // Sol's physical radius in parsecs (1 R_sun ≈ 2.2543e-8 pc).
@@ -129,5 +130,36 @@ describe('star-geometry / distAtFillFraction', () => {
     expect(dGiant).toBeGreaterThan(dSol);
     // …and the ratio matches the radius ratio in the small-angle regime.
     expect(dGiant / dSol).toBeCloseTo(100, 4);
+  });
+});
+
+describe('star-geometry / peakAmplitudeFactor', () => {
+  it('returns 1 for non-variables (no period, no amplitude)', () => {
+    expect(peakAmplitudeFactor(0, 0)).toBe(1);
+  });
+
+  it('returns 1 when amplitude is set but period is missing', () => {
+    // GCVS rows with a period but no amplitude (or vice versa) shouldn't
+    // be modulated — the renderer treats them as static stars.
+    expect(peakAmplitudeFactor(0.5, 0)).toBe(1);
+    expect(peakAmplitudeFactor(0, 4.5)).toBe(1);
+  });
+
+  it('returns 10^(amp/10) for a real variable', () => {
+    // Mira-like 5-mag amplitude → factor 10^0.5 ≈ 3.162. Means the
+    // pulse-peak radius is ~3.16× the static radius.
+    expect(peakAmplitudeFactor(5, 332)).toBeCloseTo(Math.pow(10, 0.5), 12);
+    // Algol-like 1.27-mag amplitude → factor 10^0.127 ≈ 1.34.
+    expect(peakAmplitudeFactor(1.27, 2.87)).toBeCloseTo(Math.pow(10, 0.127), 12);
+  });
+
+  it('is monotonic in amplitude for a fixed period', () => {
+    expect(peakAmplitudeFactor(2, 100)).toBeLessThan(peakAmplitudeFactor(4, 100));
+    expect(peakAmplitudeFactor(4, 100)).toBeLessThan(peakAmplitudeFactor(6, 100));
+  });
+
+  it('treats negative amp/period as non-variable (defensive)', () => {
+    expect(peakAmplitudeFactor(-1, 100)).toBe(1);
+    expect(peakAmplitudeFactor(2, -100)).toBe(1);
   });
 });

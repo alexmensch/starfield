@@ -46,12 +46,23 @@ const DARK_BASE_OPACITY = 0.55;
  */
 export class GalacticDisc {
   readonly group: THREE.Group;
-  private materials: THREE.LineBasicMaterial[] = [];
+  // Single shared material across all 6 rings — they're visually identical
+  // and the per-frame fade writes to one .opacity, not six. Replaces the
+  // prior per-ring LineBasicMaterial allocations.
+  private readonly material: THREE.LineBasicMaterial;
   private mono = false;
 
   constructor() {
     this.group = new THREE.Group();
     this.group.renderOrder = -1;
+
+    this.material = new THREE.LineBasicMaterial({
+      color: DARK_COLOUR,
+      transparent: true,
+      opacity: 0,
+      depthTest: true,
+      depthWrite: false,
+    });
 
     const midplane = this.makeRing(
       MIDPLANE_RADIUS_PC,
@@ -111,7 +122,7 @@ export class GalacticDisc {
       return;
     }
     this.group.visible = true;
-    for (const m of this.materials) m.opacity = opacity;
+    this.material.opacity = opacity;
   }
 
   setMonochrome(on: boolean) {
@@ -154,15 +165,7 @@ export class GalacticDisc {
     // Bounding sphere drawn from the geometry would be huge and miscentred
     // (group origin is offset per frame); turn off frustum culling so the
     // disc never disappears at extreme camera positions.
-    const mat = new THREE.LineBasicMaterial({
-      color: DARK_COLOUR,
-      transparent: true,
-      opacity: 0,
-      depthTest: true,
-      depthWrite: false,
-    });
-    this.materials.push(mat);
-    const loop = new THREE.LineLoop(geom, mat);
+    const loop = new THREE.LineLoop(geom, this.material);
     loop.frustumCulled = false;
     loop.renderOrder = -1;
     return loop;
@@ -172,8 +175,8 @@ export class GalacticDisc {
     for (const child of this.group.children) {
       const obj = child as THREE.LineLoop;
       obj.geometry.dispose();
-      (obj.material as THREE.Material).dispose();
     }
+    this.material.dispose();
   }
 }
 

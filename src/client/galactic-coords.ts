@@ -31,7 +31,10 @@ const ngpDir = new THREE.Vector3(
 //   +Z = toward NGP (b=+90)
 //   +Y = +Z × +X  (l=90, b=0; standard right-handed convention)
 // gcDir and ngpDir are not exactly perpendicular at full precision, so Z is
-// re-derived from (X × Y) to land exactly orthogonal to both.
+// re-derived from (X × Y) to land exactly orthogonal to both. The result
+// is parallel to — but at single-arcsec scale not exactly equal to — the
+// raw `ngpDir`. Don't compare galZ against ngpDir for equality; treat
+// galZ as the canonical NGP direction within the orthonormal basis.
 const galY = new THREE.Vector3().crossVectors(ngpDir, gcDir).normalize();
 const galZ = new THREE.Vector3().crossVectors(gcDir, galY).normalize();
 

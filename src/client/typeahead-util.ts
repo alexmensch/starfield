@@ -41,6 +41,20 @@ export function applyHoverClass(
 // scrollIntoView({block: 'nearest'}), which walks ancestors and can shift
 // a parent panel even when the row is fully visible inside its own
 // scrollable list. No-op when the dropdown isn't actually scrollable.
+//
+// LAYOUT ASSUMPTION: `row.offsetTop` is relative to the row's
+// offsetParent (the nearest positioned ancestor). The current CSS for
+// `.search-results` and `.con-typeahead .typeahead-results` both set
+// `position: absolute`, which makes them the offsetParent of their
+// `<li>` rows — so `row.offsetTop` is the desired "row top within
+// list" distance. If a future CSS change ever drops `position` from
+// either dropdown, offsetTop would silently shift to walk past the
+// list to a further positioned ancestor and the scroll math here
+// would break. If you hit that, either: (a) restore `position` on the
+// list, (b) switch to `row.getBoundingClientRect().top -
+// list.getBoundingClientRect().top + list.scrollTop`, or (c) compute
+// `row.offsetTop - list.offsetTop` (works only when both share the
+// same offsetParent).
 function scrollRowIntoView(list: HTMLElement, row: HTMLElement): void {
   if (list.scrollHeight <= list.clientHeight) return;
   const top = row.offsetTop;

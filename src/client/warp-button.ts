@@ -8,7 +8,10 @@ import type { Stellata } from './stellata';
 // flight so overlays can hide themselves via CSS.
 export function bindWarpButton(stellata: Stellata) {
   const btn = document.getElementById('warp-btn') as HTMLButtonElement;
-  const distUi = document.getElementById('dist-ui') as unknown as SVGGElement;
+  // Element is enough: only addEventListener is called on it. The earlier
+  // `as unknown as SVGGElement` cast was a type lie — the SVG group is
+  // typed by the DOM as Element, and addEventListener lives on Element.
+  const distUi = document.getElementById('dist-ui')!;
 
   const render = () => {
     if (stellata.getWarpActive()) {

@@ -46,9 +46,9 @@ export class MolecularClouds {
   private geometry: THREE.SphereGeometry;
   private mono = false;
   private isobar = false;
-  /** Map from THREE.Mesh.uuid → cloud index, so raycasts resolve to clouds. */
-  private meshIndex = new Map<string, number>();
-  /** Mesh references in catalog order, for picking ray-ellipsoid analytically. */
+  /** Mesh references in catalog order, for picking ray-ellipsoid analytically.
+   *  Cloud index is stashed on `mesh.userData.cloudIdx` so raycast results
+   *  resolve back to a cloud without a separate uuid→index Map. */
   private meshes: THREE.Mesh[] = [];
 
   // User-tunable from the dev console via `stellata.clouds.set*()`.
@@ -83,8 +83,8 @@ export class MolecularClouds {
       mesh.scale.set(c.axes[0], c.axes[1], c.axes[2]);
       mesh.frustumCulled = false; // group origin is offset per frame
       mesh.renderOrder = -2;
+      mesh.userData.cloudIdx = i;
       this.meshes.push(mesh);
-      this.meshIndex.set(mesh.uuid, i);
       this.group.add(mesh);
     }
   }
@@ -198,7 +198,8 @@ export class MolecularClouds {
     const hits = raycaster.intersectObjects(this.meshes, false);
     if (hits.length === 0) return null;
     // intersectObjects sorts by distance ascending, so first hit wins.
-    return this.meshIndex.get(hits[0].object.uuid) ?? null;
+    const idx = hits[0].object.userData.cloudIdx;
+    return typeof idx === 'number' ? idx : null;
   }
 
   dispose() {

@@ -3,11 +3,12 @@ import { GALACTIC_CENTRE_PC } from './galactic-coords';
 import { fmtDist } from './distance-util';
 import {
   buildArrowSvgPath,
-  viewSpaceScreenDir,
+  screenDirToTarget,
   ARROW_HEAD_DEPTH_PX,
   ARROW_LABEL_OFFSET_PX,
   ARROW_LABEL_PADDING_PX,
 } from './arrow-path';
+import { projectToScreen } from './overlay-project';
 
 // Nominal apparent length of each arrow on screen, in CSS pixels. The shaft
 // is built directly in screen space so this length is exact regardless of
@@ -301,49 +302,21 @@ export class HudOverlay {
     const targetScreen = projectToScreen(targetLocal, camera, w, h);
     debug.behindCamera = !targetScreen;
 
-    // Screen direction of the arrow. Two paths, both robust:
-    //   1. Target in front: take the screen-space vector from origin's
-    //      projection (cx,cy) to the target's projection. The natural
-    //      direction.
-    //   2. Target behind / projection degenerate: transform `dir` into
-    //      view space (rotation only) and read its xy components, scaled
-    //      by per-axis FOV so non-square viewports stay correct.
-    //      Independent of camera-to-origin distance, so it doesn't go
-    //      sub-pixel under close approach the way an aux-step in world
-    //      space would.
-    let sux = 0, suy = 0;
-    let dirOk = false;
-    if (targetScreen) {
-      const tdx = targetScreen[0] - cx;
-      const tdy = targetScreen[1] - cy;
-      const tlen = Math.hypot(tdx, tdy);
-      if (tlen > 0) {
-        sux = tdx / tlen;
-        suy = tdy / tlen;
-        dirOk = true;
-        debug.dirPath = 'targetScreen';
-      }
-    }
-    if (!dirOk) {
-      // Target behind the camera (or projects exactly to origin's screen
-      // position). View-space (x, -y) of the world direction sidesteps the
-      // projection divide and gives a robust screen direction whenever the
-      // direction has any component perpendicular to the camera axis. See
-      // arrow-path.ts for the helper.
-      const vsDir = viewSpaceScreenDir(dir, camera);
-      if (vsDir) {
-        sux = vsDir[0];
-        suy = vsDir[1];
-        dirOk = true;
-        debug.dirPath = 'viewSpaceDir';
-      }
-    }
-    if (!dirOk) {
+    // Screen direction of the arrow via the shared two-tier cascade in
+    // arrow-path.ts: target's screen projection when in front + visible
+    // offset, otherwise view-space xy of the world direction (robust to
+    // behind-camera targets).
+    const sdir = screenDirToTarget(cx, cy, targetScreen, dir, camera);
+    if (!sdir) {
       // dir is exactly along the camera axis — no preferred screen
       // direction (measure-zero orientation).
       this.hideArrow(path, bg, label);
       return 0;
     }
+    const sux = sdir[0];
+    const suy = sdir[1];
+    debug.dirPath = targetScreen && Math.hypot(targetScreen[0] - cx, targetScreen[1] - cy) >= 1
+      ? 'targetScreen' : 'viewSpaceDir';
 
     // Shaft endpoints + chevron tip in screen pixels. Default length
     // ARROW_PIXEL_LENGTH; shrunk so the tip stays `targetMarginPx` short of
@@ -478,18 +451,6 @@ function computeRingRadius(
 
 function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
-}
-
-function projectToScreen(
-  p: THREE.Vector3,
-  camera: THREE.PerspectiveCamera,
-  w: number,
-  h: number,
-): [number, number] | null {
-  const v = p.clone().applyMatrix4(camera.matrixWorldInverse);
-  if (v.z >= -camera.near) return null;
-  const ndc = v.applyMatrix4(camera.projectionMatrix);
-  return [(ndc.x + 1) * 0.5 * w, (1 - ndc.y) * 0.5 * h];
 }
 
 export interface ArrowDebugRecord {

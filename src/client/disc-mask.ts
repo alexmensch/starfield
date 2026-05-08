@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { Stellata } from './stellata';
+import { projectToScreen } from './overlay-project';
 
 // Per-frame SVG mask updater. Overlays that should appear BEHIND any close
 // rendered-disc star apply `mask="url(#disc-occlude-mask)"`. This module
@@ -49,13 +50,10 @@ export function createDiscMask(stellata: Stellata) {
     const positions = stellata.localPositions;
     const camera = stellata.camera;
     v.set(positions[idx * 3], positions[idx * 3 + 1], positions[idx * 3 + 2]);
-    v.applyMatrix4(camera.matrixWorldInverse);
-    if (v.z > -camera.near) return false;
-    v.applyMatrix4(camera.projectionMatrix);
-    const cx = (v.x + 1) * 0.5 * window.innerWidth;
-    const cy = (1 - v.y) * 0.5 * window.innerHeight;
-    c.setAttribute('cx', cx.toFixed(1));
-    c.setAttribute('cy', cy.toFixed(1));
+    const projected = projectToScreen(v, camera, window.innerWidth, window.innerHeight);
+    if (!projected) return false;
+    c.setAttribute('cx', projected[0].toFixed(1));
+    c.setAttribute('cy', projected[1].toFixed(1));
     c.setAttribute('r', (size * 0.5).toFixed(1));
     return true;
   };

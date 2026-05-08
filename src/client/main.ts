@@ -77,7 +77,12 @@ async function main() {
     // dust debugging and not worth gating behind an env check on a solo
     // project.
     window.stellata = stellata;
-    if (cloudCatalog) stellata.attachClouds(cloudCatalog);
+    // Cloud layer is shelved for v1.0 (CLAUDE.md). The fetch and parsing
+    // stay so the machinery is verified; the attach is suppressed so the
+    // layer doesn't enter the scene. Re-enable by uncommenting the line
+    // below.
+    // if (cloudCatalog) stellata.attachClouds(cloudCatalog);
+    void cloudCatalog;
 
     // HIP → row-index lookup, used by url-state to encode/decode shared
     // links with stable star IDs that survive a future catalog reorder.
@@ -129,7 +134,10 @@ async function main() {
     registerThemeStellata(stellata);
     bindChartMode(stellata, { bayerMap, starLabels });
     bindControls(stellata);
-    bindSearch(stellata, catalog, searchIndex, starLabels, cloudCatalog);
+    // null cloudCatalog: cloud layer is shelved for v1.0 (CLAUDE.md), so
+    // search shouldn't surface unreachable cloud entries. Pass
+    // `cloudCatalog` directly when re-enabling.
+    bindSearch(stellata, catalog, searchIndex, starLabels, null);
     createDiscMask(stellata);
     createConstellationOverlay(stellata);
     createDistanceVectorOverlay(stellata, starLabels);
@@ -165,7 +173,7 @@ async function main() {
       stellata,
     });
 
-    bindHoverTooltip(canvas, tooltip, stellata, describeStarDetailed, describeCloud);
+    bindHoverTooltip(canvas, tooltip, stellata, describeStarDetailed);
 
     await new Promise((r) => requestAnimationFrame(r));
     loading.style.transition = 'opacity 0.4s ease';
@@ -182,27 +190,10 @@ async function main() {
       maybeShowInfoModal(catalog.count);
     }, 400);
 
-    // Cloud hover description — shares the same {name, lines} shape as the
-    // star tooltip so bindHoverTooltip can render either through one path.
-    function describeCloud(idx: number): { name: string; lines: string[] } | null {
-      const cat = stellata.getCloudCatalog();
-      if (!cat) return null;
-      const c = cat.clouds[idx];
-      if (!c) return null;
-      const lines: string[] = ['Molecular cloud'];
-      lines.push(`Distance · ${fmtDist(c.distanceFromSol)}`);
-      // For Z2021 ellipsoid clouds the three axes carry useful shape info;
-      // for Z2020 spheres axes[0..2] are equal so we collapse to a single
-      // radius.
-      const [ax, ay, az] = c.axes;
-      const axEq = Math.abs(ax - ay) < 0.05 && Math.abs(ay - az) < 0.05;
-      lines.push(
-        axEq
-          ? `Radius · ${ax.toFixed(0)}pc`
-          : `Axes · ${ax.toFixed(0)} × ${ay.toFixed(0)} × ${az.toFixed(0)}pc`,
-      );
-      return { name: c.name, lines };
-    }
+    // (describeCloud removed alongside the cloud-shelving cleanup. When
+    // re-enabling the cloud layer, restore it from git history and pass it
+    // back into bindHoverTooltip so cloud hovers surface a name+axes
+    // tooltip the same way star hovers do.)
 
     // Detailed, multi-line form for the hover tooltip. Line 1 is the star
     // name; subsequent lines progressively disclose: constellation +
@@ -242,7 +233,6 @@ function bindHoverTooltip(
   tooltip: HTMLElement,
   stellata: Stellata,
   detailedStar: (i: number) => { name: string; lines: string[] },
-  detailedCloud: (i: number) => { name: string; lines: string[] } | null,
 ) {
   let timer: number | undefined;
   let dragging = false;
@@ -267,17 +257,11 @@ function bindHoverTooltip(
     lastY = e.clientY;
     hide();
     timer = window.setTimeout(() => {
-      // Stars take priority — they're the primary interaction target. If
-      // no star is under the cursor, fall back to a cloud hit so users
-      // can identify Taurus / Orion / etc. by hovering.
+      // Stars are the only hover-tooltip target while the molecular cloud
+      // layer is shelved (CLAUDE.md). When clouds re-enable, fall back to
+      // pickCloud here for the cloud-name tooltip.
       const starIdx = stellata.pickStar(lastX, lastY, 14);
-      let payload: { name: string; lines: string[] } | null = null;
-      if (starIdx >= 0) {
-        payload = detailedStar(starIdx);
-      } else {
-        const cloudIdx = stellata.pickCloud(lastX, lastY);
-        if (cloudIdx !== null) payload = detailedCloud(cloudIdx);
-      }
+      const payload = starIdx >= 0 ? detailedStar(starIdx) : null;
       if (!payload) return;
       const { name, lines } = payload;
       const subLines = lines

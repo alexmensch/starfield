@@ -9,7 +9,7 @@ import {
   normalizeGcvsName,
   parseGcvsNumber,
   inferBinaries,
-  markPrimaryIfUnflagged,
+  applyDoublesFlag as applyDoublesFlagPure,
   FLAG_HAS_NAME,
   FLAG_IS_SOL,
   FLAG_HAS_BAYER,
@@ -387,52 +387,20 @@ function parseHipCcdm(): Map<string, number[]> {
   return groups;
 }
 
-// For each CCDM system, mark its brightest in-catalog component as the
-// binary primary (FLAG_BINARY_PRIMARY) so the renderer's chart-mode wings
-// glyph appears exactly once per identified system.
-//
-// The geometric pass (inferBinaries) runs first and may already have flagged
-// a member of this CCDM group as the mutual-pair primary, possibly a
-// *different* star than this pass's brightest pick (e.g. a non-mutual triple
-// where the geometric pair is (B,C) but the CCDM group is {A,B,C} with A
-// brightest in catalog). Honouring the existing pick keeps the contract
-// "at most one primary per physical system" — re-flagging would produce two
-// wings glyphs for the same system.
-//
-// Stars without a matching companion in AT-HYG keep `companionIdx = -1`
-// (the renderer's zoom-fit guards on companion ≥ 0).
+// Build the union of CCDM groups (parsed from Hipparcos) and the curated
+// KNOWN_VISUAL_DOUBLES overrides, then delegate to the pure
+// `applyDoublesFlag` helper. The pure helper handles the per-group
+// "brightest in-catalog component, idempotent with existing flags" logic
+// — see catalog-pure.ts for the contract.
 function applyDoublesFlag(
   stars: Star[],
   ccdmGroups: Map<string, number[]>,
 ): { systems: number; flagged: number } {
-  const hipToIndex = new Map<number, number>();
-  for (let i = 0; i < stars.length; i++) {
-    const h = stars[i].hip;
-    if (h !== null && h > 0) hipToIndex.set(h, i);
-  }
-
-  // Two source streams: real CCDM systems from the file, plus curated
-  // overrides for canonical visual doubles Hipparcos modelled as single
-  // stars. Iterating them as one sequence keeps the per-group logic
-  // identical without conflating the type of identifier.
   const allGroups: Iterable<Iterable<number>> = (function* () {
     yield* ccdmGroups.values();
     for (const sys of KNOWN_VISUAL_DOUBLES) yield sys.components;
   })();
-
-  let systems = 0;
-  let flagged = 0;
-  for (const hips of allGroups) {
-    const indices: number[] = [];
-    for (const h of hips) {
-      const idx = hipToIndex.get(h);
-      if (idx !== undefined) indices.push(idx);
-    }
-    if (indices.length === 0) continue;
-    systems++;
-    if (markPrimaryIfUnflagged(stars, indices) >= 0) flagged++;
-  }
-  return { systems, flagged };
+  return applyDoublesFlagPure(stars, allGroups);
 }
 
 interface Star {

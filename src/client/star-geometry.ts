@@ -59,6 +59,17 @@ export function varEffectiveAmplitude(
   return Math.min(amp, Math.max(0, ampLimitMag));
 }
 
+// Per-star variability factor on physical radius. A non-variable returns
+// 1. A variable returns 10^(amp/10) — the peak-to-mean radius ratio under
+// the constant-temperature assumption (`R ∝ √L`, `L ∝ 10^(-Δm/2.5)`),
+// driving the orbit floor and parking-distance calibration so the pulse
+// peak hits the same screen-fill fraction every star does. Returns 1 for
+// rows the GCVS pass couldn't model (no period, irregular type) so the
+// renderer treats them as static.
+export function peakAmplitudeFactor(amplitudeMag: number, periodDays: number): number {
+  return periodDays > 0 && amplitudeMag > 0 ? Math.pow(10, amplitudeMag / 10) : 1;
+}
+
 // Solve for camera distance `d` such that a star of radius `R_pc`
 // (physical, in pc) fills `targetFrac` of `min(viewport.x, viewport.y)`
 // at the current FOV. Symbolically:

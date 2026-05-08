@@ -3,11 +3,12 @@ import type { Stellata } from './stellata';
 import { fmtDist } from './distance-util';
 import {
   buildArrowSvgPath,
-  viewSpaceScreenDir,
+  screenDirToTarget,
   ARROW_HEAD_DEPTH_PX,
   ARROW_LABEL_OFFSET_PX,
   ARROW_LABEL_PADDING_PX,
 } from './arrow-path';
+import { projectToScreen } from './overlay-project';
 import { ringRadiusPx } from './hud-overlay';
 
 // Point-of-interest overlay. Single-click on a star in OBSERVE pins it
@@ -66,7 +67,6 @@ export function createPoiOverlay(
 
   const tmpStarLocal = new THREE.Vector3();
   const tmpDir = new THREE.Vector3();
-  const tmpAux = new THREE.Vector3();
   const tmpAim = new THREE.Vector3();
 
   function createEntry(idx: number): Entry {
@@ -192,17 +192,7 @@ export function createPoiOverlay(
     const R = ringRadiusPx(camera.fov, filter.sizeMax);
     const shaftStartPx = R + RING_HALO_GAP_PX;
     const targetMarginPx = Math.max(filter.sizeMax, 0);
-
-    // Aux-step world-distance for screen-direction derivation. Mirrors
-    // the formula in hud-overlay.ts. In observe steady state the camera
-    // sits at the focal star so distToOrigin → 0; the aux-step
-    // collapses and the fallback path (direct POI projection) takes
-    // over, which is correct because camera == origin means projecting
-    // the POI directly already gives the right angular direction.
     const camPos = camera.position;
-    const focalPx = h / (2 * Math.tan((camera.fov * Math.PI) / 360));
-    const distToOrigin = camPos.length(); // origin in local frame is camera position relative to anchor; in observe steady state this is ~0
-    const auxStepW = (ARROW_PIXEL_LENGTH * Math.max(distToOrigin, 1e-3)) / Math.max(focalPx, 1);
 
     // Per-POI distance from observer is in absolute frame (the camera
     // is parked at the focal star).
@@ -273,9 +263,9 @@ export function createPoiOverlay(
         continue;
       }
 
-      // Off screen — draw arrow on the HUD ring rim. Same screen-direction
-      // derivation as hud-overlay.ts: try aux-step first, then fall back
-      // to direct target projection (reliable in observe steady state).
+      // Off screen — draw arrow on the HUD ring rim. Screen-direction
+      // derivation via the shared cascade (target's projection if
+      // available, view-space xy fallback otherwise).
       e.ring.style.display = 'none';
       e.onScreenLabel.style.display = 'none';
 
@@ -291,48 +281,13 @@ export function createPoiOverlay(
       }
       tmpDir.multiplyScalar(1 / Math.sqrt(dirLenSq));
 
-      let sux = 0;
-      let suy = 0;
-      let dirOk = false;
-
-      tmpAux.copy(camPos).addScaledVector(tmpDir, auxStepW);
-      const auxScreen = projectToScreen(tmpAux, camera, w, h);
-      if (auxScreen) {
-        const sdx = auxScreen[0] - cx;
-        const sdy = auxScreen[1] - cy;
-        const slen = Math.hypot(sdx, sdy);
-        if (slen >= 1) {
-          sux = sdx / slen;
-          suy = sdy / slen;
-          dirOk = true;
-        }
-      }
-      if (!dirOk && projected) {
-        const tdx = projected[0] - cx;
-        const tdy = projected[1] - cy;
-        const tlen = Math.hypot(tdx, tdy);
-        if (tlen >= 1) {
-          sux = tdx / tlen;
-          suy = tdy / tlen;
-          dirOk = true;
-        }
-      }
-      if (!dirOk) {
-        // Target behind camera kills both perspective-projection-based
-        // derivations. View-space (x, y) of the camera-to-target
-        // direction tells us which way to rotate even when the target
-        // is fully behind the user.
-        const vsDir = viewSpaceScreenDir(tmpDir, camera);
-        if (vsDir) {
-          sux = vsDir[0];
-          suy = vsDir[1];
-          dirOk = true;
-        }
-      }
-      if (!dirOk) {
+      const sdir = screenDirToTarget(cx, cy, projected, tmpDir, camera);
+      if (!sdir) {
         hideEntry(e);
         continue;
       }
+      const sux = sdir[0];
+      const suy = sdir[1];
 
       // Shaft length defaults to ARROW_PIXEL_LENGTH; shrunk so the tip
       // stops `targetMarginPx` short of the projected target when the
@@ -393,16 +348,4 @@ function labelFor(
 
 function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
-}
-
-function projectToScreen(
-  p: THREE.Vector3,
-  camera: THREE.PerspectiveCamera,
-  w: number,
-  h: number,
-): [number, number] | null {
-  const v = p.clone().applyMatrix4(camera.matrixWorldInverse);
-  if (v.z >= -camera.near) return null;
-  const ndc = v.applyMatrix4(camera.projectionMatrix);
-  return [(ndc.x + 1) * 0.5 * w, (1 - ndc.y) * 0.5 * h];
 }
