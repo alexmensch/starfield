@@ -133,7 +133,8 @@ export function parseBinary(ab: ArrayBuffer, constellations: Constellation[]): C
     constellation[i] = view.getUint8(off + 34);
     flags[i] = view.getUint8(off + 35);
     // Variability (v3): amplitude in 0.05 mag units, period in 0.1 days.
-    // Zero period = not a known variable.
+    // Zero period = not a known variable. (byte 37 is padding for 16-bit
+    // alignment of the period uint16 at byte 38.)
     amplitudeMag[i] = view.getUint8(off + 36) * 0.05;
     periodDays[i] = view.getUint16(off + 38, true) * 0.1;
     hip[i] = view.getUint32(off + 40, true);
@@ -147,7 +148,8 @@ export function parseBinary(ab: ArrayBuffer, constellations: Constellation[]): C
     const ntView = new DataView(ab, nameTableOffset, nameTableLength);
     const offsetToName = new Map<number, string>();
     // Offset 0 is reserved as the "no name" sentinel and contains two zero
-    // bytes of padding — skip past it.
+    // bytes of padding — skip past it. (Allows nameOffset=0 to mean "no
+    // name" without colliding with a real entry stored at byte 0.)
     let p = 2;
     while (p < nameTableLength) {
       const len = ntView.getUint16(p, true);
