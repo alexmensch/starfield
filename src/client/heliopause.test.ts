@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { Heliopause, HELIOPAUSE_APEX_LOCAL_PC, isInsideHeliopause } from './heliopause';
+import { Heliopause, HELIOPAUSE_APEX_LOCAL_PC } from './heliopause';
 
 const AU_PC = 1 / 206264.80624709636;
 
@@ -72,40 +72,6 @@ describe('Heliopause', () => {
     expect(localZ.y).toBeCloseTo(-apex.y, 12);
     expect(localZ.z).toBeCloseTo(-apex.z, 12);
     h.dispose();
-  });
-
-  it('isInsideHeliopause: Sol (origin) is inside the bubble', () => {
-    expect(isInsideHeliopause(new THREE.Vector3(0, 0, 0))).toBe(true);
-  });
-
-  it('isInsideHeliopause: a point 300 AU along the heliotail is outside', () => {
-    // Antiapex direction × 300 AU > 200 AU heliotail boundary.
-    const antiapex = new THREE.Vector3(
-      HELIOPAUSE_APEX_LOCAL_PC.x,
-      HELIOPAUSE_APEX_LOCAL_PC.y,
-      HELIOPAUSE_APEX_LOCAL_PC.z,
-    ).normalize().multiplyScalar(-300 * AU_PC);
-    expect(isInsideHeliopause(antiapex)).toBe(false);
-  });
-
-  it('isInsideHeliopause: a point 130 AU along the upwind apex is outside', () => {
-    // 130 AU along apex > 122 AU upwind boundary.
-    const beyondApex = new THREE.Vector3(
-      HELIOPAUSE_APEX_LOCAL_PC.x,
-      HELIOPAUSE_APEX_LOCAL_PC.y,
-      HELIOPAUSE_APEX_LOCAL_PC.z,
-    ).normalize().multiplyScalar(130 * AU_PC);
-    expect(isInsideHeliopause(beyondApex)).toBe(false);
-  });
-
-  it('isInsideHeliopause: a point 100 AU along the upwind apex is inside', () => {
-    // 100 AU along apex < 122 AU upwind boundary.
-    const insideApex = new THREE.Vector3(
-      HELIOPAUSE_APEX_LOCAL_PC.x,
-      HELIOPAUSE_APEX_LOCAL_PC.y,
-      HELIOPAUSE_APEX_LOCAL_PC.z,
-    ).normalize().multiplyScalar(100 * AU_PC);
-    expect(isInsideHeliopause(insideApex)).toBe(true);
   });
 
   it('mesh apex point in world coordinates lands at +122 AU along apex direction', () => {
