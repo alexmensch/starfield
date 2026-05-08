@@ -82,6 +82,14 @@ export class Typeahead<T> {
 
     if (clearBtn) {
       clearBtn.addEventListener('click', () => {
+        // Clear input.value before refocus. setName('') in the onClear
+        // chain leaves it alone while group.active === this (the X
+        // mousedown's 140 ms blur-hide defer is still pending), and the
+        // synthetic focus() below would then re-render the dropdown
+        // against the orphaned prior query. Reproduces inside the
+        // relocated Go modal: X-clear left the focus dropdown visible
+        // after the modal closed.
+        input.value = '';
         onClear?.();
         input.focus();
       });
