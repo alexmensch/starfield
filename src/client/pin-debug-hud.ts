@@ -1,8 +1,8 @@
 import type { Stellata } from './stellata';
 
-// Live diagnostic HUD for the focused-star pin (uPinFocusToCenter) and the
-// camera/target state that drives its engagement guard. Toggled via
-// `debug.pin()` in the dev console.
+// Live diagnostic readouts for the focused-star pin (uPinFocusToCenter)
+// and the camera/target state that drives its engagement guard. Mounted
+// as a section inside the unified debug panel (see debug.ts).
 //
 // What it shows:
 //   - Current focus / camera mode / warp+aim flags / pin engaged state.
@@ -21,7 +21,7 @@ import type { Stellata } from './stellata';
 // transient excursions; the latched extremes capture them.
 //
 // Click the [click to reset latches] label at the bottom to reset extremes
-// without dismissing the panel. The body of the panel is selectable text
+// without dismissing the panel. The body of the section is selectable text
 // (drag-select to copy).
 
 interface Latch {
@@ -48,25 +48,21 @@ function emptyLatch(): Latch {
   };
 }
 
-let panel: HTMLDivElement | null = null;
-let unsubscribe: (() => void) | null = null;
+export interface PinSection {
+  element: HTMLDivElement;
+  dispose: () => void;
+  setVisible: (v: boolean) => void;
+}
 
-export function togglePinHud(stellata: Stellata): void {
-  if (panel) {
-    panel.remove();
-    panel = null;
-    if (unsubscribe) { unsubscribe(); unsubscribe = null; }
-    return;
-  }
-
+export function buildPinSection(stellata: Stellata): PinSection {
   const latch = emptyLatch();
+  let visible = true;
 
   const root = document.createElement('div');
   root.style.cssText =
-    'position:fixed;top:8px;left:8px;z-index:9999;' +
     'font:11px/1.3 ui-monospace,monospace;background:rgba(0,0,0,.85);' +
     'color:#0f0;padding:6px 8px;border-radius:4px;' +
-    'white-space:pre;max-width:380px;user-select:text;';
+    'white-space:pre;overflow-x:auto;user-select:text;';
 
   // Body: live readouts. Selectable text so the user can drag-copy values.
   const body = document.createElement('div');
@@ -84,9 +80,6 @@ export function togglePinHud(stellata: Stellata): void {
   });
   root.appendChild(reset);
 
-  document.body.appendChild(root);
-  panel = root;
-
   const fmt = (n: number) => {
     if (n === 0) return '0';
     if (!Number.isFinite(n)) return String(n);
@@ -94,13 +87,15 @@ export function togglePinHud(stellata: Stellata): void {
   };
 
   const onFrame = () => {
-    if (!panel) return;
     const t = stellata.controls.target;
     const c = stellata.camera.position;
     const distCam = Math.hypot(c.x - t.x, c.y - t.y, c.z - t.z);
     const tLen = Math.hypot(t.x, t.y, t.z);
     const pinNow = stellata.isPinEngaged();
 
+    // Latches keep updating regardless of visibility — the user's
+    // interaction may have spanned a collapse and we still want the
+    // latched extremes to reflect the whole observation window.
     if (t.x > latch.tgtMaxX) latch.tgtMaxX = t.x;
     if (t.x < latch.tgtMinX) latch.tgtMinX = t.x;
     if (t.y > latch.tgtMaxY) latch.tgtMaxY = t.y;
@@ -121,6 +116,8 @@ export function togglePinHud(stellata: Stellata): void {
 
     if (pinNow !== latch.lastPinState) { latch.pinFlips++; latch.lastPinState = pinNow; }
     if (!pinNow) latch.pinOffFrames++;
+
+    if (!visible) return;
 
     body.textContent =
       `focus: ${stellata.getFocusedStar()}  mode: ${stellata.getCameraMode()}\n` +
@@ -144,5 +141,11 @@ export function togglePinHud(stellata: Stellata): void {
     root.style.color = pinNow ? '#0f0' : '#f33';
   };
 
-  unsubscribe = stellata.onFrame(onFrame);
+  const unsubscribe = stellata.onFrame(onFrame);
+
+  return {
+    element: root,
+    dispose: () => { unsubscribe(); },
+    setVisible: (v: boolean) => { visible = v; },
+  };
 }
