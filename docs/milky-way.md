@@ -142,7 +142,7 @@ as the camera flies past the GC is the realism payoff.
 panel checkbox or `mw=0` URL.
 
 **Dev tooling.** `debug.panel()` in the browser console attaches the
-shared dev panel, which today hosts two sections:
+unified dev panel, which hosts four collapsible sections:
 - **Star disc** (`star-tuning.ts`): seven sliders for the super-Gaussian
   profile knobs — visibleThreshold, coreThreshold, discardThreshold,
   distN min/max, lumBias dwarf/hypergiant. See `docs/rendering.md`
@@ -152,10 +152,13 @@ shared dev panel, which today hosts two sections:
   extinctionStrength + colour pickers for disc + bulge palette + three
   sliders for the reddening RGB multipliers (linear since CCM channels
   exceed 1.0).
+- **Perf** (`perf-hud.ts`): FPS / per-section frame timing readouts.
+- **Pin** (`pin-debug-hud.ts`): focused-star pin engagement diagnostics.
 
-Call again to detach. `debug.milkyway()` is a kept alias for muscle
-memory. The `DebugTools` interface in `debug.ts` is the registration
-point if you add more dev tools later.
+Call again to detach. `debug.milkyway()`, `debug.perf()`, and
+`debug.pin()` are kept aliases for muscle memory; all toggle the same
+unified panel. The `DebugTools` interface in `debug.ts` is the
+registration point if you add more dev tools later.
 
 The same setters are also available individually under
 `stellata.milkywayLayer.*`:

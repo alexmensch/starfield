@@ -7,19 +7,24 @@ look first when something feels slow.
 
 The HUD is an opt-in dev tool, not a user feature. Activation paths:
 
-- **`debug.perf()`** in the dev console — installs the instrumentation
-  (one-shot, swaps the module-level no-op `mark`/`measure`/`frame`
-  functions to real implementations) and toggles the panel on. Calling
-  it again toggles the panel off; the instrumentation stays installed.
+- **`debug.panel()`** (or the alias `debug.perf()`) in the dev console —
+  opens the unified debug panel; the Perf section is one of four
+  collapsible sections inside it. Opening the panel installs the
+  instrumentation (one-shot, swaps the module-level no-op
+  `mark`/`measure`/`frame` functions to real implementations).
+  Calling again toggles the panel off; instrumentation stays installed
+  so ring buffers keep filling and the histogram has data on re-open.
+  Collapsing the Perf section gates per-tick DOM writes but not the
+  ring-buffer fills.
 
 There is **no URL param and no keyboard shortcut.** Both paths existed
 during the original profiling work and were removed deliberately —
 end users could land on the HUD by accident, and the data is only
 useful to a developer who can read the section labels.
 
-The HUD lives top-right, fixed, semi-transparent. Three rolling-window
-stats up top (`FPS avg`, `low`, `gpu Xms`) over a sortable section
-table (top 8 by avg ms, descending) and a 60-frame `frame.total`
+The Perf section shows three rolling-window stats up top
+(`FPS avg`, `low`, `gpu Xms`) over a sortable section table
+(top 8 by avg ms, descending) and a 60-frame `frame.total`
 histogram. The DOM updates at ~5 Hz so the panel itself doesn't show
 up as a hot path in its own measurements.
 
@@ -48,12 +53,13 @@ after exiting chart mode (otherwise the average would lag forever).
 | `chart.glyphs.var`      | `chart-labels.ts` `tick()`       | Variable-ring `<circle>` projection + emission. |
 | `chart.glyphs.bin`      | `chart-labels.ts` `tick()`       | Binary-wing `<line>` projection + emission. |
 
-Adding a section: import `mark`/`measure` from `perf-hud.ts` and wrap
-the block. Both functions are unconditional — when the HUD is not
-installed they're a single indirect call to a no-op, V8 inlines them
-fine. Don't subscribe the HUD itself to `onFrame`; the `frame()`
-flush runs once per render after `onFrame.total` has finalised, so
-its DOM update doesn't leak into the measured numbers.
+Adding a measurement: import `mark`/`measure` from `perf-hud.ts` and
+wrap the block. Both functions are unconditional — when
+`buildPerfSection` has not yet been called they're a single indirect
+call to a no-op, V8 inlines them fine. Don't subscribe the HUD itself
+to `onFrame`; the `frame()` flush runs once per render after
+`onFrame.total` has finalised, so its DOM update doesn't leak into
+the measured numbers.
 
 ## What got optimised
 

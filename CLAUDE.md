@@ -78,12 +78,13 @@ src/
     warp-button.ts        warp trigger (on distance label) + skip pill
     mode-toggle.ts        navigate / observe pill in the top-right card
     observe-controls.ts   look-around controller (drag yaw+pitch, wheel FOV)
-    debug.ts              window.debug.* registration; hosts the tuning panel
-    debug-panel.ts        generic chrome (slider/colour/section helpers)
+    debug.ts              window.debug.* registration; hosts the unified panel
+    debug-panel.ts        chrome (drag-to-move, collapsible sections, slider/colour helpers)
     star-tuning.ts        debug section: star-disc profile knobs
     milkyway-tuning.ts    debug section: Milky Way layer tuning
-    pin-debug-hud.ts      debug.pin() — focused-star pin diagnostics
-    arrow-fade-debug-hud.ts  debug.arrows() — Sol/GC arrow draw state + fade
+    perf-hud.ts           debug section: FPS / per-section frame timing + always-callable mark/measure/frame
+    pin-debug-hud.ts      debug section: focused-star pin diagnostics
+    arrow-fade-debug-hud.ts  debug.arrows() — Sol/GC arrow draw state + fade (still its own floating panel)
     keyboard-shortcuts.ts global keydown dispatch (R/G/C/H/S/O/W/M/+/−/=/?/Esc)
     help-modal.ts         shortcut help overlay (the `?` target)
     chart-mode.ts         observe-only chart-mode orchestrator (theme + isobar + label engine)

@@ -242,14 +242,23 @@ button that snaps to `DEFAULT_FOV` = 50°. `setCameraFov` updates
 
 ## Debug panel
 
-`window.debug.panel()` toggles a free-floating tuning panel. As of the
-brand-rework it hosts a single section: Milky Way (brightness, density,
-palette, dust). The earlier Stellata section (FOV + exaggeration K)
-was retired once both controls became user-facing in the settings
-panel. Generic chrome lives in `debug-panel.ts`; section builders are
-in `*-tuning.ts` files. Add a new tool by writing a `build*Section`
-and appending it inside `togglePanel` in `debug.ts`.
-`window.debug.milkyway()` is kept as a legacy alias.
+`window.debug.panel()` toggles the unified debug panel — a draggable,
+collapsible host with four sections: Star disc (`star-tuning.ts`),
+Milky Way (`milkyway-tuning.ts`), Perf (`perf-hud.ts`), and Pin
+(`pin-debug-hud.ts`). Drag the title bar to move it, click any section
+header to fold/unfold; both the position and per-section collapse state
+persist in `sessionStorage` (resets on reload, since calibration state
+shouldn't survive between sessions). The chrome (drag handle,
+collapsible-section helper, slider/colour helpers) lives in
+`debug-panel.ts`. `window.debug.perf()` and `window.debug.pin()` are
+kept as console aliases for muscle memory; both toggle the same
+unified panel. `window.debug.milkyway()` is also kept as a legacy
+alias. The arrow-fade diagnostic HUD (`debug.arrows()`) is
+intentionally still its own floating panel — narrow-purpose enough
+that bundling it in adds clutter. Add a new tool by writing either a
+plain section element (collapsible-section + sliders) or a
+`{element, dispose, setVisible}` builder and wiring it inside
+`togglePanel` in `debug.ts`.
 
 ## Star size exaggeration
 

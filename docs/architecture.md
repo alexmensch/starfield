@@ -293,6 +293,7 @@ non-origin pin targets.
   unfocus branch), per-frame pin guard in the animate loop.
 - `src/client/url-state.ts` — `DecodedView.worldOffset`, encoder/loader.
 - `src/client/url-state.test.ts` — round-trip regression test.
-- `src/client/pin-debug-hud.ts` + `debug.pin()` in dev console — diagnostic
-  HUD with latched directional extremes. **Always use this when
+- `src/client/pin-debug-hud.ts` — Pin section in the unified debug
+  panel (`debug.panel()`, or the alias `debug.pin()`); live readouts
+  with latched directional extremes. **Always use this when
   investigating any "star drifts off-screen" report.**
