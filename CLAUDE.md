@@ -88,6 +88,13 @@ src/
     help-modal.ts         shortcut help overlay (the `?` target)
     chart-mode.ts         observe-only chart-mode orchestrator (theme + isobar + label engine)
     chart-labels.ts       per-frame chart label engine + SVG glyphs (variable rings, binary wings)
+    planet-system.ts      per-star PlanetSystem data model + Sol planet table (3re.6 groundwork)
+    star-system.ts        per-host orbit-rings + planet bodies layer (3re.7, 3re.4)
+    planet-labels.ts      per-planet body-anchored labels for the focused host (3re.4 / 3re.9 contract)
+    time.ts               wall-clock `t` helpers for the solar-system layer (3re.1: tToJDE, isLive)
+    ephemeris.ts          JPL Standish 1992 planet positions for Sol (3re.3: ±arcmin over ±3000 yr)
+    time-readout.ts       plain-English UTC `t` readout under the bottom-right star count (3re.11; planet-host + warp gated)
+    heliopause.ts         Sol's heliopause translucent shell + apex label (3re.5; ~122 AU upwind)
     shaders/
       star.vert.glsl, star.frag.glsl              GLSL3/WebGL2
       dust-particle.vert.glsl, dust-particle.frag.glsl   shelved dust splats

@@ -51,3 +51,12 @@ export const GAL_TO_ICRS: THREE.Matrix4 =
  */
 export const GALACTIC_CENTRE_PC: THREE.Vector3 =
   gcDir.clone().multiplyScalar(R0_PC);
+
+/**
+ * Unit vector toward the North Galactic Pole in ICRS coordinates — i.e. the
+ * normal to the galactic plane. Re-orthogonalised against the GC direction
+ * (= +X of the galactic basis), so it lies exactly perpendicular to the
+ * adopted galactic-frame x-axis. Consumed by stellata-3re.8's "all
+ * non-Sol hosts orbit in the galactic plane" rule.
+ */
+export const GALACTIC_NORTH_POLE_ICRS: THREE.Vector3 = galZ.clone();

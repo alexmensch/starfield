@@ -278,6 +278,14 @@ html, body {
 }
 .meta-count { color: var(--fg-dim); }
 
+/* Solar-system layer time readout (3re.11) — child of `.meta`, sits
+ * under the star count. Inherits `.meta`'s right-alignment and
+ * 11px/dim chrome; the only addition is tabular digits so the
+ * per-second tick doesn't jitter the layout. */
+.time-readout {
+  font-variant-numeric: tabular-nums;
+}
+
 .panel {
   overflow: hidden;
   background: rgba(7, 9, 18, 0.85);
@@ -806,6 +814,36 @@ body.monochrome .hud-ring {
      (in addition to clicking the star itself). */
   pointer-events: auto;
   cursor: pointer;
+}
+/* Per-planet body labels for the focused host's planet system. Cool
+   blue-white tone matches the orbit-ring family without competing with
+   the warm amber galactic-disc reference. Same halo treatment as the
+   POI label for legibility against bright stars and Milky Way regions.
+   No click target in v1 (per stellata-3re.9) so pointer-events stays
+   off — clicks pass through to the underlying canvas. */
+.planet-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  fill: rgba(190, 215, 240, 0.88);
+  paint-order: stroke;
+  stroke: rgba(7, 9, 18, 0.9);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+/* Heliopause apex label (3re.5). Dimmer than .planet-label since it
+   names a chrome boundary rather than an interactive object — same
+   font/halo treatment so it reads as part of the same family. */
+.heliopause-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  fill: rgba(200, 214, 255, 0.55);
+  paint-order: stroke;
+  stroke: rgba(7, 9, 18, 0.9);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  pointer-events: none;
 }
 /* Ring around each pinned POI star — same styling as the HUD ring so
    the POI assembly reads as a member of the same HUD widget family.

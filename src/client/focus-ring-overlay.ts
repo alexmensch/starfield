@@ -51,6 +51,17 @@ export function createFocusRingOverlay(stellata: Stellata) {
         hide();
         return;
       }
+      // Same redundancy logic for orbit rings: when the focused host has
+      // visible orbit rings centred on it (3re.7), the rings already
+      // identify the star and the focus ring just adds visual noise that
+      // can be confused for an inner orbital. When all rings are
+      // suppressed by the pixel-gap heuristic (camera far from host or
+      // the host has no planets at all), the focus ring stays as the
+      // primary "you are here" cue.
+      if (stellata.anyOrbitRingVisible()) {
+        hide();
+        return;
+      }
     }
 
     // Project the focal star to screen. During the enter transition the
