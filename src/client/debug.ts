@@ -70,7 +70,7 @@ export function setupDebug(stellata: Stellata, idMaps: IdMaps): DebugTools {
     },
     encodeView: () => encodeBlob(currentStateOf(stellata, idMaps)),
     perf: () => {
-      installPerfHud(stellata);
+      installPerfHud();
       togglePerfHud();
     },
     pin: () => togglePinHud(stellata),
