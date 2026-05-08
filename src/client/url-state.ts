@@ -1,4 +1,11 @@
-import { type FilterState, type Stellata, type MagPresetName, MAG_PRESETS, DEFAULT_FOV } from './stellata';
+import {
+  type FilterState,
+  type Stellata,
+  type MagPresetName,
+  MAG_PRESETS,
+  DEFAULT_FOV,
+  ALL_SPECT_MASK,
+} from './stellata';
 import { sliderToDist, distToSlider, SLIDER_STEPS } from './controls';
 import { setUnit, getUnit, onUnitChange } from './distance-util';
 import { isLive } from './time';
@@ -29,7 +36,6 @@ import { isLive } from './time';
 // at each apply step.
 
 const DEBOUNCE_MS = 300;
-const ALL_SPECT_MASK = 0b111111111;
 const SCHEMA_VERSION_V1 = 1;
 const SCHEMA_VERSION = 2;
 const PARAM_NAME = 'v';
@@ -39,6 +45,20 @@ const EPS = 1e-3;
 const DEFAULT_CAM: [number, number, number] = [0, 0, 30];
 const DEFAULT_TGT: [number, number, number] = [0, 0, 0];
 const DEFAULT_UP: [number, number, number] = [0, 1, 0];
+// In observe mode the camera is parked AT the focal star (origin in the
+// local frame), so the canonical default is [0,0,0] rather than DEFAULT_CAM.
+// Encoder elides cam against this; decoder snaps to it when restoring an
+// observe pose with cam absent. Single name shared by both halves so the
+// invariant is enforced in code, not just prose.
+const OBSERVE_CAM_LOCAL: [number, number, number] = [0, 0, 0];
+
+// Mode-aware default for cam, used by both encoder (omit-if-equal) and
+// decoder (snap-when-absent). The cam-omission invariant says: a default
+// observe pose has cam=[0,0,0], a default navigate pose has cam=DEFAULT_CAM.
+// Both sites must use the same predicate or round-trips diverge.
+function defaultCamForMode(mode: 'navigate' | 'observe' | undefined): [number, number, number] {
+  return mode === 'observe' ? OBSERVE_CAM_LOCAL : DEFAULT_CAM;
+}
 
 // Focus-tag-bit semantics: high bit set = HIP-resolved ID, clear = raw
 // row index. The 0xFFFFFFFF sentinel is reserved (won't naturally appear
@@ -679,7 +699,7 @@ export function currentStateOf(stellata: Stellata, idMaps: IdMaps): DecodedView 
   // assumes the local frame is Sol; in a non-Sol frame the implicit
   // default doesn't reconstruct the right pose because setWorldOffset
   // shifts camera/target alongside the origin.
-  const camDefault = mode === 'observe' ? [0, 0, 0] : DEFAULT_CAM;
+  const camDefault = defaultCamForMode(mode);
   if (woNonSol || !approx(c.x, camDefault[0]) || !approx(c.y, camDefault[1]) || !approx(c.z, camDefault[2])) {
     view.cam = [c.x, c.y, c.z];
   }
@@ -812,7 +832,7 @@ export function applyDecodedView(
   // junk position. view.cam / view.tgt below override when present.
   if (view.worldOffset) {
     stellata.setWorldOffset(view.worldOffset[0], view.worldOffset[1], view.worldOffset[2]);
-    const camDefault = view.mode === 'observe' ? [0, 0, 0] : DEFAULT_CAM;
+    const camDefault = defaultCamForMode(view.mode);
     stellata.camera.position.set(camDefault[0], camDefault[1], camDefault[2]);
     stellata.controls.target.set(DEFAULT_TGT[0], DEFAULT_TGT[1], DEFAULT_TGT[2]);
     controlsDirty = true;
@@ -830,10 +850,11 @@ export function applyDecodedView(
   // to the focal-star origin *before* controls.update so that lookAt
   // computes the right quaternion from (0,0,0)→tgt rather than from
   // focusStar's orbit position. setCameraMode('observe', animate:false)
-  // below preserves that quaternion when it pins position again.
+  // below preserves that quaternion when it pins position again. Same
+  // OBSERVE_CAM_LOCAL constant the encoder uses to elide cam.
   const willEnterObserve = view.mode === 'observe' && stellata.getFocusedStar() !== null;
   if (willEnterObserve && !hasCam) {
-    stellata.camera.position.set(0, 0, 0);
+    stellata.camera.position.set(...OBSERVE_CAM_LOCAL);
     controlsDirty = true;
   }
   if (controlsDirty) stellata.controls.update();
