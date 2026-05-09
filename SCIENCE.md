@@ -264,9 +264,17 @@ data from New Horizons 2015 reconnaissance (mean radius 1188 km,
 tan-pink colour from MVIC imagery). Representative single-colour RGB
 values per planet are observation-derived; pixel-accurate texturing,
 banding, and atmospheric haloes are deferred to the planet-zoom
-affordance epic (`stellata-2f6`) — at the camera-to-body distances
-the user can currently reach, every planet floors at ~2 px and per-
-texture detail would be invisible.
+affordance epic (`stellata-2f6`).
+
+**Planet geometric albedos** (V-band) from Mallama et al. 2018
+(https://doi.org/10.1016/j.icarus.2017.05.018) and the NASA fact
+sheets above: Mercury 0.142, Venus 0.689, Earth 0.434, Mars 0.170,
+Jupiter 0.538, Saturn 0.499, Uranus 0.488, Neptune 0.442, Pluto 0.49
+(HST + New Horizons reconnaissance). Drives the reflected-light
+apparent magnitude formula (3re.16); Lambertian phase function
+`φ(α) = (sin α + (π − α)·cos α)/π` from any standard radiometry
+text, with per-planet empirical phase curves left as a future
+refinement (`stellata-3re.18`).
 
 **Orbital plane orientation.** Sol's planet system is rendered in its
 native ecliptic plane (J2000 obliquity ε = 23.4392911°), so the ring
@@ -277,7 +285,9 @@ are generally unknown, and aligning to the galactic plane gives the
 user a consistent visual cue that a focused star has planets without
 implying a measured orientation we don't have. The per-host-plane →
 ICRS rotation is composed once at attach and reused by the orbit-ring
-and planet-body renderers (`src/client/star-system.ts`).
+and planet-body renderers (`src/client/orbit-rings-layer.ts` for the
+focus-only ring layer; `src/client/planet-body-field.ts` for the
+global, focus-independent body field).
 
 **Time `t`.** All planet positions are evaluated at a wall-clock `t`
 (Unix seconds, double). In v1 `t` is pinned to "now" with no scrubber
