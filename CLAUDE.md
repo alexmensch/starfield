@@ -193,7 +193,7 @@ Claude Code should read on demand when working on the relevant area.
   chevron density, focus-ring size, panel defaults, etc.) and where to
   find them. Read when the user asks for a tweak.
 - **`docs/performance.md`** — `perf-hud.ts` instrumentation, the
-  `debug.perf()` activation path, the per-frame sections measured in
+  `debug.panel()` activation path, the per-frame sections measured in
   `animate()` / `chart-labels.ts`, and the chart-mode optimisations
   (centroid cache, eligibility prefilter, dirty-tracked SVG writes,
   full-tick skip, sorted-distance core-mask window). Read when

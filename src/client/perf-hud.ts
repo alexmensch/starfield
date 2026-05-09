@@ -6,8 +6,8 @@
 // the ring buffers keep filling so reopening the panel resumes with
 // recent history rather than a cold start.
 //
-// The visible HUD is opt-in via `debug.panel()` / `debug.perf()` from the
-// dev console — deliberately not on a URL param or keyboard shortcut so
+// The visible HUD is opt-in via `debug.panel()` from the dev console —
+// deliberately not on a URL param or keyboard shortcut so
 // end users can't enable it by accident. Updates the DOM at ~5Hz so style
 // invalidation from the panel itself doesn't dominate measurements.
 //

@@ -155,9 +155,7 @@ unified dev panel, which hosts four collapsible sections:
 - **Perf** (`perf-hud.ts`): FPS / per-section frame timing readouts.
 - **Pin** (`pin-debug-hud.ts`): focused-star pin engagement diagnostics.
 
-Call again to detach. `debug.milkyway()`, `debug.perf()`, and
-`debug.pin()` are kept aliases for muscle memory; all toggle the same
-unified panel. The `DebugTools` interface in `debug.ts` is the
+Call again to detach. The `DebugTools` interface in `debug.ts` is the
 registration point if you add more dev tools later.
 
 The same setters are also available individually under

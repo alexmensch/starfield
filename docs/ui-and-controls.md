@@ -250,10 +250,7 @@ header to fold/unfold; both the position and per-section collapse state
 persist in `sessionStorage` (resets on reload, since calibration state
 shouldn't survive between sessions). The chrome (drag handle,
 collapsible-section helper, slider/colour helpers) lives in
-`debug-panel.ts`. `window.debug.perf()` and `window.debug.pin()` are
-kept as console aliases for muscle memory; both toggle the same
-unified panel. `window.debug.milkyway()` is also kept as a legacy
-alias. The arrow-fade diagnostic HUD (`debug.arrows()`) is
+`debug-panel.ts`. The arrow-fade diagnostic HUD (`debug.arrows()`) is
 intentionally still its own floating panel — narrow-purpose enough
 that bundling it in adds clutter. Add a new tool by writing either a
 plain section element (collapsible-section + sliders) or a

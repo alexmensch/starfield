@@ -294,6 +294,6 @@ non-origin pin targets.
 - `src/client/url-state.ts` — `DecodedView.worldOffset`, encoder/loader.
 - `src/client/url-state.test.ts` — round-trip regression test.
 - `src/client/pin-debug-hud.ts` — Pin section in the unified debug
-  panel (`debug.panel()`, or the alias `debug.pin()`); live readouts
-  with latched directional extremes. **Always use this when
-  investigating any "star drifts off-screen" report.**
+  panel (`debug.panel()`); live readouts with latched directional
+  extremes. **Always use this when investigating any "star drifts
+  off-screen" report.**

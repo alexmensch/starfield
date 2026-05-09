@@ -16,8 +16,7 @@ import {
 // Optional dev tooling exposed via `window.debug`. The unified panel
 // surfaces every collapsible-section side-by-side: star/milkyway tuning
 // sliders plus perf and pin diagnostic readouts. `debug.panel()` is the
-// canonical entry; `debug.perf()` and `debug.pin()` are kept as aliases
-// for muscle memory. State (drag position, per-section collapse) lives
+// sole entry point. State (drag position, per-section collapse) lives
 // in sessionStorage and resets on reload.
 //
 // Add a new section: build it in its own *-tuning.ts / *-hud.ts module
@@ -30,16 +29,10 @@ import {
 export interface DebugTools {
   /** Toggle the unified dev panel. */
   panel(): void;
-  /** Legacy alias for panel(). Kept so old console muscle memory still works. */
-  milkyway(): void;
   /** Decode a `?v=` blob (with or without the `v=` prefix) into a DecodedView. */
   decodeView(blob: string): DecodedView;
   /** Encode the current Stellata state into a `?v=` blob string. */
   encodeView(): string;
-  /** Alias for panel(): the perf readouts are now a section in the unified panel. */
-  perf(): void;
-  /** Alias for panel(): the pin readouts are now a section in the unified panel. */
-  pin(): void;
   /** Toggle the navigate-mode arrow-fade diagnostic HUD: live drawn shaft
    *  lengths for Sol/GC, behind-camera flag, direction-derivation path,
    *  disc radius, refLen, coverage, and the resulting alpha. */
@@ -102,9 +95,6 @@ export function setupDebug(stellata: Stellata, idMaps: IdMaps): DebugTools {
 
   const tools: DebugTools = {
     panel: togglePanel,
-    milkyway: togglePanel,
-    perf: togglePanel,
-    pin: togglePanel,
     decodeView: (blob) => {
       // Tolerate full URLs and `v=...` prefixes for paste-in convenience.
       const stripped = blob.includes('v=') ? blob.split('v=').pop()! : blob;
@@ -117,6 +107,6 @@ export function setupDebug(stellata: Stellata, idMaps: IdMaps): DebugTools {
   };
 
   (window as unknown as { debug: DebugTools }).debug = tools;
-  console.info('Debug tools: debug.panel(), debug.decodeView(blob), debug.encodeView(), debug.perf(), debug.pin(), debug.arrows()');
+  console.info('Debug tools: debug.panel(), debug.decodeView(blob), debug.encodeView(), debug.arrows()');
   return tools;
 }

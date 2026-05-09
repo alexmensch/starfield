@@ -7,8 +7,8 @@ look first when something feels slow.
 
 The HUD is an opt-in dev tool, not a user feature. Activation paths:
 
-- **`debug.panel()`** (or the alias `debug.perf()`) in the dev console —
-  opens the unified debug panel; the Perf section is one of four
+- **`debug.panel()`** in the dev console — opens the unified debug
+  panel; the Perf section is one of four
   collapsible sections inside it. Opening the panel installs the
   instrumentation (one-shot, swaps the module-level no-op
   `mark`/`measure`/`frame` functions to real implementations).
@@ -204,7 +204,8 @@ re-prosecuted.
 
 ## Where to look first when something is slow
 
-1. Open dev console, run `debug.perf()`. Sit in the suspect mode
+1. Open dev console, run `debug.panel()` and expand the Perf section.
+   Sit in the suspect mode
    for ~5 s with hands off; then again under typical interaction.
 2. Read the section table top-down. The histogram tells you whether
    it's a sustained cost or a periodic spike.
