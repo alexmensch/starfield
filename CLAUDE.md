@@ -79,18 +79,21 @@ src/
     warp-button.ts        warp trigger (on distance label) + skip pill
     mode-toggle.ts        navigate / observe pill in the top-right card
     observe-controls.ts   look-around controller (drag yaw+pitch, wheel FOV)
-    debug.ts              window.debug.* registration; hosts the tuning panel
-    debug-panel.ts        generic chrome (slider/colour/section helpers)
+    debug.ts              window.debug.* registration; hosts the unified panel
+    debug-panel.ts        chrome (drag-to-move, collapsible sections, slider/colour helpers)
     star-tuning.ts        debug section: star-disc profile knobs
     milkyway-tuning.ts    debug section: Milky Way layer tuning
-    pin-debug-hud.ts      debug.pin() — focused-star pin diagnostics
-    arrow-fade-debug-hud.ts  debug.arrows() — Sol/GC arrow draw state + fade
+    perf-hud.ts           debug section: FPS / per-section frame timing + always-callable mark/measure/frame
+    pin-debug-hud.ts      debug section: focused-star pin diagnostics
+    arrow-fade-debug-hud.ts  debug.arrows() — Sol/GC arrow draw state + fade (still its own floating panel)
     keyboard-shortcuts.ts global keydown dispatch (R/G/C/H/S/O/W/M/+/−/=/?/Esc)
     help-modal.ts         shortcut help overlay (the `?` target)
     chart-mode.ts         observe-only chart-mode orchestrator (theme + isobar + label engine)
     chart-labels.ts       per-frame chart label engine + SVG glyphs (variable rings, binary wings)
-    planet-system.ts      per-star PlanetSystem data model + Sol planet table (3re.6 groundwork)
-    star-system.ts        per-host orbit-rings + planet bodies layer (3re.7, 3re.4)
+    planet-system.ts      per-star PlanetSystem data model + Sol planet table (3re.6 + albedos for 3re.16)
+    orbit-rings-layer.ts  per-host orbit rings (focus-only, representational; 3re.7, 3re.13)
+    planet-body-field.ts  global instanced planet-body field (focus-independent physical bodies; 3re.15-17)
+    perceptual-magnitude.ts  TS mirror of the perceptual-disc shader chunk (vitest-covered)
     planet-labels.ts      per-planet body-anchored labels for the focused host (3re.4 / 3re.9 contract)
     time.ts               wall-clock `t` helpers for the solar-system layer (3re.1: tToJDE, isLive)
     ephemeris.ts          JPL Standish 1992 planet positions for Sol (3re.3: ±arcmin over ±3000 yr)
@@ -98,6 +101,8 @@ src/
     heliopause.ts         Sol's heliopause translucent shell + apex label (3re.5; ~122 AU upwind)
     shaders/
       star.vert.glsl, star.frag.glsl              GLSL3/WebGL2
+      planet.vert.glsl, planet.frag.glsl          three-pass instanced planet bodies (3re.16-17)
+      perceptual-disc.glsl                        shared point-of-light disc/glow chunk (stars + planets)
       dust-particle.vert.glsl, dust-particle.frag.glsl   shelved dust splats
       cloud.vert.glsl, cloud.frag.glsl                   molecular cloud ellipsoids
     index.html, styles.css
@@ -156,9 +161,10 @@ Claude Code should read on demand when working on the relevant area.
   and the UTC readout, Sol-focus minDistance relaxation, the canonical
   no-URL first-load view (5 AU Orion-framed park via `first-load.ts`).
   Read when touching `ephemeris.ts`,
-  `time.ts`, `planet-system.ts`, `star-system.ts`, `planet-labels.ts`,
-  `heliopause.ts`, `first-load.ts`, or any `planet.*.glsl` /
-  `heliopause.*.glsl`.
+  `time.ts`, `planet-system.ts`, `orbit-rings-layer.ts`,
+  `planet-body-field.ts`, `perceptual-magnitude.ts`,
+  `planet-labels.ts`, `heliopause.ts`, `first-load.ts`, or any
+  `planet.*.glsl` / `heliopause.*.glsl` / `perceptual-disc.glsl`.
 - **`docs/chart-mode.md`** — paper aesthetic: flat hard-edged discs,
   isobar contours for MW + clouds, the per-frame
   label / glyph engine, picking under chart mode. Read when touching
@@ -188,7 +194,7 @@ Claude Code should read on demand when working on the relevant area.
   chevron density, focus-ring size, panel defaults, etc.) and where to
   find them. Read when the user asks for a tweak.
 - **`docs/performance.md`** — `perf-hud.ts` instrumentation, the
-  `debug.perf()` activation path, the per-frame sections measured in
+  `debug.panel()` activation path, the per-frame sections measured in
   `animate()` / `chart-labels.ts`, and the chart-mode optimisations
   (centroid cache, eligibility prefilter, dirty-tracked SVG writes,
   full-tick skip, sorted-distance core-mask window). Read when

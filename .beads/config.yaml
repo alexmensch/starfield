@@ -54,3 +54,4 @@
 # - github.repo
 
 export.git-add: false
+no-git-ops: true

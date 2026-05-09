@@ -3,7 +3,7 @@ import { mark, measure, frame } from './perf-hud';
 
 describe('perf-hud / no-op API', () => {
   it('mark/measure/frame are safe to call without installing the HUD', () => {
-    // The API contract is "always callable, no-op until installPerfHud
+    // The API contract is "always callable, no-op until buildPerfSection
     // runs". Production code calls these unconditionally; if they ever
     // start throwing without the HUD installed, every animate() tick
     // would crash.

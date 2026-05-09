@@ -223,8 +223,10 @@ softness blending (below).
 ## Star intensity profile
 
 Both the disc and glow passes share a single **super-Gaussian** falloff
-shape, parameterised so the perceived bright disc fills the calibrated
-quad to its edge:
+shape (`perceptualDiscProfile` in `shaders/perceptual-disc.glsl`),
+parameterised so the perceived bright disc fills the calibrated quad
+to its edge. The shader chunk is shared with the planet pipeline —
+same brightness-PSF saturation physics for any point of light:
 
 ```
 raw  = exp(-K · (2r)^n)            with K = -ln(uVisibleThreshold)

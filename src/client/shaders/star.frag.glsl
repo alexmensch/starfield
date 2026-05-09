@@ -2,6 +2,10 @@ precision highp float;
 
 #include <common>
 #include <logdepthbuf_pars_fragment>
+// Shared radial intensity profile (perceptualDiscProfile). Same I(r)
+// for any point of light — see the chunk header for the super-Gaussian
+// formula and the brightness-PSF-saturation rationale.
+#include <stellata_perceptual_disc>
 
 uniform float uMonochrome; // 0 = colour, 1 = ink-on-paper (multiply)
 // Render mode:
@@ -59,18 +63,6 @@ out vec4 outColor;
 
 const float PHYS_RATIO_THRESHOLD = 0.5;
 
-// Super-Gaussian intensity profile, shared by both passes. Shape is
-// I(r) = exp(-K · (2r)^n), with K chosen so the unnormalised curve hits
-// uVisibleThreshold at r = 0.5; we then subtract that threshold and
-// renormalise so I(0.5) = 0 exactly.
-float starProfile(float r, float softness, float physRatio) {
-    float distN = mix(uDistNMin, uDistNMax, smoothstep(0.0, 0.5, physRatio));
-    float lumBias = mix(uLumBiasMin, uLumBiasMax, softness);
-    float n = distN * lumBias;
-    float raw = exp(-uVisibleK * pow(2.0 * r, n));
-    return max(0.0, (raw - uVisibleThreshold) / (1.0 - uVisibleThreshold));
-}
-
 void main() {
     float r = length(vUv);
     if (r > 0.5) discard;
@@ -115,7 +107,11 @@ void main() {
         return;
     }
 
-    float glow = starProfile(r, vSoftness, vPhysRatio);
+    float glow = perceptualDiscProfile(
+        r, vSoftness, vPhysRatio,
+        uVisibleThreshold, uVisibleK,
+        uDistNMin, uDistNMax,
+        uLumBiasMin, uLumBiasMax);
 
     if (uRenderMode == 2) {
         // Core depth-mask — write near depth only for disc-pass cores.
