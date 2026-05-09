@@ -78,12 +78,13 @@ src/
     warp-button.ts        warp trigger (on distance label) + skip pill
     mode-toggle.ts        navigate / observe pill in the top-right card
     observe-controls.ts   look-around controller (drag yaw+pitch, wheel FOV)
-    debug.ts              window.debug.* registration; hosts the tuning panel
-    debug-panel.ts        generic chrome (slider/colour/section helpers)
+    debug.ts              window.debug.* registration; hosts the unified panel
+    debug-panel.ts        chrome (drag-to-move, collapsible sections, slider/colour helpers)
     star-tuning.ts        debug section: star-disc profile knobs
     milkyway-tuning.ts    debug section: Milky Way layer tuning
-    pin-debug-hud.ts      debug.pin() — focused-star pin diagnostics
-    arrow-fade-debug-hud.ts  debug.arrows() — Sol/GC arrow draw state + fade
+    perf-hud.ts           debug section: FPS / per-section frame timing + always-callable mark/measure/frame
+    pin-debug-hud.ts      debug section: focused-star pin diagnostics
+    arrow-fade-debug-hud.ts  debug.arrows() — Sol/GC arrow draw state + fade (still its own floating panel)
     keyboard-shortcuts.ts global keydown dispatch (R/G/C/H/S/O/W/M/+/−/=/?/Esc)
     help-modal.ts         shortcut help overlay (the `?` target)
     chart-mode.ts         observe-only chart-mode orchestrator (theme + isobar + label engine)
@@ -192,7 +193,7 @@ Claude Code should read on demand when working on the relevant area.
   chevron density, focus-ring size, panel defaults, etc.) and where to
   find them. Read when the user asks for a tweak.
 - **`docs/performance.md`** — `perf-hud.ts` instrumentation, the
-  `debug.perf()` activation path, the per-frame sections measured in
+  `debug.panel()` activation path, the per-frame sections measured in
   `animate()` / `chart-labels.ts`, and the chart-mode optimisations
   (centroid cache, eligibility prefilter, dirty-tracked SVG writes,
   full-tick skip, sorted-distance core-mask window). Read when

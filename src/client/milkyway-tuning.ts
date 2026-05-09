@@ -1,5 +1,5 @@
 import type { MilkyWay } from './milkyway';
-import { makeColor, makeSection, makeSlider } from './debug-panel';
+import { makeCollapsibleSection, makeColor, makeSlider } from './debug-panel';
 
 // Dev-only tuning section for the volumetric Milky Way layer. Builds a
 // labelled section with sliders + colour pickers wired to the layer's
@@ -24,12 +24,15 @@ function sliderToBrightness(s: number): number {
 }
 
 export function buildMilkywaySection(layer: MilkyWay): HTMLDivElement {
-  const section = makeSection('Milky Way');
+  const { section, body } = makeCollapsibleSection({
+    title: 'Milky Way',
+    storageKey: 'milkyway',
+  });
 
   const v = layer.getValues();
 
   // Brightness — log-scale slider over [1e-7, 1e1]
-  section.appendChild(makeSlider({
+  body.appendChild(makeSlider({
     label: 'brightness',
     min: 0,
     max: 1,
@@ -39,7 +42,7 @@ export function buildMilkywaySection(layer: MilkyWay): HTMLDivElement {
     onChange: (s) => layer.setBrightness(sliderToBrightness(s)),
   }));
 
-  section.appendChild(makeSlider({
+  body.appendChild(makeSlider({
     label: 'glowMagOffset',
     min: 5,
     max: 25,
@@ -49,7 +52,7 @@ export function buildMilkywaySection(layer: MilkyWay): HTMLDivElement {
     onChange: (x) => layer.setGlowMagOffset(x),
   }));
 
-  section.appendChild(makeSlider({
+  body.appendChild(makeSlider({
     label: 'discDensity',
     min: 0,
     max: 10,
@@ -59,7 +62,7 @@ export function buildMilkywaySection(layer: MilkyWay): HTMLDivElement {
     onChange: (x) => layer.setDiscDensity(x),
   }));
 
-  section.appendChild(makeSlider({
+  body.appendChild(makeSlider({
     label: 'bulgeDensity',
     min: 0,
     max: 30,
@@ -69,7 +72,7 @@ export function buildMilkywaySection(layer: MilkyWay): HTMLDivElement {
     onChange: (x) => layer.setBulgeDensity(x),
   }));
 
-  section.appendChild(makeSlider({
+  body.appendChild(makeSlider({
     label: 'extinctionStrength',
     min: 0,
     max: 3,
@@ -79,13 +82,13 @@ export function buildMilkywaySection(layer: MilkyWay): HTMLDivElement {
     onChange: (x) => layer.setExtinctionStrength(x),
   }));
 
-  section.appendChild(makeColor({
+  body.appendChild(makeColor({
     label: 'discColor',
     initial: v.discColor,
     onChange: ({ r, g, b }) => layer.setDiscColor(r, g, b),
   }));
 
-  section.appendChild(makeColor({
+  body.appendChild(makeColor({
     label: 'bulgeColor',
     initial: v.bulgeColor,
     onChange: ({ r, g, b }) => layer.setBulgeColor(r, g, b),
@@ -97,7 +100,7 @@ export function buildMilkywaySection(layer: MilkyWay): HTMLDivElement {
   const reddening = { ...v.reddening };
   const updateReddening = () => layer.setReddeningRGB(reddening.r, reddening.g, reddening.b);
   for (const channel of ['r', 'g', 'b'] as const) {
-    section.appendChild(makeSlider({
+    body.appendChild(makeSlider({
       label: 'reddening.' + channel,
       min: 0,
       max: 2,

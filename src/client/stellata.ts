@@ -1169,7 +1169,8 @@ export class Stellata {
 
   /** Whether the focused-star pin (uPinFocusToCenter) would engage right
    *  now, mirroring the per-frame guard in animate(). Read by the pin
-   *  debug HUD (`debug.pin()`) to display live state. */
+   *  section of the unified debug panel (`debug.panel()`) to display
+   *  live state. */
   isPinEngaged(): boolean {
     return (
       this.focusedStar !== null &&

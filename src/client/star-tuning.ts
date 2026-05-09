@@ -1,5 +1,5 @@
 import type { Stellata } from './stellata';
-import { makeSection, makeSlider } from './debug-panel';
+import { makeCollapsibleSection, makeSlider } from './debug-panel';
 
 // Dev-only tuning section for star-disc rendering. Each slider drives one
 // uniform on the shared star material. Defaults match the production
@@ -11,10 +11,13 @@ import { makeSection, makeSlider } from './debug-panel';
 // extremes (e.g. lumBias < 0.3) start to look cartoony.
 
 export function buildStarSection(stellata: Stellata): HTMLDivElement {
-  const section = makeSection('Star disc');
+  const { section, body } = makeCollapsibleSection({
+    title: 'Star disc',
+    storageKey: 'star',
+  });
   const v = stellata.getStarRenderParams();
 
-  section.appendChild(makeSlider({
+  body.appendChild(makeSlider({
     label: 'visibleThreshold',
     min: 0.02,
     max: 0.40,
@@ -24,7 +27,7 @@ export function buildStarSection(stellata: Stellata): HTMLDivElement {
     onChange: (x) => stellata.setStarRenderParams({ visibleThreshold: x }),
   }));
 
-  section.appendChild(makeSlider({
+  body.appendChild(makeSlider({
     label: 'coreThreshold',
     min: 0.0,
     max: 1.0,
@@ -34,7 +37,7 @@ export function buildStarSection(stellata: Stellata): HTMLDivElement {
     onChange: (x) => stellata.setStarRenderParams({ coreThreshold: x }),
   }));
 
-  section.appendChild(makeSlider({
+  body.appendChild(makeSlider({
     label: 'discardThreshold',
     min: 0.0,
     max: 0.20,
@@ -44,7 +47,7 @@ export function buildStarSection(stellata: Stellata): HTMLDivElement {
     onChange: (x) => stellata.setStarRenderParams({ discardThreshold: x }),
   }));
 
-  section.appendChild(makeSlider({
+  body.appendChild(makeSlider({
     label: 'distN min (distant)',
     min: 1.0,
     max: 5.0,
@@ -54,7 +57,7 @@ export function buildStarSection(stellata: Stellata): HTMLDivElement {
     onChange: (x) => stellata.setStarRenderParams({ distNMin: x }),
   }));
 
-  section.appendChild(makeSlider({
+  body.appendChild(makeSlider({
     label: 'distN max (close)',
     min: 2.0,
     max: 10.0,
@@ -64,7 +67,7 @@ export function buildStarSection(stellata: Stellata): HTMLDivElement {
     onChange: (x) => stellata.setStarRenderParams({ distNMax: x }),
   }));
 
-  section.appendChild(makeSlider({
+  body.appendChild(makeSlider({
     label: 'lumBias dwarf',
     min: 0.5,
     max: 1.5,
@@ -74,7 +77,7 @@ export function buildStarSection(stellata: Stellata): HTMLDivElement {
     onChange: (x) => stellata.setStarRenderParams({ lumBiasMin: x }),
   }));
 
-  section.appendChild(makeSlider({
+  body.appendChild(makeSlider({
     label: 'lumBias hypergiant',
     min: 0.3,
     max: 1.0,
@@ -89,7 +92,7 @@ export function buildStarSection(stellata: Stellata): HTMLDivElement {
   // bright stars (Sol from inside its own neighborhood, focused-star
   // close approach) keep growing before saturating. See uSizeKnee in
   // star.vert.glsl for the exact formula.
-  section.appendChild(makeSlider({
+  body.appendChild(makeSlider({
     label: 'sizeKnee (sat. extent, mag)',
     min: 0,
     max: 48,
