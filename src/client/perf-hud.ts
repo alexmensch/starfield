@@ -1,15 +1,22 @@
-import type { Stellata } from './stellata';
-
 // Lightweight always-callable instrumentation API. `mark`/`measure`/`frame`
 // are no-ops until `installPerfHud()` runs, so call sites can stay
 // unconditional. The visible HUD is opt-in via `debug.perf()` from the
 // dev console — deliberately not on a URL param or keyboard shortcut so
 // end users can't enable it by accident. Updates the DOM at ~5Hz so
 // style invalidation from the panel itself doesn't dominate measurements.
+//
+// DOM strategy: build the panel chrome (headline, table-header, row pool,
+// histogram bars) once at install time, then per tick only mutate
+// textContent and style on the existing nodes. The earlier
+// `panelEl.innerHTML = ...` rebuild reparsed every span (60 histogram
+// bars + N rows) every 200 ms even when values were unchanged — the
+// instrumentation panel itself was sometimes the most expensive section
+// it was measuring.
 
 const RING_SIZE = 60;
 const DOM_UPDATE_MS = 200;
 const MS_PER_FRAME_60 = 1000 / 60;
+const MAX_TABLE_ROWS = 8;
 
 interface SectionStats {
   ring: Float32Array;
@@ -30,6 +37,23 @@ let installed = false;
 let visible = false;
 let panelEl: HTMLDivElement | null = null;
 let lastDomUpdateMs = 0;
+
+// Persistent DOM handles populated by ensurePanel() and mutated each tick.
+let headlineEl: HTMLDivElement | null = null;
+let rowsContainer: HTMLDivElement | null = null;
+const rowPool: { line: HTMLDivElement; label: HTMLSpanElement; values: HTMLSpanElement }[] = [];
+let histoBarsContainer: HTMLDivElement | null = null;
+const histoBars: HTMLSpanElement[] = [];
+// Per-bar last-written height/colour so per-tick writes skip identical
+// values — same dirty-tracking pattern chart-labels.ts uses for SVG.
+const histoLastHeight: number[] = [];
+const histoLastColour: string[] = [];
+
+// Scratch row data reused across ticks. Index 0..N-1 holds the current
+// frame's top sections in descending-avg order; only the first N rows
+// in rowPool are visible, the rest are display:none.
+interface RowDatum { label: string; avg: number; max: number; }
+const rowScratch: RowDatum[] = [];
 
 function ensureSection(label: string): SectionStats {
   let s = sections.get(label);
@@ -78,7 +102,7 @@ export function mark(label: string): void { _mark(label); }
 export function measure(label: string): void { _measure(label); }
 export function frame(): void { _frame(); }
 
-export function installPerfHud(_stellata: Stellata): void {
+export function installPerfHud(): void {
   if (installed) return;
   installed = true;
   _mark = realMark;
@@ -117,6 +141,93 @@ function ensurePanel(): void {
     minWidth: '240px',
     boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
   } as CSSStyleDeclaration);
+
+  // Headline: rebuilt each tick via textContent on three nested spans so
+  // we never reparse markup. Layout is "FPS NN low NN gpu N.NNms".
+  const headline = document.createElement('div');
+  headline.style.fontWeight = '600';
+  headline.style.color = '#fff';
+  headline.appendChild(document.createTextNode(''));            // "FPS NN "
+  const lowSpan = document.createElement('span');
+  lowSpan.style.color = '#fc8';
+  lowSpan.appendChild(document.createTextNode(''));
+  headline.appendChild(lowSpan);
+  headline.appendChild(document.createTextNode(' '));
+  const gpuSpan = document.createElement('span');
+  gpuSpan.style.color = '#8cf';
+  gpuSpan.appendChild(document.createTextNode(''));
+  headline.appendChild(gpuSpan);
+  div.appendChild(headline);
+  headlineEl = headline;
+
+  // Static table header row.
+  const header = document.createElement('div');
+  Object.assign(header.style, {
+    marginTop: '6px',
+    display: 'flex',
+    justifyContent: 'space-between',
+    color: '#888',
+    borderBottom: '1px solid #333',
+    paddingBottom: '2px',
+    marginBottom: '2px',
+  } as CSSStyleDeclaration);
+  const headerLeft = document.createElement('span');
+  headerLeft.textContent = 'section';
+  const headerRight = document.createElement('span');
+  headerRight.textContent = 'avg / max ms';
+  header.appendChild(headerLeft);
+  header.appendChild(headerRight);
+  div.appendChild(header);
+
+  // Row pool: MAX_TABLE_ROWS pre-allocated rows, hidden until populated.
+  const rowsParent = document.createElement('div');
+  for (let i = 0; i < MAX_TABLE_ROWS; i++) {
+    const line = document.createElement('div');
+    line.style.display = 'none';
+    line.style.justifyContent = 'space-between';
+    const label = document.createElement('span');
+    const values = document.createElement('span');
+    line.appendChild(label);
+    line.appendChild(values);
+    rowsParent.appendChild(line);
+    rowPool.push({ line, label, values });
+  }
+  div.appendChild(rowsParent);
+  rowsContainer = rowsParent;
+
+  // Histogram chrome + cached bars. Per-tick mutates only style.height /
+  // style.background on each existing span — no innerHTML, no createElement.
+  const histo = document.createElement('div');
+  Object.assign(histo.style, {
+    marginTop: '6px',
+    height: '24px',
+    lineHeight: '0',
+    borderBottom: '1px solid #444',
+  } as CSSStyleDeclaration);
+  for (let i = 0; i < RING_SIZE; i++) {
+    const bar = document.createElement('span');
+    Object.assign(bar.style, {
+      display: 'inline-block',
+      width: '3px',
+      height: '0px',
+      background: '#8df',
+      marginRight: '1px',
+      verticalAlign: 'bottom',
+    } as CSSStyleDeclaration);
+    histo.appendChild(bar);
+    histoBars.push(bar);
+    histoLastHeight.push(-1);
+    histoLastColour.push('');
+  }
+  div.appendChild(histo);
+  histoBarsContainer = histo;
+
+  const caption = document.createElement('div');
+  caption.style.color = '#888';
+  caption.style.fontSize = '10px';
+  caption.textContent = `frame.total · last ${RING_SIZE}f · 16.7ms ref`;
+  div.appendChild(caption);
+
   document.body.appendChild(div);
   panelEl = div;
 }
@@ -133,8 +244,14 @@ function summarize(s: SectionStats): { avg: number; max: number } {
   return { avg: sum / s.count, max };
 }
 
+function fmtMs(v: number): string { return v.toFixed(v >= 10 ? 1 : 2); }
+
+function colourForAvg(avg: number): string {
+  return avg > MS_PER_FRAME_60 ? '#f88' : avg > 4 ? '#fc8' : '#cfe';
+}
+
 function renderPanel(): void {
-  if (!panelEl) return;
+  if (!panelEl || !headlineEl || !rowsContainer || !histoBarsContainer) return;
 
   const total = sections.get('frame.total');
   const totalStats = total ? summarize(total) : { avg: 0, max: 0 };
@@ -144,63 +261,93 @@ function renderPanel(): void {
   const gpu = sections.get('gpu.render');
   const gpuAvg = gpu ? summarize(gpu).avg : 0;
 
-  const labels = Array.from(sections.keys()).filter((l) => l !== 'frame.total');
-  const rows = labels.map((l) => {
-    const stats = summarize(sections.get(l)!);
-    return { label: l, avg: stats.avg, max: stats.max };
-  });
-  rows.sort((a, b) => b.avg - a.avg);
-  const top = rows.slice(0, 8);
+  // Headline text nodes (3 children: textNode, lowSpan, textNode, gpuSpan).
+  const headlineNodes = headlineEl.childNodes;
+  headlineNodes[0].nodeValue = `FPS ${fpsAvg.toFixed(0)} `;
+  headlineEl.children[0].firstChild!.nodeValue = `low ${fpsLow.toFixed(0)}`;
+  headlineEl.children[1].firstChild!.nodeValue = `gpu ${fmtMs(gpuAvg)}ms`;
 
-  const fmt = (v: number): string => v.toFixed(v >= 10 ? 1 : 2);
-  const headline =
-    `<div style="font-weight:600;color:#fff">FPS ${fpsAvg.toFixed(0)} ` +
-    `<span style="color:#fc8">low ${fpsLow.toFixed(0)}</span> ` +
-    `<span style="color:#8cf">gpu ${fmt(gpuAvg)}ms</span></div>`;
+  // Single-pass row build: walk the sections map once, summarise, and
+  // insertion-sort into rowScratch (only need the top MAX_TABLE_ROWS so
+  // the partial sort is bounded by MAX_TABLE_ROWS × sections-count
+  // comparisons regardless of total section count).
+  rowScratch.length = 0;
+  for (const [label, s] of sections) {
+    if (label === 'frame.total') continue;
+    const stats = summarize(s);
+    insertSorted(rowScratch, { label, avg: stats.avg, max: stats.max });
+  }
 
-  const tableRows = top
-    .map((r) => {
-      const colour = r.avg > MS_PER_FRAME_60 ? '#f88' : r.avg > 4 ? '#fc8' : '#cfe';
-      return (
-        `<div style="display:flex;justify-content:space-between;color:${colour}">` +
-        `<span>${r.label}</span>` +
-        `<span>${fmt(r.avg)} / ${fmt(r.max)}</span>` +
-        `</div>`
-      );
-    })
-    .join('');
-  const table =
-    `<div style="margin-top:6px;display:flex;justify-content:space-between;` +
-    `color:#888;border-bottom:1px solid #333;padding-bottom:2px;margin-bottom:2px">` +
-    `<span>section</span><span>avg / max ms</span></div>` +
-    tableRows;
+  // Project rowScratch into the row pool: visible rows update, the rest
+  // hide. textContent/colour writes are still cheap, but skip identical
+  // text to spare DOM mutations on stable workloads.
+  for (let i = 0; i < MAX_TABLE_ROWS; i++) {
+    const slot = rowPool[i];
+    if (i >= rowScratch.length) {
+      if (slot.line.style.display !== 'none') slot.line.style.display = 'none';
+      continue;
+    }
+    const r = rowScratch[i];
+    if (slot.line.style.display !== 'flex') slot.line.style.display = 'flex';
+    if (slot.label.textContent !== r.label) slot.label.textContent = r.label;
+    const valStr = `${fmtMs(r.avg)} / ${fmtMs(r.max)}`;
+    if (slot.values.textContent !== valStr) slot.values.textContent = valStr;
+    const colour = colourForAvg(r.avg);
+    if (slot.line.style.color !== colour) slot.line.style.color = colour;
+  }
 
-  const histo = total ? renderHistogram(total) : '';
-
-  panelEl.innerHTML = headline + table + histo;
+  // Histogram: write only the bars that changed. Cap at 2× the 60Hz frame
+  // budget so spikes don't squash the rest of the trace beyond legibility.
+  if (total && total.count > 0) {
+    const N = total.count;
+    const start = (total.idx - N + RING_SIZE) % RING_SIZE;
+    const cap = MS_PER_FRAME_60 * 2;
+    for (let i = 0; i < RING_SIZE; i++) {
+      const bar = histoBars[i];
+      if (i >= N) {
+        if (histoLastHeight[i] !== 0) {
+          bar.style.height = '0px';
+          histoLastHeight[i] = 0;
+        }
+        continue;
+      }
+      const v = total.ring[(start + i) % RING_SIZE];
+      const h = Math.min(1, v / cap);
+      // 0.1 px quantisation to skip writes that wouldn't visually differ
+      // — toFixed(1) below truncates the same way.
+      const heightPx = Math.round(h * 240) / 10;
+      const colour =
+        v > MS_PER_FRAME_60 ? '#f88' :
+        v > MS_PER_FRAME_60 * 0.7 ? '#fc8' :
+        '#8df';
+      if (histoLastHeight[i] !== heightPx) {
+        bar.style.height = `${heightPx}px`;
+        histoLastHeight[i] = heightPx;
+      }
+      if (histoLastColour[i] !== colour) {
+        bar.style.background = colour;
+        histoLastColour[i] = colour;
+      }
+    }
+  } else {
+    for (let i = 0; i < RING_SIZE; i++) {
+      if (histoLastHeight[i] !== 0) {
+        histoBars[i].style.height = '0px';
+        histoLastHeight[i] = 0;
+      }
+    }
+  }
 }
 
-function renderHistogram(s: SectionStats): string {
-  // Walk the ring in chronological order so the latest frame is rightmost.
-  const N = s.count;
-  if (N === 0) return '';
-  const start = (s.idx - N + RING_SIZE) % RING_SIZE;
-  const bars: string[] = [];
-  // Cap visible bar height at 2× target frame budget so spikes don't
-  // squash the rest of the trace beyond legibility.
-  const cap = MS_PER_FRAME_60 * 2;
-  for (let i = 0; i < N; i++) {
-    const v = s.ring[(start + i) % RING_SIZE];
-    const h = Math.min(1, v / cap);
-    const colour = v > MS_PER_FRAME_60 ? '#f88' : v > MS_PER_FRAME_60 * 0.7 ? '#fc8' : '#8df';
-    bars.push(
-      `<span style="display:inline-block;width:3px;height:${(h * 24).toFixed(1)}px;` +
-      `background:${colour};margin-right:1px;vertical-align:bottom"></span>`,
-    );
+// Insertion into a fixed-cap descending-by-avg array. Walk the existing
+// rows once, find insert position, splice (drops the last one if at cap).
+// For ≤8 visible rows this is cheaper than a full sort over N sections.
+function insertSorted(arr: RowDatum[], r: RowDatum): void {
+  let pos = arr.length;
+  for (let i = 0; i < arr.length; i++) {
+    if (r.avg > arr[i].avg) { pos = i; break; }
   }
-  return (
-    `<div style="margin-top:6px;height:24px;line-height:0;` +
-    `border-bottom:1px solid #444">${bars.join('')}</div>` +
-    `<div style="color:#888;font-size:10px">frame.total · last ${N}f · 16.7ms ref</div>`
-  );
+  if (pos === MAX_TABLE_ROWS) return;
+  arr.splice(pos, 0, r);
+  if (arr.length > MAX_TABLE_ROWS) arr.length = MAX_TABLE_ROWS;
 }

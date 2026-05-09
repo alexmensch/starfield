@@ -13,6 +13,13 @@ import {
   FLAG_HAS_NAME,
   FLAG_IS_SOL,
   FLAG_HAS_BAYER,
+  HEADER_LAYOUT,
+  RECORD_LAYOUT,
+  HEADER_SIZE,
+  RECORD_SIZE,
+  BINARY_VERSION,
+  MAGIC,
+  NO_COMPANION,
 } from './catalog-pure';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -30,10 +37,6 @@ const OUT_SEARCH = resolve(ROOT, 'public/search-index.json');
 
 const MAX_DIST_PC = 50_000;
 const DEFAULT_CI = 0.65;
-const HEADER_SIZE = 32;
-const RECORD_SIZE = 44;
-const BINARY_VERSION = 4;
-const MAGIC = 'HYG4';
 
 const CONSTELLATIONS: { code: string; name: string }[] = [
   { code: 'And', name: 'Andromeda' },
@@ -715,54 +718,44 @@ async function main() {
 
   // Header.
   const magicBytes = encoder.encode(MAGIC);
-  bytes.set(magicBytes, 0);
-  view.setUint32(4, BINARY_VERSION, true);
-  view.setUint32(8, stars.length, true);
-  view.setUint32(12, HEADER_SIZE + recordsLength, true); // nameTableOffset
-  view.setUint32(16, nameTableLength, true);
-  // bytes 20-31: reserved.
+  bytes.set(magicBytes, HEADER_LAYOUT.magic);
+  view.setUint32(HEADER_LAYOUT.version, BINARY_VERSION, true);
+  view.setUint32(HEADER_LAYOUT.count, stars.length, true);
+  view.setUint32(HEADER_LAYOUT.nameTableOffset, HEADER_SIZE + recordsLength, true);
+  view.setUint32(HEADER_LAYOUT.nameTableLength, nameTableLength, true);
 
   // Records.
   let off = HEADER_SIZE;
   let solIndex = -1;
   let variableCount = 0;
-  const NO_COMPANION = 0xffffffff;
   for (let i = 0; i < stars.length; i++) {
     const s = stars[i];
-    view.setFloat32(off + 0, s.x, true);
-    view.setFloat32(off + 4, s.y, true);
-    view.setFloat32(off + 8, s.z, true);
-    view.setFloat32(off + 12, s.absmag, true);
-    view.setFloat32(off + 16, s.ci, true);
-    view.setFloat32(off + 20, s.physicalRadius, true);
-    view.setUint32(off + 24, s.companionIdx >= 0 ? s.companionIdx : NO_COMPANION, true);
-    view.setUint32(off + 28, s.proper ? nameOffsets[i] : 0, true);
-    view.setUint8(off + 32, s.spectClass);
-    view.setUint8(off + 33, s.lumClass);
-    view.setUint8(off + 34, s.conIndex);
-    view.setUint8(off + 35, s.flags);
-    // Variability fields (v3). Packed into bytes 36..39:
-    //   36:    amplitude in 0.05 mag units (uint8, 0 = not variable or <0.05 mag)
-    //   37:    reserved (future: variability type)
-    //   38-39: period in 0.1 days (uint16, 0 = not variable, max 6553.5 days)
-    // Amplitudes > 12.75 mag (extreme Miras) clamp to the uint8 max; periods
-    // > 6553 days (rare long-period symbiotics) clamp to the uint16 max.
-    // Period = 0 is the "not variable" sentinel the shader checks.
+    view.setFloat32(off + RECORD_LAYOUT.x, s.x, true);
+    view.setFloat32(off + RECORD_LAYOUT.y, s.y, true);
+    view.setFloat32(off + RECORD_LAYOUT.z, s.z, true);
+    view.setFloat32(off + RECORD_LAYOUT.absmag, s.absmag, true);
+    view.setFloat32(off + RECORD_LAYOUT.ci, s.ci, true);
+    view.setFloat32(off + RECORD_LAYOUT.physRadius, s.physicalRadius, true);
+    view.setUint32(off + RECORD_LAYOUT.companion, s.companionIdx >= 0 ? s.companionIdx : NO_COMPANION, true);
+    view.setUint32(off + RECORD_LAYOUT.nameOffset, s.proper ? nameOffsets[i] : 0, true);
+    view.setUint8(off + RECORD_LAYOUT.spectClass, s.spectClass);
+    view.setUint8(off + RECORD_LAYOUT.lumClass, s.lumClass);
+    view.setUint8(off + RECORD_LAYOUT.conIndex, s.conIndex);
+    view.setUint8(off + RECORD_LAYOUT.flags, s.flags);
+    // Variability: amplitude clamps at 12.75 mag (extreme Miras), period at
+    // 6553 days (rare long-period symbiotics). Period = 0 is the shader's
+    // "not variable" sentinel.
     if (s.periodDays > 0 && s.amplitudeMag > 0) {
       const ampUnits = Math.min(255, Math.max(0, Math.round(s.amplitudeMag * 20)));
       const periodUnits = Math.min(65535, Math.max(0, Math.round(s.periodDays * 10)));
-      view.setUint8(off + 36, ampUnits);
-      view.setUint8(off + 37, 0);
-      view.setUint16(off + 38, periodUnits, true);
+      view.setUint8(off + RECORD_LAYOUT.ampUnits, ampUnits);
+      view.setUint16(off + RECORD_LAYOUT.period, periodUnits, true);
       if (ampUnits > 0 && periodUnits > 0) variableCount++;
     } else {
-      view.setUint8(off + 36, 0);
-      view.setUint8(off + 37, 0);
-      view.setUint16(off + 38, 0, true);
+      view.setUint8(off + RECORD_LAYOUT.ampUnits, 0);
+      view.setUint16(off + RECORD_LAYOUT.period, 0, true);
     }
-    // HIP (v4): Hipparcos number, 0 = no HIP. Used for stable star IDs in
-    // shared URL state — see docs/build-and-data.md and url-state.ts.
-    view.setUint32(off + 40, s.hip ?? 0, true);
+    view.setUint32(off + RECORD_LAYOUT.hip, s.hip ?? 0, true);
     if (s.flags & FLAG_IS_SOL) solIndex = i;
     off += RECORD_SIZE;
   }
