@@ -274,7 +274,10 @@ Jupiter 0.538, Saturn 0.499, Uranus 0.488, Neptune 0.442, Pluto 0.49
 apparent magnitude formula (3re.16).
 
 **Planet phase functions.** Per-planet empirical V-band phase curves
-from Mallama, Krobusek, Pavlov 2018 (Icarus 282; same DOI). Mercury,
+from Mallama, Krobusek, Pavlov 2018, "Comprehensive wide-band
+magnitudes and albedos for the planets, with applications to
+exo-planets and Planet Nine" (Icarus 282, 2017, 19–33,
+https://doi.org/10.1016/j.icarus.2016.09.023). Mercury,
 Venus, Mars and Jupiter each carry a polynomial
 `ΔV(α°) = c1·α + c2·α² + …` from the paper's Tables A-1.2, A-2.2,
 A-4.2, A-5.2; Earth uses a cubic fit through the four discrete
