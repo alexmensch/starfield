@@ -34,6 +34,7 @@ import { getPlanetSystem, hasPlanets, type PlanetSystem } from './planet-system'
 import { OrbitRingsLayer } from './orbit-rings-layer';
 import { PlanetBodyField } from './planet-body-field';
 import { Heliopause } from './heliopause';
+import { shiftWarpWaypoints } from './warp-pure';
 
 export type MagPresetName = 'naked-eye' | 'binoculars' | 'all';
 
@@ -1407,7 +1408,6 @@ export class Stellata {
       this.controls.enabled = true;
       for (const h of this.onCameraModeHandlers) h(this.cameraMode);
     }
-    this.focusedStar = idx;
     // Recenter the floating origin only when *focusing* a star. The new
     // origin snaps to the focal star's absolute position, so close-range
     // rendering happens with tiny coordinate values and the projection
@@ -1424,10 +1424,7 @@ export class Stellata {
     // in the projection chain and visibly bumped the focal star on
     // screen at the moment of unfocus.
     if (idx !== null) {
-      const p = this.catalog.positions;
-      this.recenterOrigin(this.tmpRecenter.set(
-        p[idx * 3], p[idx * 3 + 1], p[idx * 3 + 2],
-      ));
+      this.recenterFocusToStar(idx);
       // After recenterOrigin, the focused star is at local (0,0,0). Snap
       // controls.target to (0,0,0) and shift camera by the same delta so
       // the camera-to-target relationship is preserved — the user-visible
@@ -1437,16 +1434,17 @@ export class Stellata {
       // catalog offset (5e-6 pc) or a long warp's |AB|·1e-7 Float32
       // residual leaks through. Every call site that sets target+camera
       // before setFocus relies on this snap to land cleanly.
+      //
+      // This target/camera snap is unique to setFocus — observe-warp
+      // arrivals route through swapObserveAnchor, which parks the camera
+      // at (0,0,0) explicitly and doesn't touch controls.target.
       const t = this.controls.target;
       this.camera.position.x -= t.x;
       this.camera.position.y -= t.y;
       this.camera.position.z -= t.z;
       t.set(0, 0, 0);
-    }
-    // else: no recentre — see comment above.
-    if (idx !== null) {
-      this.controls.minDistance = this.minOrbitDistForStar(idx);
     } else {
+      this.focusedStar = null;
       // Unfocus: clamp the new minDistance to ≤ current eye distance so
       // TrackballControls doesn't push the camera outward when the user was
       // sitting closer than GLOBAL_MIN_DIST_PC to the (former) focal star.
@@ -1454,9 +1452,9 @@ export class Stellata {
       // 5e-3 pc unfocused floor latches once the user has zoomed out past it.
       const eye = this.camera.position.distanceTo(this.controls.target);
       this.controls.minDistance = Math.min(GLOBAL_MIN_DIST_PC, eye);
+      this.refreshPlanetSystem(null);
     }
     for (const h of this.onFocusHandlers) h(idx);
-    this.refreshPlanetSystem(idx);
     this.fireStateChange();
   }
 
@@ -1503,6 +1501,12 @@ export class Stellata {
   }
 
   private tmpRecenter = new THREE.Vector3();
+  // Scratch Vector3 reused for `recenterOrigin`'s return value (the
+  // applied delta). Caller-visible only between successive
+  // `recenterOrigin` calls; never read outside the synchronous
+  // callsite. Avoids a per-recentre allocation on the warp arrival
+  // path.
+  private _recenterDelta = new THREE.Vector3();
 
   // Shift the renderer's local origin to `newOrigin` (an absolute-space
   // coordinate). The instance-position buffer is rewritten as `absolute −
@@ -1515,11 +1519,19 @@ export class Stellata {
   //
   // Triggered automatically from setFocus(). Don't call externally — it
   // bypasses the state-change bookkeeping that setFocus threads through.
-  private recenterOrigin(newOrigin: THREE.Vector3) {
+  //
+  // Returns the (dx, dy, dz) world-offset delta applied (newOrigin −
+  // previous worldOffset) so callers can migrate auxiliary state
+  // captured in the old frame (e.g. updateWarp's pEnd / pStart / A)
+  // into the new frame without re-deriving the delta themselves.
+  // Returns null on the no-op path (newOrigin equals worldOffset).
+  // The returned Vector3 is shared scratch — copy if you need to
+  // outlive the next recenterOrigin call.
+  private recenterOrigin(newOrigin: THREE.Vector3): THREE.Vector3 | null {
     const dx = newOrigin.x - this.worldOffset.x;
     const dy = newOrigin.y - this.worldOffset.y;
     const dz = newOrigin.z - this.worldOffset.z;
-    if (dx === 0 && dy === 0 && dz === 0) return;
+    if (dx === 0 && dy === 0 && dz === 0) return null;
 
     const abs = this.catalog.positions;
     const loc = this._localPositions;
@@ -1547,6 +1559,7 @@ export class Stellata {
     // Each attached host's iHostLocalPos = hostAbs - worldOffset; refresh
     // them so the planet shader sees correct local-frame host positions.
     this.planetBodyField.recenter(newOrigin);
+    return this._recenterDelta.set(dx, dy, dz);
   }
 
   // Wire a loaded DustField into the star shader. Safe to call after the
@@ -2452,26 +2465,36 @@ export class Stellata {
   }
 
   // Recentre the floating origin onto a star and update focus state.
-  // Pure geometric recenter — no observe-specific side effects, no
-  // uHideFocusIdx / camera-position snaps, no fireStateChange (caller
-  // decides when to schedule the URL write so a single arrival doesn't
-  // serialise an intermediate pose). Shared between warp arrivals:
-  //   - navigate: setFocus(destIdx) at finishWarp does the equivalent.
+  // Pure geometric + planet-system half — no observe-specific side
+  // effects, no uHideFocusIdx / camera-position snaps, no
+  // onFocusHandlers fan-out (caller fires that when appropriate; on
+  // observe→observe arrivals it's deferred to finishWarp so the
+  // search-row label doesn't switch to the destination 1.2 s before
+  // the camera lands — see stellata-9mm.153), no fireStateChange
+  // (caller decides when to schedule the URL write so a single
+  // arrival doesn't serialise an intermediate pose). Shared between
+  // warp arrivals:
+  //   - navigate: setFocus(destIdx) at finishWarp goes through this.
   //   - observe:  called at phase-3 start so the parallax slerp runs
   //               in the destination's local frame; without this, both
   //               camera position and B sit at the same kpc-scale
   //               magnitudes during phase 3 and matrixWorldInverse * B
   //               loses float32 precision — visible as destination-star
   //               jitter as the camera slerps (stellata-fqw).
-  private recenterFocusToStar(newIdx: number) {
+  //
+  // Returns the recentre delta (newOrigin − previous worldOffset) so
+  // the caller can shift auxiliary state captured in the old frame
+  // (updateWarp uses this for the WarpState waypoints). Returns null
+  // when the new origin equals the current origin (no-op recentre).
+  private recenterFocusToStar(newIdx: number): THREE.Vector3 | null {
     const p = this.catalog.positions;
-    this.recenterOrigin(this.tmpRecenter.set(
+    const delta = this.recenterOrigin(this.tmpRecenter.set(
       p[newIdx * 3], p[newIdx * 3 + 1], p[newIdx * 3 + 2],
     ));
     this.focusedStar = newIdx;
     this.controls.minDistance = this.minOrbitDistForStar(newIdx);
-    for (const h of this.onFocusHandlers) h(newIdx);
     this.refreshPlanetSystem(newIdx);
+    return delta;
   }
 
   // Swap the OBSERVE anchor to a new star without going through setFocus's
@@ -2480,7 +2503,9 @@ export class Stellata {
   // mode value). Used by finishWarp on observe→observe arrival.
   // Idempotent on the geometric half: if the phase-3 recentre already
   // landed focusedStar on newIdx, only the observe-specific tail runs
-  // (anchor hide + camera snap to local origin).
+  // (anchor hide + camera snap to local origin). onFocusHandlers fire
+  // unconditionally here so the deferred-from-phase-3 case still emits
+  // the focus event in lockstep with the camera arrival.
   private swapObserveAnchor(newIdx: number) {
     if (this.focusedStar !== newIdx) {
       this.recenterFocusToStar(newIdx);
@@ -2490,6 +2515,7 @@ export class Stellata {
     // camera at (0,0,0) under the floating origin. Quaternion preserved
     // from the post-arrival slerp end state.
     this.camera.position.set(0, 0, 0);
+    for (const h of this.onFocusHandlers) h(newIdx);
     this.fireStateChange();
   }
 
@@ -3664,21 +3690,18 @@ export class Stellata {
         // parallax slerp; swapObserveAnchor at finishWarp re-points it
         // to the destination on landing.
         if (state.returnToObserve && state.destKind === 'star' && B) {
-          const positions = this.catalog.positions;
-          const destAbsX = positions[state.destIdx * 3];
-          const destAbsY = positions[state.destIdx * 3 + 1];
-          const destAbsZ = positions[state.destIdx * 3 + 2];
-          const dx = destAbsX - this.worldOffset.x;
-          const dy = destAbsY - this.worldOffset.y;
-          const dz = destAbsZ - this.worldOffset.z;
-          this.recenterFocusToStar(state.destIdx);
-          // recenterOrigin shifted camera.position and controls.target
-          // by -d in place; mirror that onto state.pEnd so the lerp
-          // pEnd → B continues to read the same physical waypoint
-          // after the frame change.
-          state.pEnd.x -= dx;
-          state.pEnd.y -= dy;
-          state.pEnd.z -= dz;
+          const delta = this.recenterFocusToStar(state.destIdx);
+          if (delta) {
+            // recenterOrigin shifted camera.position and controls.target
+            // by -delta in place; mirror that onto every positional
+            // field of WarpState so the lerp pEnd → B continues to read
+            // the same physical waypoint after the frame change, and
+            // A / pStart stay frame-coherent for any subsequent read
+            // (skipWarp's finishWarp navigate-fallback uses pStart, and
+            // future readers shouldn't have to remember which fields
+            // are valid in which frame — see stellata-9mm.164).
+            shiftWarpWaypoints(state, delta.x, delta.y, delta.z);
+          }
           // _localPositions has been rewritten — re-bind B in the new
           // frame for the lerp below to land on (0,0,0).
           B = this.destLocalPositionInto(state.destKind, state.destIdx, out) ? out : null;
