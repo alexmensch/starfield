@@ -91,9 +91,9 @@ export class Heliopause {
 
   constructor() {
     this.group = new THREE.Group();
-    // Behind planet bodies (renderOrder=3) and above stars (0) — sits
-    // alongside orbit rings (2) at renderOrder=1, since both are dim
-    // chrome for the same layer.
+    // renderOrder = 1: shares the slot with star glow (both are dim
+    // chrome). See docs/rendering.md §RenderOrder ladder for the full
+    // cross-layer hierarchy.
     this.group.renderOrder = 1;
     this.group.visible = false;
     // Rotate the entire group so its local +Z aligns with the antiapex

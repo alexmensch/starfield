@@ -85,6 +85,46 @@ disables depth for an ink-on-paper look against the light canvas, and
 replaces the super-Gaussian profile with flat hard-edged discs sized
 linearly by magnitude. See `docs/chart-mode.md` for the full feature.
 
+## RenderOrder ladder
+
+Single source of truth for the cross-layer `renderOrder` hierarchy.
+Inline ladder comments in individual files have been removed in favour
+of pointers here, so adding a layer is a one-line edit. Within the
+same `renderOrder` value, the opaque-before-transparent rule of the
+three.js renderer determines order; opaque depth-write meshes establish
+the depth buffer that transparent passes test against.
+
+| renderOrder | Layer                                            | Source |
+|-------------|--------------------------------------------------|--------|
+| `-4`        | star core depth mask                             | `stellata.ts` |
+| `-4`        | planet core depth mask                           | `planet-body-field.ts` |
+| `-3`        | Milky Way (volumetric disc + bulge)              | `milkyway.ts` |
+| `-2`        | molecular clouds                                 | `molecular-clouds.ts` |
+| `-1`        | galactic disc + galactic grid                    | `galactic-disc.ts`, `galactic-grid.ts` |
+| `0`         | star discs                                       | `stellata.ts` |
+| `1`         | star glow                                        | `stellata.ts` |
+| `1`         | heliopause shell                                 | `heliopause.ts` |
+| `1.5`       | planet bodies — outer-disc depth occluder        | `planet-body-field.ts` (3re.19) |
+| `2`         | orbit rings                                      | `orbit-rings-layer.ts` |
+| `2`         | dust particles (shelved)                         | `stellata.ts` |
+| `3`         | planet bodies — disc pass                        | `planet-body-field.ts` |
+| `4`         | planet bodies — glow pass                        | `planet-body-field.ts` |
+
+Pinning notes:
+
+- **`-4` core depth masks** run first so background layers (MW, clouds,
+  galactic grid — all with `depthTest: true`) depth-fail behind close-
+  range bright cores instead of bleeding through. Stars and planets
+  share this slot; both write opaque depth with `colorWrite: false`.
+- **`1.5` planet outer-disc occluder** sits between star glow / heliopause
+  (1) and orbit rings (2) so far-side ring fragments depth-fail behind
+  the planet's full visible disc, not just the bright core (the bug
+  fixed by stellata-3re.19). Material is `transparent: true` so its
+  `renderOrder` is honoured relative to the orbit-rings transparent
+  queue (opaque always draws before transparent).
+- The planet-body-field test pins these values for the four planet
+  passes; a future reorder fails CI rather than silently regressing.
+
 ## Depth encoding
 
 The renderer is constructed with `WebGLRenderer({ logarithmicDepthBuffer:
