@@ -11,7 +11,7 @@ import {
   _resetCacheForTests,
   type Vec3,
 } from './ephemeris';
-import { composeOrbitOrientationQuat } from './star-system';
+import { composeOrbitOrientationQuat } from './orbit-rings-layer';
 
 // J2000.0 in Unix-seconds: 2000-01-01T12:00:00 (TT, but treated as UTC
 // here — TT-UTC offset of ~64s collapses well below any test threshold).
@@ -259,7 +259,7 @@ describe('getPlanetOrbitOrientations', () => {
       const oi = o[i];
       // Synthesised perihelion point at (a(1-e), 0, 0).
       const p = new THREE.Vector3(e.a * (1 - e.e), 0, 0);
-      // Apply Rz(Ω)·Rx(I)·Rz(ω) via the shared helper that star-system
+      // Apply Rz(Ω)·Rx(I)·Rz(ω) via the shared helper that orbit-rings-layer
       // also uses — verifying the composition is consistent across both
       // call sites and the matrix-form expansion in planetEclipticAU.
       composeOrbitOrientationQuat(oi, composedQuat);

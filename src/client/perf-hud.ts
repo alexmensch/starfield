@@ -1,12 +1,18 @@
 // Lightweight always-callable instrumentation API. `mark`/`measure`/`frame`
-// are no-ops until `installPerfHud()` runs, so call sites can stay
-// unconditional. The visible HUD is opt-in via `debug.perf()` from the
-// dev console — deliberately not on a URL param or keyboard shortcut so
-// end users can't enable it by accident. Updates the DOM at ~5Hz so
-// style invalidation from the panel itself doesn't dominate measurements.
+// are no-ops until `buildPerfSection()` runs once, so call sites can stay
+// unconditional. Once the section has been built (the unified debug panel
+// opened with the Perf section present), the real implementations stay
+// active for the rest of the page session even after the panel closes —
+// the ring buffers keep filling so reopening the panel resumes with
+// recent history rather than a cold start.
 //
-// DOM strategy: build the panel chrome (headline, table-header, row pool,
-// histogram bars) once at install time, then per tick only mutate
+// The visible HUD is opt-in via `debug.panel()` from the dev console —
+// deliberately not on a URL param or keyboard shortcut so
+// end users can't enable it by accident. Updates the DOM at ~5Hz so style
+// invalidation from the panel itself doesn't dominate measurements.
+//
+// DOM strategy: build the chrome (headline, table-header, row pool,
+// histogram bars) once at section-build time, then per tick only mutate
 // textContent and style on the existing nodes. The earlier
 // `panelEl.innerHTML = ...` rebuild reparsed every span (60 histogram
 // bars + N rows) every 200 ms even when values were unchanged — the
@@ -38,7 +44,7 @@ let visible = false;
 let panelEl: HTMLDivElement | null = null;
 let lastDomUpdateMs = 0;
 
-// Persistent DOM handles populated by ensurePanel() and mutated each tick.
+// Persistent DOM handles populated by buildPerfDom() and mutated each tick.
 let headlineEl: HTMLDivElement | null = null;
 let rowsContainer: HTMLDivElement | null = null;
 const rowPool: { line: HTMLDivElement; label: HTMLSpanElement; values: HTMLSpanElement }[] = [];
@@ -102,44 +108,36 @@ export function mark(label: string): void { _mark(label); }
 export function measure(label: string): void { _measure(label); }
 export function frame(): void { _frame(); }
 
-export function installPerfHud(): void {
-  if (installed) return;
-  installed = true;
-  _mark = realMark;
-  _measure = realMeasure;
-  _frame = realFrame;
-  ensurePanel();
-  setVisible(true);
+export interface PerfSection {
+  element: HTMLDivElement;
+  dispose: () => void;
+  setVisible: (v: boolean) => void;
 }
 
-export function togglePerfHud(): void {
-  if (!installed) return;
-  setVisible(!visible);
-}
+export function buildPerfSection(): PerfSection {
+  if (!installed) {
+    installed = true;
+    _mark = realMark;
+    _measure = realMeasure;
+    _frame = realFrame;
+  }
 
-function setVisible(v: boolean): void {
-  visible = v;
-  if (panelEl) panelEl.style.display = v ? 'block' : 'none';
-}
+  // Reset DOM handles & per-bar caches so a re-open gets a fresh build.
+  rowPool.length = 0;
+  histoBars.length = 0;
+  histoLastHeight.length = 0;
+  histoLastColour.length = 0;
 
-function ensurePanel(): void {
-  if (panelEl) return;
   const div = document.createElement('div');
   div.id = 'perf-hud';
   Object.assign(div.style, {
-    position: 'fixed',
-    top: '12px',
-    right: '12px',
-    zIndex: '9999',
     padding: '8px 10px',
-    background: 'rgba(0, 0, 0, 0.72)',
+    background: 'rgba(0, 0, 0, 0.85)',
     color: '#cfe',
     font: "11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
     lineHeight: '1.35',
-    borderRadius: '6px',
-    pointerEvents: 'none',
+    borderRadius: '4px',
     minWidth: '240px',
-    boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
   } as CSSStyleDeclaration);
 
   // Headline: rebuilt each tick via textContent on three nested spans so
@@ -228,8 +226,23 @@ function ensurePanel(): void {
   caption.textContent = `frame.total · last ${RING_SIZE}f · 16.7ms ref`;
   div.appendChild(caption);
 
-  document.body.appendChild(div);
   panelEl = div;
+  visible = true;
+  return {
+    element: div,
+    dispose: () => {
+      visible = false;
+      panelEl = null;
+      headlineEl = null;
+      rowsContainer = null;
+      histoBarsContainer = null;
+      // realMark/realMeasure/realFrame stay installed — ring buffers keep
+      // filling between toggles so the histogram has data on re-open.
+    },
+    setVisible: (v: boolean) => {
+      visible = v && panelEl !== null;
+    },
+  };
 }
 
 function summarize(s: SectionStats): { avg: number; max: number } {

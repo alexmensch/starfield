@@ -280,6 +280,12 @@ export function bindSearch(
   // same star.
   const runQuery = (q: string): FuzzyEntry[] => {
     const trimmed = q.trim();
+    // Fuse v7's `search('')` returns the entire corpus, not nothing — so
+    // without this guard, focusing an empty input pops a dropdown with
+    // ~10 arbitrary stars. The focus + destination boxes are intended to
+    // be silent until the user types (unlike the constellation typeahead,
+    // which uses its own runQuery and shows NONE+top9 on empty by design).
+    if (!trimmed) return [];
 
     // Numeric-prefixed ID lookups.
     const idPatterns: Array<{ re: RegExp; map: Map<number, number>; prefix: string }> = [

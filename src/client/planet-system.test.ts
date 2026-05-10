@@ -125,6 +125,22 @@ describe('SOL_PLANETS data', () => {
     }
   });
 
+  it('every body has a published geometric albedo in (0, 1)', () => {
+    // Mallama 2018 + NASA fact-sheet values; pinned here so an
+    // accidental edit doesn't silently drift the apparent-magnitude
+    // calculation.
+    const expected: Record<string, number> = {
+      Mercury: 0.142, Venus: 0.689, Earth: 0.434, Mars: 0.170,
+      Jupiter: 0.538, Saturn: 0.499, Uranus: 0.488, Neptune: 0.442,
+      Pluto: 0.49,
+    };
+    for (const p of SOL_PLANETS) {
+      expect(p.albedo).toBeGreaterThan(0);
+      expect(p.albedo).toBeLessThan(1);
+      expect(p.albedo).toBeCloseTo(expected[p.name], 3);
+    }
+  });
+
   it('radii match published equatorial / mean values (within 1 km)', () => {
     const expected: Record<string, number> = {
       Mercury: 2440, Venus: 6052, Earth: 6371, Mars: 3390,
