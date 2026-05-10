@@ -170,6 +170,20 @@ on whether the warp re-enters OBSERVE on arrival:
    `controls.target` from the camera quaternion, not the other way
    around.
 
+   The floating origin is recentred onto B at the start of phase 3
+   (not at `finishWarp`). Without this, both the camera and B sit at
+   the same kpc-scale magnitude in the source-local frame for the
+   1.2 s slerp window, and `matrixWorldInverse * B` loses float32
+   precision — visible as the destination star jittering as the
+   quaternion rotates (stellata-fqw). After the recentre B is at local
+   `(0,0,0)` and the camera lerps in from a small offset; the
+   projection chain stays clean. `uHideFocusIdx` still points at the
+   source for the rest of phase 3 so the destination remains visible
+   throughout the parallax slerp; `swapObserveAnchor` at `finishWarp`
+   re-points it to the destination on landing. Mirrors the
+   navigate-mode path (`setFocus(destIdx)` recentre at `finishWarp`),
+   pulled forward by `postArrivalMs`.
+
 Scale-bar smoothness: `controls.target` is pointed at **B** from the
 moment the warp begins (not just at arrival). Camera orientation is
 controlled independently via `camera.lookAt`, so the reorient phase can
