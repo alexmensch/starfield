@@ -189,14 +189,19 @@ describe('PlanetBodyField lifecycle', () => {
 
   it('exposes four render passes with the documented renderOrder layout (stellata-3re.19)', () => {
     // The contract is: orbit rings sit between the outer-disc occluder
-    // (1.5, full-disc depth) and the disc/glow passes (3, 4). If
-    // anyone reorders these, far-side rings will start showing through
-    // the planet's halo annulus again — see the bug.
+    // (1.5, full-disc depth) and the disc/glow passes (3, 4). Pin each
+    // mesh by name → renderOrder so a future swap of disc↔outer
+    // (or any other rebinding) fails CI rather than silently regressing
+    // the bug.
     const f = new PlanetBodyField(makeSharedUniforms());
-    const orders = f.group.children
-      .map((m) => m.renderOrder)
-      .sort((a, b) => a - b);
-    expect(orders).toEqual([-4, 1.5, 3, 4]);
+    const orderByName = new Map(
+      f.group.children.map((m) => [m.name, m.renderOrder]),
+    );
+    expect(orderByName.get('core')).toBe(-4);
+    expect(orderByName.get('outer')).toBe(1.5);
+    expect(orderByName.get('disc')).toBe(3);
+    expect(orderByName.get('glow')).toBe(4);
+    expect(f.group.children).toHaveLength(4);
     f.dispose();
   });
 

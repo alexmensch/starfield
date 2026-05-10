@@ -22,8 +22,9 @@
 //
 // # Render passes
 //
-// Four materials share the geometry (same pattern as the star
-// pipeline, plus an outer-disc occluder for orbit rings):
+// Four materials share the geometry. Three mirror the star pipeline
+// (core / disc / glow) — same uRenderMode 2/1/0, same gates, same
+// halo-depth trick. The fourth (outer) is planet-only:
 //   • disc  — per-channel-max, depth-write on (close-range resolved)
 //   • glow  — additive, depth-test on (distant point glow)
 //   • core  — depth-only mask, colorWrite off (occludes background
@@ -33,6 +34,13 @@
 //             by the full disc rather than just the bright core
 //             (stellata-3re.19). Sits after background layers in render
 //             order so MW / clouds remain visible through the soft halo.
+//
+// Why planets diverge from the star pipeline's 3-pass shape: orbit
+// rings depth-test against planet bodies and need occlusion across the
+// FULL disc (halo annulus included), not just the bright core. Stars
+// don't have any layer that obviously wants this; the equivalent
+// question for stars (galactic gridlines / distance-vector chevrons
+// through a foreground star's halo) is filed as stellata-9mm.180.
 //
 // uRenderMode is the only divergent uniform. Everything else
 // (apparent-mag math, view-space distances, perceptual-disc shaping)
@@ -441,62 +449,53 @@ export class PlanetBodyField {
       uFovYRad: sm.uFovYRad,
     };
 
-    this.matDisc = new THREE.ShaderMaterial({
-      glslVersion: THREE.GLSL3,
-      vertexShader: planetVert,
-      fragmentShader: planetFrag,
-      transparent: true,
-      uniforms: { ...sharedPlanetUniforms, uRenderMode: { value: 1 } },
-    });
+    const makeMat = (mode: number, params: THREE.ShaderMaterialParameters) =>
+      new THREE.ShaderMaterial({
+        glslVersion: THREE.GLSL3,
+        vertexShader: planetVert,
+        fragmentShader: planetFrag,
+        uniforms: { ...sharedPlanetUniforms, uRenderMode: { value: mode } },
+        ...params,
+      });
+
+    this.matDisc = makeMat(1, { transparent: true });
     applyDiscBlendDefaults(this.matDisc);
 
-    this.matGlow = new THREE.ShaderMaterial({
-      glslVersion: THREE.GLSL3,
-      vertexShader: planetVert,
-      fragmentShader: planetFrag,
+    this.matGlow = makeMat(0, {
       transparent: true,
       depthWrite: false,
       depthTest: true,
       blending: THREE.AdditiveBlending,
-      uniforms: { ...sharedPlanetUniforms, uRenderMode: { value: 0 } },
     });
 
-    this.matCore = new THREE.ShaderMaterial({
-      glslVersion: THREE.GLSL3,
-      vertexShader: planetVert,
-      fragmentShader: planetFrag,
+    this.matCore = makeMat(2, {
       depthWrite: true,
       depthTest: true,
       colorWrite: false,
-      uniforms: { ...sharedPlanetUniforms, uRenderMode: { value: 2 } },
     });
 
     // transparent: true puts this material in the transparent queue so
     // its renderOrder (1.5) is honoured relative to the orbit-rings
     // layer (renderOrder 2) — opaque always draws before transparent.
-    this.matOuter = new THREE.ShaderMaterial({
-      glslVersion: THREE.GLSL3,
-      vertexShader: planetVert,
-      fragmentShader: planetFrag,
+    this.matOuter = makeMat(3, {
       transparent: true,
       depthWrite: true,
       depthTest: true,
       colorWrite: false,
-      uniforms: { ...sharedPlanetUniforms, uRenderMode: { value: 3 } },
     });
 
-    this.meshDisc = new THREE.Mesh(this.geometry, this.matDisc);
-    this.meshDisc.frustumCulled = false;
-    this.meshDisc.renderOrder = 3;
-    this.meshGlow = new THREE.Mesh(this.geometry, this.matGlow);
-    this.meshGlow.frustumCulled = false;
-    this.meshGlow.renderOrder = 4;
-    this.meshCore = new THREE.Mesh(this.geometry, this.matCore);
-    this.meshCore.frustumCulled = false;
-    this.meshCore.renderOrder = -4;
-    this.meshOuter = new THREE.Mesh(this.geometry, this.matOuter);
-    this.meshOuter.frustumCulled = false;
-    this.meshOuter.renderOrder = 1.5;
+    const makeMesh = (mat: THREE.ShaderMaterial, name: string, order: number) => {
+      const m = new THREE.Mesh(this.geometry, mat);
+      m.name = name;
+      m.frustumCulled = false;
+      m.renderOrder = order;
+      return m;
+    };
+
+    this.meshCore = makeMesh(this.matCore, 'core', -4);
+    this.meshOuter = makeMesh(this.matOuter, 'outer', 1.5);
+    this.meshDisc = makeMesh(this.matDisc, 'disc', 3);
+    this.meshGlow = makeMesh(this.matGlow, 'glow', 4);
 
     this.group.add(this.meshCore);
     this.group.add(this.meshOuter);
