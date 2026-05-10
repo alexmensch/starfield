@@ -3,6 +3,9 @@ import {
   encodeBlob,
   decodeBlob,
   currentStateOf,
+  writeVarint,
+  readVarint,
+  varintLen,
   type DecodedView,
   type StarRef,
   type IdMaps,
@@ -15,6 +18,46 @@ import { DEFAULT_FILTER, DEFAULT_FOV, type Stellata } from './stellata';
 function roundtrip(view: DecodedView) {
   const blob = encodeBlob(view);
   return decodeBlob(blob);
+}
+
+// Decode a base64url blob to its underlying byte count. Used in byte-
+// budget assertions across multiple describe blocks (LEB128 mask, vec3
+// sub-mask elision, headline cam-orbit URL).
+function blobBytes(blob: string): number {
+  const padded = blob + '='.repeat((4 - (blob.length % 4)) % 4);
+  return atob(padded.replace(/-/g, '+').replace(/_/g, '/')).length;
+}
+
+// Build a manually-shaped v1 blob (legacy 32-bit mask, float32 scalars,
+// 4-byte star refs / POI HIPs). Used by the v1 backward-compat block
+// to verify legacy decoders still work.
+function buildV1Blob(mask: number, payload: Uint8Array): string {
+  const ab = new ArrayBuffer(5 + payload.length);
+  const dv = new DataView(ab);
+  dv.setUint8(0, 1); // version
+  dv.setUint32(1, mask >>> 0, true); // 32-bit mask in v1
+  const bytes = new Uint8Array(ab);
+  bytes.set(payload, 5);
+  let s = '';
+  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+// Build a manually-shaped v2 blob (24-bit mask + flat 12-byte vec3
+// fields). Used by the v2 backward-compat block and by the v2→v3
+// auto-upgrade rewrite test.
+function buildV2Blob(mask: number, payload: Uint8Array): string {
+  const ab = new ArrayBuffer(4 + payload.length);
+  const dv = new DataView(ab);
+  dv.setUint8(0, 2); // version
+  dv.setUint8(1, mask & 0xff);
+  dv.setUint8(2, (mask >>> 8) & 0xff);
+  dv.setUint8(3, (mask >>> 16) & 0xff);
+  const bytes = new Uint8Array(ab);
+  bytes.set(payload, 4);
+  let s = '';
+  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 describe('url-state', () => {
@@ -131,14 +174,20 @@ describe('url-state', () => {
       expect(view.tgt).toBeUndefined();
     });
 
-    it('emits only the diverging z-component for cam=[0,0,3.7]', () => {
-      // The bead's headline scenario: a near-Sol orbit on the z-axis.
+    it('emits the headline 10-char cam=[0,0,3.7] URL exactly', () => {
+      // The PR's headline scenario: a near-Sol orbit on the z-axis.
       // v2 would burn 12 bytes on cam (3 × f32 incl. two zero floats);
       // v3 emits 1 sub-mask byte + 4 bytes for z = 5 bytes for the cam
-      // payload, plus 1 version + 3 outer mask = 9 bytes total → 12
-      // base64url chars. Down from v2's 22.
+      // payload. Plus 1 version + 1 LEB128 outer mask (bit 0 only) = 7
+      // bytes total → 10 base64url chars. Down from v2's 22.
+      //
+      // Pinned exactly to the headline number — a `<= 12` upper bound
+      // would silently allow a future change that flipped a default
+      // constant or added an outer-mask byte to regress the win to 11
+      // or 12 chars without tripping any test.
       const blob = encodeBlob({ cam: [0, 0, 3.7] });
-      expect(blob.length).toBeLessThanOrEqual(12);
+      expect(blobBytes(blob)).toBe(7);
+      expect(blob.length).toBe(10);
       const { view } = decodeBlob(blob);
       expect(view.cam![0]).toBe(0);
       expect(view.cam![1]).toBe(0);
@@ -555,18 +604,6 @@ describe('url-state', () => {
     // Manually-constructed v1 blobs verify the legacy decoder still
     // works and reports version=1 so callers can trigger a rewrite.
 
-    function buildV1Blob(mask: number, payload: Uint8Array): string {
-      const ab = new ArrayBuffer(5 + payload.length);
-      const dv = new DataView(ab);
-      dv.setUint8(0, 1); // version
-      dv.setUint32(1, mask >>> 0, true); // 32-bit mask in v1
-      const bytes = new Uint8Array(ab);
-      bytes.set(payload, 5);
-      let s = '';
-      for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
-      return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-    }
-
     it('decodes v1 empty blob and reports version=1', () => {
       const blob = buildV1Blob(0, new Uint8Array(0));
       const { view, version } = decodeBlob(blob);
@@ -628,21 +665,6 @@ describe('url-state', () => {
     // v2 was the prior schema (1-byte version + 24-bit mask + flat
     // 12-byte vec3 fields). Manually construct v2-shaped blobs to
     // verify decodeV2 still works after v3 became the default writer.
-
-    function buildV2Blob(mask: number, payload: Uint8Array): string {
-      const ab = new ArrayBuffer(4 + payload.length);
-      const dv = new DataView(ab);
-      dv.setUint8(0, 2); // version
-      // 24-bit LE mask, same writer as production code uses
-      dv.setUint8(1, mask & 0xff);
-      dv.setUint8(2, (mask >>> 8) & 0xff);
-      dv.setUint8(3, (mask >>> 16) & 0xff);
-      const bytes = new Uint8Array(ab);
-      bytes.set(payload, 4);
-      let s = '';
-      for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
-      return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-    }
 
     it('decodes v2 empty blob and reports version=2', () => {
       const blob = buildV2Blob(0, new Uint8Array(0));
@@ -824,15 +846,7 @@ describe('url-state', () => {
   describe('LEB128 presence mask (v3)', () => {
     // Verify the wire-format size for representative mask shapes. The
     // numbers here are the bytes-on-wire after base64url; we infer
-    // the underlying byte count via base64 math. The tests don't
-    // depend on the encoder's internal varint helpers, just the
-    // final blob length.
-    function blobBytes(blob: string): number {
-      // base64url with padding stripped. 3 chars = 2 bytes, 4 chars
-      // = 3 bytes, 6 chars = 4 bytes, etc.
-      const padded = blob + '='.repeat((4 - (blob.length % 4)) % 4);
-      return atob(padded.replace(/-/g, '+').replace(/_/g, '/')).length;
-    }
+    // the underlying byte count via the module-scoped blobBytes helper.
 
     it('low-bit-only mask (cam, bit 0) fits in 1 byte', () => {
       // cam = bit 0; cam=[0,0,3.7] → sub-mask 0x04 + z f32 = 5 byte
@@ -871,6 +885,264 @@ describe('url-state', () => {
       // — readVarint should throw rather than read past the buffer.
       const blob = btoa('\x03\x80').replace(/=+$/, '');
       expect(() => decodeBlob(blob)).toThrow(/Varint runs past blob end/);
+    });
+  });
+
+  describe('vec3 sub-mask elision byte budgets (v3)', () => {
+    // The headline win of v3 is per-component vec3 elision. The cam
+    // case is covered by the "emits the headline 10-char" test above;
+    // these tests pin the exact byte counts for tgt, up, and
+    // worldOffset partial-divergence cases so a future change that
+    // flips a default constant or breaks the strict-equality predicate
+    // can't silently regress the saving to zero with all other tests
+    // still green.
+
+    it('emits one f32 for tgt=[5,0,0] (default y/z elided)', () => {
+      // 1 ver + 1 mask (bit 1) + 1 sub + 4 x = 7 bytes → 10 chars.
+      const blob = encodeBlob({ tgt: [5, 0, 0] });
+      expect(blobBytes(blob)).toBe(7);
+      const { view } = decodeBlob(blob);
+      expect(view.tgt).toEqual([5, 0, 0]);
+    });
+
+    it('emits two f32s for up=[1,1,1] (default y elided)', () => {
+      // up's per-key default is [0,1,0] — y matches, x and z diverge.
+      // 1 ver + 1 mask (bit 2) + 1 sub + 8 (x,z) = 11 bytes → 15 chars.
+      const blob = encodeBlob({ up: [1, 1, 1] });
+      expect(blobBytes(blob)).toBe(11);
+      const { view } = decodeBlob(blob);
+      expect(view.up).toEqual([1, 1, 1]);
+    });
+
+    it('emits one f32 for worldOffset=[100,0,0] (default y/z elided)', () => {
+      // worldOffset is at bit 20 → outer mask is 3 LEB128 bytes (high
+      // group). 1 ver + 3 mask + 1 sub + 4 x = 9 bytes → 12 chars.
+      const blob = encodeBlob({ worldOffset: [100, 0, 0] });
+      expect(blobBytes(blob)).toBe(9);
+      const { view } = decodeBlob(blob);
+      expect(view.worldOffset).toEqual([100, 0, 0]);
+    });
+
+    it('emits two f32s for worldOffset=[100,200,0] (default z elided)', () => {
+      // 1 ver + 3 mask + 1 sub + 8 (x,y) = 13 bytes → 18 chars.
+      const blob = encodeBlob({ worldOffset: [100, 200, 0] });
+      expect(blobBytes(blob)).toBe(13);
+      const { view } = decodeBlob(blob);
+      expect(view.worldOffset).toEqual([100, 200, 0]);
+    });
+
+    it('decoder ignores reserved high 5 bits of vec3 sub-mask', () => {
+      // The wire format uses low 3 bits of the sub-mask for component
+      // divergence and reserves bits 3-7 for forward-compat. A hand-
+      // edited or future-encoder blob that sets reserved bits should
+      // still decode the low 3 bits correctly. Build a v3 blob with
+      // cam sub-mask 0xF9 (binary 11111001 — low bit 0 set for x,
+      // y/z clear, high bits 3-7 all set as reserved) and assert cam
+      // decodes as [x, default_y, default_z].
+      const camX = 7.5;
+      const ab = new ArrayBuffer(7);
+      const dv = new DataView(ab);
+      dv.setUint8(0, 3);     // version
+      dv.setUint8(1, 0x01);  // LEB128 mask: bit 0 (cam) only
+      dv.setUint8(2, 0xF9);  // sub-mask: low bit 0 set + all reserved
+      dv.setFloat32(3, camX, true);
+      const bytes = new Uint8Array(ab);
+      let s = '';
+      for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+      const blob = btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      const { view, version } = decodeBlob(blob);
+      expect(version).toBe(3);
+      expect(view.cam![0]).toBeCloseTo(camX, 5);
+      expect(view.cam![1]).toBe(0);   // navigate-default y
+      expect(view.cam![2]).toBe(30);  // navigate-default z
+    });
+  });
+
+  describe('bit-21 t (Float64 wall-clock)', () => {
+    // The `t` field is wired in v2/v3 but never emitted by
+    // `currentStateOf` until the time-scrubber epic stellata-nmu
+    // flips on emission (gated on isLive). Pin the round-trip path
+    // now so a regression in float64 LE write/read won't surface
+    // only at nmu's first emission.
+
+    it('round-trips a float64 t through encodeBlob/decodeBlob', () => {
+      const t = 1234567890.123456;
+      const { view, version } = roundtrip({ t });
+      expect(version).toBe(3);
+      expect(view.t).toBe(t);
+    });
+
+    it('emits 8 bytes for t (1 ver + 4 mask + 8 t = 13)', () => {
+      // Bit 21 sits in LEB128 group 3 (bits 21-27), so the mask costs
+      // 4 bytes — one more than v2's flat u24. The bead's design
+      // comment calls this out explicitly: "bit 21 (t) is the only
+      // field that costs an extra byte vs u24, and it doesn't emit
+      // yet (gated on the time-scrubber epic stellata-nmu)".
+      const blob = encodeBlob({ t: 0 });
+      expect(blobBytes(blob)).toBe(13);
+    });
+
+    it('does not occupy bit 21 when t is undefined', () => {
+      // The presence guard (`v.t !== undefined`) keeps an empty view
+      // at the 2-byte minimum (1 ver + 1 LEB128 empty mask).
+      expect(blobBytes(encodeBlob({}))).toBe(2);
+    });
+
+    it('round-trips t alongside cam (mixed low + high bits)', () => {
+      const t = 9876543210.5;
+      const view: DecodedView = { cam: [0, 0, 3.7], t };
+      const { view: out, version } = roundtrip(view);
+      expect(version).toBe(3);
+      expect(out.cam![2]).toBeCloseTo(3.7, 5);
+      expect(out.t).toBe(t);
+    });
+  });
+
+  describe('LEB128 helpers (writeVarint / readVarint / varintLen)', () => {
+    // The varint is the only piece of v3 that doesn't have a fixed-
+    // size analogue in v1 or v2. Direct unit coverage of write/read
+    // symmetry and varintLen consistency makes the helpers' contract
+    // load-bearing — a future change that drifts varintLen from
+    // writeVarint's actual byte count would silently mis-size the
+    // encodeBlob buffer, but the round-trip suite above would only
+    // catch that for masks the suite happens to exercise.
+
+    const REPRESENTATIVE_MASKS = [
+      0,
+      1,
+      0x7f,
+      0x80,
+      0x3fff,
+      0x4000,
+      0x1fffff,
+      0x200000,
+      0xfffffff,
+      0x10000000,
+      0xffffffff,
+    ];
+
+    it('write→read round-trip is exact for representative masks', () => {
+      for (const m of REPRESENTATIVE_MASKS) {
+        const buf = new ArrayBuffer(5);
+        const dv = new DataView(buf);
+        const written = writeVarint(dv, 0, m);
+        const { val, bytes } = readVarint(dv, 0, 5);
+        expect(val).toBe(m >>> 0);
+        expect(bytes).toBe(written);
+      }
+    });
+
+    it('varintLen agrees with writeVarint for every representative mask', () => {
+      for (const m of REPRESENTATIVE_MASKS) {
+        const buf = new ArrayBuffer(5);
+        const dv = new DataView(buf);
+        const written = writeVarint(dv, 0, m);
+        expect(varintLen(m)).toBe(written);
+      }
+    });
+
+    it('empty mask writes exactly 1 byte', () => {
+      // The 1-byte minimum is what makes empty-state URLs cheaper than
+      // v2 (which paid a fixed 3-byte u24 mask).
+      expect(varintLen(0)).toBe(1);
+      const buf = new ArrayBuffer(5);
+      const dv = new DataView(buf);
+      expect(writeVarint(dv, 0, 0)).toBe(1);
+      expect(dv.getUint8(0)).toBe(0); // continuation bit clear, payload 0
+    });
+
+    it('rejects a varint longer than 5 bytes (shift >= 32 guard)', () => {
+      // A varint with 6 continuation bytes would imply >= 35 bits of
+      // payload — readVarint must throw rather than overflow into
+      // adjacent fields.
+      const buf = new Uint8Array(6).fill(0xFF);
+      buf[5] = 0x7F; // last byte clears continuation
+      const dv = new DataView(buf.buffer);
+      expect(() => readVarint(dv, 0, 6)).toThrow(/Varint mask too long/);
+    });
+
+    it('readVarint rejects a buffer that ends mid-varint', () => {
+      // A continuation byte (0x80) at the last position with no
+      // follow-up — readVarint must surface the truncation rather
+      // than silently return a value built from out-of-bounds bytes.
+      const buf = new Uint8Array([0x80]);
+      const dv = new DataView(buf.buffer);
+      expect(() => readVarint(dv, 0, 1)).toThrow(/Varint runs past blob end/);
+    });
+  });
+
+  describe('v2 → v3 auto-upgrade rewrite', () => {
+    // applyFromUrl detects `decoded.version !== SCHEMA_VERSION` and
+    // schedules a debounced writeUrl to silently upgrade the URL to
+    // v3 — central to the PR's "no bookmarks break, address bar
+    // shrinks" claim. The applyFromUrl path itself depends on
+    // location/setTimeout side effects, but the upgrade contract
+    // (decode legacy, re-encode as v3, decode round-trips) is pure
+    // and worth pinning here.
+
+    it('decodes v2 cam blob and re-encodes the same view as v3', () => {
+      // Build v2 blob: bit 0 (cam), payload [0,0,3.7] as flat 3×f32.
+      const v2Payload = new Uint8Array(12);
+      const v2Dv = new DataView(v2Payload.buffer);
+      v2Dv.setFloat32(0, 0, true);
+      v2Dv.setFloat32(4, 0, true);
+      v2Dv.setFloat32(8, 3.7, true);
+      const v2Blob = buildV2Blob(1 << 0, v2Payload);
+
+      const { view: v2View, version: v2Version } = decodeBlob(v2Blob);
+      expect(v2Version).toBe(2);
+
+      // Re-encode the same view; assert version byte = 3.
+      const v3Blob = encodeBlob(v2View);
+      const { view: v3View, version: v3Version } = decodeBlob(v3Blob);
+      expect(v3Version).toBe(3);
+      expect(v3View.cam![0]).toBe(0);
+      expect(v3View.cam![1]).toBe(0);
+      expect(v3View.cam![2]).toBeCloseTo(3.7, 5);
+
+      // The headline saving: the rewritten v3 blob is shorter than
+      // the original v2 (per-component sub-mask elision drops two
+      // zero-valued floats).
+      expect(v3Blob.length).toBeLessThan(v2Blob.length);
+    });
+
+    it('decodes v1 fov blob and re-encodes the same view as v3', () => {
+      // Build v1 blob: bit 3 (fov) at f32. v3 emits fov as quantised
+      // u8, so the upgrade also shrinks by 3 bytes for this case.
+      const v1Payload = new Uint8Array(4);
+      new DataView(v1Payload.buffer).setFloat32(0, 60, true);
+      const v1Blob = buildV1Blob(1 << 3, v1Payload);
+
+      const { view: v1View, version: v1Version } = decodeBlob(v1Blob);
+      expect(v1Version).toBe(1);
+
+      const v3Blob = encodeBlob(v1View);
+      const { view: v3View, version: v3Version } = decodeBlob(v3Blob);
+      expect(v3Version).toBe(3);
+      expect(v3View.fov).toBe(60);
+    });
+
+    it('preserves a typical multi-field v2 view through the upgrade', () => {
+      // Encode a realistic shared-URL view, decode it, re-encode as
+      // v3 — every field round-trips at the v3 quantisation grid,
+      // matching what applyFromUrl-then-debounced-writeUrl produces.
+      const original: DecodedView = {
+        cam: [50, -20, 100],
+        fov: 45,
+        mag: 6.5,
+        focus: { kind: 'hip', id: 32349 },
+        showGalacticGrid: true,
+      };
+      // Sanity: encode once via the production v3 path, simulating
+      // currentStateOf's output that applyFromUrl would feed back.
+      const v3Blob = encodeBlob(original);
+      const { view: out, version } = decodeBlob(v3Blob);
+      expect(version).toBe(3);
+      expect(out.cam).toEqual([50, -20, 100]);
+      expect(out.fov).toBe(45);
+      expect(out.mag).toBeCloseTo(6.5, 1);
+      expect(out.focus).toEqual({ kind: 'hip', id: 32349 });
+      expect(out.showGalacticGrid).toBe(true);
     });
   });
 });
