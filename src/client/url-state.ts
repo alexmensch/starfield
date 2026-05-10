@@ -44,6 +44,22 @@ const SCHEMA_VERSION_V2 = 2;
 const SCHEMA_VERSION = 3;
 const PARAM_NAME = 'v';
 const EPS = 1e-3;
+// Per-frame URL-write change detector: 1% of vector magnitude, capped
+// at EPS (1e-3 pc) and floored at EPS_FLOOR (well below float32 ULP at
+// any reasonable scene scale). The cap preserves the original absolute
+// behaviour at scene scale (>= 0.1 pc, where float32 noise can approach
+// 5e-4 pc); the relative floor handles solar-system scales where the
+// fixed 1e-3 pc threshold equals ~206 AU and a zoom-out from the
+// first-load 5 AU park wouldn't trip any axis until far past where
+// the user expects the URL to update.
+const EPS_REL = 0.01;
+const EPS_FLOOR = 1e-9;
+
+// Per-component change-detector threshold for `startUrlSync`. Exported
+// for unit-level coverage of the scene-scale clamp / AU-scale floor.
+export function frameTriggerEps(magnitude: number): number {
+  return Math.max(EPS_FLOOR, Math.min(EPS, magnitude * EPS_REL));
+}
 
 // Default values that the encoder uses to decide whether to omit a field.
 const DEFAULT_CAM: [number, number, number] = [0, 0, 30];
@@ -1238,15 +1254,20 @@ export function startUrlSync(stellata: Stellata, idMaps: IdMaps): void {
     const c = stellata.camera.position;
     const t = stellata.controls.target;
     const u = stellata.camera.up;
-    // Component-wise epsilon comparison on the steady-state path. EPS
-    // matches the pre-a0n toFixed(3) precision (1e-3) so the change-
-    // detection threshold is unchanged. No allocations on the no-change
-    // path — used to be 10+ string allocations per frame from a
-    // toFixed(3)×9 hash.
+    // Component-wise epsilon comparison on the steady-state path. The
+    // per-vector threshold scales with magnitude (frameTriggerEps) so
+    // a zoom-out from solar-system scale trips at AU-resolution rather
+    // than waiting for the camera to move 1e-3 pc ≈ 206 AU. At scene
+    // scale (>= 0.1 pc) the threshold caps at EPS, preserving the
+    // original behaviour. No allocations on the no-change path — used
+    // to be 10+ string allocations per frame from a toFixed(3)×9 hash.
+    const cEps = frameTriggerEps(Math.hypot(c.x, c.y, c.z));
+    const tEps = frameTriggerEps(Math.hypot(t.x, t.y, t.z));
+    const uEps = frameTriggerEps(Math.hypot(u.x, u.y, u.z));
     if (
-      Math.abs(c.x - lastCam[0]) < EPS && Math.abs(c.y - lastCam[1]) < EPS && Math.abs(c.z - lastCam[2]) < EPS &&
-      Math.abs(t.x - lastCam[3]) < EPS && Math.abs(t.y - lastCam[4]) < EPS && Math.abs(t.z - lastCam[5]) < EPS &&
-      Math.abs(u.x - lastCam[6]) < EPS && Math.abs(u.y - lastCam[7]) < EPS && Math.abs(u.z - lastCam[8]) < EPS
+      Math.abs(c.x - lastCam[0]) < cEps && Math.abs(c.y - lastCam[1]) < cEps && Math.abs(c.z - lastCam[2]) < cEps &&
+      Math.abs(t.x - lastCam[3]) < tEps && Math.abs(t.y - lastCam[4]) < tEps && Math.abs(t.z - lastCam[5]) < tEps &&
+      Math.abs(u.x - lastCam[6]) < uEps && Math.abs(u.y - lastCam[7]) < uEps && Math.abs(u.z - lastCam[8]) < uEps
     ) {
       return;
     }
