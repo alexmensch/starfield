@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   angularToPx,
   physSizePx,
+  pickScore,
   varEffectiveAmplitude,
   distAtFillFraction,
   peakAmplitudeFactor,
@@ -161,5 +162,35 @@ describe('star-geometry / peakAmplitudeFactor', () => {
   it('treats negative amp/period as non-variable (defensive)', () => {
     expect(peakAmplitudeFactor(-1, 100)).toBe(1);
     expect(peakAmplitudeFactor(2, -100)).toBe(1);
+  });
+});
+
+describe('star-geometry / pickScore', () => {
+  it('is dominated by pxDist: a 50px-away brighter star loses to a 0px-away fainter one', () => {
+    // Double Double regression: cursor on ε² Lyr (mag 4.59), with ε¹ Lyr
+    // (mag 4.67) ~50px away on screen but with a hitbox that reaches the
+    // cursor. The cursor is on ε²'s centre; ε² must win.
+    const eps2 = pickScore(0, 4.59);
+    const eps1 = pickScore(50, 4.67);
+    expect(eps2).toBeLessThan(eps1);
+  });
+
+  it('breaks ties by brightness when two candidates project to the same pixel', () => {
+    // Alula Australis regression: A (mag 4.33) and B (mag 4.80) share
+    // identical x/y/z in AT-HYG, so both project to the same screen pixel
+    // and pxDist is identical. The brighter component (A) must win.
+    const a = pickScore(0, 4.33);
+    const b = pickScore(0, 4.80);
+    expect(a).toBeLessThan(b);
+  });
+
+  it('uses a sub-pixel mag bias so a 1-mag-fainter star at the same pxDist beats a 1px-farther brighter one', () => {
+    // The mag bias is small enough (0.05 px / mag) that any visible
+    // pxDist gap dominates. A star 1px farther but 1 mag brighter still
+    // loses to the centre-aligned fainter one — picking by visible
+    // proximity, not brightness, is the contract.
+    const closeFaint = pickScore(0, 6);
+    const farBright = pickScore(1, 5);
+    expect(closeFaint).toBeLessThan(farBright);
   });
 });

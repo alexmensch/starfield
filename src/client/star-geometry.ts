@@ -70,6 +70,27 @@ export function peakAmplitudeFactor(amplitudeMag: number, periodDays: number): n
   return periodDays > 0 && amplitudeMag > 0 ? Math.pow(10, amplitudeMag / 10) : 1;
 }
 
+// Score for a star pick candidate. Lower is better. Used by pickStar
+// for both the prime tier (cursor inside a rendered disc) and the
+// proximity-fallback tier (no disc hit, nearest centre within a
+// pixel threshold). The score is dominated by `pxDist` — the cursor's
+// screen-pixel distance from the disc centre — so the star whose
+// centre the cursor is closest to wins. The sub-pixel `appMag` bias
+// (0.05 px per magnitude) only matters for near-coincident candidates:
+// it picks the brighter component when two catalog rows share the same
+// x/y/z (e.g. Alula Australis A/B in AT-HYG, both at HIP-less Gl 423A/B
+// with identical galactocentric coordinates).
+//
+// The prime tier deliberately does NOT tiebreak by camera distance:
+// the Double Double (ε¹ / ε² Lyr) sits ~3.5 arcmin apart with hitboxes
+// that overlap each other's centres at typical zoom. A "closest to
+// camera" rule consistently picked one component for every click,
+// leaving the other un-clickable. Picking by screen-pixel proximity
+// instead lets the cursor's visible target always win.
+export function pickScore(pxDist_px: number, appMag: number): number {
+  return pxDist_px + appMag * 0.05;
+}
+
 // Solve for camera distance `d` such that a star of radius `R_pc`
 // (physical, in pc) fills `targetFrac` of `min(viewport.x, viewport.y)`
 // at the current FOV. Symbolically:

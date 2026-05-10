@@ -26,6 +26,7 @@ import { mark as perfMark, measure as perfMeasure, frame as perfFrame } from './
 import {
   angularToPx as angularToPxPure,
   physSizePx,
+  pickScore,
   varEffectiveAmplitude,
   distAtFillFraction,
   peakAmplitudeFactor,
@@ -2802,11 +2803,16 @@ export class Stellata {
 
     // Two-tier picking:
     //   1. Cursor inside a star's rendered disc → prime candidate. Among
-    //      prime hits, closest-to-camera wins (foreground occludes).
-    //   2. Otherwise proximity within pixelThreshold, with mag bias so
-    //      brighter stars win ties. Prime hits always beat fallback hits.
+    //      prime hits, the cursor's screen-pixel distance to the disc
+    //      centre wins (`pickScore`), so visually-resolved pairs whose
+    //      hitboxes overlap stay independently clickable — the Double
+    //      Double (ε¹/ε² Lyr) is the canonical case. Sub-pixel mag bias
+    //      tiebreaks coincident catalog companions sharing x/y/z, e.g.
+    //      Alula Australis A/B (Gl 423A/B). See pickScore for detail.
+    //   2. Otherwise proximity within pixelThreshold, same scoring.
+    //      Prime hits always beat fallback hits.
     let discIdx = -1;
-    let discBestCamDist = Infinity;
+    let discBestScore = Infinity;
     let fbIdx = -1;
     let fbBestScore = Infinity;
 
@@ -2839,13 +2845,13 @@ export class Stellata {
       const pxSize = this.renderedSizePx(i);
       const hitRadius = Math.max(pxSize * 0.5, MIN_DISC_HIT_RADIUS_PX);
 
+      const score = pickScore(pxDist, appMag);
       if (pxDist <= hitRadius) {
-        if (dCam < discBestCamDist) {
-          discBestCamDist = dCam;
+        if (score < discBestScore) {
+          discBestScore = score;
           discIdx = i;
         }
       } else if (discIdx === -1 && pxDist <= pixelThreshold) {
-        const score = pxDist + appMag * 0.05;
         if (score < fbBestScore) {
           fbBestScore = score;
           fbIdx = i;
