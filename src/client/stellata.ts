@@ -2392,9 +2392,10 @@ export class Stellata {
     //            looking at warp start, now from the new vantage). The
     //            post-arrival phase already lerped position pEnd → B, so
     //            this is a no-op match against the last animation frame.
-    //            swapObserveAnchor below recentres the origin onto B and
-    //            its set(0,0,0) becomes a redundant snap to the same
-    //            point — no hidden teleport.
+    //            For observe→observe arrivals the floating origin was
+    //            already moved onto B at phase-3 start (see updateWarp
+    //            comment); swapObserveAnchor's geometric half is a no-op
+    //            here, only its observe-tail (uHide + camera snap) runs.
     //   navigate: camera at B − endOffset · forward (orbit radius matches
     //            the arrival we animated to), lookAt(B) so the orbit
     //            invariant TrackballControls.update() will enforce next
@@ -2414,10 +2415,13 @@ export class Stellata {
     this.setVectorTo(null);
     this.setVectorToCloud(null);
     if (state.destKind === 'star' && state.returnToObserve) {
-      // observe→observe arrival. swapObserveAnchor updates focus, recentres
-      // the floating origin, and sets uHideFocusIdx to the destination,
-      // all without flipping cameraMode through navigate (which is what
-      // setFocus would do, triggering an onCameraModeChange flicker).
+      // observe→observe arrival. swapObserveAnchor finalises the anchor
+      // swap — sets uHideFocusIdx to the destination, snaps the camera
+      // to local origin, and (if it hasn't already been done at phase-3
+      // start for jitter mitigation) recentres the floating origin and
+      // updates focused-star state. No cameraMode flip through navigate
+      // (which is what setFocus would do, triggering an
+      // onCameraModeChange flicker).
       this.swapObserveAnchor(state.destIdx);
       this.observeControls.enable();
       // controls.enabled stays false — observe owns the camera now.
@@ -2447,24 +2451,45 @@ export class Stellata {
     for (const h of this.onWarpHandlers) h(false);
   }
 
-  // Swap the OBSERVE anchor to a new star without going through setFocus's
-  // observe-cleanup branch (which would flip cameraMode to navigate and
-  // emit an onCameraModeChange event, briefly flickering UI bound to the
-  // mode value). Used by finishWarp on observe→observe arrival.
-  private swapObserveAnchor(newIdx: number) {
+  // Recentre the floating origin onto a star and update focus state.
+  // Pure geometric recenter — no observe-specific side effects, no
+  // uHideFocusIdx / camera-position snaps, no fireStateChange (caller
+  // decides when to schedule the URL write so a single arrival doesn't
+  // serialise an intermediate pose). Shared between warp arrivals:
+  //   - navigate: setFocus(destIdx) at finishWarp does the equivalent.
+  //   - observe:  called at phase-3 start so the parallax slerp runs
+  //               in the destination's local frame; without this, both
+  //               camera position and B sit at the same kpc-scale
+  //               magnitudes during phase 3 and matrixWorldInverse * B
+  //               loses float32 precision — visible as destination-star
+  //               jitter as the camera slerps (stellata-fqw).
+  private recenterFocusToStar(newIdx: number) {
     const p = this.catalog.positions;
     this.recenterOrigin(this.tmpRecenter.set(
       p[newIdx * 3], p[newIdx * 3 + 1], p[newIdx * 3 + 2],
     ));
     this.focusedStar = newIdx;
-    this.material.uniforms.uHideFocusIdx.value = newIdx;
     this.controls.minDistance = this.minOrbitDistForStar(newIdx);
+    for (const h of this.onFocusHandlers) h(newIdx);
+    this.refreshPlanetSystem(newIdx);
+  }
+
+  // Swap the OBSERVE anchor to a new star without going through setFocus's
+  // observe-cleanup branch (which would flip cameraMode to navigate and
+  // emit an onCameraModeChange event, briefly flickering UI bound to the
+  // mode value). Used by finishWarp on observe→observe arrival.
+  // Idempotent on the geometric half: if the phase-3 recentre already
+  // landed focusedStar on newIdx, only the observe-specific tail runs
+  // (anchor hide + camera snap to local origin).
+  private swapObserveAnchor(newIdx: number) {
+    if (this.focusedStar !== newIdx) {
+      this.recenterFocusToStar(newIdx);
+    }
+    this.material.uniforms.uHideFocusIdx.value = newIdx;
     // Park at the new anchor's local origin — observe invariant is
     // camera at (0,0,0) under the floating origin. Quaternion preserved
     // from the post-arrival slerp end state.
     this.camera.position.set(0, 0, 0);
-    for (const h of this.onFocusHandlers) h(newIdx);
-    this.refreshPlanetSystem(newIdx);
     this.fireStateChange();
   }
 
@@ -3618,13 +3643,46 @@ export class Stellata {
     const postElapsed = flyElapsed - state.durationMs;
     if (postElapsed < state.postArrivalMs) {
       const out = this._tmpAnimateLocal;
-      const B = this.destLocalPositionInto(state.destKind, state.destIdx, out) ? out : null;
+      let B = this.destLocalPositionInto(state.destKind, state.destIdx, out) ? out : null;
       if (!state.flyEndQuaternion) {
         // Pin the camera to the canonical fly-end pose before snapshot
         // so the slerp doesn't inherit a half-stepped frame.
         this.camera.position.copy(state.pEnd);
         if (B) this.camera.lookAt(B);
         state.flyEndQuaternion = this.camera.quaternion.clone();
+        // observe→observe arrivals: pull the destination recentre forward
+        // from finishWarp to phase-3 start. The parallax slerp lasts
+        // OBSERVE_TRANSITION_MS during which the camera sits on top of
+        // the destination star in the source's local frame; with both
+        // camera and B at kpc-scale magnitudes, matrixWorldInverse * B
+        // loses float32 precision and the destination jitters as the
+        // quaternion rotates (stellata-fqw). After this recentre the
+        // destination is at local (0,0,0) and the camera lerps in from
+        // a small offset, so the projection chain stays clean for the
+        // entire phase 3. uHideFocusIdx still points at the source for
+        // the duration so the destination remains visible during the
+        // parallax slerp; swapObserveAnchor at finishWarp re-points it
+        // to the destination on landing.
+        if (state.returnToObserve && state.destKind === 'star' && B) {
+          const positions = this.catalog.positions;
+          const destAbsX = positions[state.destIdx * 3];
+          const destAbsY = positions[state.destIdx * 3 + 1];
+          const destAbsZ = positions[state.destIdx * 3 + 2];
+          const dx = destAbsX - this.worldOffset.x;
+          const dy = destAbsY - this.worldOffset.y;
+          const dz = destAbsZ - this.worldOffset.z;
+          this.recenterFocusToStar(state.destIdx);
+          // recenterOrigin shifted camera.position and controls.target
+          // by -d in place; mirror that onto state.pEnd so the lerp
+          // pEnd → B continues to read the same physical waypoint
+          // after the frame change.
+          state.pEnd.x -= dx;
+          state.pEnd.y -= dy;
+          state.pEnd.z -= dz;
+          // _localPositions has been rewritten — re-bind B in the new
+          // frame for the lerp below to land on (0,0,0).
+          B = this.destLocalPositionInto(state.destKind, state.destIdx, out) ? out : null;
+        }
       }
       // Destination star stays visible across post-arrival so the user sees
       // it throughout the parallax slerp; swapObserveAnchor at finishWarp
