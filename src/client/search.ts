@@ -4,19 +4,9 @@ import type { Catalog } from './catalog-loader';
 import type { CloudCatalog } from './cloud-loader';
 import { TYPEAHEAD_MAX_RESULTS } from './typeahead-util';
 import { Typeahead, TypeaheadGroup } from './typeahead';
+import type { SearchEntry } from '../../scripts/catalog-pure';
 
-export interface SearchIndexEntry {
-  i: number;
-  p?: string;
-  b?: string;
-  f?: number;
-  hip?: number;
-  hd?: number;
-  hr?: number;
-  gl?: string;
-  c?: number;
-  s?: string;  // spectral designation string, cleaned for display
-}
+export type { SearchEntry };
 
 type EntryKind = 'star' | 'cloud';
 
@@ -103,7 +93,7 @@ export function buildBayerLabels(
 // value when a star is picked.
 export function buildStarLabels(
   catalog: Catalog,
-  raw: SearchIndexEntry[],
+  raw: SearchEntry[],
 ): Map<number, string> {
   const labels = new Map<number, string>();
   for (const [idx, name] of catalog.names) labels.set(idx, name);
@@ -133,7 +123,7 @@ export function buildStarLabels(
 // Map of star index → spectral designation string ("G2 V", "M1.5Iab-b",
 // "K0III+K7V", etc.), as carried from the source catalog via search-index.
 // Used by the hover tooltip to show full classification info.
-export function buildSpectralMap(raw: SearchIndexEntry[]): Map<number, string> {
+export function buildSpectralMap(raw: SearchEntry[]): Map<number, string> {
   const out = new Map<number, string>();
   for (const entry of raw) {
     if (entry.s) out.set(entry.i, entry.s);
@@ -153,7 +143,7 @@ export interface BayerInfo {
 // Map star idx → its Bayer designation parts. Used by chart mode to render
 // Greek-letter labels alongside proper names. Entries without a parseable
 // Bayer string or a constellation are skipped — chart labels need both.
-export function buildBayerMap(raw: SearchIndexEntry[]): Map<number, BayerInfo> {
+export function buildBayerMap(raw: SearchEntry[]): Map<number, BayerInfo> {
   const out = new Map<number, BayerInfo>();
   for (const entry of raw) {
     if (!entry.b) continue;
@@ -170,7 +160,7 @@ export function buildBayerMap(raw: SearchIndexEntry[]): Map<number, BayerInfo> {
 export function bindSearch(
   stellata: Stellata,
   catalog: Catalog,
-  raw: SearchIndexEntry[],
+  raw: SearchEntry[],
   starLabels: Map<number, string>,
   clouds: CloudCatalog | null,
 ) {

@@ -292,6 +292,26 @@ export const RECORD_LAYOUT = {
   hip: 40,        // uint32 (0 = no HIP)
 } as const;
 
+// ---- search-index.json wire contract ------------------------------------
+
+// One entry per searchable star written by build-catalog.ts and consumed
+// by src/client/search.ts. Keys are short (i/p/b/f/c/s/hip/hd/hr/gl) for
+// wire size — the index is ~13 MB raw with hundreds of thousands of
+// entries. Sharing the interface across writer + reader is the contract:
+// drift here ships a broken index.
+export interface SearchEntry {
+  i: number;     // record index in the binary catalog
+  p?: string;    // proper name (Sol, Sirius, …)
+  b?: string;    // Bayer designation as in AT-HYG (Alp, Alp-1, …)
+  f?: number;    // Flamsteed number
+  c?: number;    // constellation index (255 = none, omitted)
+  s?: string;    // spectral designation, cleaned for display
+  hip?: number;  // Hipparcos catalogue number
+  hd?: number;   // Henry Draper number
+  hr?: number;   // Harvard Revised / Yale BSC number
+  gl?: string;   // Gliese / GJ designation
+}
+
 // ---- Catalog flag bits --------------------------------------------------
 
 // Per-star bitfield stored at RECORD_LAYOUT.flags. Single source of truth
