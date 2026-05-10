@@ -11,25 +11,28 @@ import { setUnit, getUnit, onUnitChange } from './distance-util';
 import { isLive } from './time';
 
 // URL state lives in a single opaque param: `?v=<base64url>`. The blob
-// is `[1 byte version] [3 bytes LE presence mask] [variable payload]`
-// in the current schema. Only fields that diverge from canonical
-// defaults occupy bytes — a fully-default state has no `?v=` at all
-// and a typical share lands at ~30–40 chars.
+// is `[1 byte version] [LEB128 presence mask, 1–4 bytes] [variable
+// payload]` in v3. Only fields that diverge from canonical defaults
+// occupy bytes — a fully-default state has no `?v=` at all and a
+// typical share lands at ~10–25 chars.
 //
-// Two wire formats coexist. v2 (current) has a 24-bit presence mask,
-// 1-byte quantised scalars for fov/mag/smin/smax/span, and 3-byte
-// star/POI ids. v1 (legacy: 32-bit mask, float32 scalars, uint32 ids)
-// is still decoded — old shared URLs auto-upgrade to v2 on load via
+// Three wire formats coexist. v3 (current) has an LEB128 presence mask
+// + per-component vec3 sub-masks (cam/tgt/up/worldOffset emit only the
+// components that diverge from their per-key default). v2 has a flat
+// 24-bit presence mask, 1-byte quantised scalars for fov/mag/smin/
+// smax/span, and 3-byte star/POI ids — every present vec3 always costs
+// 12 bytes. v1 (legacy: 32-bit mask, float32 scalars, uint32 ids) is
+// the original. Old shared URLs auto-upgrade to v3 on load via
 // `applyFromUrl`'s post-debounce rewrite.
 //
 // Adding a field: claim the next free presence bit, append a FieldSpec
-// to FIELDS_V2, and add encoder/decoder logic in `currentStateOf` /
-// `applyDecodedView`. Old URLs still decode fine — unknown bits are
-// zero in the presence mask, so the decoder takes the default. Don't
-// repurpose retired bits for ~6 months of deploy overlap. Breaking-
-// shape changes (resizing existing fields, semantic shifts) need a
-// new SCHEMA_VERSION and a parallel FIELDS_V<n> table; freeze the old
-// one verbatim so its decoder stays correct.
+// to the buildFields() body, and add encoder/decoder logic in
+// `currentStateOf` / `applyDecodedView`. Old URLs still decode fine —
+// unknown bits are zero in the presence mask, so the decoder takes the
+// default. Don't repurpose retired bits for ~6 months of deploy
+// overlap. Breaking-shape changes (resizing existing fields, semantic
+// shifts) need a new SCHEMA_VERSION and a parallel FIELDS_V<n> table;
+// freeze the old one verbatim so its decoder stays correct.
 //
 // Buffer order (FIELDS bit-index order) is independent of the dispatch
 // order in applyDecodedView. Both are load-bearing — see the comments
@@ -37,9 +40,26 @@ import { isLive } from './time';
 
 const DEBOUNCE_MS = 300;
 const SCHEMA_VERSION_V1 = 1;
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION_V2 = 2;
+const SCHEMA_VERSION = 3;
 const PARAM_NAME = 'v';
 const EPS = 1e-3;
+// Per-frame URL-write change detector: 1% of vector magnitude, capped
+// at EPS (1e-3 pc) and floored at EPS_FLOOR (well below float32 ULP at
+// any reasonable scene scale). The cap preserves the original absolute
+// behaviour at scene scale (>= 0.1 pc, where float32 noise can approach
+// 5e-4 pc); the relative floor handles solar-system scales where the
+// fixed 1e-3 pc threshold equals ~206 AU and a zoom-out from the
+// first-load 5 AU park wouldn't trip any axis until far past where
+// the user expects the URL to update.
+const EPS_REL = 0.01;
+const EPS_FLOOR = 1e-9;
+
+// Per-component change-detector threshold for `startUrlSync`. Exported
+// for unit-level coverage of the scene-scale clamp / AU-scale floor.
+export function frameTriggerEps(magnitude: number): number {
+  return Math.max(EPS_FLOOR, Math.min(EPS, magnitude * EPS_REL));
+}
 
 // Default values that the encoder uses to decide whether to omit a field.
 const DEFAULT_CAM: [number, number, number] = [0, 0, 30];
@@ -166,6 +186,17 @@ export interface DecodedView {
 
 const POI_MAX_COUNT = 16;
 
+type Vec3Key = 'cam' | 'tgt' | 'up' | 'worldOffset';
+type ComponentDefaults = (v: DecodedView) => readonly [number, number, number];
+/** Mode-dependent post-decode fix-up for vec3FieldV3 fields whose
+ *  default depends on view state populated by a *later* field in the
+ *  decode loop (currently just cam, whose z-default depends on mode
+ *  set by flags at bit 13). `sub` is the sub-mask byte the field
+ *  decoded; the hook uses it to distinguish "value on the wire" from
+ *  "value filled from the static default". */
+type ApplyMode = (v: DecodedView, sub: number) => void;
+type Vec3Builder = (bit: number, key: Vec3Key) => FieldSpec;
+
 interface FieldSpec {
   bit: number;
   key: string;
@@ -178,15 +209,24 @@ interface FieldSpec {
    *  variable-length fields read a length-prefix byte. */
   decodeBytes(dv: DataView, off: number): number;
   isPresent(v: DecodedView): boolean;
-  encode(v: DecodedView, dv: DataView, off: number): void;
+  /** Encode the field at `off`. Returns the number of bytes written so
+   *  the caller can advance `off` without a second `encodeBytes` call —
+   *  matters for vec3FieldV3 / pois where the byte count requires
+   *  recomputing the sub-mask or list length. */
+  encode(v: DecodedView, dv: DataView, off: number): number;
   decode(v: DecodedView, dv: DataView, off: number): void;
+  /** Optional post-pass invoked after the full field-decode loop, only
+   *  when the field's mask bit is set this round. Used by vec3FieldV3
+   *  to apply mode-dependent default fix-up that can't run during
+   *  decode itself because the relevant view field decodes later. */
+  postDecode?(v: DecodedView): void;
 }
 
 function fixed(n: number) {
   return { encodeBytes: (_v: DecodedView) => n, decodeBytes: (_dv: DataView, _o: number) => n };
 }
 
-function vec3Field(bit: number, key: 'cam' | 'tgt' | 'up' | 'worldOffset'): FieldSpec {
+function vec3Field(bit: number, key: Vec3Key): FieldSpec {
   return {
     bit, key, ...fixed(12),
     isPresent: v => v[key] !== undefined,
@@ -195,6 +235,7 @@ function vec3Field(bit: number, key: 'cam' | 'tgt' | 'up' | 'worldOffset'): Fiel
       dv.setFloat32(o + 0, t[0], true);
       dv.setFloat32(o + 4, t[1], true);
       dv.setFloat32(o + 8, t[2], true);
+      return 12;
     },
     decode: (v, dv, o) => {
       v[key] = [dv.getFloat32(o, true), dv.getFloat32(o + 4, true), dv.getFloat32(o + 8, true)];
@@ -202,11 +243,117 @@ function vec3Field(bit: number, key: 'cam' | 'tgt' | 'up' | 'worldOffset'): Fiel
   };
 }
 
+// Per-key static defaults for the v3 vec3 sub-mask elision. cam's
+// "real" default is mode-dependent (DEFAULT_CAM in navigate, [0,0,0]
+// in observe) but the decoder uses the static navigate value here and
+// fixes up missing components in cam's postDecode hook once view.mode
+// is known — flags decodes after cam in FIELDS_V3 bit order.
+const VEC3_DEFAULTS: Record<Vec3Key, readonly [number, number, number]> = {
+  cam: DEFAULT_CAM,
+  tgt: DEFAULT_TGT,
+  up: DEFAULT_UP,
+  worldOffset: [0, 0, 0],
+};
+
+// v3 vec3 — 1-byte sub-mask (low 3 bits = which components diverge
+// from default) + per-set-bit float32 LE. A vec3 matching its default
+// in all three components has isPresent=false and is omitted from the
+// outer presence mask entirely.
+//
+// `getDefault` resolves the per-component default for the current view.
+// Static-default keys (tgt, up, worldOffset) pass `() => def`; cam's
+// default depends on mode and passes `v => defaultCamForMode(v.mode)`.
+// Localising the rule on the field spec means the encoder never branches
+// on the key string.
+//
+// `postDecode` (optional) runs after the full field-decode loop, only
+// when this field's mask bit was present this round. Used by cam to
+// swap z=0 in observe mode when the sub-mask leaves z unset (cam
+// decodes before flags-which-sets-mode, so the fix-up can't run during
+// cam.decode itself).
+//
+// Strict equality (===), not approx — under floating-origin the local-
+// frame cam can land at sub-µpc magnitudes (~1e-6 pc) that are well
+// inside the URL-write debouncer's 1e-3 epsilon. Eliding those as
+// "approximately default" would round the camera silently to the
+// frame origin on round-trip and break stellata-a7d.2.11.
+function vec3FieldV3(
+  bit: number,
+  key: Vec3Key,
+  getDefault: ComponentDefaults,
+  postDecode?: ApplyMode,
+): FieldSpec {
+  const def = VEC3_DEFAULTS[key];
+  // Captured during decode so the optional postDecode hook can
+  // distinguish "z was on the wire" from "z came from the static def".
+  // Module-singleton FieldSpec is safe under synchronous decode; the
+  // value is freshly written by decode() in the same round before the
+  // post-decode loop reads it.
+  let lastSub = 0;
+  return {
+    bit, key,
+    encodeBytes: v => {
+      const t = v[key]!;
+      const d = getDefault(v);
+      let n = 1;
+      if (t[0] !== d[0]) n += 4;
+      if (t[1] !== d[1]) n += 4;
+      if (t[2] !== d[2]) n += 4;
+      return n;
+    },
+    decodeBytes: (dv, off) => {
+      const sub = dv.getUint8(off);
+      let n = 1;
+      if (sub & 1) n += 4;
+      if (sub & 2) n += 4;
+      if (sub & 4) n += 4;
+      return n;
+    },
+    isPresent: v => {
+      const t = v[key];
+      if (!t) return false;
+      const d = getDefault(v);
+      return t[0] !== d[0] || t[1] !== d[1] || t[2] !== d[2];
+    },
+    encode: (v, dv, o) => {
+      const t = v[key]!;
+      const d = getDefault(v);
+      let sub = 0;
+      if (t[0] !== d[0]) sub |= 1;
+      if (t[1] !== d[1]) sub |= 2;
+      if (t[2] !== d[2]) sub |= 4;
+      dv.setUint8(o, sub);
+      let p = o + 1;
+      if (sub & 1) { dv.setFloat32(p, t[0], true); p += 4; }
+      if (sub & 2) { dv.setFloat32(p, t[1], true); p += 4; }
+      if (sub & 4) { dv.setFloat32(p, t[2], true); p += 4; }
+      return p - o;
+    },
+    decode: (v, dv, o) => {
+      // Sub-mask bit budget: low 3 bits = which components diverge
+      // from default; high 5 bits (bits 3-7) are reserved and
+      // silently ignored on decode. A future encoder can repurpose
+      // them (e.g. a per-component f64 escape) without bumping
+      // SCHEMA_VERSION — older clients will keep decoding the low 3
+      // bits correctly.
+      const sub = dv.getUint8(o);
+      lastSub = sub;
+      const out: [number, number, number] = [def[0], def[1], def[2]];
+      let p = o + 1;
+      if (sub & 1) { out[0] = dv.getFloat32(p, true); p += 4; }
+      if (sub & 2) { out[1] = dv.getFloat32(p, true); p += 4; }
+      if (sub & 4) { out[2] = dv.getFloat32(p, true); p += 4; }
+      v[key] = out;
+    },
+    postDecode: postDecode ? v => postDecode(v, lastSub) : undefined,
+  };
+}
+
 function f32Field(bit: number, key: 'fov' | 'mag' | 'smin' | 'smax' | 'span'): FieldSpec {
   return {
     bit, key, ...fixed(4),
     isPresent: v => v[key] !== undefined,
-    encode: (v, dv, o) => { dv.setFloat32(o, v[key]!, true); },
+    encode: (v, dv, o) => { dv.setFloat32(o, v[key]!, true); return 4; },
     decode: (v, dv, o) => { v[key] = dv.getFloat32(o, true); },
   };
 }
@@ -215,7 +362,7 @@ function u16Field(bit: number, key: 'dmin' | 'dmax' | 'spect' | 'cloud' | 'toc')
   return {
     bit, key, ...fixed(2),
     isPresent: v => v[key] !== undefined,
-    encode: (v, dv, o) => { dv.setUint16(o, v[key]!, true); },
+    encode: (v, dv, o) => { dv.setUint16(o, v[key]!, true); return 2; },
     decode: (v, dv, o) => { v[key] = dv.getUint16(o, true); },
   };
 }
@@ -228,6 +375,7 @@ function starRefField(bit: number, key: 'focus' | 'to'): FieldSpec {
       const ref = v[key] as StarRef;
       const tagged = ref.kind === 'hip' ? (ref.id | FOCUS_HIP_TAG) : (ref.id & FOCUS_ID_MASK);
       dv.setUint32(o, tagged >>> 0, true);
+      return 4;
     },
     decode: (v, dv, o) => {
       const raw = dv.getUint32(o, true);
@@ -250,6 +398,54 @@ function writeU24LE(dv: DataView, off: number, val: number): void {
   dv.setUint8(off + 2, (val >>> 16) & 0xff);
 }
 
+// LEB128: 7-bit payload + continuation bit per byte, low-group-first.
+// v3 uses this for the outer presence mask, replacing v2's fixed 3-
+// byte u24. Empty mask = 1 byte; single low-bit masks (cam = bit 0,
+// flags = bit 13 in mask 0x002000) = 1–2 bytes; full-mask high bits
+// degrade to 3–4 bytes — bit 21 (t) is the only field that costs an
+// extra byte vs u24, and it doesn't emit yet (gated on the time-
+// scrubber epic stellata-nmu).
+//
+// Exported for unit-level tests in url-state.test.ts; the helpers
+// otherwise have no consumers outside this module.
+export function writeVarint(dv: DataView, off: number, val: number): number {
+  let n = 0;
+  let x = val >>> 0;
+  do {
+    let byte = x & 0x7f;
+    x >>>= 7;
+    if (x !== 0) byte |= 0x80;
+    dv.setUint8(off + n, byte);
+    n++;
+  } while (x !== 0);
+  return n;
+}
+
+export function readVarint(dv: DataView, off: number, end: number): { val: number; bytes: number } {
+  let val = 0;
+  let n = 0;
+  let shift = 0;
+  for (;;) {
+    if (off + n >= end) throw new Error('Varint runs past blob end');
+    const byte = dv.getUint8(off + n);
+    val |= (byte & 0x7f) << shift;
+    n++;
+    if (!(byte & 0x80)) return { val: val >>> 0, bytes: n };
+    shift += 7;
+    if (shift >= 32) throw new Error('Varint mask too long');
+  }
+}
+
+export function varintLen(val: number): number {
+  let n = 0;
+  let x = val >>> 0;
+  do {
+    x >>>= 7;
+    n++;
+  } while (x !== 0);
+  return n;
+}
+
 // Quantised uint8 field — replaces f32Field for fov/mag/smin/smax/span
 // in v2. The quant grid matches each slider's native (min, max, step) so
 // round-trips are exact at slider resolution. Encoder clamps to [0, max
@@ -268,6 +464,7 @@ function u8Field(
       const raw = Math.round((v[key]! - q.min) / q.step);
       const u = Math.max(0, Math.min(maxByte, raw));
       dv.setUint8(o, u);
+      return 1;
     },
     decode: (v, dv, o) => {
       v[key] = q.min + dv.getUint8(o) * q.step;
@@ -286,6 +483,7 @@ function starRefFieldU24(bit: number, key: 'focus' | 'to'): FieldSpec {
         ? ((ref.id & FOCUS_ID_MASK_V2) | FOCUS_HIP_TAG_V2)
         : (ref.id & FOCUS_ID_MASK_V2);
       writeU24LE(dv, o, tagged >>> 0);
+      return 3;
     },
     decode: (v, dv, o) => {
       const raw = readU24LE(dv, o);
@@ -301,7 +499,7 @@ function u8CloudField(bit: number, key: 'cloud' | 'toc'): FieldSpec {
   return {
     bit, key, ...fixed(1),
     isPresent: v => v[key] !== undefined,
-    encode: (v, dv, o) => { dv.setUint8(o, v[key]! & 0xff); },
+    encode: (v, dv, o) => { dv.setUint8(o, v[key]! & 0xff); return 1; },
     decode: (v, dv, o) => { v[key] = dv.getUint8(o); },
   };
 }
@@ -318,7 +516,7 @@ const FIELDS_V1: FieldSpec[] = [
   {
     bit: 8, key: 'preset', ...fixed(1),
     isPresent: v => v.preset !== undefined,
-    encode: (v, dv, o) => { dv.setUint8(o, PRESET_TO_INDEX[v.preset!]); },
+    encode: (v, dv, o) => { dv.setUint8(o, PRESET_TO_INDEX[v.preset!]); return 1; },
     decode: (v, dv, o) => {
       const idx = dv.getUint8(o);
       v.preset = INDEX_TO_PRESET[idx] ?? 'naked-eye';
@@ -327,7 +525,7 @@ const FIELDS_V1: FieldSpec[] = [
   {
     bit: 9, key: 'con', ...fixed(1),
     isPresent: v => v.con !== undefined,
-    encode: (v, dv, o) => { dv.setInt8(o, v.con!); },
+    encode: (v, dv, o) => { dv.setInt8(o, v.con!); return 1; },
     decode: (v, dv, o) => { v.con = dv.getInt8(o); },
   },
   f32Field(10, 'smin'),
@@ -336,7 +534,7 @@ const FIELDS_V1: FieldSpec[] = [
   {
     bit: 13, key: 'flags', ...fixed(1),
     isPresent: v => packFlags(v) !== 0,
-    encode: (v, dv, o) => { dv.setUint8(o, packFlags(v)); },
+    encode: (v, dv, o) => { dv.setUint8(o, packFlags(v)); return 1; },
     decode: (v, dv, o) => { unpackFlags(v, dv.getUint8(o)); },
   },
   starRefField(14, 'focus'),
@@ -350,7 +548,7 @@ const FIELDS_V1: FieldSpec[] = [
     // focus regardless of starting state.
     bit: 18, key: 'focusCleared', ...fixed(0),
     isPresent: v => v.focus === 'cleared',
-    encode: () => {},
+    encode: () => 0,
     decode: v => { v.focus = 'cleared'; },
   },
   {
@@ -367,6 +565,7 @@ const FIELDS_V1: FieldSpec[] = [
       for (let i = 0; i < list.length; i++) {
         dv.setUint32(o + 1 + i * 4, list[i] >>> 0, true);
       }
+      return 1 + 4 * list.length;
     },
     decode: (v, dv, o) => {
       const n = Math.min(dv.getUint8(o), POI_MAX_COUNT);
@@ -379,96 +578,140 @@ const FIELDS_V1: FieldSpec[] = [
   },
 ];
 
-// v2 schema: same 20 bits / 20 fields as v1, but with quantised 1-byte
-// scalars (fov/mag/smin/smax/span), 3-byte star refs (focus/to), 1-byte
-// cloud refs, 3-byte POI HIP entries, and a 24-bit presence mask in the
-// frame. Each field's bit number is identical to v1 so the FIELDS_V1
-// table stays a frozen reference for legacy decode.
-const FIELDS_V2: FieldSpec[] = [
-  vec3Field(0, 'cam'),
-  vec3Field(1, 'tgt'),
-  vec3Field(2, 'up'),
-  u8Field(3,  'fov',  { min: 10, max: 120, step: 1   }),
-  u8Field(4,  'mag',  { min: -2, max: 15,  step: 0.1 }),
-  u16Field(5, 'dmin'),
-  u16Field(6, 'dmax'),
-  u16Field(7, 'spect'),
-  {
-    bit: 8, key: 'preset', ...fixed(1),
-    isPresent: v => v.preset !== undefined,
-    encode: (v, dv, o) => { dv.setUint8(o, PRESET_TO_INDEX[v.preset!]); },
-    decode: (v, dv, o) => {
-      const idx = dv.getUint8(o);
-      v.preset = INDEX_TO_PRESET[idx] ?? 'naked-eye';
+// v2 and v3 share 16 of 20 field specs verbatim — only bits 0/1/2/20
+// (the four vec3s) differ. `buildFields` parameterises the vec3 helper
+// so the shared bits live in one place: a non-vec3 field-shape change
+// (a new flag bit, a different cap on POIs) lands once here and both
+// FIELDS_V2 and FIELDS_V3 pick it up. v1 stays separate — its scalar
+// shapes (4-byte fov/mag, 4-byte star refs, u16 cloud, 4-byte POI
+// HIPs) diverge from v2/v3 in a way that a single helper-swap can't
+// express.
+//
+// The frozen-decoder rule the file's top comment block names ("freeze
+// the old one verbatim so its decoder stays correct") is preserved by
+// construction: vec3Field is unchanged from when it shipped in v2, so
+// FIELDS_V2 = buildFields(vec3Field) reconstructs the v2 layout
+// byte-for-byte even as buildFields gains new shared bits over time.
+function buildFields(vec3: Vec3Builder): FieldSpec[] {
+  return [
+    vec3(0, 'cam'),
+    vec3(1, 'tgt'),
+    vec3(2, 'up'),
+    u8Field(3,  'fov',  { min: 10, max: 120, step: 1   }),
+    u8Field(4,  'mag',  { min: -2, max: 15,  step: 0.1 }),
+    u16Field(5, 'dmin'),
+    u16Field(6, 'dmax'),
+    u16Field(7, 'spect'),
+    {
+      bit: 8, key: 'preset', ...fixed(1),
+      isPresent: v => v.preset !== undefined,
+      encode: (v, dv, o) => { dv.setUint8(o, PRESET_TO_INDEX[v.preset!]); return 1; },
+      decode: (v, dv, o) => {
+        const idx = dv.getUint8(o);
+        v.preset = INDEX_TO_PRESET[idx] ?? 'naked-eye';
+      },
+    },
+    {
+      bit: 9, key: 'con', ...fixed(1),
+      isPresent: v => v.con !== undefined,
+      encode: (v, dv, o) => { dv.setInt8(o, v.con!); return 1; },
+      decode: (v, dv, o) => { v.con = dv.getInt8(o); },
+    },
+    u8Field(10, 'smin', { min: 1, max: 6,  step: 0.1 }),
+    u8Field(11, 'smax', { min: 2, max: 32, step: 0.5 }),
+    u8Field(12, 'span', { min: 2, max: 20, step: 0.5 }),
+    {
+      bit: 13, key: 'flags', ...fixed(1),
+      isPresent: v => packFlags(v) !== 0,
+      encode: (v, dv, o) => { dv.setUint8(o, packFlags(v)); return 1; },
+      decode: (v, dv, o) => { unpackFlags(v, dv.getUint8(o)); },
+    },
+    starRefFieldU24(14, 'focus'),
+    starRefFieldU24(15, 'to'),
+    u8CloudField(16, 'cloud'),
+    u8CloudField(17, 'toc'),
+    {
+      bit: 18, key: 'focusCleared', ...fixed(0),
+      isPresent: v => v.focus === 'cleared',
+      encode: () => 0,
+      decode: v => { v.focus = 'cleared'; },
+    },
+    {
+      // Variable-length: 1-byte count + count × 3-byte HIP IDs (HIP space
+      // is < 2^17 so 24 bits is plenty). Hard-capped at POI_MAX_COUNT both
+      // at encode time and at decode time to bound the blob.
+      bit: 19, key: 'pois',
+      encodeBytes: v => 1 + 3 * Math.min(v.pois?.length ?? 0, POI_MAX_COUNT),
+      decodeBytes: (dv, off) => 1 + 3 * Math.min(dv.getUint8(off), POI_MAX_COUNT),
+      isPresent: v => Array.isArray(v.pois) && v.pois.length > 0,
+      encode: (v, dv, o) => {
+        const list = (v.pois ?? []).slice(0, POI_MAX_COUNT);
+        dv.setUint8(o, list.length);
+        for (let i = 0; i < list.length; i++) {
+          writeU24LE(dv, o + 1 + i * 3, list[i] >>> 0);
+        }
+        return 1 + 3 * list.length;
+      },
+      decode: (v, dv, o) => {
+        const n = Math.min(dv.getUint8(o), POI_MAX_COUNT);
+        const out: number[] = [];
+        for (let i = 0; i < n; i++) {
+          out.push(readU24LE(dv, o + 1 + i * 3));
+        }
+        v.pois = out;
+      },
+    },
+    // Floating-origin anchor. Appended at the *end* (rather than slotted
+    // in by bit number) so a stale client reading a newer URL just stops
+    // short of these trailing bytes — every preceding field decodes at
+    // its expected offset and the missing worldOffset gracefully degrades
+    // to "Sol-anchored" (the pre-fix default). Future additions should
+    // follow the same append-only pattern.
+    vec3(20, 'worldOffset'),
+    // Scrubber-pinned `t` (Unix-seconds, float64). Append-only per the
+    // worldOffset note above. Stale clients silently ignore it and
+    // resolve `t` to local wall-clock now — the same fallback as a URL
+    // without the field.
+    {
+      bit: 21, key: 't', ...fixed(8),
+      isPresent: v => v.t !== undefined,
+      encode: (v, dv, o) => { dv.setFloat64(o, v.t!, true); return 8; },
+      decode: (v, dv, o) => { v.t = dv.getFloat64(o, true); },
+    },
+  ];
+}
+
+// v2 schema: identical to v3 except for the four vec3 fields, which
+// pay a flat 12 bytes per present vec3 instead of v3's per-component
+// sub-mask. Each field's bit number matches v3 so the shared
+// buildFields body stays correct under either vec3 helper.
+const FIELDS_V2: FieldSpec[] = buildFields(vec3Field);
+
+// v3 vec3 wiring: per-key default + optional post-decode hook. Cam's
+// default depends on mode (set by flags at bit 13, which decodes after
+// cam) so cam carries a postDecode that swaps z=0 in observe mode when
+// the sub-mask leaves z unset. The other three vec3s have static
+// defaults and no post-pass.
+const VEC3_V3_CONFIG: Record<Vec3Key, { def: ComponentDefaults; postDecode?: ApplyMode }> = {
+  cam: {
+    def: v => defaultCamForMode(v.mode),
+    postDecode: (v, sub) => {
+      if (v.cam && v.mode === 'observe' && !(sub & 4)) v.cam[2] = 0;
     },
   },
-  {
-    bit: 9, key: 'con', ...fixed(1),
-    isPresent: v => v.con !== undefined,
-    encode: (v, dv, o) => { dv.setInt8(o, v.con!); },
-    decode: (v, dv, o) => { v.con = dv.getInt8(o); },
-  },
-  u8Field(10, 'smin', { min: 1, max: 6,  step: 0.1 }),
-  u8Field(11, 'smax', { min: 2, max: 32, step: 0.5 }),
-  u8Field(12, 'span', { min: 2, max: 20, step: 0.5 }),
-  {
-    bit: 13, key: 'flags', ...fixed(1),
-    isPresent: v => packFlags(v) !== 0,
-    encode: (v, dv, o) => { dv.setUint8(o, packFlags(v)); },
-    decode: (v, dv, o) => { unpackFlags(v, dv.getUint8(o)); },
-  },
-  starRefFieldU24(14, 'focus'),
-  starRefFieldU24(15, 'to'),
-  u8CloudField(16, 'cloud'),
-  u8CloudField(17, 'toc'),
-  {
-    bit: 18, key: 'focusCleared', ...fixed(0),
-    isPresent: v => v.focus === 'cleared',
-    encode: () => {},
-    decode: v => { v.focus = 'cleared'; },
-  },
-  {
-    // Variable-length: 1-byte count + count × 3-byte HIP IDs (HIP space
-    // is < 2^17 so 24 bits is plenty). Hard-capped at POI_MAX_COUNT both
-    // at encode time and at decode time to bound the blob.
-    bit: 19, key: 'pois',
-    encodeBytes: v => 1 + 3 * Math.min(v.pois?.length ?? 0, POI_MAX_COUNT),
-    decodeBytes: (dv, off) => 1 + 3 * Math.min(dv.getUint8(off), POI_MAX_COUNT),
-    isPresent: v => Array.isArray(v.pois) && v.pois.length > 0,
-    encode: (v, dv, o) => {
-      const list = (v.pois ?? []).slice(0, POI_MAX_COUNT);
-      dv.setUint8(o, list.length);
-      for (let i = 0; i < list.length; i++) {
-        writeU24LE(dv, o + 1 + i * 3, list[i] >>> 0);
-      }
-    },
-    decode: (v, dv, o) => {
-      const n = Math.min(dv.getUint8(o), POI_MAX_COUNT);
-      const out: number[] = [];
-      for (let i = 0; i < n; i++) {
-        out.push(readU24LE(dv, o + 1 + i * 3));
-      }
-      v.pois = out;
-    },
-  },
-  // Floating-origin anchor. Appended at the *end* of FIELDS_V2 (rather
-  // than slotted in by bit number) so a stale client reading a newer
-  // URL just stops short of these trailing bytes — every preceding
-  // field decodes at its expected offset and the missing worldOffset
-  // gracefully degrades to "Sol-anchored" (the pre-fix default). Future
-  // additions should follow the same append-only pattern.
-  vec3Field(20, 'worldOffset'),
-  // Scrubber-pinned `t` (Unix-seconds, float64). Append-only per the
-  // worldOffset note above. Stale clients silently ignore it and
-  // resolve `t` to local wall-clock now — the same fallback as a URL
-  // without the field.
-  {
-    bit: 21, key: 't', ...fixed(8),
-    isPresent: v => v.t !== undefined,
-    encode: (v, dv, o) => { dv.setFloat64(o, v.t!, true); },
-    decode: (v, dv, o) => { v.t = dv.getFloat64(o, true); },
-  },
-];
+  tgt:         { def: () => DEFAULT_TGT },
+  up:          { def: () => DEFAULT_UP },
+  worldOffset: { def: () => VEC3_DEFAULTS.worldOffset },
+};
+
+// v3 schema: same buildFields body as v2, but with vec3FieldV3 carrying
+// per-component sub-mask elision. A typical near-Sol pose
+// (cam=[0,0,3.7]) drops from v2's 12-byte cam to v3's 5 bytes (1
+// sub-mask + 4 z-component) — ~7 bytes saved per share URL.
+const FIELDS_V3: FieldSpec[] = buildFields((bit, key) => {
+  const cfg = VEC3_V3_CONFIG[key];
+  return vec3FieldV3(bit, key, cfg.def, cfg.postDecode);
+});
 
 function packFlags(v: DecodedView): number {
   let f = 0;
@@ -497,30 +740,39 @@ function unpackFlags(v: DecodedView, f: number): void {
 
 function computePresence(view: DecodedView): number {
   let mask = 0;
-  for (const f of FIELDS_V2) {
+  for (const f of FIELDS_V3) {
     if (f.isPresent(view)) mask |= (1 << f.bit);
   }
   return mask;
 }
 
-export function encodeBlob(view: DecodedView): string {
-  const mask = computePresence(view);
-  let total = 4; // 1 version + 3 presence
-  for (const f of FIELDS_V2) {
+// Encode a view given a pre-computed presence mask. Split out so
+// writeUrl can compute the mask once for both the "should we emit
+// `?v=`?" gate and the encode itself — the public encodeBlob runs
+// computePresence again internally for callers that don't have a
+// mask handy.
+function encodeBlobWithMask(view: DecodedView, mask: number): string {
+  let total = 1 + varintLen(mask); // 1 version + LEB128 presence (1–4 bytes)
+  for (const f of FIELDS_V3) {
     if (mask & (1 << f.bit)) total += f.encodeBytes(view);
   }
   const ab = new ArrayBuffer(total);
   const dv = new DataView(ab);
   dv.setUint8(0, SCHEMA_VERSION);
-  writeU24LE(dv, 1, mask >>> 0);
-  let off = 4;
-  for (const f of FIELDS_V2) {
+  let off = 1 + writeVarint(dv, 1, mask);
+  for (const f of FIELDS_V3) {
     if (mask & (1 << f.bit)) {
-      f.encode(view, dv, off);
-      off += f.encodeBytes(view);
+      // encode returns its own byte count, so this loop avoids a second
+      // encodeBytes call (which would recompute vec3 sub-masks and pois
+      // list lengths).
+      off += f.encode(view, dv, off);
     }
   }
   return toBase64Url(new Uint8Array(ab));
+}
+
+export function encodeBlob(view: DecodedView): string {
+  return encodeBlobWithMask(view, computePresence(view));
 }
 
 export interface DecodedBlob {
@@ -536,7 +788,8 @@ export function decodeBlob(blob: string): DecodedBlob {
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const version = dv.getUint8(0);
   if (version === SCHEMA_VERSION_V1) return { view: decodeV1(dv), version };
-  if (version === SCHEMA_VERSION)    return { view: decodeV2(dv), version };
+  if (version === SCHEMA_VERSION_V2) return { view: decodeV2(dv), version };
+  if (version === SCHEMA_VERSION)    return { view: decodeV3(dv), version };
   throw new Error(`Unsupported view version: ${version}`);
 }
 
@@ -564,6 +817,27 @@ function decodeV2(dv: DataView): DecodedView {
       f.decode(view, dv, off);
       off += f.decodeBytes(dv, off);
     }
+  }
+  return view;
+}
+
+function decodeV3(dv: DataView): DecodedView {
+  if (dv.byteLength < 2) throw new Error(`v3 blob too short: ${dv.byteLength} bytes`);
+  const { val: mask, bytes: maskBytes } = readVarint(dv, 1, dv.byteLength);
+  const view: DecodedView = {};
+  let off = 1 + maskBytes;
+  for (const f of FIELDS_V3) {
+    if (mask & (1 << f.bit)) {
+      f.decode(view, dv, off);
+      off += f.decodeBytes(dv, off);
+    }
+  }
+  // Post-decode pass: invokes postDecode hooks on fields whose mask
+  // bit was present this round. Currently used by cam to swap z=0 in
+  // observe mode — cam decodes at bit 0, mode is set by flags at bit
+  // 13, so the fix-up has to wait until view.mode is populated.
+  for (const f of FIELDS_V3) {
+    if ((mask & (1 << f.bit)) && f.postDecode) f.postDecode(view);
   }
   return view;
 }
@@ -694,11 +968,23 @@ export function currentStateOf(stellata: Stellata, idMaps: IdMaps): DecodedView 
   if (woNonSol) {
     view.worldOffset = [wo.x, wo.y, wo.z];
   }
-  // When the anchor is non-Sol, always emit cam/tgt explicitly. The
-  // default-elision logic ("omit when cam matches DEFAULT_CAM")
-  // assumes the local frame is Sol; in a non-Sol frame the implicit
-  // default doesn't reconstruct the right pose because setWorldOffset
-  // shifts camera/target alongside the origin.
+  // Two-layer elision is intentional: this site populates view.cam/tgt/up
+  // when any component is meaningfully off-default at 1e-3 epsilon (so
+  // tiny per-frame numerical noise from controls.update doesn't keep
+  // re-triggering URL writes), then vec3FieldV3.isPresent re-checks at
+  // strict equality to decide whether the field claims its outer
+  // presence bit. Both layers are load-bearing — the inner strict
+  // equality preserves floating-origin sub-µpc cam values
+  // (stellata-a7d.2.11) that would round to default under the outer
+  // epsilon if the inner check were also approx. Don't collapse to one
+  // predicate without preserving both regimes.
+  //
+  // When the anchor is non-Sol, always populate cam/tgt explicitly so
+  // the decoder doesn't fall back to default-pose reconstruction in a
+  // shifted local frame; vec3FieldV3.isPresent will still elide cam/tgt
+  // from the wire if they happen to match default (the decoder's
+  // worldOffset branch resets them to default anyway, so the net pose
+  // is identical), but populating them here keeps the path explicit.
   const camDefault = defaultCamForMode(mode);
   if (woNonSol || !approx(c.x, camDefault[0]) || !approx(c.y, camDefault[1]) || !approx(c.z, camDefault[2])) {
     view.cam = [c.x, c.y, c.z];
@@ -731,6 +1017,16 @@ function resolveStarRef(ref: StarRef, idMaps: IdMaps, fallback: number): number 
     return idx ?? fallback;
   }
   return ref.id >= 0 && ref.id < idMaps.starCount ? ref.id : fallback;
+}
+
+// Single source of truth for "park the camera at the mode's default
+// pose" — used by the worldOffset branch (after origin recentre, before
+// any explicit cam/tgt overrides) and the observe-enter branch (when no
+// explicit cam came on the wire). Both routed through `defaultCamForMode`
+// so the cam-omission invariant lives in one place.
+function setCameraToDefault(stellata: Stellata, mode: 'navigate' | 'observe' | undefined): void {
+  const d = defaultCamForMode(mode);
+  stellata.camera.position.set(d[0], d[1], d[2]);
 }
 
 // Apply a decoded view to Stellata. **The order here is load-bearing**:
@@ -832,8 +1128,7 @@ export function applyDecodedView(
   // junk position. view.cam / view.tgt below override when present.
   if (view.worldOffset) {
     stellata.setWorldOffset(view.worldOffset[0], view.worldOffset[1], view.worldOffset[2]);
-    const camDefault = defaultCamForMode(view.mode);
-    stellata.camera.position.set(camDefault[0], camDefault[1], camDefault[2]);
+    setCameraToDefault(stellata, view.mode);
     stellata.controls.target.set(DEFAULT_TGT[0], DEFAULT_TGT[1], DEFAULT_TGT[2]);
     controlsDirty = true;
   }
@@ -850,11 +1145,12 @@ export function applyDecodedView(
   // to the focal-star origin *before* controls.update so that lookAt
   // computes the right quaternion from (0,0,0)→tgt rather than from
   // focusStar's orbit position. setCameraMode('observe', animate:false)
-  // below preserves that quaternion when it pins position again. Same
-  // OBSERVE_CAM_LOCAL constant the encoder uses to elide cam.
+  // below preserves that quaternion when it pins position again.
+  // setCameraToDefault routes through defaultCamForMode so the elision
+  // invariant lives in one place.
   const willEnterObserve = view.mode === 'observe' && stellata.getFocusedStar() !== null;
   if (willEnterObserve && !hasCam) {
-    stellata.camera.position.set(...OBSERVE_CAM_LOCAL);
+    setCameraToDefault(stellata, 'observe');
     controlsDirty = true;
   }
   if (controlsDirty) stellata.controls.update();
@@ -886,8 +1182,11 @@ export function applyDecodedView(
 
 function writeUrl(stellata: Stellata, idMaps: IdMaps): void {
   const view = currentStateOf(stellata, idMaps);
+  // Single computePresence pass — the mask gates the `?v=` param itself
+  // and is also passed to encodeBlobWithMask so the encoder doesn't
+  // re-walk FIELDS_V3.
   const mask = computePresence(view);
-  const qs = mask === 0 ? '' : `${PARAM_NAME}=${encodeBlob(view)}`;
+  const qs = mask === 0 ? '' : `${PARAM_NAME}=${encodeBlobWithMask(view, mask)}`;
   const url = location.pathname + (qs ? '?' + qs : '');
   if (url !== location.pathname + location.search) {
     history.replaceState(null, '', url);
@@ -913,7 +1212,7 @@ export function applyFromUrl(stellata: Stellata, idMaps: IdMaps): boolean {
   applyDecodedView(stellata, decoded.view, idMaps);
   // Auto-upgrade legacy URLs: after the same debounce we already use for
   // routine URL writes, re-encode the current state as the latest schema
-  // so the address bar ends up with the smaller v2 form. Defers past
+  // so the address bar ends up with the smaller v3 form. Defers past
   // any state-change events triggered by the apply itself, which would
   // otherwise schedule their own write on top.
   if (decoded.version !== SCHEMA_VERSION) {
@@ -955,15 +1254,20 @@ export function startUrlSync(stellata: Stellata, idMaps: IdMaps): void {
     const c = stellata.camera.position;
     const t = stellata.controls.target;
     const u = stellata.camera.up;
-    // Component-wise epsilon comparison on the steady-state path. EPS
-    // matches the pre-a0n toFixed(3) precision (1e-3) so the change-
-    // detection threshold is unchanged. No allocations on the no-change
-    // path — used to be 10+ string allocations per frame from a
-    // toFixed(3)×9 hash.
+    // Component-wise epsilon comparison on the steady-state path. The
+    // per-vector threshold scales with magnitude (frameTriggerEps) so
+    // a zoom-out from solar-system scale trips at AU-resolution rather
+    // than waiting for the camera to move 1e-3 pc ≈ 206 AU. At scene
+    // scale (>= 0.1 pc) the threshold caps at EPS, preserving the
+    // original behaviour. No allocations on the no-change path — used
+    // to be 10+ string allocations per frame from a toFixed(3)×9 hash.
+    const cEps = frameTriggerEps(Math.hypot(c.x, c.y, c.z));
+    const tEps = frameTriggerEps(Math.hypot(t.x, t.y, t.z));
+    const uEps = frameTriggerEps(Math.hypot(u.x, u.y, u.z));
     if (
-      Math.abs(c.x - lastCam[0]) < EPS && Math.abs(c.y - lastCam[1]) < EPS && Math.abs(c.z - lastCam[2]) < EPS &&
-      Math.abs(t.x - lastCam[3]) < EPS && Math.abs(t.y - lastCam[4]) < EPS && Math.abs(t.z - lastCam[5]) < EPS &&
-      Math.abs(u.x - lastCam[6]) < EPS && Math.abs(u.y - lastCam[7]) < EPS && Math.abs(u.z - lastCam[8]) < EPS
+      Math.abs(c.x - lastCam[0]) < cEps && Math.abs(c.y - lastCam[1]) < cEps && Math.abs(c.z - lastCam[2]) < cEps &&
+      Math.abs(t.x - lastCam[3]) < tEps && Math.abs(t.y - lastCam[4]) < tEps && Math.abs(t.z - lastCam[5]) < tEps &&
+      Math.abs(u.x - lastCam[6]) < uEps && Math.abs(u.y - lastCam[7]) < uEps && Math.abs(u.z - lastCam[8]) < uEps
     ) {
       return;
     }
