@@ -7,6 +7,14 @@ import {
   type Planet,
   type PlanetType,
 } from './planet-system';
+import {
+  EARTH_PHASE,
+  JUPITER_PHASE,
+  MARS_PHASE,
+  MERCURY_PHASE,
+  SATURN_PHASE,
+  VENUS_PHASE,
+} from './phase-function';
 
 // Synthetic catalog stub — only fields used by the planet-system module
 // matter; the rest stay zero/empty so tests don't drag in catalog parsing.
@@ -138,6 +146,31 @@ describe('SOL_PLANETS data', () => {
       expect(p.albedo).toBeGreaterThan(0);
       expect(p.albedo).toBeLessThan(1);
       expect(p.albedo).toBeCloseTo(expected[p.name], 3);
+    }
+  });
+
+  it('every Mallama-published planet carries the matching phase coefficients', () => {
+    // Mallama 2018 publishes phase-angle polynomials for Mercury,
+    // Venus, Earth, Mars, Jupiter and Saturn. Uranus, Neptune and
+    // Pluto have no published phase polynomial — Uranus and Neptune
+    // because their max α from Earth is "negligible" so the paper
+    // models latitude/temporal effects instead, Pluto because the
+    // paper doesn't cover it. All three fall back to Lambertian.
+    const expected: Record<string, unknown> = {
+      Mercury: MERCURY_PHASE,
+      Venus: VENUS_PHASE,
+      Earth: EARTH_PHASE,
+      Mars: MARS_PHASE,
+      Jupiter: JUPITER_PHASE,
+      Saturn: SATURN_PHASE,
+    };
+    const lambertianFallback = new Set(['Uranus', 'Neptune', 'Pluto']);
+    for (const p of SOL_PLANETS) {
+      if (lambertianFallback.has(p.name)) {
+        expect(p.phaseCoefficients).toBeUndefined();
+      } else {
+        expect(p.phaseCoefficients).toBe(expected[p.name]);
+      }
     }
   });
 

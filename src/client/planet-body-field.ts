@@ -58,6 +58,7 @@
 
 import * as THREE from 'three';
 import type { PlanetSystem } from './planet-system';
+import { peakPhaseFactor } from './phase-function';
 import { applyDiscBlendDefaults } from './stellata';
 import {
   AU_PC,
@@ -114,10 +115,12 @@ const INITIAL_CAPACITY = 16;
  *   d_cull = 10 pc · √(p · (R/a)²) · 10^((maxAppMag − M_host) / 5)
  *         = 10 pc · sqrt(p) · (R/a) · 10^((maxAppMag − M_host) / 5)
  *
- * The actual apparent-mag formula has a φ(α) factor in [0, 1], so the
- * real visibility threshold is at d ≤ d_cull. Using d_cull as the
- * outer bound is conservative (we keep working a host that could in
- * principle still be visible).
+ * The caller folds `peakPhaseFactor(coefs)` into `brightestReflectance`
+ * before passing it in (see `attachHost`). For most planets that's a
+ * 1× no-op (c0 = 0 ⇒ φ(0) = 1); Saturn's c0 = −0.55 ring boost lifts
+ * φ(0) to ~1.66, widening Saturn's cull by ~√1.66 ≈ 1.29×. The cull
+ * remains a conservative outer bound: at any α the actual flux factor
+ * is ≤ φ_peak, so a host past d_cull is genuinely sub-cutoff.
  *
  * Pure function — exported for tests.
  */
@@ -145,8 +148,11 @@ interface AttachedHost {
   orientation: THREE.Quaternion;
   positionsAt: ((t: number, out: Float32Array) => void) | null;
   positionsScratch: Float32Array | null;
-  /** max over planets of `p · (R / a)²` — the geometry-independent
-   *  reflectance proxy. Drives cullDistancePc. */
+  /** max over planets of `p · (R / a)² · peakPhaseFactor(coefs)` —
+   *  the geometry-independent reflectance proxy folded with each
+   *  planet's α=0 phase boost. Drives cullDistancePc. Saturn's ring
+   *  c0 lifts its term above the globe-only reflectance; for every
+   *  other planet peakPhaseFactor = 1. */
   brightestReflectance: number;
   /** Cached cull distance for the current maxAppMag. */
   cullDistance: number;
@@ -172,6 +178,14 @@ export class PlanetBodyField {
   private bufSolidity!: Float32Array;
   private bufAlbedo!: Float32Array;
   private bufHostAbsmag!: Float32Array;
+  // Phase-curve coefficients packed as two vec4 attributes:
+  //   bufPhaseA: (c0, c1, c2, c3)
+  //   bufPhaseB: (c4, c5, c6, alphaMaxDeg)
+  // alphaMaxDeg = 0 is the "no Mallama fit, use Lambertian" sentinel
+  // — the same default Pluto and every exoplanet hit. See
+  // `phase-function.ts` for the polynomial form.
+  private bufPhaseA!: Float32Array;
+  private bufPhaseB!: Float32Array;
   private geometry!: THREE.InstancedBufferGeometry;
   private matDisc!: THREE.ShaderMaterial;
   private matGlow!: THREE.ShaderMaterial;
@@ -232,7 +246,12 @@ export class PlanetBodyField {
     for (const planet of ps.planets) {
       const aPc = planet.semiMajorAxisAu * AU_PC;
       const RoverA = (planet.radiusKm * KM_PC) / Math.max(aPc, 1e-30);
-      const refl = planet.albedo * RoverA * RoverA;
+      // Saturn's rings raise its α=0 brightness above globe-only
+      // reflectance via the Mallama c0 term — fold it into the cull
+      // proxy so the cull distance widens to match. Other planets
+      // have c0=0 ⇒ peak factor 1, leaving the formula unchanged.
+      const peakBrightness = peakPhaseFactor(planet.phaseCoefficients);
+      const refl = planet.albedo * RoverA * RoverA * peakBrightness;
       if (refl > brightestReflectance) brightestReflectance = refl;
     }
 
@@ -388,6 +407,8 @@ export class PlanetBodyField {
     this.bufSolidity = new Float32Array(capacity);
     this.bufAlbedo = new Float32Array(capacity);
     this.bufHostAbsmag = new Float32Array(capacity);
+    this.bufPhaseA = new Float32Array(capacity * 4);
+    this.bufPhaseB = new Float32Array(capacity * 4);
   }
 
   private growCapacity(): void {
@@ -399,6 +420,8 @@ export class PlanetBodyField {
     const oldSolidity = this.bufSolidity;
     const oldAlbedo = this.bufAlbedo;
     const oldAbsmag = this.bufHostAbsmag;
+    const oldPhaseA = this.bufPhaseA;
+    const oldPhaseB = this.bufPhaseB;
     this.allocateBuffers(newCap);
     this.bufLocalRel.set(oldLocalRel);
     this.bufHostLocalPos.set(oldHostLocal);
@@ -407,6 +430,8 @@ export class PlanetBodyField {
     this.bufSolidity.set(oldSolidity);
     this.bufAlbedo.set(oldAlbedo);
     this.bufHostAbsmag.set(oldAbsmag);
+    this.bufPhaseA.set(oldPhaseA);
+    this.bufPhaseB.set(oldPhaseB);
     this.capacity = newCap;
     // Replace the geometry with a fresh one over the new buffers.
     // Materials and meshes are re-bound via three.js's normal
@@ -438,6 +463,8 @@ export class PlanetBodyField {
     geom.setAttribute('iSolidity', new THREE.InstancedBufferAttribute(this.bufSolidity, 1));
     geom.setAttribute('iAlbedoP', new THREE.InstancedBufferAttribute(this.bufAlbedo, 1));
     geom.setAttribute('iHostAbsmag', new THREE.InstancedBufferAttribute(this.bufHostAbsmag, 1));
+    geom.setAttribute('iPhaseCoefsA', new THREE.InstancedBufferAttribute(this.bufPhaseA, 4));
+    geom.setAttribute('iPhaseCoefsB', new THREE.InstancedBufferAttribute(this.bufPhaseB, 4));
     geom.instanceCount = this.liveCount;
     geom.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
     this.geometry = geom;
@@ -531,10 +558,12 @@ export class PlanetBodyField {
   }
 
   /** One-shot fill of static per-instance attributes (radius, colour,
-   *  solidity, albedo, host absmag) for a freshly-attached host. */
+   *  solidity, albedo, host absmag, phase coefficients) for a
+   *  freshly-attached host. */
   private writeHostStaticAttributes(host: AttachedHost): void {
     const baseScalar = host.startInstance;
     const baseVec3 = host.startInstance * 3;
+    const baseVec4 = host.startInstance * 4;
     for (let i = 0; i < host.count; i++) {
       const planet = host.ps.planets[i];
       this.bufRadius[baseScalar + i] = planet.radiusKm * KM_PC;
@@ -544,6 +573,21 @@ export class PlanetBodyField {
       this.bufSolidity[baseScalar + i] = solidityForType(planet.type);
       this.bufAlbedo[baseScalar + i] = planet.albedo;
       this.bufHostAbsmag[baseScalar + i] = host.hostAbsmag;
+      // Phase coefficients packed (c0,c1,c2,c3) | (c4,c5,c6,alphaMaxDeg).
+      // Bodies without published curves write all zeros — alphaMaxDeg=0
+      // is the shader's "use Lambertian" sentinel.
+      // `bufPhaseA` and `bufPhaseB` are separate Float32Arrays with the
+      // same vec4-shaped layout, so a single per-slot offset feeds both.
+      const pc = planet.phaseCoefficients;
+      const phaseOff = baseVec4 + i * 4;
+      this.bufPhaseA[phaseOff + 0] = pc ? pc.c0 : 0;
+      this.bufPhaseA[phaseOff + 1] = pc ? pc.c1 : 0;
+      this.bufPhaseA[phaseOff + 2] = pc ? pc.c2 : 0;
+      this.bufPhaseA[phaseOff + 3] = pc ? pc.c3 : 0;
+      this.bufPhaseB[phaseOff + 0] = pc ? pc.c4 : 0;
+      this.bufPhaseB[phaseOff + 1] = pc ? pc.c5 : 0;
+      this.bufPhaseB[phaseOff + 2] = pc ? pc.c6 : 0;
+      this.bufPhaseB[phaseOff + 3] = pc ? pc.alphaMaxDeg : 0;
     }
     this.writeHostLocalPos(host);
   }
@@ -625,6 +669,8 @@ export class PlanetBodyField {
     (attrs.iSolidity as THREE.InstancedBufferAttribute).needsUpdate = true;
     (attrs.iAlbedoP as THREE.InstancedBufferAttribute).needsUpdate = true;
     (attrs.iHostAbsmag as THREE.InstancedBufferAttribute).needsUpdate = true;
+    (attrs.iPhaseCoefsA as THREE.InstancedBufferAttribute).needsUpdate = true;
+    (attrs.iPhaseCoefsB as THREE.InstancedBufferAttribute).needsUpdate = true;
   }
 
   private flushAllAttributes(): void {
@@ -646,5 +692,7 @@ export class PlanetBodyField {
     shiftScalar(this.bufSolidity, 1);
     shiftScalar(this.bufAlbedo, 1);
     shiftScalar(this.bufHostAbsmag, 1);
+    shiftScalar(this.bufPhaseA, 4);
+    shiftScalar(this.bufPhaseB, 4);
   }
 }
