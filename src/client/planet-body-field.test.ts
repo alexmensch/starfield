@@ -187,6 +187,19 @@ describe('PlanetBodyField lifecycle', () => {
     f.dispose();
   });
 
+  it('exposes four render passes with the documented renderOrder layout (stellata-3re.19)', () => {
+    // The contract is: orbit rings sit between the outer-disc occluder
+    // (1.5, full-disc depth) and the disc/glow passes (3, 4). If
+    // anyone reorders these, far-side rings will start showing through
+    // the planet's halo annulus again — see the bug.
+    const f = new PlanetBodyField(makeSharedUniforms());
+    const orders = f.group.children
+      .map((m) => m.renderOrder)
+      .sort((a, b) => a - b);
+    expect(orders).toEqual([-4, 1.5, 3, 4]);
+    f.dispose();
+  });
+
   it('grows capacity when many hosts attach beyond the initial budget', () => {
     const f = new PlanetBodyField(makeSharedUniforms());
     // Initial capacity is 16; attach 20 single-planet hosts.

@@ -236,12 +236,17 @@ export class OrbitRingsLayer {
 
   constructor() {
     this.group = new THREE.Group();
-    // Render order: rings sit between star glow and planet bodies.
+    // Render order: rings sit between the planet outer-disc occluder
+    // and the planet disc/glow passes.
     //   -4  star + planet core depth masks
     //   -3  Milky Way / molecular clouds
     //   -1  galactic disc
     //    0  star discs
     //    1  star glow
+    //    1.5  planet bodies — outer-disc depth occluder (PlanetBodyField,
+    //         stellata-3re.19) — writes full-disc depth so far-side rings
+    //         get occluded by the planet's full visible disc, not just
+    //         the bright core.
     //    2  orbit rings (this layer)
     //    3  planet bodies — disc pass (PlanetBodyField)
     //    4  planet bodies — glow pass (PlanetBodyField)

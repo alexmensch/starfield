@@ -106,8 +106,15 @@ abstraction the star pipeline uses (`shaders/perceptual-disc.glsl`).
 Apparent magnitude is computed in the vertex shader from reflected
 host-star light through a Lambertian phase function. The slider
 visibility cutoff applies — sub-cutoff planets fade naturally, no
-unconditional pixel floor. Three-pass parity with stars (depth-mask +
-disc + glow). Surface detail (textures, atmospheric haloes, banding,
+unconditional pixel floor. Four passes: the star-pipeline trio (core
+depth-mask + disc + glow) plus a planet-only **outer-disc occluder**
+(`uRenderMode == 3`, renderOrder 1.5) that writes the planet's actual
+depth across its full visible disc — placed before orbit rings so the
+rings are occluded by the full disc, not just the bright core
+(stellata-3re.19). The outer mask sits after the background layers
+(MW / clouds / stars) in render order so the perceptual halo→soft
+background falloff still works through the disc pass's MaxEquation
+blending. Surface detail (textures, atmospheric haloes, banding,
 axial-tilt cue) stays **deliberately deferred** to the planet-zoom
 epic (`stellata-2f6`); see the `defer-detail-until-zoom-affordance`
 rule in `CLAUDE.md`.

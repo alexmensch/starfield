@@ -22,12 +22,17 @@
 //
 // # Render passes
 //
-// Three materials share the geometry (same pattern as the star
-// pipeline):
-//   • disc — per-channel-max, depth-write on (close-range resolved)
-//   • glow — additive, depth-test on (distant point glow)
-//   • core — depth-only mask, colorWrite off (occludes background
-//     layers behind close planet cores)
+// Four materials share the geometry (same pattern as the star
+// pipeline, plus an outer-disc occluder for orbit rings):
+//   • disc  — per-channel-max, depth-write on (close-range resolved)
+//   • glow  — additive, depth-test on (distant point glow)
+//   • core  — depth-only mask, colorWrite off (occludes background
+//             layers behind close planet cores)
+//   • outer — depth-only mask across the full visible disc, colorWrite
+//             off; renders before orbit rings so the rings are occluded
+//             by the full disc rather than just the bright core
+//             (stellata-3re.19). Sits after background layers in render
+//             order so MW / clouds remain visible through the soft halo.
 //
 // uRenderMode is the only divergent uniform. Everything else
 // (apparent-mag math, view-space distances, perceptual-disc shaping)
@@ -153,9 +158,11 @@ export class PlanetBodyField {
   private matDisc!: THREE.ShaderMaterial;
   private matGlow!: THREE.ShaderMaterial;
   private matCore!: THREE.ShaderMaterial;
+  private matOuter!: THREE.ShaderMaterial;
   private meshDisc!: THREE.Mesh;
   private meshGlow!: THREE.Mesh;
   private meshCore!: THREE.Mesh;
+  private meshOuter!: THREE.Mesh;
   // Reusable scratch — avoids per-frame allocation in update().
   private rotateTmp = new THREE.Vector3();
 
@@ -347,6 +354,7 @@ export class PlanetBodyField {
     this.matDisc.dispose();
     this.matGlow.dispose();
     this.matCore.dispose();
+    this.matOuter.dispose();
   }
 
   // ── private ─────────────────────────────────────────────────────────
@@ -387,6 +395,7 @@ export class PlanetBodyField {
     this.meshDisc.geometry = this.geometry;
     this.meshGlow.geometry = this.geometry;
     this.meshCore.geometry = this.geometry;
+    this.meshOuter.geometry = this.geometry;
     old.dispose();
   }
 
@@ -462,6 +471,20 @@ export class PlanetBodyField {
       uniforms: { ...sharedPlanetUniforms, uRenderMode: { value: 2 } },
     });
 
+    // transparent: true puts this material in the transparent queue so
+    // its renderOrder (1.5) is honoured relative to the orbit-rings
+    // layer (renderOrder 2) — opaque always draws before transparent.
+    this.matOuter = new THREE.ShaderMaterial({
+      glslVersion: THREE.GLSL3,
+      vertexShader: planetVert,
+      fragmentShader: planetFrag,
+      transparent: true,
+      depthWrite: true,
+      depthTest: true,
+      colorWrite: false,
+      uniforms: { ...sharedPlanetUniforms, uRenderMode: { value: 3 } },
+    });
+
     this.meshDisc = new THREE.Mesh(this.geometry, this.matDisc);
     this.meshDisc.frustumCulled = false;
     this.meshDisc.renderOrder = 3;
@@ -471,8 +494,12 @@ export class PlanetBodyField {
     this.meshCore = new THREE.Mesh(this.geometry, this.matCore);
     this.meshCore.frustumCulled = false;
     this.meshCore.renderOrder = -4;
+    this.meshOuter = new THREE.Mesh(this.geometry, this.matOuter);
+    this.meshOuter.frustumCulled = false;
+    this.meshOuter.renderOrder = 1.5;
 
     this.group.add(this.meshCore);
+    this.group.add(this.meshOuter);
     this.group.add(this.meshDisc);
     this.group.add(this.meshGlow);
   }

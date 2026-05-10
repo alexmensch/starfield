@@ -59,6 +59,21 @@ void main() {
     return;
   }
 
+  if (uRenderMode == 3) {
+    // Outer-disc depth-occluder (stellata-3re.19). Writes the planet's
+    // actual depth across its full visible disc — no halo→far push, no
+    // core threshold gate. Renders before orbit rings so the rings get
+    // occluded by the full disc, not just the bright core. Sits AFTER
+    // background layers (MW, clouds, stars) in render order so the
+    // halo-soft-MW effect — provided by the disc pass's MaxEquation
+    // blending over already-drawn background — is preserved.
+    if (vPhysRatio < PHYS_RATIO_THRESHOLD) discard;
+    if (vAppMag > uMaxAppMag) discard;
+    if (glow < uDiscardThreshold) discard;
+    outColor = vec4(0.0);
+    return;
+  }
+
   if (uRenderMode == 0) {
     // Glow pass — additive, distant point-glow planets only.
     if (vPhysRatio >= PHYS_RATIO_THRESHOLD) discard;
