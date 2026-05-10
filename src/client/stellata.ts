@@ -26,6 +26,8 @@ import { mark as perfMark, measure as perfMeasure, frame as perfFrame } from './
 import {
   angularToPx as angularToPxPure,
   physSizePx,
+  pickFromCandidates,
+  type PickCandidate,
   varEffectiveAmplitude,
   distAtFillFraction,
   peakAmplitudeFactor,
@@ -2800,16 +2802,21 @@ export class Stellata {
     const sortedIdx = this.sortedByDistFromSol;
     const { start, end } = sortedDistRange(this.sortedDistFromSol, f.minDistSol, f.maxDistSol);
 
-    // Two-tier picking:
+    // Two-tier picking (project + filter + collect; reducer in
+    // star-geometry.ts):
     //   1. Cursor inside a star's rendered disc → prime candidate. Among
-    //      prime hits, closest-to-camera wins (foreground occludes).
-    //   2. Otherwise proximity within pixelThreshold, with mag bias so
-    //      brighter stars win ties. Prime hits always beat fallback hits.
-    let discIdx = -1;
-    let discBestCamDist = Infinity;
-    let fbIdx = -1;
-    let fbBestScore = Infinity;
-
+    //      prime hits, the cursor's screen-pixel distance to the disc
+    //      centre wins (`pickScore`), so visually-resolved pairs whose
+    //      hitboxes overlap stay independently clickable — the Double
+    //      Double (ε¹/ε² Lyr) is the canonical case. Sub-pixel mag bias
+    //      tiebreaks coincident catalog companions sharing x/y/z, e.g.
+    //      Alula Australis A/B (Gl 423A/B). Camera distance is
+    //      deliberately ignored: a faint background star whose centre
+    //      projects ≥ 1 px closer to the cursor wins over a bright
+    //      foreground disc that contains the cursor. See pickScore.
+    //   2. Otherwise proximity within pixelThreshold, same scoring.
+    //      Prime hits always beat fallback hits.
+    const candidates: PickCandidate[] = [];
     for (let k = start; k < end; k++) {
       const i = sortedIdx[k];
       const bit = 1 << (spectClass[i] | 0);
@@ -2838,21 +2845,12 @@ export class Stellata {
       const pxDist = Math.hypot(cursorX - screenX, cursorY - screenY);
       const pxSize = this.renderedSizePx(i);
       const hitRadius = Math.max(pxSize * 0.5, MIN_DISC_HIT_RADIUS_PX);
-
-      if (pxDist <= hitRadius) {
-        if (dCam < discBestCamDist) {
-          discBestCamDist = dCam;
-          discIdx = i;
-        }
-      } else if (discIdx === -1 && pxDist <= pixelThreshold) {
-        const score = pxDist + appMag * 0.05;
-        if (score < fbBestScore) {
-          fbBestScore = score;
-          fbIdx = i;
-        }
-      }
+      // Prune to candidates that could win in either tier; the reducer
+      // re-checks tier eligibility, this is just to keep the array tiny.
+      if (pxDist > hitRadius && pxDist > pixelThreshold) continue;
+      candidates.push({ idx: i, pxDist, hitRadius, appMag });
     }
-    return discIdx !== -1 ? discIdx : fbIdx;
+    return pickFromCandidates(candidates, pixelThreshold);
   }
 
   private pointerDownAt: { x: number; y: number; t: number } | null = null;
