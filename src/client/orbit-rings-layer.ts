@@ -236,9 +236,11 @@ export class OrbitRingsLayer {
 
   constructor() {
     this.group = new THREE.Group();
-    // renderOrder = 2: between the planet outer-disc occluder (1.5)
-    // and the planet disc/glow passes (3, 4). See docs/rendering.md
-    // §RenderOrder ladder for the full cross-layer hierarchy.
+    // renderOrder = 2: sits between the planet CORRUPT pass (1.5) and
+    // the RESTORE pass (2.5) — load-bearing, that's how near-side ring
+    // segments are masked by the planet body (stellata-3re.19). See
+    // docs/rendering.md §RenderOrder ladder for the full cross-layer
+    // hierarchy.
     this.group.renderOrder = 2;
     this.group.visible = false;
   }
