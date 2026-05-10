@@ -31,7 +31,7 @@ void main() {
   // which roughly sums to "thickness through the sphere" along the ray.
   // Raising to a power softens the falloff so the edge fades smoothly
   // rather than terminating in a hard line.
-  float ndv = abs(dot(normalize(vNormalView), vec3(0.0, 0.0, 1.0)));
+  float ndv = abs(normalize(vNormalView).z);
   float density = pow(ndv, 1.5);
 
   if (uChartIsobar > 0.5) {

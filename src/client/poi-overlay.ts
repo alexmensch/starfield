@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { Stellata } from './stellata';
+import type { Catalog } from './catalog-loader';
 import { fmtDist } from './distance-util';
 import {
   buildArrowSvgPath,
@@ -337,7 +338,7 @@ export function createPoiOverlay(
 function labelFor(
   idx: number,
   starLabels: Map<number, string>,
-  catalog: { hip: Uint32Array },
+  catalog: Catalog,
 ): string {
   const fromMap = starLabels.get(idx);
   if (fromMap) return fromMap;

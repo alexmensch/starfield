@@ -106,7 +106,7 @@ const T_TABLE: Record<number, [number, number][]> = {
   4: [[0,  5940], [5,  5560], [9,  5310]],             // G
   5: [[0,  5150], [5,  4410], [9,  3900]],             // K
   6: [[0,  3840], [5,  3170], [9,  2500]],             // M
-  7: [[0,  4000], [5,  3000], [9,  2500]],             // C/S/W (cool carbon) — rough
+  7: [[0,  4000], [5,  3000], [9,  2500]],             // C/S/W/N/R (cool carbon) — rough
   8: [[0,  5000], [5,  5000], [9,  5000]],             // unknown — neutral default
 };
 
@@ -119,6 +119,9 @@ function interpolate(table: [number, number][], key: number): number {
       return v0 + (v1 - v0) * t;
     }
   }
+  // Unreachable for in-range subclass keys (callers pass 0-9 and the
+  // tables span [0, 9] inclusive). Keeps the type checker happy and
+  // clamps anyone who breaks the contract to the table's high end.
   return table[table.length - 1][1];
 }
 

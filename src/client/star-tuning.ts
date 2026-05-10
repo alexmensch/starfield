@@ -9,6 +9,11 @@ import { makeCollapsibleSection, makeSlider } from './debug-panel';
 // the source of truth. Slider ranges are conservative envelopes around
 // values that produce sensible visuals; nothing crashes outside them, but
 // extremes (e.g. lumBias < 0.3) start to look cartoony.
+//
+// No reverse sync: `initial` snapshots `getStarRenderParams()` once at
+// build time. If something else writes the params (URL state, presets)
+// while the panel is open, the slider thumb won't move — only the
+// underlying uniform.
 
 export function buildStarSection(stellata: Stellata): HTMLDivElement {
   const { section, body } = makeCollapsibleSection({
