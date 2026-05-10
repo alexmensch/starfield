@@ -187,6 +187,28 @@ describe('PlanetBodyField lifecycle', () => {
     f.dispose();
   });
 
+  it('exposes five render passes with the documented renderOrder layout (stellata-3re.19)', () => {
+    // The contract is: orbit rings (2) sit BETWEEN the corrupt pass
+    // (1.5, writes near-plane depth across the planet's core) and the
+    // restore pass (2.5, writes the planet's actual depth back so the
+    // disc/glow passes at 3/4 still depth-test correctly). If anyone
+    // reorders these — e.g. moves restore before orbit rings — the
+    // near-side ring will no longer be hidden by the planet body
+    // (regressing the user-visible "planet looks solid" behaviour).
+    // Pin each mesh by name → renderOrder so a swap fails CI.
+    const f = new PlanetBodyField(makeSharedUniforms());
+    const orderByName = new Map(
+      f.group.children.map((m) => [m.name, m.renderOrder]),
+    );
+    expect(orderByName.get('core')).toBe(-4);
+    expect(orderByName.get('corrupt')).toBe(1.5);
+    expect(orderByName.get('restore')).toBe(2.5);
+    expect(orderByName.get('disc')).toBe(3);
+    expect(orderByName.get('glow')).toBe(4);
+    expect(f.group.children).toHaveLength(5);
+    f.dispose();
+  });
+
   it('grows capacity when many hosts attach beyond the initial budget', () => {
     const f = new PlanetBodyField(makeSharedUniforms());
     // Initial capacity is 16; attach 20 single-planet hosts.

@@ -22,12 +22,35 @@
 //
 // # Render passes
 //
-// Three materials share the geometry (same pattern as the star
-// pipeline):
-//   • disc — per-channel-max, depth-write on (close-range resolved)
-//   • glow — additive, depth-test on (distant point glow)
-//   • core — depth-only mask, colorWrite off (occludes background
-//     layers behind close planet cores)
+// Five materials share the geometry. Three mirror the star pipeline
+// (core / disc / glow) — same uRenderMode 2/1/0, same gates, same
+// halo-depth trick. The other two are a corrupt+restore pair around
+// the orbit ring layer (planet-only, stellata-3re.19):
+//   • disc    — per-channel-max, depth-write on (close-range resolved)
+//   • glow    — additive, depth-test on (distant point glow)
+//   • core    — depth-only mask at -4, colorWrite off (occludes
+//               background layers behind close planet cores)
+//   • corrupt — depth-only at 1.5; writes gl_FragDepth = 0.0 across the
+//               planet's core region (glow >= uCoreThreshold). Forces
+//               the orbit ring at renderOrder 2 to depth-fail regardless
+//               of its 3D position — so near-side ring segments that
+//               would otherwise pass the depth test are hidden too.
+//   • restore — depth-only at 2.5; writes the planet's actual depth
+//               (gl_FragCoord.z) back across the same core region so
+//               disc / glow at 3 / 4 still depth-test correctly against
+//               other planets and stars. depthFunc: AlwaysDepth so it
+//               can overwrite the 0.0 the corrupt pass wrote.
+//
+// Why planets diverge from the star pipeline's 3-pass shape: the
+// planet's orbit ring physically passes through the planet's body at
+// the planet's current position, and the user wants the planet to
+// read as a solid 2D blob bisecting the ring — from any angle, not
+// just behind. Pure depth-test occlusion can't express that (near-side
+// rings legitimately have smaller depth), hence the corrupt+restore
+// trick. Stars don't have any layer that obviously wants this; the
+// equivalent question for stars (galactic gridlines / distance-vector
+// chevrons through a foreground star's halo) is filed as
+// stellata-9mm.180.
 //
 // uRenderMode is the only divergent uniform. Everything else
 // (apparent-mag math, view-space distances, perceptual-disc shaping)
@@ -153,9 +176,13 @@ export class PlanetBodyField {
   private matDisc!: THREE.ShaderMaterial;
   private matGlow!: THREE.ShaderMaterial;
   private matCore!: THREE.ShaderMaterial;
+  private matCorrupt!: THREE.ShaderMaterial;
+  private matRestore!: THREE.ShaderMaterial;
   private meshDisc!: THREE.Mesh;
   private meshGlow!: THREE.Mesh;
   private meshCore!: THREE.Mesh;
+  private meshCorrupt!: THREE.Mesh;
+  private meshRestore!: THREE.Mesh;
   // Reusable scratch — avoids per-frame allocation in update().
   private rotateTmp = new THREE.Vector3();
 
@@ -347,6 +374,8 @@ export class PlanetBodyField {
     this.matDisc.dispose();
     this.matGlow.dispose();
     this.matCore.dispose();
+    this.matCorrupt.dispose();
+    this.matRestore.dispose();
   }
 
   // ── private ─────────────────────────────────────────────────────────
@@ -387,6 +416,8 @@ export class PlanetBodyField {
     this.meshDisc.geometry = this.geometry;
     this.meshGlow.geometry = this.geometry;
     this.meshCore.geometry = this.geometry;
+    this.meshCorrupt.geometry = this.geometry;
+    this.meshRestore.geometry = this.geometry;
     old.dispose();
   }
 
@@ -432,47 +463,69 @@ export class PlanetBodyField {
       uFovYRad: sm.uFovYRad,
     };
 
-    this.matDisc = new THREE.ShaderMaterial({
-      glslVersion: THREE.GLSL3,
-      vertexShader: planetVert,
-      fragmentShader: planetFrag,
-      transparent: true,
-      uniforms: { ...sharedPlanetUniforms, uRenderMode: { value: 1 } },
-    });
+    const makeMat = (mode: number, params: THREE.ShaderMaterialParameters) =>
+      new THREE.ShaderMaterial({
+        glslVersion: THREE.GLSL3,
+        vertexShader: planetVert,
+        fragmentShader: planetFrag,
+        uniforms: { ...sharedPlanetUniforms, uRenderMode: { value: mode } },
+        ...params,
+      });
+
+    this.matDisc = makeMat(1, { transparent: true });
     applyDiscBlendDefaults(this.matDisc);
 
-    this.matGlow = new THREE.ShaderMaterial({
-      glslVersion: THREE.GLSL3,
-      vertexShader: planetVert,
-      fragmentShader: planetFrag,
+    this.matGlow = makeMat(0, {
       transparent: true,
       depthWrite: false,
       depthTest: true,
       blending: THREE.AdditiveBlending,
-      uniforms: { ...sharedPlanetUniforms, uRenderMode: { value: 0 } },
     });
 
-    this.matCore = new THREE.ShaderMaterial({
-      glslVersion: THREE.GLSL3,
-      vertexShader: planetVert,
-      fragmentShader: planetFrag,
+    this.matCore = makeMat(2, {
       depthWrite: true,
       depthTest: true,
       colorWrite: false,
-      uniforms: { ...sharedPlanetUniforms, uRenderMode: { value: 2 } },
     });
 
-    this.meshDisc = new THREE.Mesh(this.geometry, this.matDisc);
-    this.meshDisc.frustumCulled = false;
-    this.meshDisc.renderOrder = 3;
-    this.meshGlow = new THREE.Mesh(this.geometry, this.matGlow);
-    this.meshGlow.frustumCulled = false;
-    this.meshGlow.renderOrder = 4;
-    this.meshCore = new THREE.Mesh(this.geometry, this.matCore);
-    this.meshCore.frustumCulled = false;
-    this.meshCore.renderOrder = -4;
+    // transparent: true on corrupt + restore puts them in the
+    // transparent queue so their renderOrder (1.5, 2.5) is honoured
+    // relative to the orbit-rings layer (2) — opaque always draws
+    // before transparent.
+    this.matCorrupt = makeMat(3, {
+      transparent: true,
+      depthWrite: true,
+      depthTest: true,
+      colorWrite: false,
+    });
+
+    // depthFunc: AlwaysDepth so the restore can overwrite the 0.0 the
+    // corrupt pass wrote (default LessEqual would reject planet_z > 0).
+    this.matRestore = makeMat(4, {
+      transparent: true,
+      depthWrite: true,
+      depthTest: true,
+      depthFunc: THREE.AlwaysDepth,
+      colorWrite: false,
+    });
+
+    const makeMesh = (mat: THREE.ShaderMaterial, name: string, order: number) => {
+      const m = new THREE.Mesh(this.geometry, mat);
+      m.name = name;
+      m.frustumCulled = false;
+      m.renderOrder = order;
+      return m;
+    };
+
+    this.meshCore = makeMesh(this.matCore, 'core', -4);
+    this.meshCorrupt = makeMesh(this.matCorrupt, 'corrupt', 1.5);
+    this.meshRestore = makeMesh(this.matRestore, 'restore', 2.5);
+    this.meshDisc = makeMesh(this.matDisc, 'disc', 3);
+    this.meshGlow = makeMesh(this.matGlow, 'glow', 4);
 
     this.group.add(this.meshCore);
+    this.group.add(this.meshCorrupt);
+    this.group.add(this.meshRestore);
     this.group.add(this.meshDisc);
     this.group.add(this.meshGlow);
   }

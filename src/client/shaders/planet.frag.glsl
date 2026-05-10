@@ -59,6 +59,50 @@ void main() {
     return;
   }
 
+  if (uRenderMode == 3) {
+    // Outer-disc CORRUPT pass (stellata-3re.19). Writes near-plane
+    // depth (gl_FragDepth = 0.0) across the planet's core region so
+    // the orbit ring at renderOrder 2 depth-fails regardless of its
+    // 3D position — including near-side ring segments physically in
+    // front of the planet. The conceptual rule the user wants is "the
+    // planet looks solid; the orbit ring is hidden wherever it would
+    // overlap the body, from any angle." Pure depth occlusion can't
+    // express that (near-side rings legitimately have smaller depth
+    // than the planet centre), so we corrupt the framebuffer depth to
+    // a value the ring is guaranteed to exceed.
+    //
+    // Gated on `glow >= uCoreThreshold` (NOT `>= uDiscardThreshold` as
+    // before) so the ring discontinuity matches the bright body, not
+    // the dim perceptual halo — tighter break, more readable.
+    //
+    // The corrupted depth is restored to gl_FragCoord.z at
+    // renderOrder 2.5 (uRenderMode == 4) before disc/glow at 3/4 run,
+    // so multi-planet/star depth occlusion downstream still works.
+    if (vAppMag > uMaxAppMag) discard;
+    if (glow < uCoreThreshold) discard;
+    // Override the chunk's log-depth write — we want screen-space 0.0,
+    // which is the near plane in any depth encoding.
+    gl_FragDepth = 0.0;
+    outColor = vec4(0.0);
+    return;
+  }
+
+  if (uRenderMode == 4) {
+    // Outer-disc RESTORE pass (stellata-3re.19). Runs at renderOrder
+    // 2.5 after the orbit rings have depth-failed against the corrupt
+    // pass's 0.0, and writes the planet's actual depth back so disc /
+    // glow at renderOrder 3 / 4 depth-test and write correctly. The
+    // material has `depthFunc: AlwaysDepth` so it can overwrite the
+    // 0.0 (default LessEqual would reject `planet_z > 0.0`).
+    //
+    // Same gate as the corrupt pass — same screen region.
+    // gl_FragDepth is left as the chunk's log-depth-correct value.
+    if (vAppMag > uMaxAppMag) discard;
+    if (glow < uCoreThreshold) discard;
+    outColor = vec4(0.0);
+    return;
+  }
+
   if (uRenderMode == 0) {
     // Glow pass — additive, distant point-glow planets only.
     if (vPhysRatio >= PHYS_RATIO_THRESHOLD) discard;
