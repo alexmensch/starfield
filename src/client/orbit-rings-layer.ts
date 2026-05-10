@@ -297,17 +297,6 @@ export class OrbitRingsLayer {
         opacity: RING_OPACITY,
         depthTest: true,
         depthWrite: false,
-        // Stencil discard: PlanetBodyField writes stencil = 1 at every
-        // attached planet's body region (stellata-3re.19). Skip ring
-        // fragments that land on a planet body's screen footprint so
-        // the planet reads as solid, regardless of whether the ring
-        // fragment is in front of, behind, or AT the planet's depth
-        // (the orbit's own tangent at the planet's current position
-        // would otherwise pass the depth test and bisect the body).
-        stencilWrite: false,
-        stencilFunc: THREE.NotEqualStencilFunc,
-        stencilRef: 1,
-        stencilFuncMask: 0xff,
       });
       const line = new THREE.LineLoop(geom, mat);
       // Frustum culling on a tiny sub-AU loop with the camera potentially
