@@ -86,7 +86,13 @@ Three SVG layers conditionally hide while `cameraMode === 'observe'`:
   The focal disc isn't rendered, and any other disc-rendering star
   would have to be near enough to a camera parked at the focal star
   to clear the threshold — far enough away in practice that the
-  whole-mask early-return is a safe simplification.
+  whole-mask early-return is a safe simplification. The
+  camera-position invariant is enforced in `stellata.ts setFocus` —
+  on observe entry the camera moves to the focal star's local origin
+  (`camera.position.set(0, 0, 0)` after the floating-origin recentre),
+  so every other catalog star sits at least one inter-star gap away
+  (parsec-scale at minimum), well beyond `DISC_THRESHOLD_PX` at any
+  reasonable FOV.
 - **Distance vector + To-row** — distance-vector measurement is
   meaningless from a camera parked on its own anchor; the search
   box's To-row hides via `syncFocusUI` and the underlying
