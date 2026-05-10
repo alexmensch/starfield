@@ -115,10 +115,12 @@ const INITIAL_CAPACITY = 16;
  *   d_cull = 10 pc · √(p · (R/a)²) · 10^((maxAppMag − M_host) / 5)
  *         = 10 pc · sqrt(p) · (R/a) · 10^((maxAppMag − M_host) / 5)
  *
- * The actual apparent-mag formula has a φ(α) factor in [0, 1], so the
- * real visibility threshold is at d ≤ d_cull. Using d_cull as the
- * outer bound is conservative (we keep working a host that could in
- * principle still be visible).
+ * The caller folds `peakPhaseFactor(coefs)` into `brightestReflectance`
+ * before passing it in (see `attachHost`). For most planets that's a
+ * 1× no-op (c0 = 0 ⇒ φ(0) = 1); Saturn's c0 = −0.55 ring boost lifts
+ * φ(0) to ~1.66, widening Saturn's cull by ~√1.66 ≈ 1.29×. The cull
+ * remains a conservative outer bound: at any α the actual flux factor
+ * is ≤ φ_peak, so a host past d_cull is genuinely sub-cutoff.
  *
  * Pure function — exported for tests.
  */
@@ -146,8 +148,11 @@ interface AttachedHost {
   orientation: THREE.Quaternion;
   positionsAt: ((t: number, out: Float32Array) => void) | null;
   positionsScratch: Float32Array | null;
-  /** max over planets of `p · (R / a)²` — the geometry-independent
-   *  reflectance proxy. Drives cullDistancePc. */
+  /** max over planets of `p · (R / a)² · peakPhaseFactor(coefs)` —
+   *  the geometry-independent reflectance proxy folded with each
+   *  planet's α=0 phase boost. Drives cullDistancePc. Saturn's ring
+   *  c0 lifts its term above the globe-only reflectance; for every
+   *  other planet peakPhaseFactor = 1. */
   brightestReflectance: number;
   /** Cached cull distance for the current maxAppMag. */
   cullDistance: number;
@@ -571,17 +576,18 @@ export class PlanetBodyField {
       // Phase coefficients packed (c0,c1,c2,c3) | (c4,c5,c6,alphaMaxDeg).
       // Bodies without published curves write all zeros — alphaMaxDeg=0
       // is the shader's "use Lambertian" sentinel.
+      // `bufPhaseA` and `bufPhaseB` are separate Float32Arrays with the
+      // same vec4-shaped layout, so a single per-slot offset feeds both.
       const pc = planet.phaseCoefficients;
-      const aOff = baseVec4 + i * 4;
-      const bOff = baseVec4 + i * 4;
-      this.bufPhaseA[aOff + 0] = pc ? pc.c0 : 0;
-      this.bufPhaseA[aOff + 1] = pc ? pc.c1 : 0;
-      this.bufPhaseA[aOff + 2] = pc ? pc.c2 : 0;
-      this.bufPhaseA[aOff + 3] = pc ? pc.c3 : 0;
-      this.bufPhaseB[bOff + 0] = pc ? pc.c4 : 0;
-      this.bufPhaseB[bOff + 1] = pc ? pc.c5 : 0;
-      this.bufPhaseB[bOff + 2] = pc ? pc.c6 : 0;
-      this.bufPhaseB[bOff + 3] = pc ? pc.alphaMaxDeg : 0;
+      const phaseOff = baseVec4 + i * 4;
+      this.bufPhaseA[phaseOff + 0] = pc ? pc.c0 : 0;
+      this.bufPhaseA[phaseOff + 1] = pc ? pc.c1 : 0;
+      this.bufPhaseA[phaseOff + 2] = pc ? pc.c2 : 0;
+      this.bufPhaseA[phaseOff + 3] = pc ? pc.c3 : 0;
+      this.bufPhaseB[phaseOff + 0] = pc ? pc.c4 : 0;
+      this.bufPhaseB[phaseOff + 1] = pc ? pc.c5 : 0;
+      this.bufPhaseB[phaseOff + 2] = pc ? pc.c6 : 0;
+      this.bufPhaseB[phaseOff + 3] = pc ? pc.alphaMaxDeg : 0;
     }
     this.writeHostLocalPos(host);
   }
