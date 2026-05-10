@@ -22,12 +22,35 @@
 //
 // # Render passes
 //
-// Three materials share the geometry (same pattern as the star
-// pipeline):
-//   • disc — per-channel-max, depth-write on (close-range resolved)
-//   • glow — additive, depth-test on (distant point glow)
-//   • core — depth-only mask, colorWrite off (occludes background
-//     layers behind close planet cores)
+// Five materials share the geometry. Three mirror the star pipeline
+// (core / disc / glow) — same uRenderMode 2/1/0, same gates, same
+// halo-depth trick. The other two are a corrupt+restore pair around
+// the orbit ring layer (planet-only, stellata-3re.19):
+//   • disc    — per-channel-max, depth-write on (close-range resolved)
+//   • glow    — additive, depth-test on (distant point glow)
+//   • core    — depth-only mask at -4, colorWrite off (occludes
+//               background layers behind close planet cores)
+//   • corrupt — depth-only at 1.5; writes gl_FragDepth = 0.0 across the
+//               planet's core region (glow >= uCoreThreshold). Forces
+//               the orbit ring at renderOrder 2 to depth-fail regardless
+//               of its 3D position — so near-side ring segments that
+//               would otherwise pass the depth test are hidden too.
+//   • restore — depth-only at 2.5; writes the planet's actual depth
+//               (gl_FragCoord.z) back across the same core region so
+//               disc / glow at 3 / 4 still depth-test correctly against
+//               other planets and stars. depthFunc: AlwaysDepth so it
+//               can overwrite the 0.0 the corrupt pass wrote.
+//
+// Why planets diverge from the star pipeline's 3-pass shape: the
+// planet's orbit ring physically passes through the planet's body at
+// the planet's current position, and the user wants the planet to
+// read as a solid 2D blob bisecting the ring — from any angle, not
+// just behind. Pure depth-test occlusion can't express that (near-side
+// rings legitimately have smaller depth), hence the corrupt+restore
+// trick. Stars don't have any layer that obviously wants this; the
+// equivalent question for stars (galactic gridlines / distance-vector
+// chevrons through a foreground star's halo) is filed as
+// stellata-9mm.180.
 //
 // uRenderMode is the only divergent uniform. Everything else
 // (apparent-mag math, view-space distances, perceptual-disc shaping)
@@ -35,6 +58,7 @@
 
 import * as THREE from 'three';
 import type { PlanetSystem } from './planet-system';
+import { peakPhaseFactor } from './phase-function';
 import { applyDiscBlendDefaults } from './stellata';
 import {
   AU_PC,
@@ -91,10 +115,12 @@ const INITIAL_CAPACITY = 16;
  *   d_cull = 10 pc · √(p · (R/a)²) · 10^((maxAppMag − M_host) / 5)
  *         = 10 pc · sqrt(p) · (R/a) · 10^((maxAppMag − M_host) / 5)
  *
- * The actual apparent-mag formula has a φ(α) factor in [0, 1], so the
- * real visibility threshold is at d ≤ d_cull. Using d_cull as the
- * outer bound is conservative (we keep working a host that could in
- * principle still be visible).
+ * The caller folds `peakPhaseFactor(coefs)` into `brightestReflectance`
+ * before passing it in (see `attachHost`). For most planets that's a
+ * 1× no-op (c0 = 0 ⇒ φ(0) = 1); Saturn's c0 = −0.55 ring boost lifts
+ * φ(0) to ~1.66, widening Saturn's cull by ~√1.66 ≈ 1.29×. The cull
+ * remains a conservative outer bound: at any α the actual flux factor
+ * is ≤ φ_peak, so a host past d_cull is genuinely sub-cutoff.
  *
  * Pure function — exported for tests.
  */
@@ -122,8 +148,11 @@ interface AttachedHost {
   orientation: THREE.Quaternion;
   positionsAt: ((t: number, out: Float32Array) => void) | null;
   positionsScratch: Float32Array | null;
-  /** max over planets of `p · (R / a)²` — the geometry-independent
-   *  reflectance proxy. Drives cullDistancePc. */
+  /** max over planets of `p · (R / a)² · peakPhaseFactor(coefs)` —
+   *  the geometry-independent reflectance proxy folded with each
+   *  planet's α=0 phase boost. Drives cullDistancePc. Saturn's ring
+   *  c0 lifts its term above the globe-only reflectance; for every
+   *  other planet peakPhaseFactor = 1. */
   brightestReflectance: number;
   /** Cached cull distance for the current maxAppMag. */
   cullDistance: number;
@@ -149,13 +178,25 @@ export class PlanetBodyField {
   private bufSolidity!: Float32Array;
   private bufAlbedo!: Float32Array;
   private bufHostAbsmag!: Float32Array;
+  // Phase-curve coefficients packed as two vec4 attributes:
+  //   bufPhaseA: (c0, c1, c2, c3)
+  //   bufPhaseB: (c4, c5, c6, alphaMaxDeg)
+  // alphaMaxDeg = 0 is the "no Mallama fit, use Lambertian" sentinel
+  // — the same default Pluto and every exoplanet hit. See
+  // `phase-function.ts` for the polynomial form.
+  private bufPhaseA!: Float32Array;
+  private bufPhaseB!: Float32Array;
   private geometry!: THREE.InstancedBufferGeometry;
   private matDisc!: THREE.ShaderMaterial;
   private matGlow!: THREE.ShaderMaterial;
   private matCore!: THREE.ShaderMaterial;
+  private matCorrupt!: THREE.ShaderMaterial;
+  private matRestore!: THREE.ShaderMaterial;
   private meshDisc!: THREE.Mesh;
   private meshGlow!: THREE.Mesh;
   private meshCore!: THREE.Mesh;
+  private meshCorrupt!: THREE.Mesh;
+  private meshRestore!: THREE.Mesh;
   // Reusable scratch — avoids per-frame allocation in update().
   private rotateTmp = new THREE.Vector3();
 
@@ -205,7 +246,12 @@ export class PlanetBodyField {
     for (const planet of ps.planets) {
       const aPc = planet.semiMajorAxisAu * AU_PC;
       const RoverA = (planet.radiusKm * KM_PC) / Math.max(aPc, 1e-30);
-      const refl = planet.albedo * RoverA * RoverA;
+      // Saturn's rings raise its α=0 brightness above globe-only
+      // reflectance via the Mallama c0 term — fold it into the cull
+      // proxy so the cull distance widens to match. Other planets
+      // have c0=0 ⇒ peak factor 1, leaving the formula unchanged.
+      const peakBrightness = peakPhaseFactor(planet.phaseCoefficients);
+      const refl = planet.albedo * RoverA * RoverA * peakBrightness;
       if (refl > brightestReflectance) brightestReflectance = refl;
     }
 
@@ -347,6 +393,8 @@ export class PlanetBodyField {
     this.matDisc.dispose();
     this.matGlow.dispose();
     this.matCore.dispose();
+    this.matCorrupt.dispose();
+    this.matRestore.dispose();
   }
 
   // ── private ─────────────────────────────────────────────────────────
@@ -359,6 +407,8 @@ export class PlanetBodyField {
     this.bufSolidity = new Float32Array(capacity);
     this.bufAlbedo = new Float32Array(capacity);
     this.bufHostAbsmag = new Float32Array(capacity);
+    this.bufPhaseA = new Float32Array(capacity * 4);
+    this.bufPhaseB = new Float32Array(capacity * 4);
   }
 
   private growCapacity(): void {
@@ -370,6 +420,8 @@ export class PlanetBodyField {
     const oldSolidity = this.bufSolidity;
     const oldAlbedo = this.bufAlbedo;
     const oldAbsmag = this.bufHostAbsmag;
+    const oldPhaseA = this.bufPhaseA;
+    const oldPhaseB = this.bufPhaseB;
     this.allocateBuffers(newCap);
     this.bufLocalRel.set(oldLocalRel);
     this.bufHostLocalPos.set(oldHostLocal);
@@ -378,6 +430,8 @@ export class PlanetBodyField {
     this.bufSolidity.set(oldSolidity);
     this.bufAlbedo.set(oldAlbedo);
     this.bufHostAbsmag.set(oldAbsmag);
+    this.bufPhaseA.set(oldPhaseA);
+    this.bufPhaseB.set(oldPhaseB);
     this.capacity = newCap;
     // Replace the geometry with a fresh one over the new buffers.
     // Materials and meshes are re-bound via three.js's normal
@@ -387,6 +441,8 @@ export class PlanetBodyField {
     this.meshDisc.geometry = this.geometry;
     this.meshGlow.geometry = this.geometry;
     this.meshCore.geometry = this.geometry;
+    this.meshCorrupt.geometry = this.geometry;
+    this.meshRestore.geometry = this.geometry;
     old.dispose();
   }
 
@@ -407,6 +463,8 @@ export class PlanetBodyField {
     geom.setAttribute('iSolidity', new THREE.InstancedBufferAttribute(this.bufSolidity, 1));
     geom.setAttribute('iAlbedoP', new THREE.InstancedBufferAttribute(this.bufAlbedo, 1));
     geom.setAttribute('iHostAbsmag', new THREE.InstancedBufferAttribute(this.bufHostAbsmag, 1));
+    geom.setAttribute('iPhaseCoefsA', new THREE.InstancedBufferAttribute(this.bufPhaseA, 4));
+    geom.setAttribute('iPhaseCoefsB', new THREE.InstancedBufferAttribute(this.bufPhaseB, 4));
     geom.instanceCount = this.liveCount;
     geom.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
     this.geometry = geom;
@@ -432,56 +490,80 @@ export class PlanetBodyField {
       uFovYRad: sm.uFovYRad,
     };
 
-    this.matDisc = new THREE.ShaderMaterial({
-      glslVersion: THREE.GLSL3,
-      vertexShader: planetVert,
-      fragmentShader: planetFrag,
-      transparent: true,
-      uniforms: { ...sharedPlanetUniforms, uRenderMode: { value: 1 } },
-    });
+    const makeMat = (mode: number, params: THREE.ShaderMaterialParameters) =>
+      new THREE.ShaderMaterial({
+        glslVersion: THREE.GLSL3,
+        vertexShader: planetVert,
+        fragmentShader: planetFrag,
+        uniforms: { ...sharedPlanetUniforms, uRenderMode: { value: mode } },
+        ...params,
+      });
+
+    this.matDisc = makeMat(1, { transparent: true });
     applyDiscBlendDefaults(this.matDisc);
 
-    this.matGlow = new THREE.ShaderMaterial({
-      glslVersion: THREE.GLSL3,
-      vertexShader: planetVert,
-      fragmentShader: planetFrag,
+    this.matGlow = makeMat(0, {
       transparent: true,
       depthWrite: false,
       depthTest: true,
       blending: THREE.AdditiveBlending,
-      uniforms: { ...sharedPlanetUniforms, uRenderMode: { value: 0 } },
     });
 
-    this.matCore = new THREE.ShaderMaterial({
-      glslVersion: THREE.GLSL3,
-      vertexShader: planetVert,
-      fragmentShader: planetFrag,
+    this.matCore = makeMat(2, {
       depthWrite: true,
       depthTest: true,
       colorWrite: false,
-      uniforms: { ...sharedPlanetUniforms, uRenderMode: { value: 2 } },
     });
 
-    this.meshDisc = new THREE.Mesh(this.geometry, this.matDisc);
-    this.meshDisc.frustumCulled = false;
-    this.meshDisc.renderOrder = 3;
-    this.meshGlow = new THREE.Mesh(this.geometry, this.matGlow);
-    this.meshGlow.frustumCulled = false;
-    this.meshGlow.renderOrder = 4;
-    this.meshCore = new THREE.Mesh(this.geometry, this.matCore);
-    this.meshCore.frustumCulled = false;
-    this.meshCore.renderOrder = -4;
+    // transparent: true on corrupt + restore puts them in the
+    // transparent queue so their renderOrder (1.5, 2.5) is honoured
+    // relative to the orbit-rings layer (2) — opaque always draws
+    // before transparent.
+    this.matCorrupt = makeMat(3, {
+      transparent: true,
+      depthWrite: true,
+      depthTest: true,
+      colorWrite: false,
+    });
+
+    // depthFunc: AlwaysDepth so the restore can overwrite the 0.0 the
+    // corrupt pass wrote (default LessEqual would reject planet_z > 0).
+    this.matRestore = makeMat(4, {
+      transparent: true,
+      depthWrite: true,
+      depthTest: true,
+      depthFunc: THREE.AlwaysDepth,
+      colorWrite: false,
+    });
+
+    const makeMesh = (mat: THREE.ShaderMaterial, name: string, order: number) => {
+      const m = new THREE.Mesh(this.geometry, mat);
+      m.name = name;
+      m.frustumCulled = false;
+      m.renderOrder = order;
+      return m;
+    };
+
+    this.meshCore = makeMesh(this.matCore, 'core', -4);
+    this.meshCorrupt = makeMesh(this.matCorrupt, 'corrupt', 1.5);
+    this.meshRestore = makeMesh(this.matRestore, 'restore', 2.5);
+    this.meshDisc = makeMesh(this.matDisc, 'disc', 3);
+    this.meshGlow = makeMesh(this.matGlow, 'glow', 4);
 
     this.group.add(this.meshCore);
+    this.group.add(this.meshCorrupt);
+    this.group.add(this.meshRestore);
     this.group.add(this.meshDisc);
     this.group.add(this.meshGlow);
   }
 
   /** One-shot fill of static per-instance attributes (radius, colour,
-   *  solidity, albedo, host absmag) for a freshly-attached host. */
+   *  solidity, albedo, host absmag, phase coefficients) for a
+   *  freshly-attached host. */
   private writeHostStaticAttributes(host: AttachedHost): void {
     const baseScalar = host.startInstance;
     const baseVec3 = host.startInstance * 3;
+    const baseVec4 = host.startInstance * 4;
     for (let i = 0; i < host.count; i++) {
       const planet = host.ps.planets[i];
       this.bufRadius[baseScalar + i] = planet.radiusKm * KM_PC;
@@ -491,6 +573,21 @@ export class PlanetBodyField {
       this.bufSolidity[baseScalar + i] = solidityForType(planet.type);
       this.bufAlbedo[baseScalar + i] = planet.albedo;
       this.bufHostAbsmag[baseScalar + i] = host.hostAbsmag;
+      // Phase coefficients packed (c0,c1,c2,c3) | (c4,c5,c6,alphaMaxDeg).
+      // Bodies without published curves write all zeros — alphaMaxDeg=0
+      // is the shader's "use Lambertian" sentinel.
+      // `bufPhaseA` and `bufPhaseB` are separate Float32Arrays with the
+      // same vec4-shaped layout, so a single per-slot offset feeds both.
+      const pc = planet.phaseCoefficients;
+      const phaseOff = baseVec4 + i * 4;
+      this.bufPhaseA[phaseOff + 0] = pc ? pc.c0 : 0;
+      this.bufPhaseA[phaseOff + 1] = pc ? pc.c1 : 0;
+      this.bufPhaseA[phaseOff + 2] = pc ? pc.c2 : 0;
+      this.bufPhaseA[phaseOff + 3] = pc ? pc.c3 : 0;
+      this.bufPhaseB[phaseOff + 0] = pc ? pc.c4 : 0;
+      this.bufPhaseB[phaseOff + 1] = pc ? pc.c5 : 0;
+      this.bufPhaseB[phaseOff + 2] = pc ? pc.c6 : 0;
+      this.bufPhaseB[phaseOff + 3] = pc ? pc.alphaMaxDeg : 0;
     }
     this.writeHostLocalPos(host);
   }
@@ -572,6 +669,8 @@ export class PlanetBodyField {
     (attrs.iSolidity as THREE.InstancedBufferAttribute).needsUpdate = true;
     (attrs.iAlbedoP as THREE.InstancedBufferAttribute).needsUpdate = true;
     (attrs.iHostAbsmag as THREE.InstancedBufferAttribute).needsUpdate = true;
+    (attrs.iPhaseCoefsA as THREE.InstancedBufferAttribute).needsUpdate = true;
+    (attrs.iPhaseCoefsB as THREE.InstancedBufferAttribute).needsUpdate = true;
   }
 
   private flushAllAttributes(): void {
@@ -593,5 +692,7 @@ export class PlanetBodyField {
     shiftScalar(this.bufSolidity, 1);
     shiftScalar(this.bufAlbedo, 1);
     shiftScalar(this.bufHostAbsmag, 1);
+    shiftScalar(this.bufPhaseA, 4);
+    shiftScalar(this.bufPhaseB, 4);
   }
 }

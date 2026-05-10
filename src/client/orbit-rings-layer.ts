@@ -236,15 +236,11 @@ export class OrbitRingsLayer {
 
   constructor() {
     this.group = new THREE.Group();
-    // Render order: rings sit between star glow and planet bodies.
-    //   -4  star + planet core depth masks
-    //   -3  Milky Way / molecular clouds
-    //   -1  galactic disc
-    //    0  star discs
-    //    1  star glow
-    //    2  orbit rings (this layer)
-    //    3  planet bodies — disc pass (PlanetBodyField)
-    //    4  planet bodies — glow pass (PlanetBodyField)
+    // renderOrder = 2: sits between the planet CORRUPT pass (1.5) and
+    // the RESTORE pass (2.5) — load-bearing, that's how near-side ring
+    // segments are masked by the planet body (stellata-3re.19). See
+    // docs/rendering.md §RenderOrder ladder for the full cross-layer
+    // hierarchy.
     this.group.renderOrder = 2;
     this.group.visible = false;
   }

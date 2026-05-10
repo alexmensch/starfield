@@ -104,13 +104,30 @@ Planet rendering splits across two layers (stellata-3re.15):
 Bodies render as billboarded discs through the same perceptual-disc
 abstraction the star pipeline uses (`shaders/perceptual-disc.glsl`).
 Apparent magnitude is computed in the vertex shader from reflected
-host-star light through a Lambertian phase function. The slider
-visibility cutoff applies — sub-cutoff planets fade naturally, no
-unconditional pixel floor. Three-pass parity with stars (depth-mask +
-disc + glow). Surface detail (textures, atmospheric haloes, banding,
-axial-tilt cue) stays **deliberately deferred** to the planet-zoom
-epic (`stellata-2f6`); see the `defer-detail-until-zoom-affordance`
-rule in `CLAUDE.md`.
+host-star light through a per-planet phase function — Mallama 2018
+empirical polynomials for Mercury, Venus, Earth, Mars, Jupiter and
+Saturn (3re.18); Lambertian fallback for Uranus, Neptune, Pluto and
+every exoplanet (`stellata-bk5`), since Mallama 2018 publishes no
+phase-angle polynomial for those. The slider visibility cutoff
+applies — sub-cutoff planets fade naturally, no unconditional pixel
+floor. Five passes: the star-pipeline trio (core depth-mask + disc
++ glow) plus a planet-only **corrupt + restore** pair around the
+orbit ring layer (stellata-3re.19). The CORRUPT pass
+(`uRenderMode == 3`, renderOrder 1.5) writes `gl_FragDepth = 0.0`
+across the planet's bright body (`glow >= uCoreThreshold`); the orbit
+ring at renderOrder 2 then depth-fails for every fragment landing on
+the body — far-side AND near-side, regardless of the ring's actual 3D
+position. The RESTORE pass (`uRenderMode == 4`, renderOrder 2.5,
+`depthFunc: AlwaysDepth`) writes the planet's actual `gl_FragCoord.z`
+back across the same region so disc / glow at 3 / 4 still depth-test
+correctly against other planets and stars. Background layers (MW /
+clouds / stars) paint colour into the framebuffer before the corrupt
+pass overwrites depth, so they still peek through the perceptual
+halo. See `docs/rendering.md §RenderOrder ladder` for the full
+cross-layer hierarchy. Surface detail (textures, atmospheric haloes,
+banding, axial-tilt cue) stays **deliberately deferred** to the
+planet-zoom epic (`stellata-2f6`); see the
+`defer-detail-until-zoom-affordance` rule in `CLAUDE.md`.
 
 ### Apparent-magnitude formula
 
@@ -124,10 +141,16 @@ m_planet         = m_host_at_viewer
                  − 2.5·log10( p · (R/d_vp)² · (d_vh/d_hp)² · φ(α) )
 ```
 
-where `α = ∠(viewer–planet–host)` is the phase angle and
-`φ(α) = (sin α + (π − α)·cos α) / π` is the Lambertian phase function.
-Verified Jupiter values: −2.7 from Earth at opposition, +5.2 from
-~150 AU outside the heliopause, +21 from α Cen at 1.34 pc.
+where `α = ∠(viewer–planet–host)` is the phase angle and `φ(α)` is
+the per-planet phase factor — Mallama 2018 empirical polynomial
+`10^(−ΔV(α)/2.5)` inside each planet's published α range, anchor-
+scaled Lambertian past it (Lambert(α) × poly(αmax)/Lambert(αmax) so
+brightness stays continuous and each planet's empirical character
+extends past αmax instead of snapping to a uniform Lambertian
+sphere), pure Lambertian `(sin α + (π − α)·cos α)/π` for bodies
+without published curves. Verified Jupiter values (under Lambert):
+−2.7 from Earth at opposition, +5.2 from ~150 AU outside the
+heliopause, +21 from α Cen at 1.34 pc.
 
 ### Per-host distance cull
 
