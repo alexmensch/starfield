@@ -28,7 +28,7 @@ describe('url-state', () => {
     it('decodes empty blob to empty view at current version', () => {
       const { view, version } = roundtrip({});
       expect(view).toEqual({});
-      expect(version).toBe(2);
+      expect(version).toBe(3);
     });
   });
 
@@ -45,10 +45,15 @@ describe('url-state', () => {
       expect(view.tgt).toEqual(tgt);
     });
 
-    it('round-trips up exactly', () => {
-      const up: [number, number, number] = [0, 1, 0];
+    it('round-trips a non-default up exactly', () => {
+      // [0, 1, 0] would elide to default in v3 — see the v3 default-
+      // elision test below. Use a tilted up to force the encoder to
+      // actually carry components on the wire.
+      const up: [number, number, number] = [0.7071, 0.7071, 0];
       const { view } = roundtrip({ up });
-      expect(view.up).toEqual(up);
+      expect(view.up![0]).toBeCloseTo(0.7071, 4);
+      expect(view.up![1]).toBeCloseTo(0.7071, 4);
+      expect(view.up![2]).toBe(0);
     });
 
     it('round-trips all three vec3 fields independently', () => {
@@ -110,6 +115,70 @@ describe('url-state', () => {
       expect(out.cam![0]).toBeCloseTo(1.85e-6, 9);
       expect(out.cam![1]).toBeCloseTo(-2.61e-6, 9);
       expect(out.cam![2]).toBeCloseTo(3.95e-5, 9);
+    });
+
+    it('elides up when it matches the default [0, 1, 0]', () => {
+      // v3 sub-mask: components matching the per-key default are
+      // omitted, and a vec3 with all components default has isPresent=
+      // false → the field doesn't even claim its outer presence bit.
+      const { view } = roundtrip({ up: [0, 1, 0] });
+      expect(view.up).toBeUndefined();
+    });
+
+    it('elides tgt when it matches the default [0, 0, 0]', () => {
+      const { view } = roundtrip({ tgt: [0, 0, 0] });
+      expect(view.tgt).toBeUndefined();
+    });
+
+    it('emits only the diverging z-component for cam=[0,0,3.7]', () => {
+      // The bead's headline scenario: a near-Sol orbit on the z-axis.
+      // v2 would burn 12 bytes on cam (3 × f32 incl. two zero floats);
+      // v3 emits 1 sub-mask byte + 4 bytes for z = 5 bytes for the cam
+      // payload, plus 1 version + 3 outer mask = 9 bytes total → 12
+      // base64url chars. Down from v2's 22.
+      const blob = encodeBlob({ cam: [0, 0, 3.7] });
+      expect(blob.length).toBeLessThanOrEqual(12);
+      const { view } = decodeBlob(blob);
+      expect(view.cam![0]).toBe(0);
+      expect(view.cam![1]).toBe(0);
+      expect(view.cam![2]).toBeCloseTo(3.7, 5);
+    });
+
+    it('emits only the diverging x-component for cam=[5,0,30]', () => {
+      // navigate-mode default is [0,0,30]; only x diverges. sub=1, 5
+      // bytes payload.
+      const { view } = roundtrip({ cam: [5, 0, 30] });
+      expect(view.cam).toEqual([5, 0, 30]);
+    });
+
+    it('uses observe default ([0,0,0]) for cam when mode=observe', () => {
+      // mode=observe shifts cam's z-default from 30 to 0. cam=[0,0,30]
+      // is *off-default* in observe → sub=4 (z bit), z=30 on the wire.
+      const { view, version } = roundtrip({ cam: [0, 0, 30], mode: 'observe' });
+      expect(version).toBe(3);
+      expect(view.cam).toEqual([0, 0, 30]);
+      expect(view.mode).toBe('observe');
+    });
+
+    it('elides cam in observe mode when it matches the observe default', () => {
+      // cam=[0,0,0] matches the observe default — fully elided.
+      const { view } = roundtrip({ cam: [0, 0, 0], mode: 'observe' });
+      expect(view.cam).toBeUndefined();
+      expect(view.mode).toBe('observe');
+    });
+
+    it('decoder fills observe-mode cam z-default when sub-mask omits z', () => {
+      // Encode cam=[5,0,0] in observe mode: only x diverges from
+      // observe default [0,0,0]. sub=1, payload = x. Decoder must fill
+      // z=0 (not z=30, the static-table default) once flags reveals
+      // mode=observe — that's the post-pass in decodeV3.
+      const { view } = roundtrip({ cam: [5, 0, 0], mode: 'observe' });
+      expect(view.cam).toEqual([5, 0, 0]);
+    });
+
+    it('elides worldOffset when it matches [0, 0, 0]', () => {
+      const { view } = roundtrip({ worldOffset: [0, 0, 0] });
+      expect(view.worldOffset).toBeUndefined();
     });
 
     it('preserves cam precision at Mpc-scale worldOffset (extragalactic anchor)', () => {
@@ -434,9 +503,12 @@ describe('url-state', () => {
         pois: [100, 200, 300],
       };
       const { view: out, version } = roundtrip(view);
-      expect(version).toBe(2);
+      expect(version).toBe(3);
       expect(out.cam).toEqual(view.cam);
-      expect(out.tgt).toEqual(view.tgt);
+      // tgt=[0,0,0] matches the per-key default in v3 → elided. Same
+      // contract as up=[0,1,0] and worldOffset=[0,0,0]. Receiver
+      // recomputes tgt from default.
+      expect(out.tgt).toBeUndefined();
       expect(out.fov).toBe(45);
       expect(out.mag).toBeCloseTo(6.5, 1);
       expect(out.dmax).toBe(500);
@@ -548,6 +620,90 @@ describe('url-state', () => {
       const blob = buildV1Blob(1 << 19, payload);
       const { view } = decodeBlob(blob);
       expect(view.pois).toHaveLength(16);
+    });
+  });
+
+  describe('v2 backward compatibility', () => {
+    // v2 was the prior schema (1-byte version + 24-bit mask + flat
+    // 12-byte vec3 fields). Manually construct v2-shaped blobs to
+    // verify decodeV2 still works after v3 became the default writer.
+
+    function buildV2Blob(mask: number, payload: Uint8Array): string {
+      const ab = new ArrayBuffer(4 + payload.length);
+      const dv = new DataView(ab);
+      dv.setUint8(0, 2); // version
+      // 24-bit LE mask, same writer as production code uses
+      dv.setUint8(1, mask & 0xff);
+      dv.setUint8(2, (mask >>> 8) & 0xff);
+      dv.setUint8(3, (mask >>> 16) & 0xff);
+      const bytes = new Uint8Array(ab);
+      bytes.set(payload, 4);
+      let s = '';
+      for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+      return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    }
+
+    it('decodes v2 empty blob and reports version=2', () => {
+      const blob = buildV2Blob(0, new Uint8Array(0));
+      const { view, version } = decodeBlob(blob);
+      expect(version).toBe(2);
+      expect(view).toEqual({});
+    });
+
+    it('decodes v2 cam as a flat 12-byte float32 vec3', () => {
+      // v2 bit 0 = cam, 12 bytes f32 LE × 3 — no sub-mask.
+      const payload = new Uint8Array(12);
+      const dv = new DataView(payload.buffer);
+      dv.setFloat32(0, 1.5, true);
+      dv.setFloat32(4, -2.25, true);
+      dv.setFloat32(8, 3.7, true);
+      const blob = buildV2Blob(1 << 0, payload);
+      const { view, version } = decodeBlob(blob);
+      expect(version).toBe(2);
+      expect(view.cam![0]).toBeCloseTo(1.5, 5);
+      expect(view.cam![1]).toBeCloseTo(-2.25, 5);
+      expect(view.cam![2]).toBeCloseTo(3.7, 5);
+    });
+
+    it('decodes v2 fov as quantised u8 (already compressed in v2)', () => {
+      // v2 bit 3 = fov, 1 byte u8 (raw=50 → fov = 10 + 50*1 = 60)
+      const payload = new Uint8Array([50]);
+      const blob = buildV2Blob(1 << 3, payload);
+      const { view, version } = decodeBlob(blob);
+      expect(version).toBe(2);
+      expect(view.fov).toBe(60);
+    });
+
+    it('decodes v2 star ref as 3-byte u24', () => {
+      // v2 bit 14 = focus, 3 bytes u24 LE; HIP tag = 0x800000
+      const FOCUS_HIP_TAG_V2 = 0x800000;
+      const id = 32349;
+      const tagged = (id | FOCUS_HIP_TAG_V2) >>> 0;
+      const payload = new Uint8Array(3);
+      payload[0] = tagged & 0xff;
+      payload[1] = (tagged >>> 8) & 0xff;
+      payload[2] = (tagged >>> 16) & 0xff;
+      const blob = buildV2Blob(1 << 14, payload);
+      const { view, version } = decodeBlob(blob);
+      expect(version).toBe(2);
+      expect(view.focus).toEqual({ kind: 'hip', id: 32349 });
+    });
+
+    it('decodes v2 POI list with 3-byte HIP entries', () => {
+      // v2 bit 19 = pois, 1-byte count + 3 bytes per HIP
+      const hips = [100, 200, 300];
+      const payload = new Uint8Array(1 + hips.length * 3);
+      payload[0] = hips.length;
+      for (let i = 0; i < hips.length; i++) {
+        const off = 1 + i * 3;
+        payload[off]     = hips[i]         & 0xff;
+        payload[off + 1] = (hips[i] >>> 8)  & 0xff;
+        payload[off + 2] = (hips[i] >>> 16) & 0xff;
+      }
+      const blob = buildV2Blob(1 << 19, payload);
+      const { view, version } = decodeBlob(blob);
+      expect(version).toBe(2);
+      expect(view.pois).toEqual(hips);
     });
   });
 
