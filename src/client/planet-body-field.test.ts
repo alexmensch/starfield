@@ -187,25 +187,40 @@ describe('PlanetBodyField lifecycle', () => {
     f.dispose();
   });
 
-  it('exposes five render passes with the documented renderOrder layout (stellata-3re.19)', () => {
-    // The contract is: orbit rings (2) sit BETWEEN the corrupt pass
-    // (1.5, writes near-plane depth across the planet's core) and the
-    // restore pass (2.5, writes the planet's actual depth back so the
-    // disc/glow passes at 3/4 still depth-test correctly). If anyone
-    // reorders these — e.g. moves restore before orbit rings — the
-    // near-side ring will no longer be hidden by the planet body
-    // (regressing the user-visible "planet looks solid" behaviour).
-    // Pin each mesh by name → renderOrder so a swap fails CI.
+  it('exposes four render passes with the documented renderOrder layout (stellata-3re.19)', () => {
+    // The contract: stencil pass at 1.5 (writes stencil=1 at the
+    // planet's core region) sits between background layers (≤ 1) and
+    // the orbit rings at 2 (which discard via stencilFunc: NotEqual).
+    // If the stencil pass moves above renderOrder 2, rings would
+    // already be drawn before the stencil bit goes down, regressing
+    // the user-visible "planet looks solid" behaviour. Pin each mesh
+    // by name → renderOrder so a swap fails CI.
     const f = new PlanetBodyField(makeSharedUniforms());
     const orderByName = new Map(
       f.group.children.map((m) => [m.name, m.renderOrder]),
     );
     expect(orderByName.get('core')).toBe(-4);
-    expect(orderByName.get('corrupt')).toBe(1.5);
-    expect(orderByName.get('restore')).toBe(2.5);
+    expect(orderByName.get('stencil')).toBe(1.5);
     expect(orderByName.get('disc')).toBe(3);
     expect(orderByName.get('glow')).toBe(4);
-    expect(f.group.children).toHaveLength(5);
+    expect(f.group.children).toHaveLength(4);
+    f.dispose();
+  });
+
+  it('the stencil pass is configured to write stencil bit 1 (stellata-3re.19)', () => {
+    // The orbit-ring material reads this exact bit. If the stencil
+    // material loses its stencilWrite flag or the ref/op gets shuffled,
+    // the ring's NotEqual test against bit 1 silently does nothing —
+    // and the orbit ring will start passing through the planet body
+    // again. Pin the actual stencil settings here, not just renderOrder.
+    const f = new PlanetBodyField(makeSharedUniforms());
+    const stencilMesh = f.group.children.find((m) => m.name === 'stencil')!;
+    const mat = (stencilMesh as THREE.Mesh).material as THREE.ShaderMaterial;
+    expect(mat.stencilWrite).toBe(true);
+    expect(mat.stencilRef).toBe(1);
+    expect(mat.stencilFunc).toBe(THREE.AlwaysStencilFunc);
+    expect(mat.stencilZPass).toBe(THREE.ReplaceStencilOp);
+    expect(mat.colorWrite).toBe(false);
     f.dispose();
   });
 

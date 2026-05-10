@@ -22,34 +22,36 @@
 //
 // # Render passes
 //
-// Five materials share the geometry. Three mirror the star pipeline
+// Four materials share the geometry. Three mirror the star pipeline
 // (core / disc / glow) — same uRenderMode 2/1/0, same gates, same
-// halo-depth trick. The other two are a corrupt+restore pair around
-// the orbit ring layer (planet-only, stellata-3re.19):
+// halo-depth trick. The fourth is planet-only (stellata-3re.19):
 //   • disc    — per-channel-max, depth-write on (close-range resolved)
 //   • glow    — additive, depth-test on (distant point glow)
 //   • core    — depth-only mask at -4, colorWrite off (occludes
 //               background layers behind close planet cores)
-//   • corrupt — depth-only at 1.5; writes gl_FragDepth = 0.0 across the
-//               planet's core region (glow >= uCoreThreshold). Forces
-//               the orbit ring at renderOrder 2 to depth-fail regardless
-//               of its 3D position — so near-side ring segments that
-//               would otherwise pass the depth test are hidden too.
-//   • restore — depth-only at 2.5; writes the planet's actual depth
-//               (gl_FragCoord.z) back across the same core region so
-//               disc / glow at 3 / 4 still depth-test correctly against
-//               other planets and stars. depthFunc: AlwaysDepth so it
-//               can overwrite the 0.0 the corrupt pass wrote.
+//   • stencil — stencil-only at 1.5, no color, no depth write. Sets a
+//               stencil bit (1) at the planet's core region (glow >=
+//               uCoreThreshold), gated on depth-test against whatever
+//               background the camera is seeing. The orbit-ring material
+//               has stencilFunc: NotEqual against bit 1 — every ring
+//               fragment landing on a planet body's screen footprint
+//               (whether near-side, far-side, or the orbit's own tangent
+//               at the planet's current position) is discarded outright.
+//
+// Why stencil instead of depth manipulation: at typical Mercury-class
+// viewing distances Mercury's log-depth-encoded depth is on the order
+// of 1e-7, indistinguishable from 0.0 in a 16-bit depth buffer.
+// gl_FragDepth = 0.0 tricks failed at the planet's own orbital tangent
+// (ring depth ≈ planet depth, both round to 0). Stencil is
+// precision-independent — either the bit is set or it isn't.
 //
 // Why planets diverge from the star pipeline's 3-pass shape: the
 // planet's orbit ring physically passes through the planet's body at
 // the planet's current position, and the user wants the planet to
 // read as a solid 2D blob bisecting the ring — from any angle, not
-// just behind. Pure depth-test occlusion can't express that (near-side
-// rings legitimately have smaller depth), hence the corrupt+restore
-// trick. Stars don't have any layer that obviously wants this; the
-// equivalent question for stars (galactic gridlines / distance-vector
-// chevrons through a foreground star's halo) is filed as
+// just behind. Stars don't have any layer that obviously wants this;
+// the equivalent question for stars (galactic gridlines / distance-
+// vector chevrons through a foreground star's halo) is filed as
 // stellata-9mm.180.
 //
 // uRenderMode is the only divergent uniform. Everything else
@@ -176,13 +178,11 @@ export class PlanetBodyField {
   private matDisc!: THREE.ShaderMaterial;
   private matGlow!: THREE.ShaderMaterial;
   private matCore!: THREE.ShaderMaterial;
-  private matCorrupt!: THREE.ShaderMaterial;
-  private matRestore!: THREE.ShaderMaterial;
+  private matStencil!: THREE.ShaderMaterial;
   private meshDisc!: THREE.Mesh;
   private meshGlow!: THREE.Mesh;
   private meshCore!: THREE.Mesh;
-  private meshCorrupt!: THREE.Mesh;
-  private meshRestore!: THREE.Mesh;
+  private meshStencil!: THREE.Mesh;
   // Reusable scratch — avoids per-frame allocation in update().
   private rotateTmp = new THREE.Vector3();
 
@@ -374,8 +374,7 @@ export class PlanetBodyField {
     this.matDisc.dispose();
     this.matGlow.dispose();
     this.matCore.dispose();
-    this.matCorrupt.dispose();
-    this.matRestore.dispose();
+    this.matStencil.dispose();
   }
 
   // ── private ─────────────────────────────────────────────────────────
@@ -416,8 +415,7 @@ export class PlanetBodyField {
     this.meshDisc.geometry = this.geometry;
     this.meshGlow.geometry = this.geometry;
     this.meshCore.geometry = this.geometry;
-    this.meshCorrupt.geometry = this.geometry;
-    this.meshRestore.geometry = this.geometry;
+    this.meshStencil.geometry = this.geometry;
     old.dispose();
   }
 
@@ -488,25 +486,25 @@ export class PlanetBodyField {
       colorWrite: false,
     });
 
-    // transparent: true on corrupt + restore puts them in the
-    // transparent queue so their renderOrder (1.5, 2.5) is honoured
-    // relative to the orbit-rings layer (2) — opaque always draws
-    // before transparent.
-    this.matCorrupt = makeMat(3, {
+    // transparent: true puts the stencil pass in the transparent queue
+    // so its renderOrder (1.5) is honoured relative to the orbit-rings
+    // layer (2) — opaque always draws before transparent.
+    //
+    // depthTest=true so the stencil bit only goes down where the planet
+    // is actually visible (occluded by Sol → no stencil → orbit ring
+    // shows through the planet's screen footprint, which is correct
+    // because the planet itself isn't visible there).
+    this.matStencil = makeMat(3, {
       transparent: true,
-      depthWrite: true,
       depthTest: true,
+      depthWrite: false,
       colorWrite: false,
-    });
-
-    // depthFunc: AlwaysDepth so the restore can overwrite the 0.0 the
-    // corrupt pass wrote (default LessEqual would reject planet_z > 0).
-    this.matRestore = makeMat(4, {
-      transparent: true,
-      depthWrite: true,
-      depthTest: true,
-      depthFunc: THREE.AlwaysDepth,
-      colorWrite: false,
+      stencilWrite: true,
+      stencilFunc: THREE.AlwaysStencilFunc,
+      stencilRef: 1,
+      stencilZPass: THREE.ReplaceStencilOp,
+      stencilFail: THREE.KeepStencilOp,
+      stencilZFail: THREE.KeepStencilOp,
     });
 
     const makeMesh = (mat: THREE.ShaderMaterial, name: string, order: number) => {
@@ -518,14 +516,12 @@ export class PlanetBodyField {
     };
 
     this.meshCore = makeMesh(this.matCore, 'core', -4);
-    this.meshCorrupt = makeMesh(this.matCorrupt, 'corrupt', 1.5);
-    this.meshRestore = makeMesh(this.matRestore, 'restore', 2.5);
+    this.meshStencil = makeMesh(this.matStencil, 'stencil', 1.5);
     this.meshDisc = makeMesh(this.matDisc, 'disc', 3);
     this.meshGlow = makeMesh(this.matGlow, 'glow', 4);
 
     this.group.add(this.meshCore);
-    this.group.add(this.meshCorrupt);
-    this.group.add(this.meshRestore);
+    this.group.add(this.meshStencil);
     this.group.add(this.meshDisc);
     this.group.add(this.meshGlow);
   }
