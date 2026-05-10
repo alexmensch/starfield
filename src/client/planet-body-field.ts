@@ -22,25 +22,35 @@
 //
 // # Render passes
 //
-// Four materials share the geometry. Three mirror the star pipeline
+// Five materials share the geometry. Three mirror the star pipeline
 // (core / disc / glow) — same uRenderMode 2/1/0, same gates, same
-// halo-depth trick. The fourth (outer) is planet-only:
-//   • disc  — per-channel-max, depth-write on (close-range resolved)
-//   • glow  — additive, depth-test on (distant point glow)
-//   • core  — depth-only mask, colorWrite off (occludes background
-//             layers behind close planet cores)
-//   • outer — depth-only mask across the full visible disc, colorWrite
-//             off; renders before orbit rings so the rings are occluded
-//             by the full disc rather than just the bright core
-//             (stellata-3re.19). Sits after background layers in render
-//             order so MW / clouds remain visible through the soft halo.
+// halo-depth trick. The other two are a corrupt+restore pair around
+// the orbit ring layer (planet-only, stellata-3re.19):
+//   • disc    — per-channel-max, depth-write on (close-range resolved)
+//   • glow    — additive, depth-test on (distant point glow)
+//   • core    — depth-only mask at -4, colorWrite off (occludes
+//               background layers behind close planet cores)
+//   • corrupt — depth-only at 1.5; writes gl_FragDepth = 0.0 across the
+//               planet's core region (glow >= uCoreThreshold). Forces
+//               the orbit ring at renderOrder 2 to depth-fail regardless
+//               of its 3D position — so near-side ring segments that
+//               would otherwise pass the depth test are hidden too.
+//   • restore — depth-only at 2.5; writes the planet's actual depth
+//               (gl_FragCoord.z) back across the same core region so
+//               disc / glow at 3 / 4 still depth-test correctly against
+//               other planets and stars. depthFunc: AlwaysDepth so it
+//               can overwrite the 0.0 the corrupt pass wrote.
 //
-// Why planets diverge from the star pipeline's 3-pass shape: orbit
-// rings depth-test against planet bodies and need occlusion across the
-// FULL disc (halo annulus included), not just the bright core. Stars
-// don't have any layer that obviously wants this; the equivalent
-// question for stars (galactic gridlines / distance-vector chevrons
-// through a foreground star's halo) is filed as stellata-9mm.180.
+// Why planets diverge from the star pipeline's 3-pass shape: the
+// planet's orbit ring physically passes through the planet's body at
+// the planet's current position, and the user wants the planet to
+// read as a solid 2D blob bisecting the ring — from any angle, not
+// just behind. Pure depth-test occlusion can't express that (near-side
+// rings legitimately have smaller depth), hence the corrupt+restore
+// trick. Stars don't have any layer that obviously wants this; the
+// equivalent question for stars (galactic gridlines / distance-vector
+// chevrons through a foreground star's halo) is filed as
+// stellata-9mm.180.
 //
 // uRenderMode is the only divergent uniform. Everything else
 // (apparent-mag math, view-space distances, perceptual-disc shaping)
@@ -166,11 +176,13 @@ export class PlanetBodyField {
   private matDisc!: THREE.ShaderMaterial;
   private matGlow!: THREE.ShaderMaterial;
   private matCore!: THREE.ShaderMaterial;
-  private matOuter!: THREE.ShaderMaterial;
+  private matCorrupt!: THREE.ShaderMaterial;
+  private matRestore!: THREE.ShaderMaterial;
   private meshDisc!: THREE.Mesh;
   private meshGlow!: THREE.Mesh;
   private meshCore!: THREE.Mesh;
-  private meshOuter!: THREE.Mesh;
+  private meshCorrupt!: THREE.Mesh;
+  private meshRestore!: THREE.Mesh;
   // Reusable scratch — avoids per-frame allocation in update().
   private rotateTmp = new THREE.Vector3();
 
@@ -362,7 +374,8 @@ export class PlanetBodyField {
     this.matDisc.dispose();
     this.matGlow.dispose();
     this.matCore.dispose();
-    this.matOuter.dispose();
+    this.matCorrupt.dispose();
+    this.matRestore.dispose();
   }
 
   // ── private ─────────────────────────────────────────────────────────
@@ -403,7 +416,8 @@ export class PlanetBodyField {
     this.meshDisc.geometry = this.geometry;
     this.meshGlow.geometry = this.geometry;
     this.meshCore.geometry = this.geometry;
-    this.meshOuter.geometry = this.geometry;
+    this.meshCorrupt.geometry = this.geometry;
+    this.meshRestore.geometry = this.geometry;
     old.dispose();
   }
 
@@ -474,13 +488,24 @@ export class PlanetBodyField {
       colorWrite: false,
     });
 
-    // transparent: true puts this material in the transparent queue so
-    // its renderOrder (1.5) is honoured relative to the orbit-rings
-    // layer (renderOrder 2) — opaque always draws before transparent.
-    this.matOuter = makeMat(3, {
+    // transparent: true on corrupt + restore puts them in the
+    // transparent queue so their renderOrder (1.5, 2.5) is honoured
+    // relative to the orbit-rings layer (2) — opaque always draws
+    // before transparent.
+    this.matCorrupt = makeMat(3, {
       transparent: true,
       depthWrite: true,
       depthTest: true,
+      colorWrite: false,
+    });
+
+    // depthFunc: AlwaysDepth so the restore can overwrite the 0.0 the
+    // corrupt pass wrote (default LessEqual would reject planet_z > 0).
+    this.matRestore = makeMat(4, {
+      transparent: true,
+      depthWrite: true,
+      depthTest: true,
+      depthFunc: THREE.AlwaysDepth,
       colorWrite: false,
     });
 
@@ -493,12 +518,14 @@ export class PlanetBodyField {
     };
 
     this.meshCore = makeMesh(this.matCore, 'core', -4);
-    this.meshOuter = makeMesh(this.matOuter, 'outer', 1.5);
+    this.meshCorrupt = makeMesh(this.matCorrupt, 'corrupt', 1.5);
+    this.meshRestore = makeMesh(this.matRestore, 'restore', 2.5);
     this.meshDisc = makeMesh(this.matDisc, 'disc', 3);
     this.meshGlow = makeMesh(this.matGlow, 'glow', 4);
 
     this.group.add(this.meshCore);
-    this.group.add(this.meshOuter);
+    this.group.add(this.meshCorrupt);
+    this.group.add(this.meshRestore);
     this.group.add(this.meshDisc);
     this.group.add(this.meshGlow);
   }

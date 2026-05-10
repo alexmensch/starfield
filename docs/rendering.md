@@ -104,9 +104,10 @@ the depth buffer that transparent passes test against.
 | `0`         | star discs                                       | `stellata.ts` |
 | `1`         | star glow                                        | `stellata.ts` |
 | `1`         | heliopause shell                                 | `heliopause.ts` |
-| `1.5`       | planet bodies — outer-disc depth occluder        | `planet-body-field.ts` (3re.19) |
+| `1.5`       | planet bodies — outer-disc CORRUPT (depth = 0)   | `planet-body-field.ts` (3re.19) |
 | `2`         | orbit rings                                      | `orbit-rings-layer.ts` |
 | `2`         | dust particles (shelved)                         | `stellata.ts` |
+| `2.5`       | planet bodies — outer-disc RESTORE (actual depth)| `planet-body-field.ts` (3re.19) |
 | `3`         | planet bodies — disc pass                        | `planet-body-field.ts` |
 | `4`         | planet bodies — glow pass                        | `planet-body-field.ts` |
 
@@ -116,14 +117,22 @@ Pinning notes:
   galactic grid — all with `depthTest: true`) depth-fail behind close-
   range bright cores instead of bleeding through. Stars and planets
   share this slot; both write opaque depth with `colorWrite: false`.
-- **`1.5` planet outer-disc occluder** sits between star glow / heliopause
-  (1) and orbit rings (2) so far-side ring fragments depth-fail behind
-  the planet's full visible disc, not just the bright core (the bug
-  fixed by stellata-3re.19). Material is `transparent: true` so its
-  `renderOrder` is honoured relative to the orbit-rings transparent
-  queue (opaque always draws before transparent).
-- The planet-body-field test pins these values for the four planet
-  passes; a future reorder fails CI rather than silently regressing.
+- **`1.5` + `2.5` planet outer-disc corrupt + restore pair** is the
+  mechanism that keeps the planet reading as a solid body across an
+  orbit ring (stellata-3re.19). The corrupt pass at 1.5 writes
+  `gl_FragDepth = 0.0` (near plane, smallest possible depth) across
+  the planet's core region (`glow >= uCoreThreshold`). The orbit ring
+  at renderOrder 2 then depth-fails at every fragment landing on the
+  planet's body — far-side AND near-side, regardless of the ring's
+  actual 3D position. The restore pass at 2.5 writes the planet's
+  actual `gl_FragCoord.z` back across the same region (with
+  `depthFunc: AlwaysDepth` so it can overwrite the 0.0), so the disc /
+  glow passes at 3 / 4 still depth-test correctly against other
+  planets and stars. Both materials are `transparent: true` so their
+  `renderOrder` is honoured in the transparent queue.
+- The planet-body-field test pins these values for the five planet
+  passes; a future reorder (e.g. moving restore before orbit rings)
+  fails CI rather than silently regressing.
 
 ## Depth encoding
 
