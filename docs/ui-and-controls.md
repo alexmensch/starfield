@@ -58,7 +58,7 @@ is fine — it's how `+` and `?` are typed on US layouts.
 **ESC priority chain** (top of the keydown handler, before the
 shortcut switch):
 
-1. **Open kb-modal first.** SearchBox / typeahead bail their own ESC
+1. **Open kb-modal first.** The `Typeahead` class bails its own ESC
    when `results.length === 0` (e.g., an empty Go modal), so the
    shortcut module owns ESC for the kb-modal regardless of input
    focus. Closes both modals (idempotent) and `preventDefault`s.
@@ -75,10 +75,10 @@ The two pickers reuse the existing `.search-wrap` (topbar) and
 `#con-picker` (panel) widgets verbatim. On open, the live element is
 moved into `#kb-modal-card` via `appendChild`; on close, it's restored
 via `originalParent.insertBefore(widget, originalNextSibling)`. Event
-listeners survive the move, so all SearchBox / typeahead behaviour
-keeps working unchanged — including OBSERVE-mode rerouting through
-`warpTo()`, OBSERVE-only star filtering in `focusRunQuery`, and the
-None-entry path in the constellation typeahead.
+listeners survive the move, so all `Typeahead` behaviour keeps working
+unchanged — including OBSERVE-mode rerouting through `warpTo()`,
+OBSERVE-only star filtering in `focusRunQuery`, and the None-entry
+path in the constellation typeahead.
 
 CSS-only relocation was tried first but rejected: the constellation
 typeahead lives inside `data-group="overlays"` and `.panel-inner`,
@@ -99,12 +99,12 @@ The shared `bindRelocateModal` helper closes on:
 
 - ESC (handled in the shortcut module's capture-phase listener).
 - Backdrop click (`.kb-modal-backdrop`).
-- Input blur, deferred 180ms — covers `pick()`-then-blur (SearchBox
+- Input blur, deferred 180ms — covers `pick()`-then-blur (`Typeahead`
   blurs the input synchronously after `onSelect`), click-outside, and
-  ESC inside the input. The 180ms sits just past SearchBox's own
+  ESC inside the input. The 180ms sits just past `Typeahead`'s own
   140ms blur deferral so its result-mousedown race finishes first.
   An `onInputFocus` handler cancels the pending close, so re-focusing
-  via the SearchBox X-clear button doesn't tear down the modal mid
+  via the typeahead's X-clear button doesn't tear down the modal mid
   edit.
 
 ### Reset (R) scope

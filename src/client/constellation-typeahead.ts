@@ -1,17 +1,15 @@
 import type { Stellata } from './stellata';
-import { applyHoverClass, TYPEAHEAD_MAX_RESULTS } from './typeahead-util';
-import { escapeHtml } from './dom-util';
+import { TYPEAHEAD_MAX_RESULTS } from './typeahead-util';
+import { Typeahead } from './typeahead';
 
 // Typeahead replacement for the old `<select id="con-select">` constellation
 // picker. 88 entries, all known up-front — no fuzzy library needed; a
 // simple substring filter against name + IAU 3-letter code is plenty.
 //
-// UX modeled on the Focus/To search box in `search.ts`: the input shows the
-// selected constellation's name when blurred, focusing reveals the dropdown
-// (showing the full list if the input is empty), typing filters, blur
-// restores the displayed name. Keyboard: ArrowUp/Down + Enter, Escape
-// closes. Selecting fires both `setFilter({ highlightCon })` and
-// `aimAtConstellation`, matching the prior `<select>`'s behaviour.
+// UX modeled on the Focus/To search box in `search.ts`: both binders use
+// the shared `Typeahead<T>` abstraction in `typeahead.ts`. Selecting fires
+// both `setFilter({ highlightCon })` and `aimAtConstellation`, matching
+// the prior `<select>`'s behaviour.
 
 export interface ConEntry {
   idx: number;  // -1 for the synthetic "None" entry that clears the highlight
@@ -52,99 +50,28 @@ export function bindConstellationTypeahead(stellata: Stellata) {
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
 
-  let displayName = '';
-  let results: ConEntry[] = [];
-  let hoverIdx = -1;
-  let focused = false;
-
   const nameForIdx = (idx: number): string => {
     if (idx < 0) return '';
     const c = stellata.catalog.constellations[idx];
     return c ? c.name : '';
   };
 
-  const filter = (query: string): ConEntry[] => filterConstellations(entries, query);
-
-  const renderDom = () => {
-    resultsEl.innerHTML = '';
-    for (let i = 0; i < results.length; i++) {
-      const e = results[i];
-      const li = document.createElement('li');
-      // No active class here — renderQuery calls setHover(0) after the
-      // rebuild so the initial highlight goes through applyHoverClass.
-      li.className = '';
-      li.innerHTML = `<span>${escapeHtml(e.name)}</span><span class="sub">${escapeHtml(e.code)}</span>`;
-      li.addEventListener('mousedown', (ev) => {
-        ev.preventDefault();
-        pick(i);
-      });
-      resultsEl.appendChild(li);
-    }
-  };
-
-  const setHover = (newIdx: number) => {
-    applyHoverClass(resultsEl, hoverIdx, newIdx);
-    hoverIdx = newIdx;
-  };
-
-  const renderQuery = (query: string) => {
-    results = filter(query);
-    // Rebuild rows with no active class, then route the initial hover
-    // through setHover so applyHoverClass owns the scroll-into-view.
-    // Pre-baking the class would skip the scroll path and silently
-    // break the moment a rebuild preserves resultsEl.scrollTop.
-    hoverIdx = -1;
-    renderDom();
-    if (results.length > 0) setHover(0);
-    resultsEl.hidden = results.length === 0;
-  };
-
-  const pick = (i: number) => {
-    const e = results[i];
-    if (!e) return;
-    stellata.setFilter({ highlightCon: e.idx });
-    // The synthetic None entry has no constellation to aim at — picking
-    // it just clears the highlight.
-    if (e.idx >= 0) stellata.aimAtConstellation(e.idx);
-    resultsEl.hidden = true;
-    input.blur();
-  };
-
-  input.addEventListener('input', () => renderQuery(input.value));
-  input.addEventListener('focus', () => {
-    focused = true;
-    renderQuery(input.value);
-  });
-  input.addEventListener('blur', () => {
-    // Defer so click-on-result (mousedown) wins the race.
-    setTimeout(() => {
-      focused = false;
-      resultsEl.hidden = true;
-      input.value = displayName;
-    }, 140);
-  });
-  input.addEventListener('keydown', (e) => {
-    if (results.length === 0) return;
-    if (e.key === 'ArrowDown') {
-      setHover((hoverIdx + 1) % results.length);
-      e.preventDefault();
-    } else if (e.key === 'ArrowUp') {
-      setHover((hoverIdx - 1 + results.length) % results.length);
-      e.preventDefault();
-    } else if (e.key === 'Enter') {
-      if (hoverIdx >= 0) pick(hoverIdx);
-      e.preventDefault();
-    } else if (e.key === 'Escape') {
-      resultsEl.hidden = true;
-      input.blur();
-    }
+  const typeahead = new Typeahead<ConEntry>({
+    input,
+    resultsEl,
+    runQuery: (q) => filterConstellations(entries, q),
+    rowFor: (e) => ({ primary: e.name, sub: e.code }),
+    onSelect: (e) => {
+      stellata.setFilter({ highlightCon: e.idx });
+      // The synthetic None entry has no constellation to aim at — picking
+      // it just clears the highlight.
+      if (e.idx >= 0) stellata.aimAtConstellation(e.idx);
+    },
   });
 
   // Reverse-sync from filter state — URL restore, "None"-pick, etc.
   const syncFromFilter = () => {
-    const idx = stellata.getFilter().highlightCon;
-    displayName = nameForIdx(idx);
-    if (!focused) input.value = displayName;
+    typeahead.setName(nameForIdx(stellata.getFilter().highlightCon));
   };
   stellata.onFilterChange(syncFromFilter);
   syncFromFilter();

@@ -1,8 +1,7 @@
-// Shared primitives for the two typeahead dropdowns (the star/cloud
-// SearchBox in `search.ts` and the constellation picker in
-// `constellation-typeahead.ts`). The two are otherwise parallel
-// implementations of the same UI primitive — see stellata-xbj for a
-// follow-up to unify them behind a single `Typeahead<T>` abstraction.
+// Pure helpers for the typeahead dropdowns (the star/cloud picker in
+// `search.ts` and the constellation picker in
+// `constellation-typeahead.ts`). The DOM glue itself lives in
+// `typeahead.ts` (the unified `Typeahead<T>` class — stellata-xbj).
 
 // Sized so the wraparound point matches what the 320px max-height +
 // ~30px row height actually shows on screen, so users don't arrow-nav
