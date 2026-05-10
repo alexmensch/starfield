@@ -12,7 +12,7 @@ import { selectMaskCandidates } from './disc-mask-pure';
 //      last focused index rather than the *current* focused index so that
 //      Esc-unfocusing doesn't drop the mask while the camera is still close
 //      enough to render the disc — the bug stellata-rmo reports. The stale
-//      entry self-evicts naturally: placeCircle returns false once the disc
+//      entry self-evicts naturally: placeSlot returns false once the disc
 //      shrinks below the threshold, so as the camera pulls away the mask
 //      circle quietly goes to r=0.
 //   2. Every vertex star in the highlighted constellation whose disc still
@@ -35,6 +35,17 @@ const DISC_THRESHOLD_PX = 48;
 // without ever firing in practice. Exceeding it warns once (dev signal
 // that the iteration source changed); growth itself is not blocked.
 const MAX_MASK_CIRCLES = 64;
+// Half a .toFixed(1) step — below this the attribute string round-trips to
+// the same value, so the browser would treat the write as a no-op anyway
+// (after re-parsing the attribute). Mirrors chart-labels.ts.
+const ATTR_DIRTY_PX = 0.05;
+
+interface Slot {
+  el: SVGCircleElement;
+  lastCx: number;
+  lastCy: number;
+  lastR: number;
+}
 
 export function createDiscMask(stellata: Stellata) {
   const mask = document.getElementById('disc-occlude-mask') as unknown as SVGMaskElement;
@@ -43,39 +54,58 @@ export function createDiscMask(stellata: Stellata) {
   const original = document.getElementById('disc-mask-cutout');
   if (original) original.remove();
 
-  // Pool of <circle>s, grown on demand and never shrunk. Allocations are
+  // Pool of Slot wrappers, grown on demand and never shrunk. Allocations are
   // rare (bounded by max constellation member count + 2 for focal+companion).
-  const circles: SVGCircleElement[] = [];
+  // NaN sentinel init forces the first attribute write through the dirty-
+  // track gate even when the desired value happens to match the static
+  // -100/-100/0 placeholder.
+  const slots: Slot[] = [];
   let capExceededWarned = false;
-  const ensureCircles = (n: number) => {
+  const ensureSlots = (n: number) => {
     if (n > MAX_MASK_CIRCLES && !capExceededWarned) {
       console.warn(
         `disc-mask: pool grew to ${n}, exceeds expected ceiling ${MAX_MASK_CIRCLES} — check whether the iteration source changed.`,
       );
       capExceededWarned = true;
     }
-    while (circles.length < n) {
+    while (slots.length < n) {
       const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
       c.setAttribute('cx', '-100');
       c.setAttribute('cy', '-100');
       c.setAttribute('r', '0');
       c.setAttribute('fill', 'black');
       mask.appendChild(c);
-      circles.push(c);
+      slots.push({ el: c, lastCx: NaN, lastCy: NaN, lastR: NaN });
     }
   };
 
   const v = new THREE.Vector3();
 
-  const clearCircle = (c: SVGCircleElement) => {
-    c.setAttribute('r', '0');
-    c.setAttribute('cx', '-100');
-    c.setAttribute('cy', '-100');
+  const setCx = (s: Slot, value: number) => {
+    if (Math.abs(value - s.lastCx) < ATTR_DIRTY_PX) return;
+    s.el.setAttribute('cx', value.toFixed(1));
+    s.lastCx = value;
+  };
+  const setCy = (s: Slot, value: number) => {
+    if (Math.abs(value - s.lastCy) < ATTR_DIRTY_PX) return;
+    s.el.setAttribute('cy', value.toFixed(1));
+    s.lastCy = value;
+  };
+  const setR = (s: Slot, value: number) => {
+    if (Math.abs(value - s.lastR) < ATTR_DIRTY_PX) return;
+    s.el.setAttribute('r', value.toFixed(1));
+    s.lastR = value;
+  };
+
+  const clearSlot = (s: Slot) => {
+    setCx(s, -100);
+    setCy(s, -100);
+    setR(s, 0);
   };
 
   // Project a star's world position to screen + set a mask circle. Returns
   // whether a circle was placed (false = off-screen / too small).
-  const placeCircle = (c: SVGCircleElement, idx: number): boolean => {
+  const placeSlot = (s: Slot, idx: number): boolean => {
     const size = stellata.renderedSizePx(idx);
     if (size <= DISC_THRESHOLD_PX) return false;
     const positions = stellata.localPositions;
@@ -83,9 +113,9 @@ export function createDiscMask(stellata: Stellata) {
     v.set(positions[idx * 3], positions[idx * 3 + 1], positions[idx * 3 + 2]);
     const projected = projectToScreen(v, camera, window.innerWidth, window.innerHeight);
     if (!projected) return false;
-    c.setAttribute('cx', projected[0].toFixed(1));
-    c.setAttribute('cy', projected[1].toFixed(1));
-    c.setAttribute('r', (size * 0.5).toFixed(1));
+    setCx(s, projected[0]);
+    setCy(s, projected[1]);
+    setR(s, size * 0.5);
     return true;
   };
 
@@ -110,7 +140,7 @@ export function createDiscMask(stellata: Stellata) {
     }
   });
 
-  // Track how many circles were active last frame so we only clear the
+  // Track how many slots were active last frame so we only clear the
   // tail end of the pool that is no longer used.
   let lastUsed = 0;
 
@@ -126,7 +156,7 @@ export function createDiscMask(stellata: Stellata) {
       stellata.getCameraMode() === 'observe' || stellata.isObserveTransitionActive();
     if (observe) {
       if (lastUsed > 0) {
-        for (let i = 0; i < lastUsed; i++) clearCircle(circles[i]);
+        for (let i = 0; i < lastUsed; i++) clearSlot(slots[i]);
         lastUsed = 0;
       }
       return;
@@ -141,10 +171,10 @@ export function createDiscMask(stellata: Stellata) {
 
     let used = 0;
     for (const idx of candidates) {
-      ensureCircles(used + 1);
-      if (placeCircle(circles[used], idx)) used++;
+      ensureSlots(used + 1);
+      if (placeSlot(slots[used], idx)) used++;
     }
-    for (let i = used; i < lastUsed; i++) clearCircle(circles[i]);
+    for (let i = used; i < lastUsed; i++) clearSlot(slots[i]);
     lastUsed = used;
   });
 }

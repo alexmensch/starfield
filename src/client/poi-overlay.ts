@@ -45,6 +45,8 @@ const ON_SCREEN_PULL_IN_PX = 40;
 const POI_RING_RADIUS_PX = 24;
 const LABEL_RIM_GAP_PX = 6;
 const LABEL_DIAG = (POI_RING_RADIUS_PX + LABEL_RIM_GAP_PX) / Math.SQRT2;
+// Half a .toFixed(1) step. Mirrors chart-labels.ts.
+const ATTR_DIRTY_PX = 0.05;
 
 interface Entry {
   idx: number;
@@ -52,6 +54,22 @@ interface Entry {
   arrowLabel: SVGTextElement;
   ring: SVGCircleElement;
   onScreenLabel: SVGTextElement;
+  // Dirty-tracked attribute / style state — POI entries persist for the
+  // lifetime of the pin, so storing the last-written value lets the per-
+  // frame handler skip identical writes during stationary observe
+  // sessions. Sentinels guarantee the first write always happens.
+  lastArrowD: string;
+  lastArrowLabelDisplay: string;
+  lastArrowLabelText: string;
+  lastArrowLabelX: number;
+  lastArrowLabelY: number;
+  lastRingDisplay: string;
+  lastRingCx: number;
+  lastRingCy: number;
+  lastOnScreenLabelDisplay: string;
+  lastOnScreenLabelText: string;
+  lastOnScreenLabelX: number;
+  lastOnScreenLabelY: number;
 }
 
 export function createPoiOverlay(
@@ -109,7 +127,42 @@ export function createPoiOverlay(
       stellata.aimAt(tmpAim);
     });
 
-    return { idx, arrowPath, arrowLabel, ring, onScreenLabel };
+    return {
+      idx, arrowPath, arrowLabel, ring, onScreenLabel,
+      lastArrowD: '',
+      lastArrowLabelDisplay: '',
+      lastArrowLabelText: '',
+      lastArrowLabelX: -Infinity,
+      lastArrowLabelY: -Infinity,
+      lastRingDisplay: '',
+      lastRingCx: -Infinity,
+      lastRingCy: -Infinity,
+      lastOnScreenLabelDisplay: '',
+      lastOnScreenLabelText: '',
+      lastOnScreenLabelX: -Infinity,
+      lastOnScreenLabelY: -Infinity,
+    };
+  }
+
+  function setArrowD(e: Entry, d: string) {
+    if (d === e.lastArrowD) return;
+    e.arrowPath.setAttribute('d', d);
+    e.lastArrowD = d;
+  }
+  function setArrowLabelDisplay(e: Entry, v: string) {
+    if (v === e.lastArrowLabelDisplay) return;
+    e.arrowLabel.style.display = v;
+    e.lastArrowLabelDisplay = v;
+  }
+  function setRingDisplay(e: Entry, v: string) {
+    if (v === e.lastRingDisplay) return;
+    e.ring.style.display = v;
+    e.lastRingDisplay = v;
+  }
+  function setOnScreenLabelDisplay(e: Entry, v: string) {
+    if (v === e.lastOnScreenLabelDisplay) return;
+    e.onScreenLabel.style.display = v;
+    e.lastOnScreenLabelDisplay = v;
   }
 
   function destroyEntry(e: Entry) {
@@ -134,10 +187,10 @@ export function createPoiOverlay(
   }
 
   function hideEntry(e: Entry) {
-    e.arrowPath.setAttribute('d', '');
-    e.arrowLabel.style.display = 'none';
-    e.ring.style.display = 'none';
-    e.onScreenLabel.style.display = 'none';
+    setArrowD(e, '');
+    setArrowLabelDisplay(e, 'none');
+    setRingDisplay(e, 'none');
+    setOnScreenLabelDisplay(e, 'none');
   }
 
   // Idempotent show/hide: track visibility so the per-frame handler
@@ -236,13 +289,19 @@ export function createPoiOverlay(
 
       if (onScreen && projected) {
         // Hide arrow chrome.
-        e.arrowPath.setAttribute('d', '');
-        e.arrowLabel.style.display = 'none';
+        setArrowD(e, '');
+        setArrowLabelDisplay(e, 'none');
 
         // Ring at the projected star.
-        e.ring.style.display = '';
-        e.ring.setAttribute('cx', projected[0].toFixed(1));
-        e.ring.setAttribute('cy', projected[1].toFixed(1));
+        setRingDisplay(e, '');
+        if (Math.abs(projected[0] - e.lastRingCx) >= ATTR_DIRTY_PX) {
+          e.ring.setAttribute('cx', projected[0].toFixed(1));
+          e.lastRingCx = projected[0];
+        }
+        if (Math.abs(projected[1] - e.lastRingCy) >= ATTR_DIRTY_PX) {
+          e.ring.setAttribute('cy', projected[1].toFixed(1));
+          e.lastRingCy = projected[1];
+        }
 
         // On-screen label anchored just outside the ring rim along a 45°
         // diagonal. Fixed-pixel offset → label-to-star distance is
@@ -251,24 +310,29 @@ export function createPoiOverlay(
         const fullText = conCode
           ? `${name} · ${conCode} · ${fmtDist(distPc)}`
           : `${name} · ${fmtDist(distPc)}`;
-        e.onScreenLabel.style.display = '';
-        e.onScreenLabel.textContent = fullText;
-        e.onScreenLabel.setAttribute(
-          'x',
-          (projected[0] + LABEL_DIAG).toFixed(1),
-        );
-        e.onScreenLabel.setAttribute(
-          'y',
-          (projected[1] + LABEL_DIAG).toFixed(1),
-        );
+        setOnScreenLabelDisplay(e, '');
+        if (fullText !== e.lastOnScreenLabelText) {
+          e.onScreenLabel.textContent = fullText;
+          e.lastOnScreenLabelText = fullText;
+        }
+        const lx = projected[0] + LABEL_DIAG;
+        const ly = projected[1] + LABEL_DIAG;
+        if (Math.abs(lx - e.lastOnScreenLabelX) >= ATTR_DIRTY_PX) {
+          e.onScreenLabel.setAttribute('x', lx.toFixed(1));
+          e.lastOnScreenLabelX = lx;
+        }
+        if (Math.abs(ly - e.lastOnScreenLabelY) >= ATTR_DIRTY_PX) {
+          e.onScreenLabel.setAttribute('y', ly.toFixed(1));
+          e.lastOnScreenLabelY = ly;
+        }
         continue;
       }
 
       // Off screen — draw arrow on the HUD ring rim. Screen-direction
       // derivation via the shared cascade (target's projection if
       // available, view-space xy fallback otherwise).
-      e.ring.style.display = 'none';
-      e.onScreenLabel.style.display = 'none';
+      setRingDisplay(e, 'none');
+      setOnScreenLabelDisplay(e, 'none');
 
       tmpDir.set(
         tmpStarLocal.x - camPos.x,
@@ -319,7 +383,7 @@ export function createPoiOverlay(
         hideEntry(e);
         continue;
       }
-      e.arrowPath.setAttribute('d', d);
+      setArrowD(e, d);
 
       // Name-only label clamped to viewport with the same padding the
       // Sol/GC arrows use.
@@ -327,10 +391,19 @@ export function createPoiOverlay(
       const labelAnchorY = tipY - ARROW_LABEL_OFFSET_PX;
       const sx = clamp(labelAnchorX, ARROW_LABEL_PADDING_PX, w - ARROW_LABEL_PADDING_PX);
       const sy = clamp(labelAnchorY, ARROW_LABEL_PADDING_PX, h - ARROW_LABEL_PADDING_PX);
-      e.arrowLabel.style.display = '';
-      e.arrowLabel.textContent = name;
-      e.arrowLabel.setAttribute('x', sx.toFixed(1));
-      e.arrowLabel.setAttribute('y', sy.toFixed(1));
+      setArrowLabelDisplay(e, '');
+      if (name !== e.lastArrowLabelText) {
+        e.arrowLabel.textContent = name;
+        e.lastArrowLabelText = name;
+      }
+      if (Math.abs(sx - e.lastArrowLabelX) >= ATTR_DIRTY_PX) {
+        e.arrowLabel.setAttribute('x', sx.toFixed(1));
+        e.lastArrowLabelX = sx;
+      }
+      if (Math.abs(sy - e.lastArrowLabelY) >= ATTR_DIRTY_PX) {
+        e.arrowLabel.setAttribute('y', sy.toFixed(1));
+        e.lastArrowLabelY = sy;
+      }
     }
   });
 }

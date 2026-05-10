@@ -38,6 +38,34 @@ const FOCUS_RING_RADIUS_PX = 24;
 // FOVs (raw `sizeMax` is single-digit pixels and reads as a dot).
 const RING_FOV_ANCHOR_DEG = 10;
 const RING_SIZE_FACTOR = 5;
+// Half a .toFixed(1) step. Mirrors chart-labels.ts.
+const ATTR_DIRTY_PX = 0.05;
+// Per-arrow dirty-track state. The Sol/GC arrows recompute geometry every
+// frame, but on a stationary camera the resulting attributes are
+// identical to the previous frame; storing the last-written value lets
+// updateOne skip the SVG attribute / textContent / inline-style writes
+// (each of which forces re-parsing or style invalidation). Sentinels
+// guarantee the first write always happens.
+interface ArrowState {
+  lastD: string;
+  lastLabelDisplay: string;
+  lastLabelText: string;
+  lastLabelX: number;
+  lastLabelY: number;
+  lastOpacity: number;
+  lastPointerEvents: string;
+}
+function emptyArrowState(): ArrowState {
+  return {
+    lastD: '',
+    lastLabelDisplay: '',
+    lastLabelText: '',
+    lastLabelX: -Infinity,
+    lastLabelY: -Infinity,
+    lastOpacity: -1,
+    lastPointerEvents: '',
+  };
+}
 
 /**
  * Map current vertical FOV (degrees) and the user-tuned max star size to
@@ -127,6 +155,15 @@ export class HudOverlay {
   private tmpSolLocal = new THREE.Vector3();
   private tmpGcLocal = new THREE.Vector3();
 
+  // Dirty-track state for Sol/GC arrows + the OBSERVE ring. See
+  // ArrowState comment above.
+  private solArrowState: ArrowState = emptyArrowState();
+  private gcArrowState: ArrowState = emptyArrowState();
+  private lastRingDisplay = '';
+  private lastRingCx = -Infinity;
+  private lastRingCy = -Infinity;
+  private lastRingR = -Infinity;
+
   // Click handlers — owned here so dispose() can remove them and let the SVG
   // labels release their references back to the Stellata closure.
   private onSolLabelClick: (() => void) | null = null;
@@ -212,12 +249,25 @@ export class HudOverlay {
     // so the arrows always tangent the ring rim, even mid-transition when
     // the anchor slides from the projected focal-star toward screen-centre.
     if (ringRadius > 0) {
-      this.ring.style.display = '';
-      this.ring.setAttribute('cx', cx.toFixed(1));
-      this.ring.setAttribute('cy', cy.toFixed(1));
-      this.ring.setAttribute('r', ringRadius.toFixed(1));
-    } else {
+      if (this.lastRingDisplay !== '') {
+        this.ring.style.display = '';
+        this.lastRingDisplay = '';
+      }
+      if (Math.abs(cx - this.lastRingCx) >= ATTR_DIRTY_PX) {
+        this.ring.setAttribute('cx', cx.toFixed(1));
+        this.lastRingCx = cx;
+      }
+      if (Math.abs(cy - this.lastRingCy) >= ATTR_DIRTY_PX) {
+        this.ring.setAttribute('cy', cy.toFixed(1));
+        this.lastRingCy = cy;
+      }
+      if (Math.abs(ringRadius - this.lastRingR) >= ATTR_DIRTY_PX) {
+        this.ring.setAttribute('r', ringRadius.toFixed(1));
+        this.lastRingR = ringRadius;
+      }
+    } else if (this.lastRingDisplay !== 'none') {
       this.ring.style.display = 'none';
+      this.lastRingDisplay = 'none';
     }
 
     const targetMarginPx = Math.max(sizeMaxPx, 0);
@@ -231,7 +281,7 @@ export class HudOverlay {
       solDist, this.tmpSolLocal,
       camera, w, h,
       hideSolArrow, targetMarginPx, shaftStartPx, 'Sol',
-      navArrowFadeAlpha, this.solDebug,
+      navArrowFadeAlpha, this.solDebug, this.solArrowState,
     );
 
     const gcDist = this.tmpGcLocal.distanceTo(origin);
@@ -242,7 +292,7 @@ export class HudOverlay {
       gcDist, this.tmpGcLocal,
       camera, w, h,
       false, targetMarginPx, shaftStartPx, 'Galactic centre',
-      navArrowFadeAlpha, this.gcDebug,
+      navArrowFadeAlpha, this.gcDebug, this.gcArrowState,
     );
   }
 
@@ -283,6 +333,7 @@ export class HudOverlay {
     labelPrefix: string,
     fadeAlpha: number,
     debug: ArrowDebugRecord,
+    state: ArrowState,
   ): number {
     debug.hideRequested = hide;
     debug.dirPath = 'none';
@@ -294,7 +345,7 @@ export class HudOverlay {
 
     const dirLenSq = dir.lengthSq();
     if (hide || dirLenSq < 1e-12) {
-      this.hideArrow(path, bg, label);
+      this.hideArrow(path, bg, label, state);
       return 0;
     }
     dir.multiplyScalar(1 / Math.sqrt(dirLenSq));
@@ -310,7 +361,7 @@ export class HudOverlay {
     if (!sdir) {
       // dir is exactly along the camera axis — no preferred screen
       // direction (measure-zero orientation).
-      this.hideArrow(path, bg, label);
+      this.hideArrow(path, bg, label, state);
       return 0;
     }
     const sux = sdir[0];
@@ -340,7 +391,7 @@ export class HudOverlay {
     debug.shaftLengthPx = shaftLengthPx;
 
     if (shaftLengthPx <= 0) {
-      this.hideArrow(path, bg, label);
+      this.hideArrow(path, bg, label, state);
       return 0;
     }
 
@@ -357,22 +408,38 @@ export class HudOverlay {
     const chevronScale = Math.min(1, shaftLengthPx / CHEVRON_FULL_AT_PX);
     const d = buildArrowSvgPath(shaftStartX, shaftStartY, tipX, tipY, chevronScale);
     if (!d) {
-      this.hideArrow(path, bg, label);
+      this.hideArrow(path, bg, label, state);
       return 0;
     }
-    path.setAttribute('d', d);
-    bg.setAttribute('d', d);
+    if (d !== state.lastD) {
+      path.setAttribute('d', d);
+      bg.setAttribute('d', d);
+      state.lastD = d;
+    }
 
     const labelAnchorX = tipX + ARROW_LABEL_OFFSET_PX + ARROW_HEAD_DEPTH_PX;
     const labelAnchorY = tipY - ARROW_LABEL_OFFSET_PX;
     const sx = clamp(labelAnchorX, ARROW_LABEL_PADDING_PX, w - ARROW_LABEL_PADDING_PX);
     const sy = clamp(labelAnchorY, ARROW_LABEL_PADDING_PX, h - ARROW_LABEL_PADDING_PX);
-    label.style.display = '';
-    label.setAttribute('x', sx.toFixed(1));
-    label.setAttribute('y', sy.toFixed(1));
-    label.textContent = `${labelPrefix} · ${fmtDist(distancePc)}`;
+    if (state.lastLabelDisplay !== '') {
+      label.style.display = '';
+      state.lastLabelDisplay = '';
+    }
+    if (Math.abs(sx - state.lastLabelX) >= ATTR_DIRTY_PX) {
+      label.setAttribute('x', sx.toFixed(1));
+      state.lastLabelX = sx;
+    }
+    if (Math.abs(sy - state.lastLabelY) >= ATTR_DIRTY_PX) {
+      label.setAttribute('y', sy.toFixed(1));
+      state.lastLabelY = sy;
+    }
+    const labelText = `${labelPrefix} · ${fmtDist(distancePc)}`;
+    if (labelText !== state.lastLabelText) {
+      label.textContent = labelText;
+      state.lastLabelText = labelText;
+    }
 
-    applyFade(path, bg, label, fadeAlpha);
+    applyFade(path, bg, label, fadeAlpha, state);
     return shaftLengthPx;
   }
 
@@ -387,19 +454,33 @@ export class HudOverlay {
   }
 
   private hideAll() {
-    this.ring.style.display = 'none';
-    this.hideArrow(this.solPath, this.solBg, this.solLabel);
-    this.hideArrow(this.gcPath, this.gcBg, this.gcLabel);
+    if (this.lastRingDisplay !== 'none') {
+      this.ring.style.display = 'none';
+      this.lastRingDisplay = 'none';
+    }
+    this.hideArrow(this.solPath, this.solBg, this.solLabel, this.solArrowState);
+    this.hideArrow(this.gcPath, this.gcBg, this.gcLabel, this.gcArrowState);
     this.solDrawnLen = 0;
     this.gcDrawnLen = 0;
     Object.assign(this.solDebug, emptyArrowDebug());
     Object.assign(this.gcDebug, emptyArrowDebug());
   }
 
-  private hideArrow(path: SVGPathElement, bg: SVGPathElement, label: SVGTextElement) {
-    path.setAttribute('d', '');
-    bg.setAttribute('d', '');
-    label.style.display = 'none';
+  private hideArrow(
+    path: SVGPathElement,
+    bg: SVGPathElement,
+    label: SVGTextElement,
+    state: ArrowState,
+  ) {
+    if (state.lastD !== '') {
+      path.setAttribute('d', '');
+      bg.setAttribute('d', '');
+      state.lastD = '';
+    }
+    if (state.lastLabelDisplay !== 'none') {
+      label.style.display = 'none';
+      state.lastLabelDisplay = 'none';
+    }
   }
 }
 
@@ -478,16 +559,26 @@ export function emptyArrowDebug(): ArrowDebugRecord {
 // Apply the navigate-mode arrow fade to a Sol or GC arrow's three SVG
 // elements. Pointer events are suppressed below half-opacity so a barely-
 // visible label can't accept the click that would aim the camera at it.
+// Dirty-tracked through ArrowState so a stable alpha (the steady-state
+// outside the fade window) doesn't write three inline-style strings every
+// frame. The 0.0005 threshold mirrors the .toFixed(3) precision floor.
 function applyFade(
   path: SVGPathElement,
   bg: SVGPathElement,
   label: SVGTextElement,
   alpha: number,
+  state: ArrowState,
 ) {
-  const a = alpha.toFixed(3);
-  path.style.opacity = a;
-  bg.style.opacity = a;
-  label.style.opacity = a;
+  if (Math.abs(alpha - state.lastOpacity) >= 0.0005) {
+    const a = alpha.toFixed(3);
+    path.style.opacity = a;
+    bg.style.opacity = a;
+    label.style.opacity = a;
+    state.lastOpacity = alpha;
+  }
   const clickable = alpha >= 0.5 ? '' : 'none';
-  label.style.pointerEvents = clickable;
+  if (clickable !== state.lastPointerEvents) {
+    label.style.pointerEvents = clickable;
+    state.lastPointerEvents = clickable;
+  }
 }

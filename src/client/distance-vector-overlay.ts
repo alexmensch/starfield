@@ -15,6 +15,16 @@ const SOURCE_OFFSET_PX = 28;
 // Cap how far past the viewport the clipped "off-screen" endpoint can extend,
 // so the generated SVG path doesn't contain absurd coordinates.
 const MAX_OFFSCREEN_FACTOR = 1.5;
+// Half a .toFixed(1) step — below this the attribute string round-trips to
+// the same value, so the browser would treat the write as a no-op anyway
+// after re-parsing. Mirrors chart-labels.ts.
+const ATTR_DIRTY_PX = 0.05;
+// Module-level scratches for projectWithNearClip — the function is called
+// at most once per frame from this module's onFrame handler, so a shared
+// scratch costs nothing and avoids three Vector3 allocations per frame.
+const projVa = /*@__PURE__*/ new THREE.Vector3();
+const projVb = /*@__PURE__*/ new THREE.Vector3();
+const projEnd = /*@__PURE__*/ new THREE.Vector3();
 
 export function createDistanceVectorOverlay(
   stellata: Stellata,
@@ -35,10 +45,41 @@ export function createDistanceVectorOverlay(
   // hide() through several bail paths, so an unguarded hide ran 60×/sec
   // any time no vector was set.
   let visible = false;
+  // Dirty-tracked attribute state — the per-frame handler recomputes every
+  // value, but on a stationary camera the values are identical to the
+  // previous frame. Skipping setAttribute / textContent / style writes
+  // avoids SVG re-parse and inline-style invalidation cost. Sentinels
+  // guarantee the first write always happens.
+  let lastLineD = '';
+  let lastLineBgD = '';
+  let lastLabelText = '';
+  let lastLabelX = -Infinity;
+  let lastLabelY = -Infinity;
+  let lastWarpX = -Infinity;
+  let lastWarpY = -Infinity;
+  let lastOpacity = -1;
+  let lastPointerEvents = '';
+  // Cache getComputedTextLength keyed on the rendered string. SVG's
+  // getComputedTextLength forces a layout flush; it's stable for a given
+  // string + font, so once measured we don't need to re-measure on a
+  // stationary camera.
+  let labelWidthCacheText = '';
+  let labelWidthCachePx = 0;
+
+  const setLineD = (d: string) => {
+    if (d === lastLineD) return;
+    line.setAttribute('d', d);
+    lastLineD = d;
+  };
+  const setLineBgD = (d: string) => {
+    if (d === lastLineBgD) return;
+    lineBg.setAttribute('d', d);
+    lastLineBgD = d;
+  };
   const hide = () => {
     if (!visible) return;
-    line.setAttribute('d', '');
-    lineBg.setAttribute('d', '');
+    setLineD('');
+    setLineBgD('');
     // Hide the whole UI group so both label and warp suffix disappear at
     // once. Using display rather than clearing textContent keeps the static
     // warp element in the DOM so its :hover styling keeps working on show.
@@ -114,8 +155,8 @@ export function createDistanceVectorOverlay(
 
     const d = buildArrowSvgPath(shaftStartX, shaftStartY, tipX, tipY);
     if (!d) { hide(); return; }
-    line.setAttribute('d', d);
-    lineBg.setAttribute('d', d);
+    setLineD(d);
+    setLineBgD(d);
 
     // True 3D distance, always shown regardless of clipping.
     const dx = tmpB.x - tmpA.x;
@@ -135,22 +176,45 @@ export function createDistanceVectorOverlay(
       distUi.style.display = '';
       visible = true;
     }
-    label.textContent = `${destLabel} · ${fmtDist(distPc)}`;
+    const labelText = `${destLabel} · ${fmtDist(distPc)}`;
+    if (labelText !== lastLabelText) {
+      label.textContent = labelText;
+      lastLabelText = labelText;
+    }
     // The label is anchor-start so `x` is its left edge; subtract its width
     // from the right-side clamp so the visible text stays inside the
-    // viewport when the line exits near the right edge.
-    const labelWidth = label.getComputedTextLength();
+    // viewport when the line exits near the right edge. Caching by text
+    // content avoids the per-frame layout flush forced by getComputedTextLength.
+    let labelWidth = labelWidthCachePx;
+    if (labelText !== labelWidthCacheText) {
+      labelWidth = label.getComputedTextLength();
+      labelWidthCacheText = labelText;
+      labelWidthCachePx = labelWidth;
+    }
     const labelAnchorX = anchorX + ARROW_LABEL_OFFSET_PX + ARROW_HEAD_DEPTH_PX;
     const labelAnchorY = anchorY - ARROW_LABEL_OFFSET_PX;
     const mxMax = Math.max(ARROW_LABEL_PADDING_PX, w - ARROW_LABEL_PADDING_PX - labelWidth);
     const mx = Math.max(ARROW_LABEL_PADDING_PX, Math.min(mxMax, labelAnchorX));
     const my = Math.max(ARROW_LABEL_PADDING_PX, Math.min(h - ARROW_LABEL_PADDING_PX, labelAnchorY));
-    label.setAttribute('x', mx.toFixed(1));
-    label.setAttribute('y', my.toFixed(1));
+    if (Math.abs(mx - lastLabelX) >= ATTR_DIRTY_PX) {
+      label.setAttribute('x', mx.toFixed(1));
+      lastLabelX = mx;
+    }
+    if (Math.abs(my - lastLabelY) >= ATTR_DIRTY_PX) {
+      label.setAttribute('y', my.toFixed(1));
+      lastLabelY = my;
+    }
 
     // Position the warp affordance to the right of the distance label.
-    warpText.setAttribute('x', (mx + labelWidth + WARP_GAP_PX).toFixed(1));
-    warpText.setAttribute('y', my.toFixed(1));
+    const warpX = mx + labelWidth + WARP_GAP_PX;
+    if (Math.abs(warpX - lastWarpX) >= ATTR_DIRTY_PX) {
+      warpText.setAttribute('x', warpX.toFixed(1));
+      lastWarpX = warpX;
+    }
+    if (Math.abs(my - lastWarpY) >= ATTR_DIRTY_PX) {
+      warpText.setAttribute('y', my.toFixed(1));
+      lastWarpY = my;
+    }
 
     // Navigate-mode disc-coverage fade — drops opacity to 0 as the focused
     // star's disc grows past the standard Sol/GC chevron length. Same alpha
@@ -160,11 +224,18 @@ export function createDistanceVectorOverlay(
     // the (barely visible) label + warp affordance don't accept stray
     // clicks during fade-out.
     const alpha = stellata.getNavigateArrowFadeAlpha();
-    const a = alpha.toFixed(3);
-    line.style.opacity = a;
-    lineBg.style.opacity = a;
-    distUi.style.opacity = a;
-    distUi.style.pointerEvents = alpha >= 0.5 ? '' : 'none';
+    if (Math.abs(alpha - lastOpacity) >= 0.0005) {
+      const a = alpha.toFixed(3);
+      line.style.opacity = a;
+      lineBg.style.opacity = a;
+      distUi.style.opacity = a;
+      lastOpacity = alpha;
+    }
+    const pe = alpha >= 0.5 ? '' : 'none';
+    if (pe !== lastPointerEvents) {
+      distUi.style.pointerEvents = pe;
+      lastPointerEvents = pe;
+    }
   });
 }
 
@@ -175,27 +246,30 @@ export function projectWithNearClip(
   w: number,
   h: number,
 ): { pA: [number, number]; pB: [number, number] } | null {
-  const vA = worldA.clone().applyMatrix4(camera.matrixWorldInverse);
-  const vB = worldB.clone().applyMatrix4(camera.matrixWorldInverse);
+  // Module-scope scratches replace the per-call .clone() — caller invokes
+  // this at most once per frame so a shared scratch is safe and avoids the
+  // three Vector3 allocations.
+  projVa.copy(worldA).applyMatrix4(camera.matrixWorldInverse);
+  projVb.copy(worldB).applyMatrix4(camera.matrixWorldInverse);
   const threshold = -camera.near;
 
   // If the focus star itself is behind the camera, we can't draw a
   // meaningful origin — bail out.
-  if (vA.z >= threshold) return null;
+  if (projVa.z >= threshold) return null;
 
-  let endView = vB;
-  if (vB.z >= threshold) {
+  let endView = projVb;
+  if (projVb.z >= threshold) {
     // Destination is behind the camera; clip the segment at the near plane
     // so the chevrons still extend toward where it would be.
-    const denom = vB.z - vA.z;
+    const denom = projVb.z - projVa.z;
     if (Math.abs(denom) < 1e-9) return null;
-    const t = (threshold - vA.z) / denom;
+    const t = (threshold - projVa.z) / denom;
     if (!(t > 0 && t <= 1)) return null;
-    endView = vA.clone().lerp(vB, t);
+    endView = projEnd.copy(projVa).lerp(projVb, t);
     endView.z = threshold - 1e-4;
   }
 
-  const ndcA = vA.applyMatrix4(camera.projectionMatrix);
+  const ndcA = projVa.applyMatrix4(camera.projectionMatrix);
   const ndcB = endView.applyMatrix4(camera.projectionMatrix);
 
   const pA: [number, number] = [

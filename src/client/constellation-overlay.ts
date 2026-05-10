@@ -15,6 +15,17 @@ export function createConstellationOverlay(stellata: Stellata) {
   let current = -1;
   let chartActive = false;
   let visible = true;
+  // Dirty-tracked path data — segments.join('') is recomputed every frame
+  // but is identical when the camera is stationary. Skipping the
+  // setAttribute avoids SVG attribute parsing on a string that can be
+  // hundreds of segments wide in chart mode.
+  let lastD = '';
+
+  const setD = (d: string) => {
+    if (d === lastD) return;
+    figure.setAttribute('d', d);
+    lastD = d;
+  };
 
   const update = () => {
     const f = stellata.getFilter();
@@ -22,7 +33,7 @@ export function createConstellationOverlay(stellata: Stellata) {
     visible = f.showConstellation;
     chartActive = f.chart && stellata.getCameraMode() === 'observe';
     if (!visible || (current < 0 && !chartActive)) {
-      figure.setAttribute('d', '');
+      setD('');
       return;
     }
     tick();
@@ -67,7 +78,7 @@ export function createConstellationOverlay(stellata: Stellata) {
         }
       }
     }
-    figure.setAttribute('d', segments.join(''));
+    setD(segments.join(''));
   };
 
   stellata.on('filter', update);
