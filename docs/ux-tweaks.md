@@ -85,7 +85,14 @@ for the surrounding context.
 - **Pick hit-radius floor** — `MIN_DISC_HIT_RADIUS_PX` (4 px) in
   `pickStar` (`stellata.ts`). Floor on the prime-disc hit test so
   tiny chart-mode discs stay hoverable. Raise for easier hover at the
-  cost of foreground stars stealing picks from neighbours.
+  cost of more cases where a neighbour disc whose centre is
+  marginally closer to the cursor wins over the visually-targeted
+  star (`pickScore` tiebreak — see `star-geometry.ts`).
+- **Pick magnitude bias** — `PICK_MAG_BIAS_PX_PER_MAG` (0.05 px/mag)
+  in `star-geometry.ts`. Sub-pixel weight on `appMag` in `pickScore`
+  so two coincident catalog rows (e.g. Alula Australis A/B) tiebreak
+  to the brighter component without disturbing the screen-pixel
+  proximity ordering for any visible separation.
 - **Panel collapse default** — persisted under `stellata.panel-collapsed`
   (`'0'` = expanded, `'1'` = collapsed, missing = collapsed by default for
   first-time visitors). The default-collapsed check is phrased as

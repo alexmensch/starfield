@@ -185,7 +185,7 @@ the end of each tick.
 
 ## Picking under chart mode
 
-`pickStar` (`stellata.ts`) two fixes for the small-disc / variable
+`pickStar` (`stellata.ts`) three fixes for the small-disc / variable
 case:
 
 1. **Variable bright-extreme filter.** Filter check uses
@@ -197,6 +197,17 @@ case:
    realistically land within it; larger discs are unaffected. The
    14 px proximity fallback is unchanged but only fires if no other
    disc has won, which on a crowded chart it often has.
+3. **pickScore tiebreak.** Within the prime tier (cursor inside a
+   rendered disc), the cursor's pixel distance to each candidate's
+   projected centre wins (`pickScore = pxDist + appMag *
+   PICK_MAG_BIAS_PX_PER_MAG`, with `PICK_MAG_BIAS_PX_PER_MAG = 0.05`
+   in `star-geometry.ts`). Visually-resolved pairs whose hitboxes
+   overlap stay independently clickable — the Double Double (ε¹/ε²
+   Lyr) is the canonical case. The sub-pixel mag bias tiebreaks
+   coincident catalog companions sharing x/y/z, e.g. Alula Australis
+   A/B (Gl 423A/B at identical coordinates). Camera distance is
+   deliberately ignored in this tier — see the `pickScore` docstring
+   for the trade-off.
 
 ## Binary indication coverage
 
