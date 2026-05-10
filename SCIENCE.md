@@ -271,10 +271,26 @@ affordance epic (`stellata-2f6`).
 sheets above: Mercury 0.142, Venus 0.689, Earth 0.434, Mars 0.170,
 Jupiter 0.538, Saturn 0.499, Uranus 0.488, Neptune 0.442, Pluto 0.49
 (HST + New Horizons reconnaissance). Drives the reflected-light
-apparent magnitude formula (3re.16); Lambertian phase function
-`φ(α) = (sin α + (π − α)·cos α)/π` from any standard radiometry
-text, with per-planet empirical phase curves left as a future
-refinement (`stellata-3re.18`).
+apparent magnitude formula (3re.16).
+
+**Planet phase functions.** Per-planet empirical V-band phase curves
+from Mallama, Krobusek, Pavlov 2018 (Icarus 282; same DOI). Mercury,
+Venus, Mars and Jupiter each carry a polynomial
+`ΔV(α°) = c1·α + c2·α² + …` from the paper's Tables A-1.2, A-2.2,
+A-4.2, A-5.2; Earth uses a cubic fit through the four discrete
+values published in Table A-3.1; Saturn uses a static-β = 16°
+approximation of the joint α/ring-tilt formula in Table A-6.2 (the
+ring contribution lands as a constant `c0 = −0.55 mag` brightness
+boost). The renderer multiplies the flux factor `10^(−ΔV/2.5)` into
+the apparent-magnitude formula in place of the Lambertian default
+whenever a planet carries coefficients and α is inside the published
+validity bound. Mallama 2018 publishes no phase polynomial for
+Uranus, Neptune or Pluto — the first two because their max α from
+Earth is "negligible" (the paper models latitude/temporal effects
+instead), Pluto because the paper doesn't cover it. Those three —
+and every exoplanet (`stellata-bk5`) — fall back to the Lambertian
+phase function `φ(α) = (sin α + (π − α)·cos α)/π`. See
+`src/client/phase-function.ts` for the per-planet coefficients.
 
 **Orbital plane orientation.** Sol's planet system is rendered in its
 native ecliptic plane (J2000 obliquity ε = 23.4392911°), so the ring

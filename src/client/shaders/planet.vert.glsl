@@ -21,6 +21,12 @@ in vec2 aCorner;
 //   iSolidity     — 1 = rocky (crisp edge), 0 = gas-giant (fuzzy).
 //   iAlbedoP      — geometric albedo p, V-band.
 //   iHostAbsmag   — host star's absolute magnitude.
+//   iPhaseCoefsA  — Mallama 2018 phase polynomial (c0,c1,c2,c3) in
+//                   α-degrees, ΔV in mag. See phase-function.ts.
+//   iPhaseCoefsB  — (c4,c5,c6,alphaMaxDeg). The .w slot doubles as
+//                   a sentinel: alphaMaxDeg = 0 disables Mallama and
+//                   the renderer uses Lambertian for every α — the
+//                   default Pluto and every exoplanet hit.
 in vec3 iHostLocalPos;
 in vec3 iLocalRel;
 in float iRadiusPc;
@@ -28,6 +34,8 @@ in vec3 iColour;
 in float iSolidity;
 in float iAlbedoP;
 in float iHostAbsmag;
+in vec4 iPhaseCoefsA;
+in vec4 iPhaseCoefsB;
 
 uniform vec2 uViewport;       // CSS pixels
 uniform float uPixelRatio;
@@ -82,21 +90,46 @@ void main() {
   }
 
   // Phase angle α = ∠(viewer → planet → host). vph = planet → viewer,
-  // hph = planet → host. Lambertian phase function below.
+  // hph = planet → host. The phase factor φ(α) prefers the Mallama
+  // 2018 empirical polynomial when one is supplied for the body and α
+  // sits inside its validity range; otherwise Lambert is the
+  // fallback. CPU mirror in `phase-function.ts` is vitest-pinned.
   vec3 vphHat = normalize(-planetView.xyz);
   vec3 hphHat = normalize(hostView.xyz - planetView.xyz);
   float cosA = clamp(dot(vphHat, hphHat), -1.0, 1.0);
   float alpha = acos(cosA);
-  float phi = (sin(alpha) + (PI_CONST - alpha) * cos(alpha)) / PI_CONST;
+  float phi;
+  float alphaMaxDeg = iPhaseCoefsB.w;
+  float alphaDeg = alpha * (180.0 / PI_CONST);
+  if (alphaMaxDeg > 0.0 && alphaDeg <= alphaMaxDeg) {
+    // Horner from c6 down to c0; ΔV in V-band mag → flux factor
+    // 10^(−ΔV/2.5). Saturn's ring contribution rides on c0 < 0,
+    // which makes φ(0) > 1 (intentional — `albedo` represents the
+    // globe's α=0 reflectance, the c0 boost stacks the ring system
+    // on top).
+    float a = alphaDeg;
+    float dV = iPhaseCoefsA.x
+             + a * (iPhaseCoefsA.y
+             + a * (iPhaseCoefsA.z
+             + a * (iPhaseCoefsA.w
+             + a * (iPhaseCoefsB.x
+             + a * (iPhaseCoefsB.y
+             + a * iPhaseCoefsB.z)))));
+    phi = exp(-dV * 0.4 * LOG10);
+  } else {
+    // Lambertian — the default for exoplanets and for α excursions
+    // outside the published Mallama validity window. (sin α +
+    // (π − α)·cos α)/π; φ(0)=1, φ(π)=0.
+    phi = (sin(alpha) + (PI_CONST - alpha) * cos(alpha)) / PI_CONST;
+  }
 
-  // Reflected-light apparent magnitude (Lambertian sphere, full or
-  // partial illumination via φ(α)):
+  // Reflected-light apparent magnitude:
   //
   //   m_host_at_viewer = M_host + 5·log10(d_vh / 10pc)
   //   m_planet         = m_host_at_viewer
   //                    − 2.5·log10( p · (R/d_vp)² · (d_vh/d_hp)² · φ(α) )
   //
-  // Verified against Jupiter (R=69,911 km, p=0.538):
+  // Verified against Jupiter (R=69,911 km, p=0.538) under Lambert:
   //   • Earth at opposition (d_vh=1 AU, d_hp=5.2 AU, d_vp=4.2 AU): −2.7 ✓
   //   • Outside heliopause (d_vh=150 AU): +5.2 ✓
   //   • α Cen (1.34 pc): +21 ✓

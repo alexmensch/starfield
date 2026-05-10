@@ -18,6 +18,15 @@ import {
   PLANET_ORDER,
   type OrbitOrientationRad,
 } from './ephemeris';
+import {
+  EARTH_PHASE,
+  JUPITER_PHASE,
+  MARS_PHASE,
+  MERCURY_PHASE,
+  type PhaseCoefficients,
+  SATURN_PHASE,
+  VENUS_PHASE,
+} from './phase-function';
 
 export type PlanetType = 'rocky' | 'gas_giant' | 'ice_giant';
 
@@ -47,6 +56,12 @@ export interface Planet {
   // calculation in the planet pipeline (3re.16). Mallama 2018 +
   // NASA fact-sheet values.
   readonly albedo: number;
+  // Optional Mallama 2018 empirical phase-curve coefficients —
+  // overrides the default Lambertian phase function in the renderer
+  // when present. See `phase-function.ts` for the polynomial form
+  // and per-planet citations. Pluto and every exoplanet under
+  // `stellata-bk5` leave this undefined and fall back to Lambert.
+  readonly phaseCoefficients?: PhaseCoefficients;
 }
 
 export interface PlanetSystem {
@@ -105,6 +120,7 @@ export const SOL_PLANETS: readonly Planet[] = [
     type: 'rocky',
     colour: [0.55, 0.47, 0.32],
     albedo: 0.142,
+    phaseCoefficients: MERCURY_PHASE,
   },
   {
     name: 'Venus',
@@ -114,6 +130,7 @@ export const SOL_PLANETS: readonly Planet[] = [
     type: 'rocky',
     colour: [0.91, 0.82, 0.60],
     albedo: 0.689,
+    phaseCoefficients: VENUS_PHASE,
   },
   {
     name: 'Earth',
@@ -123,6 +140,7 @@ export const SOL_PLANETS: readonly Planet[] = [
     type: 'rocky',
     colour: [0.31, 0.49, 0.67],
     albedo: 0.434,
+    phaseCoefficients: EARTH_PHASE,
   },
   {
     name: 'Mars',
@@ -132,6 +150,7 @@ export const SOL_PLANETS: readonly Planet[] = [
     type: 'rocky',
     colour: [0.76, 0.27, 0.05],
     albedo: 0.170,
+    phaseCoefficients: MARS_PHASE,
   },
   {
     name: 'Jupiter',
@@ -141,6 +160,7 @@ export const SOL_PLANETS: readonly Planet[] = [
     type: 'gas_giant',
     colour: [0.85, 0.72, 0.51],
     albedo: 0.538,
+    phaseCoefficients: JUPITER_PHASE,
   },
   {
     name: 'Saturn',
@@ -150,7 +170,12 @@ export const SOL_PLANETS: readonly Planet[] = [
     type: 'gas_giant',
     colour: [0.90, 0.79, 0.62],
     albedo: 0.499,
+    phaseCoefficients: SATURN_PHASE,
   },
+  // Uranus and Neptune deliberately omit `phaseCoefficients` — see
+  // the comment in `phase-function.ts` for the reason. Both fall
+  // back to the Lambertian phase function via the renderer's
+  // alphaMaxDeg=0 sentinel, same as Pluto and every exoplanet.
   {
     name: 'Uranus',
     radiusKm: 25362,
@@ -174,7 +199,9 @@ export const SOL_PLANETS: readonly Planet[] = [
   // really an icy-rocky body but bins with the inner terrestrials for
   // disc-rendering purposes (sharp silhouette, not a gas-giant gradient).
   // Tan-pink colour reflects New Horizons MVIC imagery. Albedo from
-  // HST + New Horizons reconnaissance.
+  // HST + New Horizons reconnaissance. No `phaseCoefficients` — Mallama
+  // 2018 doesn't publish a polynomial fit for Pluto, so the renderer
+  // uses the Lambertian default.
   {
     name: 'Pluto',
     radiusKm: 1188,
