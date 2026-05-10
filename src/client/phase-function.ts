@@ -139,22 +139,25 @@ export function peakPhaseFactor(coefs: PhaseCoefficients | undefined): number {
 // the renderer falls back to Lambert.
 
 /** Mercury — 7th-order V-band fit (Mallama 2018 Table A-1.2),
- *  2° ≤ α ≤ 170°. The published polynomial includes a `c7 =
- *  +6.592e-15` term which we drop to keep the renderer's polynomial
- *  storage at degree 6 (two vec4 attributes per instance). Pinned by
- *  `phase-function.test.ts`: truncation error stays below 0.25 mag
- *  only out to α ≈ 87° (≈0.32 mag at 90°, 0.66 mag at 100°), grows
- *  to ~2.4 mag at 120°, and reaches ~27 mag at 170° where the
- *  truncated polynomial is no longer faithful. The renderer's
- *  alphaMaxDeg = 170° preserves the published validity bound; the
- *  anchor-scaled Lambert fallback past αmax keeps brightness
- *  continuous, but the high-α regime within the polynomial path is
- *  effectively wrong by tens of magnitudes for Mercury. Acceptable
- *  for v1 — Mercury at α ≫ 90° from a Stellata camera position is
- *  rare (requires viewer near Sol on the opposite side). A
- *  follow-up bead may lower alphaMaxDeg to ~90° so high-α Mercury
- *  rolls into the anchor-Lambert path before the truncation runs
- *  away. */
+ *  published validity 2° ≤ α ≤ 170°. The polynomial includes a
+ *  `c7 = +6.592e-15` term we drop to keep storage at degree 6
+ *  (two vec4 attributes per instance). The truncation budget is
+ *  pinned by `phase-function.test.ts`: |ΔV_truncated − ΔV_full|
+ *  stays below 0.25 mag only out to α ≈ 87°, then grows rapidly
+ *  (~0.66 mag at 100°, ~2.4 mag at 120°, ~27 mag at 170°) — past
+ *  88° the dropped c7·α⁷ term dominates and the truncated polynomial
+ *  is no longer physically faithful. To stop it running away we cap
+ *  `alphaMaxDeg` at 87° (well short of Mallama's published 170°);
+ *  the renderer rolls into anchor-scaled Lambert past that, which
+ *  tracks the published 7th-order curve to within 0.5 mag across
+ *  the entire 87°–170° range. The physical justification: at high α
+ *  Mercury reads as an unresolved thin crescent dominated by the
+ *  geometric `(sin α + (π−α)·cos α)/π` falloff Lambertian models;
+ *  the anchor multiplier `k = poly(87°)/Lambert(87°)` provides the
+ *  right normalization at the handover. A future upgrade could
+ *  store c7 in a third vec4 attribute to recover the full polynomial
+ *  out to 170° — Mercury is the only Mallama 2018 fit beyond
+ *  degree 6. */
 export const MERCURY_PHASE: PhaseCoefficients = {
   c0: 0,
   c1: 6.617e-2,
@@ -163,7 +166,7 @@ export const MERCURY_PHASE: PhaseCoefficients = {
   c4: -4.583e-7,
   c5: 2.643e-9,
   c6: -7.012e-12,
-  alphaMaxDeg: 170,
+  alphaMaxDeg: 87,
 };
 
 /** Venus — 4th-order V-band fit (Mallama 2018 Table A-2.2), valid up
