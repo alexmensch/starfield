@@ -3,7 +3,7 @@ import { DustField, loadDustManifest, loadDustParticles } from './dust-loader';
 import { loadClouds } from './cloud-loader';
 import { Stellata } from './stellata';
 import { bindControls } from './controls';
-import { bindSearch, buildStarLabels, buildSpectralMap, buildBayerMap, type SearchIndexEntry } from './search';
+import { bindSearch, buildStarLabels, buildSpectralMap, buildBayerMap, type SearchEntry } from './search';
 import { createConstellationOverlay } from './constellation-overlay';
 import { createDiscMask } from './disc-mask';
 import { createDistanceVectorOverlay } from './distance-vector-overlay';
@@ -57,7 +57,7 @@ async function main() {
         },
       ),
       fetch(`${import.meta.env.BASE_URL}search-index.json`).then(
-        (r) => r.json() as Promise<SearchIndexEntry[]>,
+        (r) => r.json() as Promise<SearchEntry[]>,
       ),
       // Molecular clouds. Fetched in parallel with the catalog —
       // a few hundred KB; null if the artifact is missing (fresh checkout

@@ -20,6 +20,7 @@ import {
   BINARY_VERSION,
   MAGIC,
   NO_COMPANION,
+  type SearchEntry,
 } from './catalog-pure';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -219,14 +220,21 @@ interface VarStarData {
   amplitudeMag: number;
 }
 
+// Both GCVS files (gcvs5.txt and crossid.txt) are pipe-delimited with
+// trailing whitespace inside each cell. Yields per-line trimmed-field
+// arrays; missing files yield nothing so callers can pass through.
+function* readPipeDelimited(path: string): Iterable<string[]> {
+  if (!existsSync(path)) return;
+  const text = readFileSync(path, 'utf8');
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    yield line.split('|').map((f) => f.trim());
+  }
+}
+
 function parseGcvsMain(): Map<string, VarStarData> {
   const out = new Map<string, VarStarData>();
-  if (!existsSync(SRC_GCVS)) return out;
-  const text = readFileSync(SRC_GCVS, 'utf8');
-  const lines = text.split(/\r?\n/);
-  for (const line of lines) {
-    if (!line.trim()) continue;
-    const fields = line.split('|');
+  for (const fields of readPipeDelimited(SRC_GCVS)) {
     // Expect ~22 fields; headers / malformed rows are shorter.
     if (fields.length < 12) continue;
     const name = normalizeGcvsName(fields[1] ?? '');
@@ -251,19 +259,12 @@ interface VarStarXref {
 function parseGcvsCrossref(): VarStarXref {
   const byHip = new Map<number, string>();
   const byHd = new Map<number, string>();
-  if (!existsSync(SRC_GCVS_XREF)) return { byHip, byHd };
-  const text = readFileSync(SRC_GCVS_XREF, 'utf8');
-  const lines = text.split(/\r?\n/);
-  for (const line of lines) {
-    if (!line.trim()) continue;
+  for (const fields of readPipeDelimited(SRC_GCVS_XREF)) {
     // Each line: "<CATALOG> <NUM>          | = <GCVS_NAME>  | | |"
     // We only care about Hip and HD since those are what AT-HYG carries.
-    const bar = line.indexOf('|');
-    if (bar < 0) continue;
-    const leftRaw = line.substring(0, bar).trim();
-    const rest = line.substring(bar + 1);
-    const rightBar = rest.indexOf('|');
-    const rightRaw = (rightBar >= 0 ? rest.substring(0, rightBar) : rest).trim();
+    const leftRaw = fields[0] ?? '';
+    const rightRaw = fields[1] ?? '';
+    if (!leftRaw || !rightRaw) continue;
 
     // Left side examples: "Hip  000008", "HD   000015"
     const leftMatch = leftRaw.match(/^(\w+)\s+(\d+)/);
@@ -445,13 +446,34 @@ function nonEmpty(s: string | undefined | null): string | null {
   return t ? t : null;
 }
 
+// Subset of AT-HYG v3.3 columns this build script reads. Every column we
+// touch must be declared here; a typo on `row.foo` then becomes a compile
+// error rather than a silent `undefined` that corrupts the binary.
+// `cast: false` keeps every cell as a string; the parseFloat/parseInt
+// helpers below normalise them.
+interface AthygRow {
+  x0: string; y0: string; z0: string;
+  absmag: string;
+  dist: string;
+  ci: string;
+  spect: string;
+  con: string;
+  proper: string;
+  bayer: string;
+  flam: string;
+  hip: string;
+  hd: string;
+  hr: string;
+  gl: string;
+}
+
 async function readStars(): Promise<{
   stars: Star[];
   stats: { total: number; dropped: Record<string, number> };
 }> {
   const parser = createReadStream(SRC_CSV).pipe(
     parse({ columns: true, skip_empty_lines: true, cast: false })
-  );
+  ) as AsyncIterable<AthygRow>;
 
   const stars: Star[] = [];
   const dropped: Record<string, number> = {
@@ -781,12 +803,13 @@ async function main() {
   await writeFile(OUT_CON, JSON.stringify(constellationsOut) + '\n');
 
   // Search index — one entry per star with at least one identifier the user
-  // might type. Keys kept short (i/p/b/f/hip/hd/hr/gl) for wire size.
-  const searchEntries: Array<Record<string, string | number>> = [];
+  // might type. SearchEntry is the shared writer↔reader contract (see
+  // catalog-pure.ts); keep field names there in sync.
+  const searchEntries: SearchEntry[] = [];
   for (let i = 0; i < stars.length; i++) {
     const s = stars[i];
     if (!s.proper && !s.bayer && s.hip === null && s.hd === null && s.hr === null && s.flam === null && !s.gl) continue;
-    const entry: Record<string, string | number> = { i };
+    const entry: SearchEntry = { i };
     if (s.proper) entry.p = s.proper;
     if (s.bayer) entry.b = s.bayer;
     if (s.flam !== null) entry.f = s.flam;

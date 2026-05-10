@@ -6,7 +6,7 @@ import {
   buildBayerLabels,
   buildBayerMap,
   buildSpectralMap,
-  type SearchIndexEntry,
+  type SearchEntry,
 } from './search';
 
 describe('search / splitBayer', () => {
@@ -144,7 +144,7 @@ describe('search / buildBayerLabels', () => {
 
 describe('search / buildBayerMap', () => {
   it('produces an entry per Bayer-tagged star with parseable letter and constellation', () => {
-    const raw: SearchIndexEntry[] = [
+    const raw: SearchEntry[] = [
       { i: 0, b: 'Alp', c: 1 },
       { i: 1, b: 'Bet', c: 2 },
     ];
@@ -155,13 +155,13 @@ describe('search / buildBayerMap', () => {
   });
 
   it('encodes -1/-2 component suffix as a unicode superscript', () => {
-    const raw: SearchIndexEntry[] = [{ i: 0, b: 'Alp-1', c: 5 }];
+    const raw: SearchEntry[] = [{ i: 0, b: 'Alp-1', c: 5 }];
     const map = buildBayerMap(raw);
     expect(map.get(0)).toEqual({ greek: 'α', suffix: '¹', conIdx: 5 });
   });
 
   it('skips entries with no Bayer string', () => {
-    const raw: SearchIndexEntry[] = [
+    const raw: SearchEntry[] = [
       { i: 0, p: 'Sirius', c: 1 },
       { i: 1, b: 'Alp', c: 2 },
     ];
@@ -171,7 +171,7 @@ describe('search / buildBayerMap', () => {
   });
 
   it('skips entries with no constellation (chart label needs both)', () => {
-    const raw: SearchIndexEntry[] = [
+    const raw: SearchEntry[] = [
       { i: 0, b: 'Alp', c: 255 },
       { i: 1, b: 'Bet' /* no c */ },
     ];
@@ -179,7 +179,7 @@ describe('search / buildBayerMap', () => {
   });
 
   it('skips entries whose Bayer letter is unknown', () => {
-    const raw: SearchIndexEntry[] = [
+    const raw: SearchEntry[] = [
       { i: 0, b: 'Xxx', c: 1 },
       { i: 1, b: 'Alp', c: 1 },
     ];
@@ -191,7 +191,7 @@ describe('search / buildBayerMap', () => {
 
 describe('search / buildSpectralMap', () => {
   it('keeps only entries with a spectral string', () => {
-    const raw: SearchIndexEntry[] = [
+    const raw: SearchEntry[] = [
       { i: 0, s: 'G2 V' },
       { i: 1, s: 'M1.5Iab-b' },
       { i: 2, p: 'NoSpect' },
@@ -207,12 +207,12 @@ describe('search / buildSpectralMap', () => {
     // Composites and ranges (e.g. 'K0III+K7V', 'M1.5Iab-b') must round-
     // trip through the map without any normalisation — the tooltip shows
     // the catalog's exact classification.
-    const raw: SearchIndexEntry[] = [{ i: 0, s: 'K0III+K7V' }];
+    const raw: SearchEntry[] = [{ i: 0, s: 'K0III+K7V' }];
     expect(buildSpectralMap(raw).get(0)).toBe('K0III+K7V');
   });
 
   it('returns an empty map when no entries carry spectral info', () => {
-    const raw: SearchIndexEntry[] = [{ i: 0, p: 'A' }, { i: 1 }];
+    const raw: SearchEntry[] = [{ i: 0, p: 'A' }, { i: 1 }];
     expect(buildSpectralMap(raw).size).toBe(0);
   });
 });
