@@ -65,6 +65,24 @@ out float vSoftness;
 const float LOG10 = 2.302585093;
 const float PI_CONST = 3.14159265358979323846;
 
+// Phase-curve polynomial in α-degrees. The truncation rule (Mercury's
+// degree-7 c7 dropped to fit two-vec4 storage) sits in
+// phase-function.ts; this helper just evaluates whatever the buffer
+// carries.
+float mallamaDV(vec4 coefsA, vec4 coefsB, float aDeg) {
+  return coefsA.x
+       + aDeg * (coefsA.y
+       + aDeg * (coefsA.z
+       + aDeg * (coefsA.w
+       + aDeg * (coefsB.x
+       + aDeg * (coefsB.y
+       + aDeg * coefsB.z)))));
+}
+
+float lambertPhi(float alpha) {
+  return (sin(alpha) + (PI_CONST - alpha) * cos(alpha)) / PI_CONST;
+}
+
 void main() {
   // View-space positions (frame-independent — host and planet both
   // move through the same modelViewMatrix). Distances are in pc
@@ -102,25 +120,27 @@ void main() {
   float alphaMaxDeg = iPhaseCoefsB.w;
   float alphaDeg = alpha * (180.0 / PI_CONST);
   if (alphaMaxDeg > 0.0 && alphaDeg <= alphaMaxDeg) {
-    // Horner from c6 down to c0; ΔV in V-band mag → flux factor
-    // 10^(−ΔV/2.5). Saturn's ring contribution rides on c0 < 0,
+    // Polynomial path. Saturn's ring contribution rides on c0 < 0,
     // which makes φ(0) > 1 (intentional — `albedo` represents the
     // globe's α=0 reflectance, the c0 boost stacks the ring system
     // on top).
-    float a = alphaDeg;
-    float dV = iPhaseCoefsA.x
-             + a * (iPhaseCoefsA.y
-             + a * (iPhaseCoefsA.z
-             + a * (iPhaseCoefsA.w
-             + a * (iPhaseCoefsB.x
-             + a * (iPhaseCoefsB.y
-             + a * iPhaseCoefsB.z)))));
+    float dV = mallamaDV(iPhaseCoefsA, iPhaseCoefsB, alphaDeg);
     phi = exp(-dV * 0.4 * LOG10);
+  } else if (alphaMaxDeg > 0.0) {
+    // Anchor-scaled Lambert past the published validity bound:
+    // Lambert(α) × (poly(αmax) / Lambert(αmax)). Preserves brightness
+    // continuity at αmax and keeps each planet's empirical character
+    // (Saturn's c0 boost; Mars's faster-than-Lambert darkening)
+    // extending out instead of snapping to a uniform Lambertian
+    // sphere. CPU mirror in phase-function.ts.
+    float dVb = mallamaDV(iPhaseCoefsA, iPhaseCoefsB, alphaMaxDeg);
+    float boundaryFlux = exp(-dVb * 0.4 * LOG10);
+    float alphaMaxRad = alphaMaxDeg * (PI_CONST / 180.0);
+    phi = lambertPhi(alpha) * (boundaryFlux / lambertPhi(alphaMaxRad));
   } else {
-    // Lambertian — the default for exoplanets and for α excursions
-    // outside the published Mallama validity window. (sin α +
-    // (π − α)·cos α)/π; φ(0)=1, φ(π)=0.
-    phi = (sin(alpha) + (PI_CONST - alpha) * cos(alpha)) / PI_CONST;
+    // No published curve — pure Lambertian (Pluto, Uranus, Neptune,
+    // every exoplanet via stellata-bk5).
+    phi = lambertPhi(alpha);
   }
 
   // Reflected-light apparent magnitude:

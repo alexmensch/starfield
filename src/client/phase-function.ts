@@ -69,19 +69,11 @@ export function lambertianPhaseFactor(alphaRad: number): number {
   return (Math.sin(a) + (Math.PI - a) * Math.cos(a)) / Math.PI;
 }
 
-/** Mallama 2018 empirical phase factor: `10^(−ΔV(α)/2.5)` where ΔV is
- *  the polynomial described on `PhaseCoefficients`. Falls back to
- *  Lambert when α exceeds the published validity bound, or when the
- *  coefficients carry the `alphaMaxDeg = 0` sentinel. */
-export function mallamaPhaseFactor(
-  coefs: PhaseCoefficients,
-  alphaRad: number,
-): number {
-  if (coefs.alphaMaxDeg <= 0) return lambertianPhaseFactor(alphaRad);
-  const aDeg = alphaRad * RAD_TO_DEG;
-  if (aDeg > coefs.alphaMaxDeg) return lambertianPhaseFactor(alphaRad);
-  // Horner from c6 down to c0.
-  const dV =
+/** Horner-evaluated Mallama 2018 ΔV polynomial in α-degrees. Helper
+ *  exists so the in-validity-bound and at-boundary-anchor paths share
+ *  one definition — keeps the truncation rule (degree-6) localised. */
+function mallamaDV(coefs: PhaseCoefficients, aDeg: number): number {
+  return (
     coefs.c0 +
     aDeg *
       (coefs.c1 +
@@ -89,8 +81,42 @@ export function mallamaPhaseFactor(
           (coefs.c2 +
             aDeg *
               (coefs.c3 +
-                aDeg * (coefs.c4 + aDeg * (coefs.c5 + aDeg * coefs.c6)))));
-  return Math.exp(-dV * 0.4 * LOG10);
+                aDeg * (coefs.c4 + aDeg * (coefs.c5 + aDeg * coefs.c6)))))
+  );
+}
+
+/** Mallama 2018 empirical phase factor: `10^(−ΔV(α)/2.5)` where ΔV is
+ *  the polynomial described on `PhaseCoefficients`.
+ *
+ *  - `alphaMaxDeg = 0` sentinel → pure Lambertian for every α.
+ *  - α inside [0, αmax°] → polynomial path.
+ *  - α beyond αmax → Lambert(α) scaled by k = poly(αmax) / Lambert(αmax)
+ *    so brightness is continuous at the boundary and each planet's
+ *    empirical character (Saturn's c0 ring boost; Mars's
+ *    faster-than-Lambert darkening) extends past the published
+ *    validity range instead of snapping to a uniform Lambert sphere.
+ *
+ *  α is clamped defensively to [0, π] — sibling-symmetric with
+ *  `lambertianPhaseFactor`. The polynomial extrapolates wildly past
+ *  its fitted domain (Horner happily diverges), so a misuse with e.g.
+ *  degrees passed where radians were expected would otherwise emit a
+ *  catastrophically wrong magnitude. The clamp + αmax-fallback fail
+ *  safe together. */
+export function mallamaPhaseFactor(
+  coefs: PhaseCoefficients,
+  alphaRad: number,
+): number {
+  if (coefs.alphaMaxDeg <= 0) return lambertianPhaseFactor(alphaRad);
+  const a = Math.max(0, Math.min(Math.PI, alphaRad));
+  const aDeg = a * RAD_TO_DEG;
+  if (aDeg <= coefs.alphaMaxDeg) {
+    return Math.exp(-mallamaDV(coefs, aDeg) * 0.4 * LOG10);
+  }
+  // Past αmax: anchor-scaled Lambert. k folds the empirical-vs-Lambert
+  // ratio at the boundary into a single multiplier.
+  const boundaryFlux = Math.exp(-mallamaDV(coefs, coefs.alphaMaxDeg) * 0.4 * LOG10);
+  const boundaryLambert = lambertianPhaseFactor(coefs.alphaMaxDeg / RAD_TO_DEG);
+  return lambertianPhaseFactor(a) * (boundaryFlux / boundaryLambert);
 }
 
 /** Phase-factor flux multiplier at α = 0 — i.e. `10^(−c0/2.5)`. Drives
@@ -115,10 +141,20 @@ export function peakPhaseFactor(coefs: PhaseCoefficients | undefined): number {
 /** Mercury — 7th-order V-band fit (Mallama 2018 Table A-1.2),
  *  2° ≤ α ≤ 170°. The published polynomial includes a `c7 =
  *  +6.592e-15` term which we drop to keep the renderer's polynomial
- *  storage at degree 6 (two vec4 attributes per instance). The
- *  truncation is sub-0.25 mag for α < 120° and grows to ~2.9 mag at
- *  α = 170°; a Mercury silhouette at extreme α from a Stellata
- *  camera position is uncommon enough that the trade is worth it. */
+ *  storage at degree 6 (two vec4 attributes per instance). Pinned by
+ *  `phase-function.test.ts`: truncation error stays below 0.25 mag
+ *  only out to α ≈ 87° (≈0.32 mag at 90°, 0.66 mag at 100°), grows
+ *  to ~2.4 mag at 120°, and reaches ~27 mag at 170° where the
+ *  truncated polynomial is no longer faithful. The renderer's
+ *  alphaMaxDeg = 170° preserves the published validity bound; the
+ *  anchor-scaled Lambert fallback past αmax keeps brightness
+ *  continuous, but the high-α regime within the polynomial path is
+ *  effectively wrong by tens of magnitudes for Mercury. Acceptable
+ *  for v1 — Mercury at α ≫ 90° from a Stellata camera position is
+ *  rare (requires viewer near Sol on the opposite side). A
+ *  follow-up bead may lower alphaMaxDeg to ~90° so high-α Mercury
+ *  rolls into the anchor-Lambert path before the truncation runs
+ *  away. */
 export const MERCURY_PHASE: PhaseCoefficients = {
   c0: 0,
   c1: 6.617e-2,

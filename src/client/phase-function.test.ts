@@ -53,12 +53,66 @@ describe('mallamaPhaseFactor', () => {
     }
   });
 
-  it('falls back to Lambert when α exceeds the validity bound', () => {
-    // Mars: alphaMaxDeg = 50°. At 60° we want Lambert, not the
-    // extrapolated polynomial (which would over-brighten).
-    const a = 60 * DEG;
-    expect(mallamaPhaseFactor(MARS_PHASE, a))
-      .toBeCloseTo(lambertianPhaseFactor(a), 12);
+  it('beyond αmax: anchor-scaled Lambert (continuous at the boundary)', () => {
+    // Mars: alphaMaxDeg = 50°. At 60° we want
+    //   Lambert(60°) × poly(50°) / Lambert(50°)
+    // — anchor-scaled, NOT pure Lambert (which would step) and NOT
+    // the extrapolated polynomial (which would over-brighten).
+    const aMax = MARS_PHASE.alphaMaxDeg * DEG;
+    const polyAtBoundary = mallamaPhaseFactor(MARS_PHASE, aMax);
+    const lambertAtBoundary = lambertianPhaseFactor(aMax);
+    const k = polyAtBoundary / lambertAtBoundary;
+    const a60 = 60 * DEG;
+    expect(mallamaPhaseFactor(MARS_PHASE, a60))
+      .toBeCloseTo(lambertianPhaseFactor(a60) * k, 10);
+    // Mars darkens faster than a Lambertian sphere at moderate α:
+    // k < 1, so the anchor-scaled Lambert past 50° stays dimmer than
+    // pure Lambert.
+    expect(k).toBeLessThan(1);
+  });
+
+  it('Saturn continuity: no brightness step across α = αmax', () => {
+    // Saturn's c0 = −0.55 lifts polynomial flux to ~1.42 just inside
+    // αmax = 6.5°; pure Lambert at 6.5° is ~0.99, so the prior
+    // implementation showed a ~30% brightness drop at the boundary.
+    // Anchor-scaled Lambert past αmax eliminates the step by
+    // construction (right-limit ≡ left-limit).
+    const eps = 1e-6;
+    const aMax = SATURN_PHASE.alphaMaxDeg * DEG;
+    const lhs = mallamaPhaseFactor(SATURN_PHASE, aMax - eps);
+    const rhs = mallamaPhaseFactor(SATURN_PHASE, aMax + eps);
+    expect(rhs).toBeCloseTo(lhs, 5);
+    // Sanity: the anchor preserves Saturn's ring boost past αmax —
+    // anchored Lambert sits well above 1, not the ~0.99 a naive
+    // Lambert would give.
+    expect(rhs).toBeGreaterThan(1.4);
+  });
+
+  it('Mars continuity: no brightness step across α = αmax', () => {
+    // Same continuity check for Mars (smaller jump, opposite
+    // direction — polynomial dimmer than Lambert at 50°).
+    const eps = 1e-6;
+    const aMax = MARS_PHASE.alphaMaxDeg * DEG;
+    const lhs = mallamaPhaseFactor(MARS_PHASE, aMax - eps);
+    const rhs = mallamaPhaseFactor(MARS_PHASE, aMax + eps);
+    expect(rhs).toBeCloseTo(lhs, 5);
+  });
+
+  it('clamps α defensively outside [0, π] (sibling-symmetric with Lambert)', () => {
+    // Negative α → clamped to 0. For c0 = 0 planets, the polynomial
+    // value at α = 0 is exactly 1.
+    expect(mallamaPhaseFactor(MARS_PHASE, -1)).toBeCloseTo(1, 12);
+    // α > π → clamped to π. π in degrees = 180°, beyond every
+    // published αmax, so this lands on the anchor-Lambert path with
+    // Lambert(π) = 0 ⇒ φ = 0 regardless of the anchor multiplier.
+    expect(mallamaPhaseFactor(MARS_PHASE, Math.PI + 1)).toBeCloseTo(0, 12);
+    // Saturn at negative α → clamped to 0 → polynomial gives the c0
+    // ring boost (≈ 1.66×). Defensive symmetry: a misuse with
+    // out-of-range α can't trigger Horner extrapolation.
+    expect(mallamaPhaseFactor(SATURN_PHASE, -1)).toBeCloseTo(
+      10 ** (0.55 / 2.5),
+      6,
+    );
   });
 
   it('returns 1 at α = 0 for every planet with c0 = 0', () => {
@@ -82,6 +136,50 @@ describe('mallamaPhaseFactor', () => {
     expect(v).toBeCloseTo(10 ** (0.55 / 2.5), 6);
     expect(v).toBeGreaterThan(1.6);
     expect(v).toBeLessThan(1.7);
+  });
+
+  it('Mercury truncation: pinned bounds vs the full Mallama 7th-order fit', () => {
+    // Mallama 2018 Table A-1.2 publishes Mercury as a degree-7
+    // polynomial. We drop c7 = 6.592e-15 to fit degree-6 storage; the
+    // truncation budget is documented on `MERCURY_PHASE`. Pin the
+    // |ΔV_truncated − ΔV_full| envelope at multiple α so a future
+    // re-pack (e.g. dropping c6 to free a vec4 slot) cannot widen it
+    // silently. NOTE: the truncation is sub-0.25 mag only out to
+    // ≈88° — well short of the renderer's αmax = 170°. Past ~90° the
+    // truncated polynomial degrades rapidly; this test makes that
+    // explicit so a follow-up bead can decide whether to lower
+    // alphaMaxDeg for Mercury.
+    const c7 = 6.592e-15;
+    const fullDV = (aDeg: number): number =>
+      MERCURY_PHASE.c0 +
+      aDeg *
+        (MERCURY_PHASE.c1 +
+          aDeg *
+            (MERCURY_PHASE.c2 +
+              aDeg *
+                (MERCURY_PHASE.c3 +
+                  aDeg *
+                    (MERCURY_PHASE.c4 +
+                      aDeg *
+                        (MERCURY_PHASE.c5 +
+                          aDeg * (MERCURY_PHASE.c6 + aDeg * c7))))));
+    const truncatedDV = (aDeg: number): number => {
+      const factor = mallamaPhaseFactor(MERCURY_PHASE, aDeg * DEG);
+      return (-Math.log(factor) * 2.5) / Math.log(10);
+    };
+    // Sub-0.25 mag out to ≈87° (where c7·α^7 first exceeds 0.25).
+    for (let aDeg = 0; aDeg <= 84; aDeg += 4) {
+      const err = Math.abs(truncatedDV(aDeg) - fullDV(aDeg));
+      expect(err, `α=${aDeg}°`).toBeLessThan(0.25);
+    }
+    // The cutoff: just under 0.25 at 87°, just over at 88°.
+    expect(Math.abs(truncatedDV(87) - fullDV(87))).toBeLessThan(0.25);
+    expect(Math.abs(truncatedDV(88) - fullDV(88))).toBeGreaterThan(0.25);
+    // Spot-checks at higher α — pin the actual budget so future
+    // edits to c0..c6 can't drift undetected.
+    expect(Math.abs(truncatedDV(100) - fullDV(100))).toBeCloseTo(0.659, 2);
+    expect(Math.abs(truncatedDV(120) - fullDV(120))).toBeCloseTo(2.362, 2);
+    expect(Math.abs(truncatedDV(170) - fullDV(170))).toBeCloseTo(27.05, 1);
   });
 
   it('Mercury polynomial reproduces published ΔV at α = 30°', () => {

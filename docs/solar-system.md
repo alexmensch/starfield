@@ -143,11 +143,14 @@ m_planet         = m_host_at_viewer
 
 where `α = ∠(viewer–planet–host)` is the phase angle and `φ(α)` is
 the per-planet phase factor — Mallama 2018 empirical polynomial
-`10^(−ΔV(α)/2.5)` for the eight Sol planets (and α inside its
-published validity range), Lambertian
-`(sin α + (π − α)·cos α)/π` otherwise. Verified Jupiter values
-(under Lambert): −2.7 from Earth at opposition, +5.2 from ~150 AU
-outside the heliopause, +21 from α Cen at 1.34 pc.
+`10^(−ΔV(α)/2.5)` inside each planet's published α range, anchor-
+scaled Lambertian past it (Lambert(α) × poly(αmax)/Lambert(αmax) so
+brightness stays continuous and each planet's empirical character
+extends past αmax instead of snapping to a uniform Lambertian
+sphere), pure Lambertian `(sin α + (π − α)·cos α)/π` for bodies
+without published curves. Verified Jupiter values (under Lambert):
+−2.7 from Earth at opposition, +5.2 from ~150 AU outside the
+heliopause, +21 from α Cen at 1.34 pc.
 
 ### Per-host distance cull
 
