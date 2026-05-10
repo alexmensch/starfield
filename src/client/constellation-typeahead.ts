@@ -73,6 +73,6 @@ export function bindConstellationTypeahead(stellata: Stellata) {
   const syncFromFilter = () => {
     typeahead.setName(nameForIdx(stellata.getFilter().highlightCon));
   };
-  stellata.onFilterChange(syncFromFilter);
+  stellata.on('filter', syncFromFilter);
   syncFromFilter();
 }

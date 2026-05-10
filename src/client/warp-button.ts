@@ -59,7 +59,7 @@ export function bindWarpButton(stellata: Stellata) {
     }
   });
 
-  stellata.onWarpChange((active) => {
+  stellata.on('warp', (active) => {
     document.body.classList.toggle('warping', active);
     render();
   });

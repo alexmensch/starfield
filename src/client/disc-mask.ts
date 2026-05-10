@@ -91,10 +91,10 @@ export function createDiscMask(stellata: Stellata) {
 
   // Cache the highlighted-constellation index so the per-frame tick doesn't
   // re-read getFilter() each frame. Mirrors constellation-overlay.ts (which
-  // consumes the same field via onFilterChange) so the two overlays react
+  // consumes the same field via the 'filter' event) so the two overlays react
   // to filter mutations through the same mechanism.
   let highlightCon = stellata.getFilter().highlightCon;
-  stellata.onFilterChange((f) => {
+  stellata.on('filter', (f) => {
     highlightCon = f.highlightCon;
   });
 
@@ -103,7 +103,7 @@ export function createDiscMask(stellata: Stellata) {
   // the focal-pair mask alive after Esc-unfocus until the disc shrinks.
   let recentFocus: number | null = null;
   let recentCompanion = -1;
-  stellata.onFocusChange((idx) => {
+  stellata.on('focus', (idx) => {
     if (idx !== null) {
       recentFocus = idx;
       recentCompanion = stellata.catalog.companion[idx];
@@ -114,7 +114,7 @@ export function createDiscMask(stellata: Stellata) {
   // tail end of the pool that is no longer used.
   let lastUsed = 0;
 
-  stellata.onFrame(() => {
+  stellata.on('frame', () => {
     // In OBSERVE mode the focal star (and its companion if any) are hidden
     // by the vertex shader, so a mask cutout for them would just be a black
     // hole carved out of overlays for nothing. Other stars are always far

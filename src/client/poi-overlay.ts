@@ -161,10 +161,10 @@ export function createPoiOverlay(
     groupsVisible = true;
   }
 
-  stellata.onPoisChange(syncPool);
+  stellata.on('pois', syncPool);
   syncPool();
 
-  stellata.onFrame(() => {
+  stellata.on('frame', () => {
     const pois = stellata.getPois();
     if (pois.length === 0) {
       hideAll();

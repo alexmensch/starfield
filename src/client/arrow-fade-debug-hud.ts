@@ -129,7 +129,7 @@ export function buildArrowSection(stellata: Stellata): ArrowSection {
     root.style.borderLeftColor = independentState ? '#f33' : '#0f0';
   };
 
-  const unsubscribe = stellata.onFrame(onFrame);
+  const unsubscribe = stellata.on('frame', onFrame);
 
   return {
     element: root,

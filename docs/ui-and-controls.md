@@ -155,7 +155,7 @@ with an `<input id="con-input">` + dropdown. Substring filter against
 constellation name plus 3-letter IAU code; full alphabetised list shows
 when the input is empty and focused. Single-select — picking fires
 both `setFilter({ highlightCon })` and `aimAtConstellation`, matching
-the prior `<select>` behaviour. Reverse-sync from `onFilterChange`
+the prior `<select>` behaviour. Reverse-sync from the `'filter'` event
 keeps the input in step with URL restores.
 
 A synthetic `NONE_ENTRY` (`idx: -1`, `search: ''`) is prepended to the
@@ -207,7 +207,7 @@ Two specific freezes use this:
 
 ## Reverse-sync in `controls.ts`
 
-Widgets subscribe to `stellata.onFilterChange` and write DOM from the filter
+Widgets subscribe to `stellata.on('filter', …)` and write DOM from the filter
 state. This is how URL restores and `naked eye`/`all` presets update sliders
 and chip states. **Setting `.value` programmatically does NOT dispatch
 `input`**, so there's no feedback loop. If you add a filter field, remember

@@ -43,7 +43,7 @@ after exiting chart mode (otherwise the average would lag forever).
 | `pre-render`            | `stellata.ts` `animate()`       | Per-frame uniform writes + galactic + Milky Way reposition. |
 | `coreMask`              | `stellata.ts` `animate()`       | The binary-search `shouldEnableCoreMask()` (see below). |
 | `gpu.render`            | `stellata.ts` `animate()`       | The `renderer.render()` call — three-pass star draw + overlays. |
-| `onFrame.total`         | `stellata.ts` `animate()`       | The full `onFrameHandlers` loop (overlays, chart labels). |
+| `onFrame.total`         | `stellata.ts` `animate()`       | The full `'frame'` emit loop (overlays, chart labels). |
 | `chart.names`           | `chart-labels.ts` `tick()`       | Proper-name label projection + culling. |
 | `chart.bayer`           | `chart-labels.ts` `tick()`       | Bayer-letter Greek-glyph pass. |
 | `chart.constellations`  | `chart-labels.ts` `tick()`       | Constellation centroid recompute + label placement. |
@@ -57,7 +57,7 @@ Adding a measurement: import `mark`/`measure` from `perf-hud.ts` and
 wrap the block. Both functions are unconditional — when
 `buildPerfSection` has not yet been called they're a single indirect
 call to a no-op, V8 inlines them fine. Don't subscribe the HUD itself
-to `onFrame`; the `frame()` flush runs once per render after
+to the `'frame'` event; the `frame()` flush runs once per render after
 `onFrame.total` has finalised, so its DOM update doesn't leak into
 the measured numbers.
 
@@ -110,7 +110,7 @@ Cache the centroids and recompute only when either condition fires:
 
 - Camera moved more than `√CENTROID_RECOMPUTE_DIST_SQ ≈ 0.5 pc`
   since the last recompute.
-- Filter version bumped (subscribed via `stellata.onFilterChange`).
+- Filter version bumped (subscribed via `stellata.on('filter', …)`).
 
 The centroid is still re-projected to screen every frame (88 cheap
 matrix transforms) — it's the inner per-member loop that's elided.
@@ -128,7 +128,7 @@ list, applied the spectral-mask + min/max distance-from-Sol gates
 (static parts of `renderableAppMag`), then projected.
 
 Pre-bin into `variableEligible` / `binaryEligible` on filter change
-(via `stellata.onFilterChange`); the per-frame loops drop the
+(via `stellata.on('filter', …)`); the per-frame loops drop the
 spectral + distance-from-Sol checks because eligibility already
 encodes them, and the cheap remaining work (magnitude gate +
 projection) only runs against the pruned set. Restrictive filters
@@ -173,7 +173,7 @@ navigate-mode idle cost.
 ### Overlay self-gating fast-paths
 
 `disc-mask.ts`, `distance-vector-overlay.ts`, `poi-overlay.ts`,
-`focus-ring-overlay.ts`. Each overlay subscribes to `onFrame` and
+`focus-ring-overlay.ts`. Each overlay subscribes to `'frame'` and
 runs every frame regardless of state. The empty-state path (no
 focus / no vector) bails in <10 ns before doing any DOM work.
 Visibility transitions are tracked via a local boolean so
@@ -216,5 +216,5 @@ re-prosecuted.
    per-frame overlay; check the self-gating fast-paths haven't
    regressed.
 5. If `chart.*` dominates, the eligibility lists or centroid cache
-   may have invalidated unexpectedly — check whether
-   `onFilterChange` is firing more than expected.
+   may have invalidated unexpectedly — check whether the `'filter'`
+   event is firing more than expected.

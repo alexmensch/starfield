@@ -8,16 +8,29 @@ anything that reads star positions. For the `?v=` URL wire format see
 
 ## Event bus on `Stellata`
 
-- `onFocusChange(idx | null)` — focused star changed (from any source).
-- `onVectorChange(toIdx | null)` — distance-vector destination changed.
-- `onFilterChange(filter)` — any filter patch applied.
-- `onCameraModeChange(mode)` — camera mode flipped between `'navigate'` and
-  `'observe'`. Used by the mode toggle, search-row label swap, and
-  scale-bar (which switches to angular degrees in observe).
-- `onFrame()` — called after each render, used by all SVG overlays.
-- `onStateChange()` — fires on any discrete state mutation. This is what the
-  URL-sync module listens to. Don't fire it from `onFrame` for camera changes —
-  the URL sync has its own frame hook with hash comparison for that.
+Subscribers register via `stellata.on(name, fn)` and receive a typed
+payload per event. `on` returns an unsubscribe — call it to detach.
+The payload map is `StellataEventMap` in `stellata.ts`.
+
+- `'focus'` (`number | null`) — focused star changed (from any source).
+- `'cloudFocus'` (`number | null`) — focused molecular cloud changed.
+- `'planetSystem'` (`PlanetSystem | null`) — focused star's planet
+  system loaded, cleared, or swapped.
+- `'vector'` / `'vectorCloud'` (`number | null`) — distance-vector
+  destination changed (mutually exclusive star vs cloud destinations).
+- `'filter'` (`Readonly<FilterState>`) — any filter patch applied.
+- `'cameraMode'` (`'navigate' | 'observe'`) — camera mode flipped.
+  Used by the mode toggle, search-row label swap, and scale-bar
+  (which switches to angular degrees in observe).
+- `'warp'` (`boolean`) — warp animation start/finish.
+- `'pois'` (`readonly number[]`) — observe-mode pinned-star list
+  changed.
+- `'frame'` (no payload) — called after each render, used by all SVG
+  overlays.
+- `'state'` (no payload) — fires on any discrete state mutation. This
+  is what the URL-sync module listens to. Don't fire it from a
+  `'frame'` handler for camera changes — the URL sync has its own
+  frame hook with hash comparison for that.
 
 ## Click-state machine (`stellata.ts onPointerUp`)
 
@@ -50,15 +63,15 @@ the focal disc via `uHideFocusIdx`. Two gotchas worth noting up front:
 1. **`cameraMode` stays `'observe'` throughout an observe→observe warp.**
    `startWarp` from observe disables `observeControls` and sets a
    per-warp `returnToObserve` flag, but does not flip `cameraMode` or
-   fire `onCameraModeChange`. The animate loop branches on `warpState`
+   emit `'cameraMode'`. The animate loop branches on `warpState`
    first, so the value is purely cosmetic during the flight — but every
-   listener bound to `onCameraModeChange` (mode toggle, search-row
+   listener bound to `'cameraMode'` (mode toggle, search-row
    label, etc.) stays settled. Without this, observe→observe arrival
    visibly flickers through navigate mid-warp.
 2. **`finishWarp` re-anchors via `swapObserveAnchor`**, not `setFocus`,
    when `returnToObserve` is true. `setFocus` would see
    `cameraMode === 'observe'` and run its observe-cleanup branch
-   (`uHideFocusIdx = -1`, fire `onCameraModeChange`), recreating the
+   (`uHideFocusIdx = -1`, emit `'cameraMode'`), recreating the
    flicker. `swapObserveAnchor` recentres the floating origin, updates
    `focusedStar`, repoints `uHideFocusIdx` to the new anchor, and snaps
    the camera to `(0, 0, 0)` local without touching `cameraMode`.

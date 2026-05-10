@@ -44,6 +44,7 @@ import {
   tickFocusLerp,
 } from './focus-transition';
 import { shiftWarpWaypoints } from './warp-pure';
+import { EventBus } from './event-bus';
 
 export type MagPresetName = 'naked-eye' | 'binoculars' | 'all';
 
@@ -454,6 +455,24 @@ export const DEFAULT_FILTER: FilterState = {
   chart: false,
 };
 
+// Event-bus payload map. Subscribers register via `Stellata.on(name, fn)`
+// and the compiler enforces the payload type per event. `state` and
+// `frame` are no-payload events.
+export type StellataEventMap = {
+  focus: number | null;
+  cloudFocus: number | null;
+  planetSystem: PlanetSystem | null;
+  filter: Readonly<FilterState>;
+  vector: number | null;
+  vectorCloud: number | null;
+  cameraMode: CameraMode;
+  warp: boolean;
+  focusLerp: boolean;
+  pois: readonly number[];
+  state: void;
+  frame: void;
+};
+
 export class Stellata {
   readonly catalog: Catalog;
   readonly renderer: THREE.WebGLRenderer;
@@ -513,16 +532,7 @@ export class Stellata {
   private filter: FilterState = { ...DEFAULT_FILTER };
 
   private disposed = false;
-  private onFocusHandlers: Array<(starIndex: number | null) => void> = [];
-  private onCloudFocusHandlers: Array<(cloudIndex: number | null) => void> = [];
-  private onFrameHandlers: Array<() => void> = [];
-  private onFilterHandlers: Array<(f: Readonly<FilterState>) => void> = [];
-  private onVectorHandlers: Array<(toIdx: number | null) => void> = [];
-  private onVectorCloudHandlers: Array<(toCloudIdx: number | null) => void> = [];
-  private onStateHandlers: Array<() => void> = [];
-  private onWarpHandlers: Array<(active: boolean) => void> = [];
-  private onFocusLerpHandlers: Array<(active: boolean) => void> = [];
-  private onCameraModeHandlers: Array<(mode: CameraMode) => void> = [];
+  private bus = new EventBus<StellataEventMap>();
 
   private cameraMode: CameraMode = 'navigate';
   private observeTransition: ObserveTransitionState | null = null;
@@ -554,7 +564,6 @@ export class Stellata {
   // by comparing against planetSystemToken.
   private focusedPlanetSystem: PlanetSystem | null = null;
   private planetSystemToken = 0;
-  private onPlanetSystemHandlers: Array<(ps: PlanetSystem | null) => void> = [];
   // Distance-vector destination — at most one of these is non-null at a
   // time. Mutual exclusion is enforced by setVectorTo / setVectorToCloud
   // both clearing the other slot.
@@ -582,7 +591,6 @@ export class Stellata {
   // url-state.ts is HIP-only). Insertion-ordered (Array, not Set) so
   // round-trips through URL state preserve the user's pin order.
   private pois: number[] = [];
-  private onPoisHandlers: Array<(pois: readonly number[]) => void> = [];
   // Pending single-click in OBSERVE mode. Held for OBSERVE_DBL_CLICK_MS
   // so we can disambiguate single (pin a star) from double (slerp the
   // camera to the clicked direction). Navigate-mode clicks do not enter
@@ -935,7 +943,7 @@ export class Stellata {
     // PlanetBodyField — they're physical objects, attached once at
     // startup (below) and rendered whenever the camera is within
     // their per-host cull distance, regardless of focus.
-    this.onPlanetSystemChange((ps) => {
+    this.on('planetSystem', (ps) => {
       this.orbitRingsLayer.setPlanetSystem(ps, this.catalog.solIndex);
       this.heliopause.setVisible(ps !== null && ps.hostStarIdx === this.catalog.solIndex);
     });
@@ -1012,10 +1020,10 @@ export class Stellata {
 
     // Clear pinned POIs on any exit out of observe. Subscribed here
     // rather than wired into each cameraMode-flip site because all three
-    // exit paths (mode toggle, focus change, search-X clear) emit
-    // onCameraModeChange; one listener catches them all and fires before
-    // the URL writer's debounced flush.
-    this.onCameraModeChange((mode) => {
+    // exit paths (mode toggle, focus change, search-X clear) emit the
+    // 'cameraMode' event; one listener catches them all and fires
+    // before the URL writer's debounced flush.
+    this.on('cameraMode', (mode) => {
       if (mode !== 'observe') this.clearPois();
     });
 
@@ -1023,34 +1031,15 @@ export class Stellata {
     this.animate();
   }
 
-  onFocusChange(h: (starIndex: number | null) => void) { this.onFocusHandlers.push(h); }
-  onCloudFocusChange(h: (cloudIndex: number | null) => void) { this.onCloudFocusHandlers.push(h); }
-  /** Subscribe to planet-system changes — fires whenever the focused star's
-   *  attached system loads, clears, or swaps. Renderers in the solar-system
-   *  layer hook here to (re)build their geometry / uniforms. */
-  onPlanetSystemChange(h: (ps: PlanetSystem | null) => void) {
-    this.onPlanetSystemHandlers.push(h);
+  /** Subscribe to any event in `StellataEventMap`. Returns an unsubscribe
+   *  function. Payload type is inferred from the event name; payload-less
+   *  events (`'state'`, `'frame'`) are called without a payload arg. */
+  on<K extends keyof StellataEventMap>(
+    name: K,
+    handler: (payload: StellataEventMap[K]) => void,
+  ): () => void {
+    return this.bus.on(name, handler);
   }
-  /** Subscribe to per-frame ticks. Returns a disposer that removes the
-   *  handler when invoked — debug HUDs and other temporary subscribers
-   *  call this on close so the closure doesn't accumulate across toggles. */
-  onFrame(h: () => void): () => void {
-    this.onFrameHandlers.push(h);
-    return () => {
-      const i = this.onFrameHandlers.indexOf(h);
-      if (i >= 0) this.onFrameHandlers.splice(i, 1);
-    };
-  }
-  onFilterChange(h: (f: Readonly<FilterState>) => void) { this.onFilterHandlers.push(h); }
-  onVectorChange(h: (toIdx: number | null) => void) { this.onVectorHandlers.push(h); }
-  onVectorCloudChange(h: (toCloudIdx: number | null) => void) { this.onVectorCloudHandlers.push(h); }
-  onStateChange(h: () => void) { this.onStateHandlers.push(h); }
-  onWarpChange(h: (active: boolean) => void) { this.onWarpHandlers.push(h); }
-  /** Fires on focus-park lerp start (true) and end (false). Overlays that
-   *  shouldn't flail against the moving camera (HUD arrows, focus ring,
-   *  distance vector, etc.) listen and hide themselves — same precedent
-   *  as `onWarpChange` and the `body.warping` CSS hide rule. */
-  onFocusLerpChange(h: (active: boolean) => void) { this.onFocusLerpHandlers.push(h); }
   getFocusLerpActive(): boolean { return this.focusLerpState !== null; }
 
   getFocusedStar(): number | null { return this.focusedStar; }
@@ -1058,7 +1047,7 @@ export class Stellata {
   /** Planet system for the currently focused star, or null if the focus
    *  has none (or has not finished loading). The solar-system rendering
    *  layer gates on this — renderers also subscribe to
-   *  onPlanetSystemChange to react to focus swaps. */
+   *  the 'planetSystem' event to react to focus swaps. */
   getFocusedPlanetSystem(): PlanetSystem | null { return this.focusedPlanetSystem; }
   /** True when the orbit-rings layer is currently rendering at least one
    *  ring. Frame-coherent — `updateGalacticLayers()` runs before
@@ -1113,7 +1102,7 @@ export class Stellata {
    *  (stellata-nmu); v1 never calls this from the UI. */
   setT(t: number | null): void {
     this.pinnedT = t;
-    this.fireStateChange();
+    this.bus.emit('state');
   }
   getMonochrome(): boolean { return this.monochrome; }
   getWarpActive(): boolean { return this.warpState !== null; }
@@ -1190,7 +1179,7 @@ export class Stellata {
   }
 
   // Set/clear the focus-lerp slot through these helpers so overlays
-  // subscribed to onFocusLerpChange see exactly one true → false edge
+  // subscribed to the 'focusLerp' event see exactly one true → false edge
   // per lerp. Calling startFocusLerp twice in a row emits a single
   // 'true' (state changed shape but stays active); endFocusLerp() is a
   // no-op when no lerp is running.
@@ -1198,13 +1187,13 @@ export class Stellata {
     const wasInactive = this.focusLerpState === null;
     this.focusLerpState = state;
     if (wasInactive) {
-      for (const h of this.onFocusLerpHandlers) h(true);
+      this.bus.emit('focusLerp', true);
     }
   }
   private endFocusLerp() {
     if (this.focusLerpState !== null) {
       this.focusLerpState = null;
-      for (const h of this.onFocusLerpHandlers) h(false);
+      this.bus.emit('focusLerp', false);
     }
   }
   /** Threshold squared-length below which `controls.target` engages the
@@ -1244,10 +1233,6 @@ export class Stellata {
     return { f, kind: s.kind };
   }
 
-  onCameraModeChange(handler: (mode: CameraMode) => void) {
-    this.onCameraModeHandlers.push(handler);
-  }
-
   // ──────────────────── OBSERVE-mode points of interest ────────────────────
   //
   // Single-click on a star in OBSERVE pins it; click again to unpin. The
@@ -1256,7 +1241,6 @@ export class Stellata {
   // on any observe→navigate transition.
 
   getPois(): readonly number[] { return this.pois; }
-  onPoisChange(h: (pois: readonly number[]) => void) { this.onPoisHandlers.push(h); }
 
   /**
    * Toggle a POI for the given catalog index.
@@ -1319,8 +1303,8 @@ export class Stellata {
   }
 
   private firePoisChange() {
-    for (const h of this.onPoisHandlers) h(this.pois);
-    this.fireStateChange();
+    this.bus.emit('pois', this.pois);
+    this.bus.emit('state');
   }
 
   /**
@@ -1369,8 +1353,8 @@ export class Stellata {
           kind: 'enter',
         };
       }
-      for (const h of this.onCameraModeHandlers) h(this.cameraMode);
-      this.fireStateChange();
+      this.bus.emit('cameraMode', this.cameraMode);
+      this.bus.emit('state');
       return;
     }
 
@@ -1420,8 +1404,8 @@ export class Stellata {
         clearFocusOnExit: opts.clearFocusOnExit,
       };
     }
-    for (const h of this.onCameraModeHandlers) h(this.cameraMode);
-    this.fireStateChange();
+    this.bus.emit('cameraMode', this.cameraMode);
+    this.bus.emit('state');
   }
 
   private setFocus(idx: number | null) {
@@ -1432,10 +1416,10 @@ export class Stellata {
     const cloudCleared = this.focusedCloud !== null;
     if (cloudCleared) {
       this.focusedCloud = null;
-      for (const h of this.onCloudFocusHandlers) h(null);
+      this.bus.emit('cloudFocus', null);
     }
     if (this.focusedStar === idx) {
-      if (cloudCleared) this.fireStateChange();
+      if (cloudCleared) this.bus.emit('state');
       return;
     }
     // OBSERVE depends on a focused star anchor. Any change to the anchor
@@ -1450,7 +1434,7 @@ export class Stellata {
       this.observeControls.disable();
       this.alignCameraUpToQuaternion();
       this.controls.enabled = true;
-      for (const h of this.onCameraModeHandlers) h(this.cameraMode);
+      this.bus.emit('cameraMode', this.cameraMode);
     }
     // Recenter the floating origin only when *focusing* a star. The new
     // origin snaps to the focal star's absolute position, so close-range
@@ -1498,8 +1482,8 @@ export class Stellata {
       this.controls.minDistance = Math.min(GLOBAL_MIN_DIST_PC, eye);
       this.refreshPlanetSystem(null);
     }
-    for (const h of this.onFocusHandlers) h(idx);
-    this.fireStateChange();
+    this.bus.emit('focus', idx);
+    this.bus.emit('state');
   }
 
   // Reload the focused star's planet system. Called from every code path
@@ -1513,7 +1497,7 @@ export class Stellata {
     if (idx === null || !hasPlanets(this.catalog, idx)) {
       if (this.focusedPlanetSystem !== null) {
         this.focusedPlanetSystem = null;
-        for (const h of this.onPlanetSystemHandlers) h(null);
+        this.bus.emit('planetSystem', null);
       }
       return;
     }
@@ -1521,7 +1505,7 @@ export class Stellata {
       if (token !== this.planetSystemToken) return;
       if (this.focusedPlanetSystem === ps) return;
       this.focusedPlanetSystem = ps;
-      for (const h of this.onPlanetSystemHandlers) h(ps);
+      this.bus.emit('planetSystem', ps);
     });
   }
 
@@ -1540,8 +1524,8 @@ export class Stellata {
     }
     if (this.focusedCloud === idx) return;
     this.focusedCloud = idx;
-    for (const h of this.onCloudFocusHandlers) h(idx);
-    this.fireStateChange();
+    this.bus.emit('cloudFocus', idx);
+    this.bus.emit('state');
   }
 
   private tmpRecenter = new THREE.Vector3();
@@ -1851,12 +1835,12 @@ export class Stellata {
     // any cloud destination.
     if (idx !== null && this.vectorToCloud !== null) {
       this.vectorToCloud = null;
-      for (const h of this.onVectorCloudHandlers) h(null);
+      this.bus.emit('vectorCloud', null);
     }
     if (this.vectorTo === idx) return;
     this.vectorTo = idx;
-    for (const h of this.onVectorHandlers) h(idx);
-    this.fireStateChange();
+    this.bus.emit('vector', idx);
+    this.bus.emit('state');
   }
 
   setVectorToCloud(idx: number | null) {
@@ -1865,12 +1849,12 @@ export class Stellata {
     // any star destination.
     if (idx !== null && this.vectorTo !== null) {
       this.vectorTo = null;
-      for (const h of this.onVectorHandlers) h(null);
+      this.bus.emit('vector', null);
     }
     if (this.vectorToCloud === idx) return;
     this.vectorToCloud = idx;
-    for (const h of this.onVectorCloudHandlers) h(idx);
-    this.fireStateChange();
+    this.bus.emit('vectorCloud', idx);
+    this.bus.emit('state');
   }
 
   unfocus(opts: { animate?: boolean } = {}) {
@@ -1886,7 +1870,7 @@ export class Stellata {
     this.setVectorTo(null);
     this.setVectorToCloud(null);
     // X-out from OBSERVE: clear focus FIRST so the search box empties as
-    // soon as the user clicks (via onFocusChange → syncFocusUI), then
+    // soon as the user clicks (via the 'focus' event → syncFocusUI), then
     // animate the same zoom-out the navigate-mode toggle uses. Since
     // a7d.2.11 setFocus(null) doesn't recentre, so the animation runs
     // in the (former focal star's) local frame — fromPos/toPos below
@@ -1906,7 +1890,7 @@ export class Stellata {
       this.observeControls.disable();
       this.observeAimState = null;
 
-      // Clear the star focus; search box clears via the onFocusChange
+      // Clear the star focus; search box clears via the 'focus' event
       // handler. cameraMode is already 'navigate' so the observe-cleanup
       // branch inside setFocus is skipped. Since a7d.2.11, setFocus(null)
       // leaves worldOffset alone — camera.position stays put.
@@ -1924,8 +1908,8 @@ export class Stellata {
         // finishObserveTransition to clean up.
         clearFocusOnExit: false,
       };
-      for (const h of this.onCameraModeHandlers) h(this.cameraMode);
-      this.fireStateChange();
+      this.bus.emit('cameraMode', this.cameraMode);
+      this.bus.emit('state');
       return;
     }
     // Navigate-mode close-zoom unfocus: animate the camera back to the
@@ -1977,16 +1961,12 @@ export class Stellata {
           kind: 'unfocus',
           finalMinDistance: minDist,
         };
-        this.fireStateChange();
+        this.bus.emit('state');
         return;
       }
     }
     this.setFocus(null);
     this.setFocusedCloud(null);
-  }
-
-  private fireStateChange() {
-    for (const h of this.onStateHandlers) h();
   }
 
   setFilter(patch: Partial<FilterState>) {
@@ -2004,8 +1984,8 @@ export class Stellata {
     // slider moves so distant hosts stay culled at the new threshold.
     this.planetBodyField.setMaxAppMag(this.filter.maxAppMag);
     this.milkyway.setEnabled(this.filter.showMilkyway);
-    for (const h of this.onFilterHandlers) h(this.filter);
-    this.fireStateChange();
+    this.bus.emit('filter', this.filter);
+    this.bus.emit('state');
   }
 
   getFilter(): Readonly<FilterState> { return this.filter; }
@@ -2083,8 +2063,8 @@ export class Stellata {
       this.controls.minDistance = this.minOrbitDistForStar(this.focusedStar);
     }
     this.recomputePresetPxSizes();
-    for (const h of this.onFilterHandlers) h(this.filter);
-    this.fireStateChange();
+    this.bus.emit('filter', this.filter);
+    this.bus.emit('state');
   }
   getCameraFov(): number { return this.camera.fov; }
 
@@ -2099,8 +2079,8 @@ export class Stellata {
     this.recomputePresetPxSizes();
     // Fire even when recompute patched nothing (e.g. sizes overridden) so
     // the debug readout reflects the new K.
-    for (const h of this.onFilterHandlers) h(this.filter);
-    this.fireStateChange();
+    this.bus.emit('filter', this.filter);
+    this.bus.emit('state');
   }
   getStarExaggerationK(preset?: MagPresetName): number {
     return starExaggerationK[preset ?? this.filter.activePreset];
@@ -2197,7 +2177,7 @@ export class Stellata {
     // are now driven by the chart-mode orchestrator via
     // `setMilkywayIsobar` and `setCloudsIsobar` below — call them
     // alongside setMonochrome.
-    this.fireStateChange();
+    this.bus.emit('state');
   }
 
   /** Chart-mode isobar pass on/off for the molecular cloud layer.
@@ -2328,7 +2308,7 @@ export class Stellata {
   // Start an animated journey from the currently focused thing (star or
   // cloud) to a star at `destIdx`. Camera flies in a straight line with a
   // symmetric accelerate/decelerate profile. Orbit controls are disabled
-  // for the duration; overlays listening to onWarpChange are expected to
+  // for the duration; overlays listening to the 'warp' event are expected to
   // hide themselves so they don't flail against the moving camera.
   // No-ops if there's no focus, the destination equals the source, or the
   // two are coincident.
@@ -2492,8 +2472,8 @@ export class Stellata {
     // distance. Orbit rings stay focus-only by design, so a warp doesn't
     // preview the destination's rings — only the bodies fade in as the
     // camera approaches.
-    for (const h of this.onWarpHandlers) h(true);
-    this.fireStateChange();
+    this.bus.emit('warp', true);
+    this.bus.emit('state');
   }
 
   // Jump to the end state of an in-flight warp. Equivalent to letting the
@@ -2514,7 +2494,7 @@ export class Stellata {
       // gracefully to a clean state rather than NaN-ing the camera.
       this.warpState = null;
       this.controls.enabled = true;
-      for (const h of this.onWarpHandlers) h(false);
+      this.bus.emit('warp', false);
       return;
     }
     // Final parked pose. Differs by destination mode:
@@ -2552,7 +2532,7 @@ export class Stellata {
       // start for jitter mitigation) recentres the floating origin and
       // updates focused-star state. No cameraMode flip through navigate
       // (which is what setFocus would do, triggering an
-      // onCameraModeChange flicker).
+      // 'cameraMode' event flicker).
       this.swapObserveAnchor(state.destIdx);
       this.observeControls.enable();
       // controls.enabled stays false — observe owns the camera now.
@@ -2579,16 +2559,16 @@ export class Stellata {
       this.controls.enabled = true;
       this.controls.update();
     }
-    for (const h of this.onWarpHandlers) h(false);
+    this.bus.emit('warp', false);
   }
 
   // Recentre the floating origin onto a star and update focus state.
   // Pure geometric + planet-system half — no observe-specific side
   // effects, no uHideFocusIdx / camera-position snaps, no
-  // onFocusHandlers fan-out (caller fires that when appropriate; on
+  // 'focus' event fan-out (caller fires that when appropriate; on
   // observe→observe arrivals it's deferred to finishWarp so the
   // search-row label doesn't switch to the destination 1.2 s before
-  // the camera lands — see stellata-9mm.153), no fireStateChange
+  // the camera lands — see stellata-9mm.153), no 'state' event emit
   // (caller decides when to schedule the URL write so a single
   // arrival doesn't serialise an intermediate pose). Shared between
   // warp arrivals:
@@ -2617,11 +2597,11 @@ export class Stellata {
 
   // Swap the OBSERVE anchor to a new star without going through setFocus's
   // observe-cleanup branch (which would flip cameraMode to navigate and
-  // emit an onCameraModeChange event, briefly flickering UI bound to the
+  // emit a 'cameraMode' event, briefly flickering UI bound to the
   // mode value). Used by finishWarp on observe→observe arrival.
   // Idempotent on the geometric half: if the phase-3 recentre already
   // landed focusedStar on newIdx, only the observe-specific tail runs
-  // (anchor hide + camera snap to local origin). onFocusHandlers fire
+  // (anchor hide + camera snap to local origin). The 'focus' event fires
   // unconditionally here so the deferred-from-phase-3 case still emits
   // the focus event in lockstep with the camera arrival.
   private swapObserveAnchor(newIdx: number) {
@@ -2633,8 +2613,8 @@ export class Stellata {
     // camera at (0,0,0) under the floating origin. Quaternion preserved
     // from the post-arrival slerp end state.
     this.camera.position.set(0, 0, 0);
-    for (const h of this.onFocusHandlers) h(newIdx);
-    this.fireStateChange();
+    this.bus.emit('focus', newIdx);
+    this.bus.emit('state');
   }
 
   /** Local-frame position of a cloud's centroid. Returns null if the
@@ -3659,7 +3639,7 @@ export class Stellata {
     this.renderer.render(this.scene, this.camera);
     perfMeasure('gpu.render');
     perfMark('onFrame.total');
-    for (const h of this.onFrameHandlers) h();
+    this.bus.emit('frame');
     perfMeasure('onFrame.total');
     perfMeasure('frame.total');
     perfFrame();
@@ -3930,7 +3910,7 @@ export class Stellata {
       this.controls.enabled = true;
       if (state.clearFocusOnExit) this.setFocus(null);
     }
-    this.fireStateChange();
+    this.bus.emit('state');
   }
 
   // Re-anchor camera.up to the camera's current local +Y. Required before any

@@ -86,7 +86,7 @@ export function setupDebug(stellata: Stellata, idMaps: IdMaps): DebugTools {
     built.body.appendChild(buildMilkywaySection(stellata.milkywayLayer));
 
     // Live sections — each owns its per-frame subscription via
-    // stellata.onFrame() and exposes setVisible to gate DOM writes
+    // stellata.on('frame', ...) and exposes setVisible to gate DOM writes
     // when collapsed. Latches inside each module keep updating
     // independent of visibility.
     liveDisposers.push(

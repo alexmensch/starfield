@@ -71,9 +71,9 @@ export function createTimeReadout({ el, stellata }: TimeReadoutDeps): () => void
     }
   };
 
-  stellata.onPlanetSystemChange(updateVisibility);
-  stellata.onFilterChange(updateVisibility);
-  stellata.onWarpChange(updateVisibility);
+  stellata.on('planetSystem', updateVisibility);
+  stellata.on('filter', updateVisibility);
+  stellata.on('warp', updateVisibility);
   updateVisibility();
 
   return () => {

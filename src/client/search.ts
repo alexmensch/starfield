@@ -464,11 +464,11 @@ export function bindSearch(
     else toBox.setName('');
   };
 
-  stellata.onFocusChange(syncFocusUI);
-  stellata.onCloudFocusChange(syncFocusUI);
-  stellata.onCameraModeChange(syncFocusUI);
-  stellata.onVectorChange(syncVectorUI);
-  stellata.onVectorCloudChange(syncVectorUI);
+  stellata.on('focus', syncFocusUI);
+  stellata.on('cloudFocus', syncFocusUI);
+  stellata.on('cameraMode', syncFocusUI);
+  stellata.on('vector', syncVectorUI);
+  stellata.on('vectorCloud', syncVectorUI);
 
   syncFocusUI();
   syncVectorUI();

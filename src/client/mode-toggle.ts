@@ -39,7 +39,7 @@ export function bindModeToggle(stellata: Stellata) {
     }
   };
 
-  stellata.onCameraModeChange(sync);
-  stellata.onFocusChange(sync);
+  stellata.on('cameraMode', sync);
+  stellata.on('focus', sync);
   sync();
 }

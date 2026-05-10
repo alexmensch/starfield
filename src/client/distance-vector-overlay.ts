@@ -46,14 +46,14 @@ export function createDistanceVectorOverlay(
     visible = false;
   };
 
-  stellata.onVectorChange(() => {
+  stellata.on('vector', () => {
     if (stellata.getVectorTo() === null && stellata.getVectorToCloud() === null) hide();
   });
-  stellata.onVectorCloudChange(() => {
+  stellata.on('vectorCloud', () => {
     if (stellata.getVectorTo() === null && stellata.getVectorToCloud() === null) hide();
   });
 
-  stellata.onFrame(() => {
+  stellata.on('frame', () => {
     // Source: whichever is focused. Star wins when both are set (which
     // shouldn't happen — they're mutually exclusive — but be defensive).
     const fromStar = stellata.getFocusedStar();

@@ -87,7 +87,7 @@ describe('Heliopause', () => {
     };
     try {
       const stellata = {
-        onFrame: () => {},
+        on: () => () => {},
       } as unknown as Parameters<typeof createHeliopauseLabel>[0];
       createHeliopauseLabel(stellata);
       expect(text.style.display).toBe('none');

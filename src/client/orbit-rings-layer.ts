@@ -8,7 +8,7 @@
 //
 // Sol is the only host with planet data populated in v1, but the layer
 // is intentionally host-agnostic: stellata-bk5 will plug exoplanet
-// systems through the same Stellata.onPlanetSystemChange event without
+// systems through the same Stellata 'planetSystem' event without
 // requiring any change in this file. The orbital plane normal is
 // resolved per-host via orbitalPlaneNormalFor().
 //

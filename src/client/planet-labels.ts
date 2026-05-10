@@ -66,13 +66,13 @@ export function createPlanetLabels(stellata: Stellata): void {
   }
   setGroupVisible(false);
 
-  stellata.onPlanetSystemChange(() => {
+  stellata.on('planetSystem', () => {
     rebuildEntries();
     if (entries.length === 0) setGroupVisible(false);
   });
   rebuildEntries();
 
-  stellata.onFrame(() => {
+  stellata.on('frame', () => {
     if (entries.length === 0) {
       setGroupVisible(false);
       return;
