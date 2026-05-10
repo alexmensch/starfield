@@ -11,19 +11,19 @@ import { setUnit, getUnit, onUnitChange } from './distance-util';
 import { isLive } from './time';
 
 // URL state lives in a single opaque param: `?v=<base64url>`. The blob
-// is `[1 byte version] [3 bytes LE presence mask] [variable payload]`
-// in v2; v3 keeps the same shape but the vec3 fields (cam/tgt/up/
-// worldOffset) carry a 1-byte sub-mask + per-component f32 payload so
-// components matching their default cost zero bytes. Only fields that
-// diverge from canonical defaults occupy bytes — a fully-default state
-// has no `?v=` at all and a typical share lands at ~10–25 chars.
+// is `[1 byte version] [LEB128 presence mask, 1–4 bytes] [variable
+// payload]` in v3. Only fields that diverge from canonical defaults
+// occupy bytes — a fully-default state has no `?v=` at all and a
+// typical share lands at ~10–25 chars.
 //
-// Three wire formats coexist. v3 (current) has a 24-bit presence mask
-// + per-component vec3 sub-masks. v2 has a 24-bit presence mask, 1-byte
-// quantised scalars for fov/mag/smin/smax/span, and 3-byte star/POI ids
-// — every present vec3 always costs 12 bytes. v1 (legacy: 32-bit mask,
-// float32 scalars, uint32 ids) is the original. Old shared URLs auto-
-// upgrade to v3 on load via `applyFromUrl`'s post-debounce rewrite.
+// Three wire formats coexist. v3 (current) has an LEB128 presence mask
+// + per-component vec3 sub-masks (cam/tgt/up/worldOffset emit only the
+// components that diverge from their per-key default). v2 has a flat
+// 24-bit presence mask, 1-byte quantised scalars for fov/mag/smin/
+// smax/span, and 3-byte star/POI ids — every present vec3 always costs
+// 12 bytes. v1 (legacy: 32-bit mask, float32 scalars, uint32 ids) is
+// the original. Old shared URLs auto-upgrade to v3 on load via
+// `applyFromUrl`'s post-debounce rewrite.
 //
 // Adding a field: claim the next free presence bit, append a FieldSpec
 // to FIELDS_V3, and add encoder/decoder logic in `currentStateOf` /
@@ -331,6 +331,51 @@ function writeU24LE(dv: DataView, off: number, val: number): void {
   dv.setUint8(off,     val         & 0xff);
   dv.setUint8(off + 1, (val >>> 8)  & 0xff);
   dv.setUint8(off + 2, (val >>> 16) & 0xff);
+}
+
+// LEB128: 7-bit payload + continuation bit per byte, low-group-first.
+// v3 uses this for the outer presence mask, replacing v2's fixed 3-
+// byte u24. Empty mask = 1 byte; single low-bit masks (cam = bit 0,
+// flags = bit 13 in mask 0x002000) = 1–2 bytes; full-mask high bits
+// degrade to 3–4 bytes — bit 21 (t) is the only field that costs an
+// extra byte vs u24, and it doesn't emit yet (gated on the time-
+// scrubber epic stellata-nmu).
+function writeVarint(dv: DataView, off: number, val: number): number {
+  let n = 0;
+  let x = val >>> 0;
+  do {
+    let byte = x & 0x7f;
+    x >>>= 7;
+    if (x !== 0) byte |= 0x80;
+    dv.setUint8(off + n, byte);
+    n++;
+  } while (x !== 0);
+  return n;
+}
+
+function readVarint(dv: DataView, off: number, end: number): { val: number; bytes: number } {
+  let val = 0;
+  let n = 0;
+  let shift = 0;
+  for (;;) {
+    if (off + n >= end) throw new Error('Varint runs past blob end');
+    const byte = dv.getUint8(off + n);
+    val |= (byte & 0x7f) << shift;
+    n++;
+    if (!(byte & 0x80)) return { val: val >>> 0, bytes: n };
+    shift += 7;
+    if (shift >= 32) throw new Error('Varint mask too long');
+  }
+}
+
+function varintLen(val: number): number {
+  let n = 0;
+  let x = val >>> 0;
+  do {
+    x >>>= 7;
+    n++;
+  } while (x !== 0);
+  return n;
 }
 
 // Quantised uint8 field — replaces f32Field for fov/mag/smin/smax/span
@@ -667,15 +712,16 @@ function computePresence(view: DecodedView): number {
 
 export function encodeBlob(view: DecodedView): string {
   const mask = computePresence(view);
-  let total = 4; // 1 version + 3 presence
+  const maskLen = varintLen(mask);
+  let total = 1 + maskLen; // 1 version + N presence (LEB128, 1–4 bytes)
   for (const f of FIELDS_V3) {
     if (mask & (1 << f.bit)) total += f.encodeBytes(view);
   }
   const ab = new ArrayBuffer(total);
   const dv = new DataView(ab);
   dv.setUint8(0, SCHEMA_VERSION);
-  writeU24LE(dv, 1, mask >>> 0);
-  let off = 4;
+  const maskBytes = writeVarint(dv, 1, mask);
+  let off = 1 + maskBytes;
   for (const f of FIELDS_V3) {
     if (mask & (1 << f.bit)) {
       f.encode(view, dv, off);
@@ -732,15 +778,15 @@ function decodeV2(dv: DataView): DecodedView {
 }
 
 function decodeV3(dv: DataView): DecodedView {
-  if (dv.byteLength < 4) throw new Error(`v3 blob too short: ${dv.byteLength} bytes`);
-  const mask = readU24LE(dv, 1);
+  if (dv.byteLength < 2) throw new Error(`v3 blob too short: ${dv.byteLength} bytes`);
+  const { val: mask, bytes: maskBytes } = readVarint(dv, 1, dv.byteLength);
   const view: DecodedView = {};
   // cam's mode-dependent default (z=0 in observe vs z=30 in navigate)
   // can't be applied during cam's decode because flags (which sets
   // view.mode) decodes after cam in FIELDS_V3 bit order. Capture the
   // sub-mask here and patch view.cam[2] after the loop once mode is known.
   let camSub = -1;
-  let off = 4;
+  let off = 1 + maskBytes;
   for (const f of FIELDS_V3) {
     if (mask & (1 << f.bit)) {
       if (f.key === 'cam') camSub = dv.getUint8(off);

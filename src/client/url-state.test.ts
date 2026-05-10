@@ -19,10 +19,11 @@ function roundtrip(view: DecodedView) {
 
 describe('url-state', () => {
   describe('empty view', () => {
-    it('encodes to a 4-byte (version+presence) blob', () => {
+    it('encodes to a 2-byte (version + 1-byte LEB128 mask) blob', () => {
       const blob = encodeBlob({});
-      // 4 bytes → 6 base64url chars (no padding)
-      expect(blob.length).toBe(6);
+      // 2 bytes → 3 base64url chars (no padding). v3's LEB128 mask
+      // collapses the empty mask to 1 byte from v2's fixed 3 bytes.
+      expect(blob.length).toBe(3);
     });
 
     it('decodes empty blob to empty view at current version', () => {
@@ -797,23 +798,79 @@ describe('url-state', () => {
   });
 
   describe('blob size', () => {
-    it('full-default state encodes to ~6 chars (1 version + 3 mask)', () => {
-      expect(encodeBlob({}).length).toBe(6);
+    it('full-default state encodes to 3 chars (1 version + 1-byte LEB128 mask)', () => {
+      expect(encodeBlob({}).length).toBe(3);
     });
 
     it('single-flag state is small', () => {
-      // 1 version + 3 mask + 1 flags byte = 5 bytes → 7 chars
-      expect(encodeBlob({ showGalacticGrid: true }).length).toBeLessThanOrEqual(8);
+      // 1 version + 2-byte LEB128 mask (bit 13) + 1 flags byte = 4
+      // bytes → 6 base64url chars. v2 was 5 bytes / 7 chars.
+      expect(encodeBlob({ showGalacticGrid: true }).length).toBeLessThanOrEqual(6);
     });
 
     it('encodes shorter than v1 would for the same scalar fields', () => {
       // v2 quantises fov/mag/smin/smax/span to u8, so a state that
-      // exercises all five takes 5 bytes of payload vs 20 in v1.
+      // exercises all five takes 5 bytes of payload vs 20 in v1. v3
+      // additionally shrinks the mask via LEB128: bits 3,4,10,11,12
+      // give mask 0x1c18 → 2 LEB128 bytes vs v2's fixed 3.
       const blob = encodeBlob({
         fov: 60, mag: 5, smin: 3, smax: 20, span: 10,
       });
-      // 1 version + 3 mask + 5 u8 = 9 bytes → 12 base64url chars
-      expect(blob.length).toBeLessThanOrEqual(12);
+      // 1 version + 2 mask + 5 u8 = 8 bytes → 11 base64url chars
+      expect(blob.length).toBeLessThanOrEqual(11);
+    });
+  });
+
+  describe('LEB128 presence mask (v3)', () => {
+    // Verify the wire-format size for representative mask shapes. The
+    // numbers here are the bytes-on-wire after base64url; we infer
+    // the underlying byte count via base64 math. The tests don't
+    // depend on the encoder's internal varint helpers, just the
+    // final blob length.
+    function blobBytes(blob: string): number {
+      // base64url with padding stripped. 3 chars = 2 bytes, 4 chars
+      // = 3 bytes, 6 chars = 4 bytes, etc.
+      const padded = blob + '='.repeat((4 - (blob.length % 4)) % 4);
+      return atob(padded.replace(/-/g, '+').replace(/_/g, '/')).length;
+    }
+
+    it('low-bit-only mask (cam, bit 0) fits in 1 byte', () => {
+      // cam = bit 0; cam=[0,0,3.7] → sub-mask 0x04 + z f32 = 5 byte
+      // payload. 1 ver + 1 mask + 5 payload = 7 bytes total.
+      const blob = encodeBlob({ cam: [0, 0, 3.7] });
+      expect(blobBytes(blob)).toBe(7);
+    });
+
+    it('mid-bit mask (flags, bit 13) needs 2 bytes', () => {
+      // bit 13 = 0x002000; LEB128 groups bits 0-6 (=0) and 7-13 (=64)
+      // → 2 bytes (0x80, 0x40). 1 ver + 2 mask + 1 flags = 4 bytes.
+      const blob = encodeBlob({ showGalacticGrid: true });
+      expect(blobBytes(blob)).toBe(4);
+    });
+
+    it('high-bit mask (worldOffset, bit 20) needs 3 bytes', () => {
+      // bit 20 = 0x100000; LEB128 groups (0, 0, 64) → 3 bytes. Same
+      // as v2's fixed u24 — no regression for far-from-Sol anchors.
+      // worldOffset payload = 1 sub-mask + 12 components = 13 bytes.
+      const blob = encodeBlob({ worldOffset: [1, 2, 3] });
+      expect(blobBytes(blob)).toBe(1 + 3 + 13);
+    });
+
+    it('round-trips a mask with both low and high bits', () => {
+      // cam (bit 0) + worldOffset (bit 20) — varint must encode
+      // both groups correctly and the decoder must recover the mask
+      // before stepping through fields.
+      const view = { cam: [1, 2, 3] as [number, number, number], worldOffset: [10, 20, 30] as [number, number, number] };
+      const { view: out } = roundtrip(view);
+      expect(out.cam).toEqual([1, 2, 3]);
+      expect(out.worldOffset).toEqual([10, 20, 30]);
+    });
+
+    it('rejects a v3 blob whose varint mask runs past the buffer end', () => {
+      // Version=3, then a continuation byte (0x80) with no follow-up
+      // — readVarint should throw rather than read past the buffer.
+      const blob = btoa('\x03\x80').replace(/=+$/, '');
+      expect(() => decodeBlob(blob)).toThrow(/Varint runs past blob end/);
     });
   });
 });
