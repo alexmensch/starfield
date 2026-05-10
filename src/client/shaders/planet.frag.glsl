@@ -61,13 +61,23 @@ void main() {
 
   if (uRenderMode == 3) {
     // Outer-disc depth-occluder (stellata-3re.19). Writes the planet's
-    // actual depth across its full visible disc — no halo→far push, no
-    // core threshold gate. Renders before orbit rings so the rings get
-    // occluded by the full disc, not just the bright core. Sits AFTER
-    // background layers (MW, clouds, stars) in render order so the
-    // halo-soft-MW effect — provided by the disc pass's MaxEquation
-    // blending over already-drawn background — is preserved.
-    if (vPhysRatio < PHYS_RATIO_THRESHOLD) discard;
+    // actual depth across the entire perceptually-visible quad — no
+    // halo→far push, no core threshold gate, no disc-vs-glow regime
+    // gate. The "visible disc" the user perceives at typical Mercury-
+    // class viewing distances IS the perceptual halo (vPhysRatio ≈ 0.02
+    // for Mercury at 1 AU camera distance), so gating this on
+    // vPhysRatio ≥ 0.5 would never fire and the orbit-ring occlusion
+    // wouldn't land — the original 3re.19 implementation had that gate
+    // and the additive glow at renderOrder 4 then drew over the still-
+    // painted ring without hiding it. Only `glow < uDiscardThreshold`
+    // (imperceptible outer fringe) and `vAppMag > uMaxAppMag` (planet
+    // below cutoff) are valid skip-the-write conditions.
+    //
+    // Background layers (MW, clouds, stars at renderOrder ≤ 1) still
+    // peek through the halo because they paint colour into the
+    // framebuffer BEFORE this pass overwrites depth — only LATER
+    // layers (renderOrder > 1.5: orbit rings, dust particles) are
+    // newly occluded.
     if (vAppMag > uMaxAppMag) discard;
     if (glow < uDiscardThreshold) discard;
     outColor = vec4(0.0);
