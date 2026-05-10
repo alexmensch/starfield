@@ -70,25 +70,83 @@ export function peakAmplitudeFactor(amplitudeMag: number, periodDays: number): n
   return periodDays > 0 && amplitudeMag > 0 ? Math.pow(10, amplitudeMag / 10) : 1;
 }
 
+// Sub-pixel magnitude bias in `pickScore`. A 1-mag-fainter candidate is
+// treated as `PICK_MAG_BIAS_PX_PER_MAG` pixels farther from the cursor;
+// a 4-mag-fainter candidate is 0.2 px farther. Sized so any visible
+// `pxDist` gap (≥ 1 px) dominates while two coincident catalog rows
+// (Alula Australis A/B at the same x/y/z) still tiebreak by brightness.
+export const PICK_MAG_BIAS_PX_PER_MAG = 0.05;
+
 // Score for a star pick candidate. Lower is better. Used by pickStar
 // for both the prime tier (cursor inside a rendered disc) and the
 // proximity-fallback tier (no disc hit, nearest centre within a
 // pixel threshold). The score is dominated by `pxDist` — the cursor's
 // screen-pixel distance from the disc centre — so the star whose
 // centre the cursor is closest to wins. The sub-pixel `appMag` bias
-// (0.05 px per magnitude) only matters for near-coincident candidates:
-// it picks the brighter component when two catalog rows share the same
-// x/y/z (e.g. Alula Australis A/B in AT-HYG, both at HIP-less Gl 423A/B
-// with identical galactocentric coordinates).
+// (`PICK_MAG_BIAS_PX_PER_MAG`) only matters for near-coincident
+// candidates: it picks the brighter component when two catalog rows
+// share the same x/y/z (e.g. Alula Australis A/B in AT-HYG, both at
+// HIP-less Gl 423A/B with identical galactocentric coordinates).
 //
-// The prime tier deliberately does NOT tiebreak by camera distance:
-// the Double Double (ε¹ / ε² Lyr) sits ~3.5 arcmin apart with hitboxes
-// that overlap each other's centres at typical zoom. A "closest to
-// camera" rule consistently picked one component for every click,
-// leaving the other un-clickable. Picking by screen-pixel proximity
-// instead lets the cursor's visible target always win.
-export function pickScore(pxDist_px: number, appMag: number): number {
-  return pxDist_px + appMag * 0.05;
+// The prime tier deliberately does NOT tiebreak by camera distance —
+// depth-occlusion is intentionally ignored in the picker. The Double
+// Double (ε¹ / ε² Lyr) sits ~3.5 arcmin apart with hitboxes that
+// overlap each other's centres at typical zoom; a "closest to camera"
+// rule consistently picked one component for every click, leaving the
+// other un-clickable. The trade-off: a faint background star whose
+// projected centre lands ≥ 1 px closer to the cursor than a bright
+// foreground star wins, even if the foreground disc fully contains
+// the cursor. The au3 / xec failure mode (overlapping disc hitboxes
+// leaving one component unclickable) was deemed worse than the rare
+// inverse case where the visually obvious foreground disc loses by a
+// pixel.
+export function pickScore(pxDist: number, appMag: number): number {
+  return pxDist + appMag * PICK_MAG_BIAS_PX_PER_MAG;
+}
+
+// One projected pick candidate, after the prime/fallback filter has
+// already accepted it. `hitRadius` is the prime-tier disc radius
+// (`max(pxSize/2, MIN_DISC_HIT_RADIUS_PX)`) — caller-computed because
+// it depends on rendered disc size. Pure-data shape so the reducer
+// below stays unit-testable without a Three.js scene.
+export type PickCandidate = {
+  idx: number;
+  pxDist: number;
+  hitRadius: number;
+  appMag: number;
+};
+
+// Reduce a candidate list to the winning idx (or -1) under the two-tier
+// pickStar contract:
+//   prime  — `pxDist <= hitRadius` (cursor inside the rendered disc)
+//   fallback — `pxDist <= pixelThreshold` (cursor near the centre, no
+//              disc hit). Only consulted when no prime hit exists.
+// Within each tier, lowest `pickScore` wins. Prime hits ALWAYS beat
+// fallback hits — a prime candidate just inside its hit radius beats
+// a fallback candidate one pixel from the cursor, regardless of score.
+export function pickFromCandidates(
+  candidates: Iterable<PickCandidate>,
+  pixelThreshold: number,
+): number {
+  let primeIdx = -1;
+  let primeBest = Infinity;
+  let fbIdx = -1;
+  let fbBest = Infinity;
+  for (const c of candidates) {
+    const score = pickScore(c.pxDist, c.appMag);
+    if (c.pxDist <= c.hitRadius) {
+      if (score < primeBest) {
+        primeBest = score;
+        primeIdx = c.idx;
+      }
+    } else if (c.pxDist <= pixelThreshold) {
+      if (score < fbBest) {
+        fbBest = score;
+        fbIdx = c.idx;
+      }
+    }
+  }
+  return primeIdx !== -1 ? primeIdx : fbIdx;
 }
 
 // Solve for camera distance `d` such that a star of radius `R_pc`

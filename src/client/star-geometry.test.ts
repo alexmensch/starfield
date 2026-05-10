@@ -3,6 +3,8 @@ import {
   angularToPx,
   physSizePx,
   pickScore,
+  pickFromCandidates,
+  type PickCandidate,
   varEffectiveAmplitude,
   distAtFillFraction,
   peakAmplitudeFactor,
@@ -192,5 +194,83 @@ describe('star-geometry / pickScore', () => {
     const closeFaint = pickScore(0, 6);
     const farBright = pickScore(1, 5);
     expect(closeFaint).toBeLessThan(farBright);
+  });
+});
+
+describe('star-geometry / pickFromCandidates', () => {
+  // Synthetic candidate factory — keeps the per-test arrays readable.
+  const c = (
+    idx: number,
+    pxDist: number,
+    hitRadius: number,
+    appMag: number,
+  ): PickCandidate => ({ idx, pxDist, hitRadius, appMag });
+
+  it('returns -1 when no candidates exist', () => {
+    expect(pickFromCandidates([], 16)).toBe(-1);
+  });
+
+  it('prime-only: lowest pickScore wins among hits inside hitRadius', () => {
+    // Two prime hits — both inside hitRadius. The one with the lower
+    // pickScore (closer to centre, brighter on tie) wins.
+    const cands = [
+      c(10, 3, 5, 4.0), // score = 3 + 0.20 = 3.20
+      c(11, 1, 5, 4.5), // score = 1 + 0.225 = 1.225 ← winner
+      c(12, 4, 5, 3.0), // score = 4 + 0.15 = 4.15
+    ];
+    expect(pickFromCandidates(cands, 16)).toBe(11);
+  });
+
+  it('fallback-only: nearest-to-cursor wins when no prime hits exist', () => {
+    // No candidate's pxDist is inside hitRadius; all fall through to
+    // the proximity tier, where lowest pickScore wins.
+    const cands = [
+      c(20, 8, 2, 5.0), // pxDist > hitRadius → fallback; score = 8.25
+      c(21, 6, 2, 5.5), // fallback; score = 6.275 ← winner
+      c(22, 14, 2, 4.0), // fallback; score = 14.20
+    ];
+    expect(pickFromCandidates(cands, 16)).toBe(21);
+  });
+
+  it('mixed prime + fallback: any prime hit beats the best fallback', () => {
+    // A prime candidate with a worse score (4.5 + ε) than the best
+    // fallback (1 + ε) still wins, because prime hits always beat
+    // fallback hits.
+    const cands = [
+      c(30, 4.5, 5, 4.0), // prime; score ≈ 4.7
+      c(31, 1.0, 0.5, 3.0), // fallback (pxDist > hitRadius); score ≈ 1.15
+    ];
+    expect(pickFromCandidates(cands, 16)).toBe(30);
+  });
+
+  it('prime tier with tied score (Alula Australis): brighter component wins', () => {
+    // Two coincident catalog rows — same pxDist, same hitRadius. Only
+    // the magnitude differs. Brighter (lower appMag) must win.
+    const cands = [
+      c(40, 0, 5, 4.33), // Alula A
+      c(41, 0, 5, 4.80), // Alula B
+    ];
+    expect(pickFromCandidates(cands, 16)).toBe(40);
+  });
+
+  it('prime hit inside hitRadius beats fallback hit just under pixelThreshold', () => {
+    // Edge case — prime candidate scrapes the inside of its hitRadius;
+    // fallback candidate scrapes the inside of pixelThreshold and is
+    // far brighter. Prime priority means the prime wins regardless.
+    const cands = [
+      c(50, 4.99, 5, 6.0), // prime (just inside); score ≈ 5.29
+      c(51, 15.99, 0.5, 0.0), // fallback (just inside); score ≈ 15.99
+    ];
+    expect(pickFromCandidates(cands, 16)).toBe(50);
+  });
+
+  it('candidates outside both tiers (pxDist > pixelThreshold and > hitRadius) are ignored', () => {
+    // Reducer must skip candidates that don't qualify for either tier
+    // even if pickScore would otherwise rank them.
+    const cands = [
+      c(60, 100, 5, 0.0), // way out; ignored
+      c(61, 50, 5, 1.0), // also out
+    ];
+    expect(pickFromCandidates(cands, 16)).toBe(-1);
   });
 });
