@@ -521,6 +521,7 @@ export class Stellata {
   private onVectorCloudHandlers: Array<(toCloudIdx: number | null) => void> = [];
   private onStateHandlers: Array<() => void> = [];
   private onWarpHandlers: Array<(active: boolean) => void> = [];
+  private onFocusLerpHandlers: Array<(active: boolean) => void> = [];
   private onCameraModeHandlers: Array<(mode: CameraMode) => void> = [];
 
   private cameraMode: CameraMode = 'navigate';
@@ -1045,6 +1046,12 @@ export class Stellata {
   onVectorCloudChange(h: (toCloudIdx: number | null) => void) { this.onVectorCloudHandlers.push(h); }
   onStateChange(h: () => void) { this.onStateHandlers.push(h); }
   onWarpChange(h: (active: boolean) => void) { this.onWarpHandlers.push(h); }
+  /** Fires on focus-park lerp start (true) and end (false). Overlays that
+   *  shouldn't flail against the moving camera (HUD arrows, focus ring,
+   *  distance vector, etc.) listen and hide themselves — same precedent
+   *  as `onWarpChange` and the `body.warping` CSS hide rule. */
+  onFocusLerpChange(h: (active: boolean) => void) { this.onFocusLerpHandlers.push(h); }
+  getFocusLerpActive(): boolean { return this.focusLerpState !== null; }
 
   getFocusedStar(): number | null { return this.focusedStar; }
   getFocusedCloud(): number | null { return this.focusedCloud; }
@@ -1179,7 +1186,26 @@ export class Stellata {
   // toggling controls during a click-driven animation races with
   // TrackballControls' pointerup handler.
   private cancelFocusLerp() {
-    this.focusLerpState = null;
+    this.endFocusLerp();
+  }
+
+  // Set/clear the focus-lerp slot through these helpers so overlays
+  // subscribed to onFocusLerpChange see exactly one true → false edge
+  // per lerp. Calling startFocusLerp twice in a row emits a single
+  // 'true' (state changed shape but stays active); endFocusLerp() is a
+  // no-op when no lerp is running.
+  private startFocusLerp(state: FocusLerpState) {
+    const wasInactive = this.focusLerpState === null;
+    this.focusLerpState = state;
+    if (wasInactive) {
+      for (const h of this.onFocusLerpHandlers) h(true);
+    }
+  }
+  private endFocusLerp() {
+    if (this.focusLerpState !== null) {
+      this.focusLerpState = null;
+      for (const h of this.onFocusLerpHandlers) h(false);
+    }
   }
   /** Threshold squared-length below which `controls.target` engages the
    *  focused-star pin. Surfaced for the pin debug HUD so the displayed
@@ -1701,7 +1727,7 @@ export class Stellata {
     const eyeDist = this.camera.position.distanceTo(target);
 
     if (animate && eyeDist > parkDist) {
-      this.focusLerpState = newFocusLerpFrom(
+      this.startFocusLerp(newFocusLerpFrom(
         this.camera.position,
         startQuat,
         startUp,
@@ -1709,7 +1735,7 @@ export class Stellata {
         parkDist,
         FOCUS_LERP_MS,
         performance.now(),
-      );
+      ));
       // controls.enabled stays true — see focusStar's comment.
     } else if (eyeDist > parkDist) {
       const dir = new THREE.Vector3()
@@ -2243,7 +2269,7 @@ export class Stellata {
     const eyeDist = this.camera.position.length();
 
     if (animate && eyeDist > parkDist) {
-      this.focusLerpState = newFocusLerpFrom(
+      this.startFocusLerp(newFocusLerpFrom(
         this.camera.position,
         startQuat,
         startUp,
@@ -2251,7 +2277,7 @@ export class Stellata {
         parkDist,
         FOCUS_LERP_MS,
         performance.now(),
-      );
+      ));
       // Deliberately do NOT toggle controls.enabled. The animate-loop
       // dispatcher routes through updateFocusLerp before
       // controls.update(), so user input accumulates inside
@@ -2836,7 +2862,7 @@ export class Stellata {
     if (!state) return;
     const stillActive = tickFocusLerp(state, performance.now(), this.camera);
     if (!stillActive) {
-      this.focusLerpState = null;
+      this.endFocusLerp();
       this.controls.update();
     }
   }

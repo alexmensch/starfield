@@ -118,6 +118,13 @@ to NDC origin while the camera is mid-rotation, making the star
 appear pasted at screen centre instead of following the rotation
 naturally.
 
+`#overlay` (HUD arrows + ring, focus ring, distance vector,
+constellation lines, POI labels, etc.) is hidden for the lerp's
+duration via a `body.focus-lerping` class — same mechanism the warp
+uses (`body.warping`), CSS rule shares the selector. Stellata fires
+`onFocusLerpChange(active)` on start / end edges; `main.ts` toggles
+the body class.
+
 `CAMERA_LERP_MS = 2000` is the canonical 2 s constant — `WARP_REORIENT_MS`,
 `AIM_T_MAX_MS`, and `FOCUS_LERP_MS` all alias it so the three
 camera-move animations read as the same family. `WARP_T_K_MS = 2000`

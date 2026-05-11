@@ -1238,7 +1238,8 @@ body.monochrome #con-results {
   color: var(--accent);
   border-color: var(--accent);
 }
-body.warping #overlay { display: none; }
+body.warping #overlay,
+body.focus-lerping #overlay { display: none; }
 body.monochrome .warp-btn {
   color: var(--fg);
   background: rgba(245, 242, 234, 0.9);
