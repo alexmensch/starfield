@@ -1,8 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { FIRST_LOAD_VIEW } from './first-load';
 import { encodeBlob, decodeBlob } from './url-state';
-
-const AU_PC = 1 / 206264.80624709636;
+import { AU_PC } from './ephemeris';
 
 describe('first-load', () => {
   describe('FIRST_LOAD_VIEW', () => {
