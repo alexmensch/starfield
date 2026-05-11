@@ -319,4 +319,4 @@ export function _resetCacheForTests(): void {
 }
 
 export type { ElementSet };
-export { ELEMENTS, J2000_JD, AU_PC, CACHE_GRANULARITY_SEC };
+export { ELEMENTS, J2000_JD, CACHE_GRANULARITY_SEC };

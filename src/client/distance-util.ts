@@ -1,7 +1,8 @@
+import { AU_PER_PC } from './astronomy-constants';
+
 export type DistanceUnit = 'pc' | 'ly';
 
 export const LY_PER_PC = 3.2615638;
-export const AU_PER_PC = 206264.806;
 // Below this distance, the pc/ly readout becomes uncomfortably small
 // ("0.005 pc") and AU is the more graspable unit — Voyager-class /
 // outer-Oort scale. The switch is one-way: pc-or-ly above, AU below.

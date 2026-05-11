@@ -9,9 +9,7 @@ import {
   distAtFillFraction,
   peakAmplitudeFactor,
 } from './star-geometry';
-
-// Sol's physical radius in parsecs (1 R_sun ≈ 2.2543e-8 pc).
-const R_SUN_PC = 2.2543e-8;
+import { R_SUN_PC } from './astronomy-constants';
 
 // Canonical viewport / FOV used across the tests below. 1080 vertical
 // pixels at 50° vertical FOV ≈ 1238 px / radian — close to the live

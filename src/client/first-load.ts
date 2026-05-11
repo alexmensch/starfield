@@ -16,7 +16,7 @@
 // stays empty until first interaction.
 
 import { applyDecodedView, type DecodedView, type IdMaps } from './url-state';
-import { AU_PC } from './ephemeris';
+import { AU_PC } from './astronomy-constants';
 import type { Stellata } from './stellata';
 
 // Sol→galactic-centre camera position from the hand-tuned share URL,

@@ -60,9 +60,8 @@ import * as THREE from 'three';
 import type { PlanetSystem } from './planet-system';
 import { peakPhaseFactor } from './phase-function';
 import { applyDiscBlendDefaults } from './stellata';
+import { AU_PC, KM_PC } from './astronomy-constants';
 import {
-  AU_PC,
-  KM_PC,
   orbitalPlaneNormalFor,
   placeholderEccentricAnomaly,
   planetLocalPosition,
