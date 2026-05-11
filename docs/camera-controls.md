@@ -88,14 +88,35 @@ Branch in `focusStar` / `flyToCloud`:
 
 - **`eyeDist <= parkDist` → stay put.** Camera doesn't move; only
   `controls.target`, `controls.minDistance`, and focus state update.
-- **`eyeDist > parkDist` → lerp.** Camera glides from its current
-  pose to `target + (eye-direction × parkDist)` over `FOCUS_LERP_MS`,
-  with smoothstep easing. `controls.enabled` is disabled for the
-  duration; the animate-loop dispatcher routes through
-  `updateFocusLerp` instead of `controls.update`.
+- **`eyeDist > parkDist` → lerp.** Camera position lerps from
+  `fromPos` to `toPos = target + (eye-direction × parkDist)` and
+  camera orientation slerps in parallel from `fromQuat` to a quaternion
+  that looks at the target from `toPos`. Both interpolations are
+  driven by the same smoothstep, so the camera continuously rotates
+  toward the new target as it flies in — "start view → pointing at
+  new star from same location → flying right up to it, still facing it"
+  as one continuous animation, not phased like the warp. Builds the
+  lerp **after** `setFocus` recentres the floating origin so
+  `fromPos` / `toPos` live in the post-recentre frame.
 - **`opts.animate === false`** (URL restore) bypasses the lerp and
   snaps to the park pose. Matches the existing `unfocus({animate:false})`
   contract for URL-driven state restoration.
+
+`controls.enabled` is **not** toggled during the lerp — the `animate()`
+dispatcher routes through `updateFocusLerp` before `controls.update()`,
+so user drag accumulates inside `TrackballControls` without visible
+effect until the lerp lands. Disabling explicitly would race
+`TrackballControls`' pointerup handler (Stellata's pointerup → focus
+click runs *before* TC's dynamically-added pointerup), leaving TC's
+`_state` stuck at `ROTATE` and the cursor "captured" until the next
+click. Same precedent as the unfocus lerp (`docs/camera-observe.md`).
+
+The focus-star pin (`uPinFocusToCenter`) is suppressed while the lerp
+is in flight — `controls.target` is already `(0,0,0)` in the
+post-recentre frame, so the pin would otherwise snap the focal star
+to NDC origin while the camera is mid-rotation, making the star
+appear pasted at screen centre instead of following the rotation
+naturally.
 
 `CAMERA_LERP_MS = 2000` is the canonical 2 s constant — `WARP_REORIENT_MS`,
 `AIM_T_MAX_MS`, and `FOCUS_LERP_MS` all alias it so the three

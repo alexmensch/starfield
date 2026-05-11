@@ -1173,14 +1173,13 @@ export class Stellata {
     }
   }
 
-  // Cancel an in-flight focus-park lerp (r9q.2). Re-enables orbit
-  // controls so they aren't left disabled when a follow-up camera
-  // action (warp, aim, second focus) takes over.
+  // Cancel an in-flight focus-park lerp (r9q.2). controls.enabled is
+  // not touched here because focusStar / flyToCloud don't disable it
+  // when starting the lerp — see the unfocus-lerp precedent for why
+  // toggling controls during a click-driven animation races with
+  // TrackballControls' pointerup handler.
   private cancelFocusLerp() {
-    if (this.focusLerpState) {
-      this.focusLerpState = null;
-      this.controls.enabled = true;
-    }
+    this.focusLerpState = null;
   }
   /** Threshold squared-length below which `controls.target` engages the
    *  focused-star pin. Surfaced for the pin debug HUD so the displayed
@@ -1195,7 +1194,7 @@ export class Stellata {
     return (
       this.focusedStar !== null &&
       this.cameraMode === 'navigate' &&
-      !this.warpState && !this.aimState &&
+      !this.warpState && !this.aimState && !this.focusLerpState &&
       this.controls.target.lengthSq() < PIN_ENGAGE_THRESHOLD_SQ_PC
     );
   }
@@ -1672,8 +1671,11 @@ export class Stellata {
 
   /** Cloud-side analogue of focusStar — used by search-select and
    *  click-vector-tip. Routes through the same focus-park primitives
-   *  (r9q.3) so the lerp-or-noop UX matches stars. animate: false (URL
-   *  restore) snaps without a transition. */
+   *  (r9q.3) so the lerp-or-noop UX matches stars. `animate: false`
+   *  (URL restore) snaps without a transition. setFocus(null) below
+   *  leaves worldOffset alone (a7d.2.11), so no frame-shift handling
+   *  is needed here — target is `cloud.centerAbs - worldOffset` in the
+   *  current local frame both before and after the focus clear. */
   flyToCloud(idx: number, opts: { animate?: boolean } = {}) {
     if (!this.clouds) return;
     const cloud = this.clouds.clouds[idx];
@@ -1682,42 +1684,42 @@ export class Stellata {
     this.cancelUnfocusLerp();
     this.cancelFocusLerp();
 
-    // Drop any star focus first. Since a7d.2.11, setFocus(null) leaves
-    // worldOffset at the former focal star (so the projection chain
-    // stays float32-clean across unfocus); we therefore can't assume
-    // the local frame is Sol-relative here. Subtract worldOffset
-    // explicitly when placing camera/target so the cloud's absolute
-    // centroid translates correctly into the current local frame.
     if (this.focusedStar !== null) this.setFocus(null);
     this.setVectorTo(null);
     this.setVectorToCloud(null);
 
     const animate = opts.animate ?? true;
-    const target = this.tmpVec3b.copy(cloud.centerAbs).sub(this.worldOffset);
+    const startQuat = this.camera.quaternion.clone();
+    const startUp = this.camera.up.clone();
+
+    const target = new THREE.Vector3().copy(cloud.centerAbs).sub(this.worldOffset);
+    this.controls.target.copy(target);
     const parkDist = parkDistance({
       R_pc: Math.max(cloud.axes[0], cloud.axes[1], cloud.axes[2]),
       dMinFloor: cloudViewingDistancePc(cloud),
     });
     const eyeDist = this.camera.position.distanceTo(target);
-    this.controls.target.copy(target);
+
     if (animate && eyeDist > parkDist) {
       this.focusLerpState = newFocusLerpFrom(
         this.camera.position,
+        startQuat,
+        startUp,
         target,
         parkDist,
         FOCUS_LERP_MS,
         performance.now(),
       );
-      this.controls.enabled = false;
+      // controls.enabled stays true — see focusStar's comment.
+    } else if (eyeDist > parkDist) {
+      const dir = new THREE.Vector3()
+        .subVectors(this.camera.position, target)
+        .normalize();
+      if (dir.lengthSq() === 0) dir.set(0, 0, 1);
+      this.camera.position.copy(target).addScaledVector(dir, parkDist);
+      this.camera.lookAt(target);
+      this.controls.update();
     } else {
-      if (eyeDist > parkDist) {
-        const dir = new THREE.Vector3()
-          .subVectors(this.camera.position, target)
-          .normalize()
-          .multiplyScalar(parkDist);
-        if (dir.lengthSq() === 0) dir.set(0, 0, parkDist);
-        this.camera.position.copy(target).add(dir);
-      }
       this.controls.update();
     }
     this.setFocusedCloud(idx);
@@ -2199,60 +2201,78 @@ export class Stellata {
 
   /**
    * Focus a star. With `animate: true` (default), the camera glides to
-   * `parkDistForStar(idx)` over FOCUS_LERP_MS when the camera is currently
-   * outside that park distance; otherwise the camera stays put and only
-   * the focus state / orbit floor are updated. With `animate: false`, the
-   * camera snaps to the park pose directly (URL-restore path).
+   * `parkDistForStar(idx)` over `FOCUS_LERP_MS` when the camera is
+   * currently outside that park distance; otherwise the camera stays put
+   * and only the focus state / orbit floor are updated. With
+   * `animate: false`, the camera snaps to the park pose directly
+   * (URL-restore path).
+   *
+   * Flow: `setFocus` translates the camera into the new floating-origin
+   * frame (new star at local (0,0,0)). We capture starting orientation
+   * BEFORE `setFocus`, then build the lerp AFTER — the lerp's
+   * fromPos/toPos must live in the post-recentre frame, otherwise the
+   * camera teleports backward and lands at `|targetOld|` past the star.
    */
   focusStar(starIndex: number, opts: { animate?: boolean } = {}) {
     if (this.warpState) return;
-    // Interrupt any in-flight unfocus zoom-out (a7d.2.6) or prior
-    // focus-park lerp cleanly so the next tick doesn't drag the camera
-    // away from the new park position. Observe enter/exit transitions
-    // still gate via the regular call sites (e.g. setCameraMode);
-    // focusStar is reached through them.
     this.cancelUnfocusLerp();
     this.cancelFocusLerp();
     const animate = opts.animate ?? true;
-    const target = this.starLocalPosition(starIndex);
+
+    // Orientation is frame-shift-invariant; capture once. After setFocus
+    // we still want `fromQuat` to be the user's pre-click camera view.
+    const startQuat = this.camera.quaternion.clone();
+    const startUp = this.camera.up.clone();
+
     const parkDist = this.parkDistForStar(starIndex);
     const minOrbit = this.minOrbitDistForStar(starIndex);
-    const eyeDist = this.camera.position.distanceTo(target);
-    // Set the new star's orbit floor BEFORE controls.update(). Without this,
-    // TrackballControls clamps the eye vector to the OLD focal star's
-    // minOrbit (or GLOBAL_MIN_DIST_PC when previously unfocused), which can
-    // be larger than the new park distance — pushing the camera outward and
-    // leaving the user farther from the star than the 10% disc-fill target.
+
+    // setFocus's contract: caller seeds controls.target with the new
+    // star's local position in the CURRENT (pre-recentre) frame; setFocus
+    // then recentres worldOffset to the new star and translates camera +
+    // target by -target so both land in the new frame with target at
+    // (0,0,0). Match that contract.
+    this.controls.target.copy(this.starLocalPosition(starIndex));
     this.controls.minDistance = minOrbit;
-    this.controls.target.copy(target);
+    this.setVectorTo(null);
+    this.setFocus(starIndex);
+    // From here on: the new star sits at local (0,0,0); camera.position
+    // is already translated into the new frame.
+
+    const target = this.controls.target; // (0,0,0) post-recentre
+    const eyeDist = this.camera.position.length();
+
     if (animate && eyeDist > parkDist) {
-      // Glide camera position; controls stay disabled until the lerp lands
-      // so TrackballControls doesn't fight the per-frame writes.
       this.focusLerpState = newFocusLerpFrom(
         this.camera.position,
+        startQuat,
+        startUp,
         target,
         parkDist,
         FOCUS_LERP_MS,
         performance.now(),
       );
-      this.controls.enabled = false;
+      // Deliberately do NOT toggle controls.enabled. The animate-loop
+      // dispatcher routes through updateFocusLerp before
+      // controls.update(), so user input accumulates inside
+      // TrackballControls but doesn't apply visually. Disabling here
+      // would race the click-to-focus event chain — Stellata's pointerup
+      // runs before TC's dynamically-added pointerup, and TC's _state
+      // would stay stuck at ROTATE until the next click clears it (cursor
+      // appears captured). Same precedent as the unfocus lerp.
+    } else if (eyeDist > parkDist) {
+      // animate: false snap path — outside park: place at park along
+      // current eye direction with an explicit lookAt so orientation
+      // matches what TC would resolve.
+      const dir = this.camera.position.clone().normalize();
+      if (dir.lengthSq() === 0) dir.set(0, 0, 1);
+      this.camera.position.copy(target).addScaledVector(dir, parkDist);
+      this.camera.lookAt(target);
+      this.controls.update();
     } else {
-      // Snap path: camera already inside park, or caller asked for an
-      // un-animated landing (URL restore).
-      const offset = new THREE.Vector3()
-        .subVectors(this.camera.position, target)
-        .normalize()
-        .multiplyScalar(parkDist);
-      if (offset.lengthSq() === 0) offset.set(0, 0, parkDist);
-      // Only move the camera when it actually sits outside the park —
-      // staying-put inside park is part of the new contract.
-      if (eyeDist > parkDist) {
-        this.camera.position.copy(target).add(offset);
-      }
+      // Inside park: stay-put. Nothing to move.
       this.controls.update();
     }
-    this.setVectorTo(null);
-    this.setFocus(starIndex);
   }
 
   setOrbitTarget(starIndex: number) {
@@ -2806,15 +2826,17 @@ export class Stellata {
     }
   }
 
-  // Tick the focus-park lerp (r9q.2). Re-enables TrackballControls once
-  // the camera has landed at the park position.
+  // Tick the focus-park lerp (r9q.2). controls.enabled is left true
+  // throughout the lerp; the animate() dispatcher routes here instead
+  // of controls.update(), so user drag accumulates in TC without
+  // visible effect until the lerp lands. On landing we re-issue
+  // controls.update() so TC re-syncs against the final camera pose.
   private updateFocusLerp() {
     const state = this.focusLerpState;
     if (!state) return;
     const stillActive = tickFocusLerp(state, performance.now(), this.camera);
     if (!stillActive) {
       this.focusLerpState = null;
-      this.controls.enabled = true;
       this.controls.update();
     }
   }

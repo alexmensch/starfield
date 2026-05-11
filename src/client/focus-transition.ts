@@ -34,21 +34,31 @@ export function parkDistance(opts: ParkDistanceInputs): number {
 export interface FocusLerpState {
   startTimeMs: number;
   durationMs: number;
-  /** Camera position snapshot at lerp start (local frame). */
+  /** Camera position at lerp start, in the post-`setFocus` local frame. */
   fromPos: THREE.Vector3;
-  /** Park position the camera lerps to. */
+  /** Park position the camera lerps to, in the same local frame. */
   toPos: THREE.Vector3;
+  /** Camera orientation at lerp start. */
+  fromQuat: THREE.Quaternion;
+  /** Camera orientation at lerp end — at `toPos`, looking at the target. */
+  toQuat: THREE.Quaternion;
 }
 
 /**
  * Build a focus lerp from the current camera pose. The destination is the
  * point at `parkDist` from `target`, along the current eye-to-target line —
  * so the camera glides in along its existing viewing direction rather than
- * jumping sideways. Degenerate case (camera coincident with target) falls
- * back to +Z so the lerp still produces a sensible destination.
+ * jumping sideways. Orientation slerps in parallel: starting from
+ * `cameraQuat`, ending at "looking at `target` from `toPos` with `cameraUp`
+ * as up." Both interpolations are driven by the same smoothstep so the
+ * camera continuously reorients toward the new target as it flies. The
+ * caller must build this **after** any floating-origin recentre — every
+ * vector here is in the post-recentre local frame.
  */
 export function newFocusLerpFrom(
   cameraPos: THREE.Vector3,
+  cameraQuat: THREE.Quaternion,
+  cameraUp: THREE.Vector3,
   target: THREE.Vector3,
   parkDist: number,
   durationMs: number,
@@ -58,11 +68,23 @@ export function newFocusLerpFrom(
   if (offset.lengthSq() === 0) offset.set(0, 0, 1);
   offset.normalize().multiplyScalar(parkDist);
   const toPos = new THREE.Vector3().addVectors(target, offset);
+
+  // End orientation: place a scratch PerspectiveCamera at toPos with the
+  // camera's up, look at target. Its quaternion is the camera orientation
+  // we want at lerp end. (Object3D.lookAt swaps axes for non-cameras —
+  // we need the camera-flavoured variant that orients -Z at the target.)
+  const endPose = new THREE.PerspectiveCamera();
+  endPose.position.copy(toPos);
+  endPose.up.copy(cameraUp);
+  endPose.lookAt(target);
+
   return {
     startTimeMs,
     durationMs,
     fromPos: cameraPos.clone(),
     toPos,
+    fromQuat: cameraQuat.clone(),
+    toQuat: endPose.quaternion.clone(),
   };
 }
 
@@ -73,9 +95,9 @@ function easeSmoothstep(t: number): number {
 }
 
 /**
- * Advance the lerp. Writes the eased position into `camera.position`.
- * Returns true while the lerp is still in flight, false once it has
- * landed at `toPos`.
+ * Advance the lerp. Writes the eased position into `camera.position` and
+ * the slerped orientation into `camera.quaternion`. Returns true while
+ * the lerp is still in flight, false once it has landed at `toPos`.
  */
 export function tickFocusLerp(
   state: FocusLerpState,
@@ -85,5 +107,6 @@ export function tickFocusLerp(
   const t = Math.min(1, (nowMs - state.startTimeMs) / state.durationMs);
   const f = easeSmoothstep(t);
   camera.position.lerpVectors(state.fromPos, state.toPos, f);
+  camera.quaternion.copy(state.fromQuat).slerp(state.toQuat, f);
   return t < 1;
 }

@@ -70,37 +70,64 @@ describe('parkDistance', () => {
 });
 
 describe('newFocusLerpFrom', () => {
+  const Y_UP = new THREE.Vector3(0, 1, 0);
+  const IDENTITY = new THREE.Quaternion();
+
   it('parks the lerp endpoint at parkDist along the current eye direction', () => {
     const cam = new THREE.Vector3(0, 0, 5 * AU_PC);
     const target = new THREE.Vector3(0, 0, 0);
     const parkDist = AU_PC;
-    const state = newFocusLerpFrom(cam, target, parkDist, 2000, 0);
+    const state = newFocusLerpFrom(cam, IDENTITY, Y_UP, target, parkDist, 2000, 0);
     expect(state.toPos.distanceTo(target)).toBeCloseTo(parkDist, 14);
-    // Same direction as starting eye vector — Z+ in this setup.
     expect(state.toPos.z).toBeCloseTo(parkDist, 14);
     expect(state.toPos.x).toBeCloseTo(0, 14);
     expect(state.toPos.y).toBeCloseTo(0, 14);
   });
 
-  it('clones the start position so later camera moves do not mutate fromPos', () => {
+  it('clones inputs so later camera moves do not mutate state', () => {
     const cam = new THREE.Vector3(0, 0, 5 * AU_PC);
-    const state = newFocusLerpFrom(cam, new THREE.Vector3(), AU_PC, 2000, 0);
+    const quat = new THREE.Quaternion();
+    const up = new THREE.Vector3(0, 1, 0);
+    const state = newFocusLerpFrom(cam, quat, up, new THREE.Vector3(), AU_PC, 2000, 0);
     cam.set(99, 99, 99);
+    quat.set(0.5, 0.5, 0.5, 0.5);
+    up.set(99, 99, 99);
     expect(state.fromPos.equals(new THREE.Vector3(0, 0, 5 * AU_PC))).toBe(true);
+    expect(state.fromQuat.x).toBe(0);
   });
 
   it('falls back to +Z when camera is coincident with target', () => {
     const cam = new THREE.Vector3(0, 0, 0);
     const target = new THREE.Vector3(0, 0, 0);
-    const state = newFocusLerpFrom(cam, target, AU_PC, 2000, 0);
+    const state = newFocusLerpFrom(cam, IDENTITY, Y_UP, target, AU_PC, 2000, 0);
     expect(state.toPos.z).toBeCloseTo(AU_PC, 14);
+  });
+
+  it('captures an end-quaternion that looks at the target from toPos', () => {
+    // Camera 5 AU back along +Z, looking at origin. End-orientation
+    // must still point at origin (so toQuat ≈ identity for a +Z eye).
+    const cam = new THREE.Vector3(0, 0, 5 * AU_PC);
+    const target = new THREE.Vector3();
+    const state = newFocusLerpFrom(cam, IDENTITY, Y_UP, target, AU_PC, 2000, 0);
+    // Verify by applying toQuat to (0,0,-1) — should give the direction
+    // from toPos to target. That direction is (target - toPos).normalize().
+    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(state.toQuat);
+    const expected = new THREE.Vector3().subVectors(target, state.toPos).normalize();
+    expect(fwd.x).toBeCloseTo(expected.x, 12);
+    expect(fwd.y).toBeCloseTo(expected.y, 12);
+    expect(fwd.z).toBeCloseTo(expected.z, 12);
   });
 });
 
 describe('tickFocusLerp', () => {
+  const Y_UP = new THREE.Vector3(0, 1, 0);
+  const IDENTITY = new THREE.Quaternion();
+
   function makeState() {
     return newFocusLerpFrom(
       new THREE.Vector3(0, 0, 5 * AU_PC),
+      IDENTITY,
+      Y_UP,
       new THREE.Vector3(0, 0, 0),
       AU_PC,
       2000,
@@ -120,13 +147,17 @@ describe('tickFocusLerp', () => {
     expect(cam.position.z).toBeCloseTo(midZ, 14);
   });
 
-  it('lands exactly on toPos when duration has elapsed', () => {
+  it('lands exactly on toPos and toQuat when duration has elapsed', () => {
     const state = makeState();
     const cam = new THREE.PerspectiveCamera(50, 1, 1e-7, 1000);
     cam.position.copy(state.fromPos);
     const active = tickFocusLerp(state, 1000 + state.durationMs, cam);
     expect(active).toBe(false);
     expect(cam.position.equals(state.toPos)).toBe(true);
+    expect(cam.quaternion.x).toBeCloseTo(state.toQuat.x, 14);
+    expect(cam.quaternion.y).toBeCloseTo(state.toQuat.y, 14);
+    expect(cam.quaternion.z).toBeCloseTo(state.toQuat.z, 14);
+    expect(cam.quaternion.w).toBeCloseTo(state.toQuat.w, 14);
   });
 
   it('does not run past the endpoint when nowMs overshoots durationMs', () => {
