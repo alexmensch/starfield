@@ -143,120 +143,120 @@
 
     <div id="about-modal" class="modal" hidden>
       <div class="modal-backdrop" data-modal-dismiss></div>
-      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="about-title">
+      <div class="modal-card" role="dialog" aria-modal="true" aria-label="About Stellata">
         <button class="modal-close" type="button" data-modal-dismiss aria-label="Close">×</button>
-        <h2 id="about-title">About Stellata</h2>
-        <p>
-          Stellata is an observational 3D model of our local part of
-          the galaxy at every scale we've measured it. From individual
-          stars and their planets, through the local interstellar medium,
-          out to the structure of the galactic disc. Every object in Stellata
-          comes from databases of direct, empirical measurement. Theoretical
-          predictions and conjectured structures are excluded. The goal of
-          Stellata is to continue to build observational data into the model
-          as we continue to expand our knowledge of our galactic home.
-        </p>
-        <p>
-          Each star is rendered at the colour and apparent brightness
-          you would actually see from any given point in space,
-          including the effects of dust extinction and reddening
-          through the interstellar medium. Known variable stars pulsate at
-          their catalogue period. When focused on Sol, the eight
-          planets and Pluto render at their heliocentric positions for
-          the current wall-clock time, with faint orbit rings shown for
-          reference. The heliopause is represented as an asymmetric shell at
-          ~122 AU upwind, ~200 AU into the heliotail.
-        </p>
-        <p>
-          ~313,000 stars come from the AT-HYG v3.3 catalogue, cross-matched
-          with the GCVS variable-star catalogue and the Hipparcos CCDM list of
-          visual binaries. Planet positions come from JPL Standish 1992
-          Keplerian elements, and heliopause sizing derives from Voyager 1 &amp; 2 and
-          IBEX measurements. The Milky Way's volumetric backdrop is
-          drawn from published density profiles. See Credits for the
-          full list and more details.
-        </p>
-        <p>
-          There are two camera modes: <strong>Navigate</strong> orbits, zooms,
-          and warps between stars; <strong>Observe</strong> parks the camera's
-          vantage point at the focused star and lets you look around. Press M while observing to switch to a Sky Atlas–style monochrome chart with
-          proper name and Bayer labels. Press ? for the full keyboard reference.
-        </p>
-        <p>
-          Created by <a href="https://alxm.me" target="_blank" rel="noopener noreferrer">Alex Marshall</a> and released under AGPL-3.0.
-        </p>
-        <div class="about-footer">
-          <a href="https://github.com/alexmensch/stellata" target="_blank" rel="noopener noreferrer">View source on GitHub →</a>
-          <span class="about-version" id="about-version"></span>
+        <div class="modal-tabs" role="tablist">
+          <button class="modal-tab is-active" id="about-tab-about" type="button" role="tab" aria-selected="true" aria-controls="about-pane">About Stellata</button>
+          <span class="sep" aria-hidden="true">·</span>
+          <button class="modal-tab" id="about-tab-credits" type="button" role="tab" aria-selected="false" aria-controls="credits-pane">Credits</button>
         </div>
-      </div>
-    </div>
-
-    <div id="credits-modal" class="modal" hidden>
-      <div class="modal-backdrop" data-modal-dismiss></div>
-      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="credits-title">
-        <button class="modal-close" type="button" data-modal-dismiss aria-label="Close">×</button>
-        <h2 id="credits-title">Credits</h2>
-        <p>
-          Stellata is built on a stack of real astronomical data. Every
-          catalogue and dataset used to render the scene is listed below.
-        </p>
-        <div class="modal-credits">
-          <div class="credit-entry">
-            <div class="credit-label">Stars</div>
-            <a href="https://codeberg.org/astronexus/athyg" target="_blank" rel="noopener noreferrer">AT-HYG v3.3</a>
-            — David Nash, combined Tycho-2 / Hipparcos / Gaia DR3 catalogue
-          </div>
-          <div class="credit-entry">
-            <div class="credit-label">Variable stars</div>
-            <a href="http://www.sai.msu.su/gcvs/gcvs/" target="_blank" rel="noopener noreferrer">GCVS 5.1</a>
-            — Samus et al., Sternberg Astronomical Institute
-          </div>
-          <div class="credit-entry">
-            <div class="credit-label">Visual binaries</div>
-            <a href="https://cdsarc.cds.unistra.fr/viz-bin/cat/I/239" target="_blank" rel="noopener noreferrer">Hipparcos CCDM</a>
-            — ESA, via VizieR
-          </div>
-          <div class="credit-entry">
-            <div class="credit-label">Constellation lines</div>
-            <a href="https://github.com/Stellarium/stellarium" target="_blank" rel="noopener noreferrer">Stellarium</a>
-          </div>
-          <div class="credit-entry">
-            <div class="credit-label">Interstellar dust</div>
-            <a href="https://doi.org/10.5281/zenodo.8187943" target="_blank" rel="noopener noreferrer">Edenhofer &amp; Green 2024</a>
-            — 3D dust extinction map of the local Milky Way
-          </div>
-          <div class="credit-entry">
-            <div class="credit-label">Planet positions</div>
-            <a href="https://ssd.jpl.nasa.gov/planets/approx_pos.html" target="_blank" rel="noopener noreferrer">JPL Standish 1992</a>
-            — Keplerian-elements approximation, valid 3000 BCE – 3000 CE
-          </div>
-          <div class="credit-entry">
-            <div class="credit-label">Planet bodies</div>
-            <a href="https://nssdc.gsfc.nasa.gov/planetary/factsheet/" target="_blank" rel="noopener noreferrer">NASA planetary fact sheets</a>
-            — radii, mean elements; Pluto from New Horizons 2015 reconnaissance
-          </div>
-          <div class="credit-entry">
-            <div class="credit-label">Planet brightness</div>
-            <a href="https://doi.org/10.1016/j.icarus.2016.09.023" target="_blank" rel="noopener noreferrer">Mallama, Krobusek &amp; Pavlov 2018</a>
-            — V-band geometric albedos and empirical phase curves
-          </div>
-          <div class="credit-entry">
-            <div class="credit-label">Heliopause boundary</div>
-            <a href="https://voyager.jpl.nasa.gov/" target="_blank" rel="noopener noreferrer">Voyager 1 &amp; 2</a>
-            crossings (2012, 2018) and IBEX/Cassini ENA estimates for the heliotail
-          </div>
-          <div class="credit-entry">
-            <div class="credit-label">Solar apex direction</div>
-            <a href="https://doi.org/10.1146/annurev-astro-082312-140843" target="_blank" rel="noopener noreferrer">Frisch &amp; Slavin 2013</a>
-            — direction of solar motion through the local interstellar medium
+        <div class="modal-pane" id="about-pane" role="tabpanel" aria-labelledby="about-tab-about">
+          <p>
+            Stellata is an observational 3D model of our local part of
+            the galaxy at every scale we've measured it. From individual
+            stars and their planets, through the local interstellar medium,
+            out to the structure of the galactic disc. Every object in Stellata
+            comes from databases of direct, empirical measurement. Theoretical
+            predictions and conjectured structures are excluded. The goal of
+            Stellata is to continue to build observational data into the model
+            as we continue to expand our knowledge of our galactic home.
+          </p>
+          <p>
+            Each star is rendered at the colour and apparent brightness
+            you would actually see from any given point in space,
+            including the effects of dust extinction and reddening
+            through the interstellar medium. Known variable stars pulsate at
+            their catalogue period. When focused on Sol, the eight
+            planets and Pluto render at their heliocentric positions for
+            the current wall-clock time, with faint orbit rings shown for
+            reference. The heliopause is represented as an asymmetric shell at
+            ~122 AU upwind, ~200 AU into the heliotail.
+          </p>
+          <p>
+            ~313,000 stars come from the AT-HYG v3.3 catalogue, cross-matched
+            with the GCVS variable-star catalogue and the Hipparcos CCDM list of
+            visual binaries. Planet positions come from JPL Standish 1992
+            Keplerian elements, and heliopause sizing derives from Voyager 1 &amp; 2 and
+            IBEX measurements. The Milky Way's volumetric backdrop is
+            drawn from published density profiles. See the Credits tab for the
+            full list and more details.
+          </p>
+          <p>
+            There are two camera modes: <strong>Navigate</strong> orbits, zooms,
+            and warps between stars; <strong>Observe</strong> parks the camera's
+            vantage point at the focused star and lets you look around. Press M while observing to switch to a Sky Atlas–style monochrome chart with
+            proper name and Bayer labels. Press ? for the full keyboard reference.
+          </p>
+          <p>
+            Created by <a href="https://alxm.me" target="_blank" rel="noopener noreferrer">Alex Marshall</a> and released under AGPL-3.0.
+          </p>
+          <div class="about-footer">
+            <a href="https://github.com/alexmensch/stellata" target="_blank" rel="noopener noreferrer">View source on GitHub →</a>
+            <span class="about-version" id="about-version"></span>
           </div>
         </div>
-        <p style="margin-top: 16px;">
-          Full citations and modelling notes live in
-          <a href="https://github.com/alexmensch/stellata/blob/main/SCIENCE.md" target="_blank" rel="noopener noreferrer">SCIENCE.md</a>
-          in the source repository.
-        </p>
+        <div class="modal-pane" id="credits-pane" role="tabpanel" aria-labelledby="about-tab-credits" hidden>
+          <p>
+            Stellata is built on a stack of real astronomical data. Every
+            catalogue and dataset used to render the scene is listed below.
+          </p>
+          <div class="modal-credits">
+            <div class="credit-entry">
+              <div class="credit-label">Stars</div>
+              <a href="https://codeberg.org/astronexus/athyg" target="_blank" rel="noopener noreferrer">AT-HYG v3.3</a>
+              — David Nash, combined Tycho-2 / Hipparcos / Gaia DR3 catalogue
+            </div>
+            <div class="credit-entry">
+              <div class="credit-label">Variable stars</div>
+              <a href="http://www.sai.msu.su/gcvs/gcvs/" target="_blank" rel="noopener noreferrer">GCVS 5.1</a>
+              — Samus et al., Sternberg Astronomical Institute
+            </div>
+            <div class="credit-entry">
+              <div class="credit-label">Visual binaries</div>
+              <a href="https://cdsarc.cds.unistra.fr/viz-bin/cat/I/239" target="_blank" rel="noopener noreferrer">Hipparcos CCDM</a>
+              — ESA, via VizieR
+            </div>
+            <div class="credit-entry">
+              <div class="credit-label">Constellation lines</div>
+              <a href="https://github.com/Stellarium/stellarium" target="_blank" rel="noopener noreferrer">Stellarium</a>
+            </div>
+            <div class="credit-entry">
+              <div class="credit-label">Interstellar dust</div>
+              <a href="https://doi.org/10.5281/zenodo.8187943" target="_blank" rel="noopener noreferrer">Edenhofer &amp; Green 2024</a>
+              — 3D dust extinction map of the local Milky Way
+            </div>
+            <div class="credit-entry">
+              <div class="credit-label">Planet positions</div>
+              <a href="https://ssd.jpl.nasa.gov/planets/approx_pos.html" target="_blank" rel="noopener noreferrer">JPL Standish 1992</a>
+              — Keplerian-elements approximation, valid 3000 BCE – 3000 CE
+            </div>
+            <div class="credit-entry">
+              <div class="credit-label">Planet bodies</div>
+              <a href="https://nssdc.gsfc.nasa.gov/planetary/factsheet/" target="_blank" rel="noopener noreferrer">NASA planetary fact sheets</a>
+              — radii, mean elements; Pluto from New Horizons 2015 reconnaissance
+            </div>
+            <div class="credit-entry">
+              <div class="credit-label">Planet brightness</div>
+              <a href="https://doi.org/10.1016/j.icarus.2016.09.023" target="_blank" rel="noopener noreferrer">Mallama, Krobusek &amp; Pavlov 2018</a>
+              — V-band geometric albedos and empirical phase curves
+            </div>
+            <div class="credit-entry">
+              <div class="credit-label">Heliopause boundary</div>
+              <a href="https://voyager.jpl.nasa.gov/" target="_blank" rel="noopener noreferrer">Voyager 1 &amp; 2</a>
+              crossings (2012, 2018) and IBEX/Cassini ENA estimates for the heliotail
+            </div>
+            <div class="credit-entry">
+              <div class="credit-label">Solar apex direction</div>
+              <a href="https://doi.org/10.1146/annurev-astro-082312-140843" target="_blank" rel="noopener noreferrer">Frisch &amp; Slavin 2013</a>
+              — direction of solar motion through the local interstellar medium
+            </div>
+          </div>
+          <p style="margin-top: 16px;">
+            Full citations and modelling notes live in
+            <a href="https://github.com/alexmensch/stellata/blob/main/SCIENCE.md" target="_blank" rel="noopener noreferrer">SCIENCE.md</a>
+            in the source repository.
+          </p>
+        </div>
       </div>
     </div>
 
@@ -274,7 +274,7 @@
         <div class="brand-links">
           <button class="link-btn" id="brand-about" type="button">about</button>
           <span class="sep">·</span>
-          <button class="link-btn" id="brand-credits" type="button">credits</button>
+          <button class="link-btn share-link" id="brand-share" type="button">share <span class="share-glyph">⧉</span></button>
         </div>
       </div>
     </div>
