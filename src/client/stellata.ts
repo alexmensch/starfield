@@ -36,6 +36,7 @@ import { getPlanetSystem, hasPlanets, type PlanetSystem } from './planet-system'
 import { OrbitRingsLayer } from './orbit-rings-layer';
 import { PlanetBodyField } from './planet-body-field';
 import { Heliopause } from './heliopause';
+import { R_SUN_PC } from './astronomy-constants';
 import { shiftWarpWaypoints } from './warp-pure';
 
 export type MagPresetName = 'naked-eye' | 'binoculars' | 'all';
@@ -241,13 +242,6 @@ const TARGET_PARK_FRACTION = 0.10;
 // Default vertical FOV (degrees). User-tunable via the FOV slider; the
 // reset button snaps back to this value.
 export const DEFAULT_FOV = 50;
-
-// One solar radius in parsecs. catalog.physicalRadius (and therefore
-// iLogRadius) is in solar radii; the angular-diameter formula needs
-// physical radius in pc to match the camera-distance units. Used both
-// in stellata.ts and in the star vertex shader (uRSunPc).
-//   1 R_sun = 6.957e8 m, 1 pc = 3.0857e16 m  →  R_sun = 2.2543e-8 pc
-const R_SUN_PC = 2.2543e-8;
 
 // When a focused star has a binary companion, minDistance is set so the
 // companion subtends at most this half-angle from the camera axis — gives
