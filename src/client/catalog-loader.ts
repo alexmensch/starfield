@@ -8,6 +8,8 @@ import {
   BINARY_VERSION,
   MAGIC,
   NO_COMPANION,
+  NAME_TABLE_PADDING,
+  NAME_LENGTH_PREFIX_BYTES,
 } from '../../scripts/catalog-pure';
 
 export interface Constellation {
@@ -148,14 +150,14 @@ export function parseBinary(ab: ArrayBuffer, constellations: Constellation[]): C
     const nameData = new Uint8Array(ab, nameTableOffset, nameTableLength);
     const ntView = new DataView(ab, nameTableOffset, nameTableLength);
     const offsetToName = new Map<number, string>();
-    // Offset 0 is reserved as the "no name" sentinel and contains two zero
-    // bytes of padding — skip past it. (Allows nameOffset=0 to mean "no
-    // name" without colliding with a real entry stored at byte 0.)
-    let p = 2;
+    // Offset 0 is reserved as the "no name" sentinel — skip past the
+    // leading padding bytes. (Allows nameOffset=0 to mean "no name"
+    // without colliding with a real entry stored at byte 0.)
+    let p = NAME_TABLE_PADDING;
     while (p < nameTableLength) {
       const len = ntView.getUint16(p, true);
       const nameOffset = p;
-      p += 2;
+      p += NAME_LENGTH_PREFIX_BYTES;
       const name = td.decode(nameData.subarray(p, p + len));
       offsetToName.set(nameOffset, name);
       p += len;

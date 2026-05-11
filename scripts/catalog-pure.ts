@@ -111,6 +111,13 @@ const T_TABLE: Record<number, [number, number][]> = {
 };
 
 function interpolate(table: [number, number][], key: number): number {
+  // Explicit high-end clamp: callers contract for keys in [0, 9] and the
+  // tables span [0, 9] inclusive, so any key >= the last bucket boundary
+  // is at-or-beyond the table. Returning the last value here is the
+  // documented out-of-range behaviour and lets the loop body assume
+  // key < k1 on every iteration.
+  const last = table[table.length - 1];
+  if (key >= last[0]) return last[1];
   for (let i = 1; i < table.length; i++) {
     const [k0, v0] = table[i - 1];
     const [k1, v1] = table[i];
@@ -119,10 +126,7 @@ function interpolate(table: [number, number][], key: number): number {
       return v0 + (v1 - v0) * t;
     }
   }
-  // Unreachable for in-range subclass keys (callers pass 0-9 and the
-  // tables span [0, 9] inclusive). Keeps the type checker happy and
-  // clamps anyone who breaks the contract to the table's high end.
-  return table[table.length - 1][1];
+  return last[1];
 }
 
 export function tempKelvin(info: SpectralInfo): number {
@@ -212,51 +216,16 @@ export function parseGcvsNumber(s: string): number | null {
 // writer (scripts/build-catalog), the runtime reader
 // (src/client/catalog-loader), and the verify tool (scripts/verify-catalog).
 //
-// Adding/changing a field means: bump BINARY_VERSION + MAGIC, extend
-// RECORD_LAYOUT with the new offset, update RECORD_SIZE, and the writer +
-// reader pick the change up automatically.
-//
-// File structure
-// --------------
+// File structure:
 //   [0,                       HEADER_SIZE)                              header
 //   [HEADER_SIZE,             HEADER_SIZE + count*RECORD_SIZE)          records
 //   [HEADER_SIZE + count*RECORD_SIZE,                       end)        name table
 //
-// Header (HEADER_SIZE = 32 bytes, little-endian)
-// ----------------------------------------------
-//    0..3    magic            4-char ASCII tag (MAGIC)
-//    4..7    version          uint32 (BINARY_VERSION)
-//    8..11   recordCount      uint32
-//   12..15   nameTableOffset  uint32, byte offset of the name table
-//   16..19   nameTableLength  uint32, byte length of the name table
-//   20..31   reserved         12 bytes, currently zero-filled
-//
-// Record (RECORD_SIZE = 44 bytes, little-endian; offsets in RECORD_LAYOUT)
-// -----------------------------------------------------------------------
-//    0..3    x                float32, parsec, galactic XYZ
-//    4..7    y                float32
-//    8..11   z                float32
-//   12..15   absmag           float32
-//   16..19   ci               float32, B-V colour index
-//   20..23   physRadius       float32, R/R_sun
-//   24..27   companion        uint32, record index of nearest neighbour;
-//                                     NO_COMPANION = none
-//   28..31   nameOffset       uint32, byte offset into name table; 0 = unnamed
-//   32       spectClass       uint8
-//   33       lumClass         uint8
-//   34       conIndex         uint8, 0..87 IAU constellation, 255 = none
-//   35       flags            uint8, FLAG_* bitfield
-//   36       ampUnits         uint8, GCVS amplitude in 0.05 mag units;
-//                                    0 = not variable
-//   37       reserved         uint8 (future: variability type)
-//   38..39   period           uint16, GCVS period in 0.1 days; 0 = not variable
-//   40..43   hip              uint32, Hipparcos number; 0 = no HIP
-//
-// Name table (variable length)
-// ----------------------------
-// Two zero bytes of padding so name offset 0 reads as the "no name" sentinel,
-// followed by length-prefixed UTF-8 strings: uint16 byteLen, then byteLen
-// bytes.
+// HEADER_LAYOUT / RECORD_LAYOUT below carry the per-field byte offsets;
+// HEADER_FIELD_SIZES / RECORD_FIELD_SIZES carry the matching byte widths
+// and field kinds. Adding/changing a field means: bump BINARY_VERSION +
+// MAGIC, extend the LAYOUT + SIZES pair with the new offset and kind, and
+// the writer + reader + tests pick the change up automatically.
 
 export const MAGIC = 'HYG4';
 export const BINARY_VERSION = 4;
@@ -272,6 +241,17 @@ export const HEADER_LAYOUT = {
   nameTableLength: 16, // uint32
   // bytes 20..31 reserved
 } as const;
+
+/** Per-field byte width keyed by HEADER_LAYOUT name. Single source of
+ *  truth shared with the layout regression tests so size assertions
+ *  can't drift from the actual encoding. */
+export const HEADER_FIELD_SIZES: Record<keyof typeof HEADER_LAYOUT, number> = {
+  magic: 4,
+  version: 4,
+  count: 4,
+  nameTableOffset: 4,
+  nameTableLength: 4,
+};
 
 export const RECORD_LAYOUT = {
   x: 0,           // float32
@@ -291,6 +271,22 @@ export const RECORD_LAYOUT = {
   period: 38,     // uint16 (×0.1 days)
   hip: 40,        // uint32 (0 = no HIP)
 } as const;
+
+/** Per-field byte width keyed by RECORD_LAYOUT name. As with
+ *  HEADER_FIELD_SIZES the test suite derives non-overlap + bound checks
+ *  from this map so any new field gets coverage by extending one place. */
+export const RECORD_FIELD_SIZES: Record<keyof typeof RECORD_LAYOUT, number> = {
+  x: 4, y: 4, z: 4, absmag: 4, ci: 4, physRadius: 4,
+  companion: 4, nameOffset: 4,
+  spectClass: 1, lumClass: 1, conIndex: 1, flags: 1, ampUnits: 1,
+  period: 2, hip: 4,
+};
+
+// Name table layout: two zero bytes of padding so name offset 0 reads as
+// the "no name" sentinel, followed by length-prefixed UTF-8 strings:
+// uint16 byteLen, then byteLen bytes.
+export const NAME_TABLE_PADDING = 2;
+export const NAME_LENGTH_PREFIX_BYTES = 2;
 
 // ---- search-index.json wire contract ------------------------------------
 
@@ -317,15 +313,28 @@ export interface SearchEntry {
 // Per-star bitfield stored at RECORD_LAYOUT.flags. Single source of truth
 // for both writers (scripts/build-catalog, scripts/catalog-pure
 // inferBinaries) and readers (catalog-loader, chart-labels,
-// verify-catalog). Adding a bit means adding a name here, not sprinkling
-// another magic number.
+// verify-catalog). Adding a bit means adding a name to the FLAGS
+// registry, not sprinkling another magic number — the regression tests
+// then automatically pin distinct-ness and single-bit-ness.
 //
-// Reserved bits available without a binary-version bump:
-//   0x08, 0x20, 0x40, 0x80
-export const FLAG_HAS_NAME = 0x01;
-export const FLAG_IS_SOL = 0x02;
-export const FLAG_HAS_BAYER = 0x04;
-export const FLAG_BINARY_PRIMARY = 0x10;
+// FLAGS is the canonical registry; the FLAG_* exports below are named
+// aliases for callsite readability.
+export const FLAGS = {
+  hasName: 0x01,
+  isSol: 0x02,
+  hasBayer: 0x04,
+  binaryPrimary: 0x10,
+} as const;
+export const FLAG_HAS_NAME = FLAGS.hasName;
+export const FLAG_IS_SOL = FLAGS.isSol;
+export const FLAG_HAS_BAYER = FLAGS.hasBayer;
+export const FLAG_BINARY_PRIMARY = FLAGS.binaryPrimary;
+
+/** Bits intentionally left free for future use — adding functionality
+ *  that fits inside one of these does not require a BINARY_VERSION bump.
+ *  The reservation is pinned by a regression test: drifting RESERVED into
+ *  any FLAGS value forces a deliberate edit here. */
+export const RESERVED_FLAG_BITS = 0x08 | 0x20 | 0x40 | 0x80;
 
 // ---- Geometric binary inference -----------------------------------------
 
