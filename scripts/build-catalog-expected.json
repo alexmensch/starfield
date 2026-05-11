@@ -1,0 +1,18 @@
+{
+  "recordCount": 313242,
+  "binaryPairs": 28,
+  "binaryMutualPairs": 14,
+  "gcvsEntries": 38881,
+  "gcvsHipXrefs": 11316,
+  "gcvsHdXrefs": 13926,
+  "gcvsMatched": 3677,
+  "ccdmGroups": 12496,
+  "ccdmResolved": 12393,
+  "ccdmFlagged": 12384,
+  "nameTableEntries": 492,
+  "variableCount": 3624,
+  "searchEntries": 313242,
+  "solIndex": 298240,
+  "figureCount": 219,
+  "figureConstellations": 88
+}

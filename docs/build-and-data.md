@@ -66,6 +66,15 @@ are `0x08`, `0x20`, `0x40`, `0x80` (see `FLAG_*` exports). Layout
 consistency is pinned by the `binary-format constants` block in
 `scripts/catalog-pure.test.ts`.
 
+The build script also asserts every headline count (record count, GCVS
+xrefs, binary inference output, CCDM doubles, name-table entries,
+search-index entries, etc.) against
+`scripts/build-catalog-expected.json` at the end of each run. A
+deliberate change refreshes the manifest with
+`UPDATE_BUILD_COUNTS=1 npm run build:catalog`; an unintended drift
+exits non-zero with a per-key diff. `scripts/build-counts.ts` carries
+the pure comparator + formatter and has its own vitest coverage.
+
 ## Search index (`public/search-index.json`)
 
 Separate from `catalog.bin` so the main binary stays rendering-focused.
