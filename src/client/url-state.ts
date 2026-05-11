@@ -1221,21 +1221,29 @@ export function applyFromUrl(stellata: Stellata, idMaps: IdMaps): boolean {
   return true;
 }
 
+// Write the live camera/target/up triple into `out` at the canonical
+// layout the per-frame change detector reads from:
+//   [0..2] camera.position, [3..5] controls.target, [6..8] camera.up
+// Single source of truth for that layout so seed and per-frame update
+// can't drift apart on index.
+function snapshotCam(stellata: Stellata, out: Float64Array): void {
+  const c = stellata.camera.position;
+  const t = stellata.controls.target;
+  const u = stellata.camera.up;
+  out[0] = c.x; out[1] = c.y; out[2] = c.z;
+  out[3] = t.x; out[4] = t.y; out[5] = t.z;
+  out[6] = u.x; out[7] = u.y; out[8] = u.z;
+}
+
 export function startUrlSync(stellata: Stellata, idMaps: IdMaps): void {
   let timer: number | undefined;
-  // Scratch for the per-frame camera/target/up change detector. Layout:
-  //   [0..2] camera.position, [3..5] controls.target, [6..8] camera.up
-  // Seeded from the live camera state at registration time so the first
-  // frame doesn't trigger a write — the URL stays empty (or in sync with
-  // whatever applyFromUrl/applyFirstLoadView just applied) until the
-  // user actually moves the camera or changes a setting.
+  // Per-frame camera/target/up change detector. Seeded from the live
+  // camera state at registration time so the first frame doesn't
+  // trigger a write — the URL stays empty (or in sync with whatever
+  // applyFromUrl/applyFirstLoadView just applied) until the user
+  // actually moves the camera or changes a setting.
   const lastCam = new Float64Array(9);
-  const c0 = stellata.camera.position;
-  const t0 = stellata.controls.target;
-  const u0 = stellata.camera.up;
-  lastCam[0] = c0.x; lastCam[1] = c0.y; lastCam[2] = c0.z;
-  lastCam[3] = t0.x; lastCam[4] = t0.y; lastCam[5] = t0.z;
-  lastCam[6] = u0.x; lastCam[7] = u0.y; lastCam[8] = u0.z;
+  snapshotCam(stellata, lastCam);
 
   const schedule = () => {
     if (timer !== undefined) clearTimeout(timer);
@@ -1271,9 +1279,7 @@ export function startUrlSync(stellata: Stellata, idMaps: IdMaps): void {
     ) {
       return;
     }
-    lastCam[0] = c.x; lastCam[1] = c.y; lastCam[2] = c.z;
-    lastCam[3] = t.x; lastCam[4] = t.y; lastCam[5] = t.z;
-    lastCam[6] = u.x; lastCam[7] = u.y; lastCam[8] = u.z;
+    snapshotCam(stellata, lastCam);
     schedule();
   });
 }

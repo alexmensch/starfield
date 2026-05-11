@@ -945,7 +945,7 @@ export class Stellata {
       void getPlanetSystem(catalog, solIdx).then((ps) => {
         if (ps !== null) {
           this.planetBodyField.attachHost(
-            solIdx, ps, catalog.absmag[solIdx], solAbs, solIdx,
+            solIdx, ps, catalog.absmag[solIdx], solAbs, solIdx, this.getT(),
           );
         }
       });

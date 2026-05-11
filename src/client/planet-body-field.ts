@@ -227,6 +227,7 @@ export class PlanetBodyField {
     hostAbsmag: number,
     hostAbsPos: Readonly<THREE.Vector3>,
     solIndex: number,
+    t: number,
   ): void {
     if (ps.planets.length === 0) return;
     if (this.hosts.has(hostStarIdx)) this.detachHost(hostStarIdx);
@@ -276,7 +277,7 @@ export class PlanetBodyField {
     // ephemeris-or-placeholder pass so the first frame after attach
     // has valid iLocalRel data.
     this.writeHostStaticAttributes(host);
-    this.writeHostPositions(host, Date.now() / 1000);
+    this.writeHostPositions(host, t);
     this.flushAttributeRange(host.startInstance, host.count);
     this.geometry.instanceCount = this.liveCount;
     this.group.visible = !this.hidden && !this.mono;

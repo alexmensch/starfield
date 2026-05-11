@@ -63,3 +63,43 @@ export function perceptualAppSizePx(
   const t = Math.sqrt(dMEff / Math.max(sizeSpan, 0.001));
   return sizeMin + t * (sizeMax - sizeMin);
 }
+
+/**
+ * Reflected-light apparent magnitude of a planet seen by a viewer. CPU
+ * mirror of the integrated formula in shaders/planet.vert.glsl:146-162.
+ *
+ *   m_host_at_viewer = M_host + 5·log10(d_vh / 10pc)
+ *   m_planet         = m_host_at_viewer
+ *                    − 2.5·log10( p · (R/d_vp)² · (d_vh/d_hp)² · φ(α) )
+ *
+ * - `hostAbsmag` is the host star's absolute V-band magnitude.
+ * - `dVhPc` is viewer→host distance in parsecs.
+ * - `dVpPc` is viewer→planet distance in parsecs.
+ * - `dHpPc` is host→planet distance in parsecs.
+ * - `albedo` is the planet's geometric albedo p (dimensionless).
+ * - `radiusPc` is the planet's physical radius in parsecs.
+ * - `phaseFactor` is φ(α) — pass 1 for full-phase, or use
+ *   `lambertianPhaseFactor` / `mallamaPhaseFactor` from `phase-function.ts`.
+ *
+ * Distances and the reflectance product floor at 1e-30 to match the
+ * shader's defensive clamps at the singular zero-distance point.
+ */
+export function planetApparentMagnitude(
+  hostAbsmag: number,
+  dVhPc: number,
+  dVpPc: number,
+  dHpPc: number,
+  albedo: number,
+  radiusPc: number,
+  phaseFactor: number,
+): number {
+  const dVh = Math.max(dVhPc, 1e-30);
+  const dVp = Math.max(dVpPc, 1e-30);
+  const dHp = Math.max(dHpPc, 1e-30);
+  const mHostAtViewer = hostAbsmag + 5 * (Math.log10(dVh) - 1);
+  const radRatio = radiusPc / dVp;
+  const legRatio = dVh / dHp;
+  const reflFactor =
+    albedo * radRatio * radRatio * legRatio * legRatio * Math.max(phaseFactor, 0);
+  return mHostAtViewer - 2.5 * Math.log10(Math.max(reflFactor, 1e-30));
+}

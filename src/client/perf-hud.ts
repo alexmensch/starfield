@@ -24,6 +24,18 @@ const DOM_UPDATE_MS = 200;
 const MS_PER_FRAME_60 = 1000 / 60;
 const MAX_TABLE_ROWS = 8;
 
+// Row-colour ramp: amber when average ms approaches the 60Hz budget.
+// Absolute threshold rather than a fraction so the rows colour amber a
+// touch earlier than the histogram, which keeps the at-a-glance summary
+// trailing-pessimistic.
+const AVG_AMBER_MS = 4;
+// Histogram bar ramp: amber threshold expressed as a fraction of the
+// 60Hz frame budget (~11.7 ms at MS_PER_FRAME_60 * 0.7).
+const HISTO_AMBER_RATIO = 0.7;
+// Histogram visible-height cap as a multiple of MS_PER_FRAME_60 — spikes
+// above this clip rather than squashing the rest of the trace.
+const HISTO_HEIGHT_CAP_MULT = 2;
+
 interface SectionStats {
   ring: Float32Array;
   idx: number;
@@ -46,9 +58,9 @@ let lastDomUpdateMs = 0;
 
 // Persistent DOM handles populated by buildPerfDom() and mutated each tick.
 let headlineEl: HTMLDivElement | null = null;
-let rowsContainer: HTMLDivElement | null = null;
+let captionEl: HTMLDivElement | null = null;
+let lastCaptionN = -1;
 const rowPool: { line: HTMLDivElement; label: HTMLSpanElement; values: HTMLSpanElement }[] = [];
-let histoBarsContainer: HTMLDivElement | null = null;
 const histoBars: HTMLSpanElement[] = [];
 // Per-bar last-written height/colour so per-tick writes skip identical
 // values — same dirty-tracking pattern chart-labels.ts uses for SVG.
@@ -191,7 +203,6 @@ export function buildPerfSection(): PerfSection {
     rowPool.push({ line, label, values });
   }
   div.appendChild(rowsParent);
-  rowsContainer = rowsParent;
 
   // Histogram chrome + cached bars. Per-tick mutates only style.height /
   // style.background on each existing span — no innerHTML, no createElement.
@@ -218,13 +229,14 @@ export function buildPerfSection(): PerfSection {
     histoLastColour.push('');
   }
   div.appendChild(histo);
-  histoBarsContainer = histo;
 
   const caption = document.createElement('div');
   caption.style.color = '#888';
   caption.style.fontSize = '10px';
-  caption.textContent = `frame.total · last ${RING_SIZE}f · 16.7ms ref`;
+  caption.textContent = `frame.total · last 0f · 16.7ms ref`;
   div.appendChild(caption);
+  captionEl = caption;
+  lastCaptionN = -1;
 
   panelEl = div;
   visible = true;
@@ -234,8 +246,8 @@ export function buildPerfSection(): PerfSection {
       visible = false;
       panelEl = null;
       headlineEl = null;
-      rowsContainer = null;
-      histoBarsContainer = null;
+      captionEl = null;
+      lastCaptionN = -1;
       // realMark/realMeasure/realFrame stay installed — ring buffers keep
       // filling between toggles so the histogram has data on re-open.
     },
@@ -260,11 +272,11 @@ function summarize(s: SectionStats): { avg: number; max: number } {
 function fmtMs(v: number): string { return v.toFixed(v >= 10 ? 1 : 2); }
 
 function colourForAvg(avg: number): string {
-  return avg > MS_PER_FRAME_60 ? '#f88' : avg > 4 ? '#fc8' : '#cfe';
+  return avg > MS_PER_FRAME_60 ? '#f88' : avg > AVG_AMBER_MS ? '#fc8' : '#cfe';
 }
 
 function renderPanel(): void {
-  if (!panelEl || !headlineEl || !rowsContainer || !histoBarsContainer) return;
+  if (!panelEl || !headlineEl) return;
 
   const total = sections.get('frame.total');
   const totalStats = total ? summarize(total) : { avg: 0, max: 0 };
@@ -314,7 +326,12 @@ function renderPanel(): void {
   if (total && total.count > 0) {
     const N = total.count;
     const start = (total.idx - N + RING_SIZE) % RING_SIZE;
-    const cap = MS_PER_FRAME_60 * 2;
+    const cap = MS_PER_FRAME_60 * HISTO_HEIGHT_CAP_MULT;
+    const amberMs = MS_PER_FRAME_60 * HISTO_AMBER_RATIO;
+    if (captionEl && lastCaptionN !== N) {
+      captionEl.textContent = `frame.total · last ${N}f · 16.7ms ref`;
+      lastCaptionN = N;
+    }
     for (let i = 0; i < RING_SIZE; i++) {
       const bar = histoBars[i];
       if (i >= N) {
@@ -331,7 +348,7 @@ function renderPanel(): void {
       const heightPx = Math.round(h * 240) / 10;
       const colour =
         v > MS_PER_FRAME_60 ? '#f88' :
-        v > MS_PER_FRAME_60 * 0.7 ? '#fc8' :
+        v > amberMs ? '#fc8' :
         '#8df';
       if (histoLastHeight[i] !== heightPx) {
         bar.style.height = `${heightPx}px`;

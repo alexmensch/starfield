@@ -16,10 +16,16 @@ import {
   FLAG_IS_SOL,
   FLAG_HAS_BAYER,
   FLAG_BINARY_PRIMARY,
+  FLAGS,
+  RESERVED_FLAG_BITS,
   HEADER_LAYOUT,
   RECORD_LAYOUT,
+  HEADER_FIELD_SIZES,
+  RECORD_FIELD_SIZES,
   HEADER_SIZE,
   RECORD_SIZE,
+  NAME_TABLE_PADDING,
+  NAME_LENGTH_PREFIX_BYTES,
   type SpectralInfo,
   type BinaryStar,
   type DoublesStar,
@@ -619,50 +625,45 @@ describe('catalog-pure / applyDoublesFlag', () => {
 // constants themselves get the regression coverage.
 describe('catalog-pure / binary-format constants', () => {
   it('header offsets are non-overlapping uint32 slots within HEADER_SIZE', () => {
-    const fields = Object.entries(HEADER_LAYOUT);
-    // First field is `magic` (4 ASCII bytes), the rest are uint32s.
-    const sizes: Record<string, number> = {
-      magic: 4, version: 4, count: 4, nameTableOffset: 4, nameTableLength: 4,
-    };
+    const fields = Object.entries(HEADER_LAYOUT) as [keyof typeof HEADER_LAYOUT, number][];
     for (const [name, off] of fields) {
-      expect(sizes[name]).toBeDefined();
-      expect(off + sizes[name]).toBeLessThanOrEqual(HEADER_SIZE);
+      expect(HEADER_FIELD_SIZES[name]).toBeDefined();
+      expect(off + HEADER_FIELD_SIZES[name]).toBeLessThanOrEqual(HEADER_SIZE);
     }
     // Pairwise non-overlap.
     for (let i = 0; i < fields.length; i++) {
       for (let j = i + 1; j < fields.length; j++) {
         const [na, oa] = fields[i];
         const [nb, ob] = fields[j];
-        const ea = oa + sizes[na];
-        const eb = ob + sizes[nb];
+        const ea = oa + HEADER_FIELD_SIZES[na];
+        const eb = ob + HEADER_FIELD_SIZES[nb];
         const overlap = oa < eb && ob < ea;
-        expect(overlap, `${na}@${oa}+${sizes[na]} overlaps ${nb}@${ob}+${sizes[nb]}`).toBe(false);
+        expect(overlap, `${na}@${oa}+${HEADER_FIELD_SIZES[na]} overlaps ${nb}@${ob}+${HEADER_FIELD_SIZES[nb]}`).toBe(false);
       }
     }
   });
 
   it('record offsets are non-overlapping and fit within RECORD_SIZE', () => {
-    const sizes: Record<string, number> = {
-      x: 4, y: 4, z: 4, absmag: 4, ci: 4, physRadius: 4,
-      companion: 4, nameOffset: 4,
-      spectClass: 1, lumClass: 1, conIndex: 1, flags: 1, ampUnits: 1,
-      period: 2, hip: 4,
-    };
-    const fields = Object.entries(RECORD_LAYOUT);
+    const fields = Object.entries(RECORD_LAYOUT) as [keyof typeof RECORD_LAYOUT, number][];
     for (const [name, off] of fields) {
-      expect(sizes[name]).toBeDefined();
-      expect(off + sizes[name]).toBeLessThanOrEqual(RECORD_SIZE);
+      expect(RECORD_FIELD_SIZES[name]).toBeDefined();
+      expect(off + RECORD_FIELD_SIZES[name]).toBeLessThanOrEqual(RECORD_SIZE);
     }
     for (let i = 0; i < fields.length; i++) {
       for (let j = i + 1; j < fields.length; j++) {
         const [na, oa] = fields[i];
         const [nb, ob] = fields[j];
-        const ea = oa + sizes[na];
-        const eb = ob + sizes[nb];
+        const ea = oa + RECORD_FIELD_SIZES[na];
+        const eb = ob + RECORD_FIELD_SIZES[nb];
         const overlap = oa < eb && ob < ea;
-        expect(overlap, `${na}@${oa}+${sizes[na]} overlaps ${nb}@${ob}+${sizes[nb]}`).toBe(false);
+        expect(overlap, `${na}@${oa}+${RECORD_FIELD_SIZES[na]} overlaps ${nb}@${ob}+${RECORD_FIELD_SIZES[nb]}`).toBe(false);
       }
     }
+  });
+
+  it('layout and size maps cover identical key sets', () => {
+    expect(Object.keys(HEADER_FIELD_SIZES).sort()).toEqual(Object.keys(HEADER_LAYOUT).sort());
+    expect(Object.keys(RECORD_FIELD_SIZES).sort()).toEqual(Object.keys(RECORD_LAYOUT).sort());
   });
 
   it('record fields cover the v4 byte plan (one byte 37 reserved)', () => {
@@ -674,12 +675,71 @@ describe('catalog-pure / binary-format constants', () => {
     expect(RECORD_LAYOUT.period).toBe(38);
   });
 
-  it('flag bits are distinct powers of two', () => {
-    const flags = [FLAG_HAS_NAME, FLAG_IS_SOL, FLAG_HAS_BAYER, FLAG_BINARY_PRIMARY];
-    for (const f of flags) {
+  it('FLAGS registry entries are distinct single-bit values', () => {
+    const values = Object.values(FLAGS);
+    for (const f of values) {
       expect(f).toBeGreaterThan(0);
-      expect((f & (f - 1))).toBe(0); // single-bit
+      expect(f & (f - 1)).toBe(0); // single-bit
     }
-    expect(new Set(flags).size).toBe(flags.length);
+    expect(new Set(values).size).toBe(values.length);
+  });
+
+  it('FLAG_* aliases match the FLAGS registry', () => {
+    expect(FLAG_HAS_NAME).toBe(FLAGS.hasName);
+    expect(FLAG_IS_SOL).toBe(FLAGS.isSol);
+    expect(FLAG_HAS_BAYER).toBe(FLAGS.hasBayer);
+    expect(FLAG_BINARY_PRIMARY).toBe(FLAGS.binaryPrimary);
+  });
+
+  it('RESERVED_FLAG_BITS does not collide with any registered FLAGS value', () => {
+    for (const v of Object.values(FLAGS)) {
+      expect(v & RESERVED_FLAG_BITS, `FLAGS value 0x${v.toString(16)} collides with RESERVED_FLAG_BITS`).toBe(0);
+    }
+  });
+
+  it('reserved + used flag bits stay within the uint8 envelope', () => {
+    const used = Object.values(FLAGS).reduce((acc, v) => acc | v, 0);
+    expect((used | RESERVED_FLAG_BITS) & ~0xff).toBe(0);
+  });
+
+  it('name-table layout is two zero padding bytes + (uint16 len, utf-8 bytes) entries', () => {
+    expect(NAME_TABLE_PADDING).toBe(2);
+    expect(NAME_LENGTH_PREFIX_BYTES).toBe(2);
+    // Round-trip a writer-shaped table inline and verify the reader's
+    // pointer-walk lands on the right names. Pins the contract without
+    // depending on build-catalog.ts or catalog-loader.ts.
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder('utf-8');
+    const names = ['Sol', 'α Cen', '日本']; // ascii + 2-byte + 3-byte UTF-8
+    const chunks: Uint8Array[] = [new Uint8Array(NAME_TABLE_PADDING)];
+    let len = NAME_TABLE_PADDING;
+    const expectedOffsets: number[] = [];
+    for (const n of names) {
+      const bytes = encoder.encode(n);
+      expectedOffsets.push(len);
+      const lenHeader = new Uint8Array(NAME_LENGTH_PREFIX_BYTES);
+      new DataView(lenHeader.buffer).setUint16(0, bytes.length, true);
+      chunks.push(lenHeader);
+      chunks.push(bytes);
+      len += NAME_LENGTH_PREFIX_BYTES + bytes.length;
+    }
+    const table = new Uint8Array(len);
+    let p = 0;
+    for (const c of chunks) { table.set(c, p); p += c.length; }
+    // Sentinel padding is zero.
+    for (let i = 0; i < NAME_TABLE_PADDING; i++) expect(table[i]).toBe(0);
+    // Reader walk.
+    const view = new DataView(table.buffer);
+    let q = NAME_TABLE_PADDING;
+    const recovered: { offset: number; name: string }[] = [];
+    while (q < len) {
+      const byteLen = view.getUint16(q, true);
+      const offset = q;
+      q += NAME_LENGTH_PREFIX_BYTES;
+      recovered.push({ offset, name: decoder.decode(table.subarray(q, q + byteLen)) });
+      q += byteLen;
+    }
+    expect(recovered.map((r) => r.name)).toEqual(names);
+    expect(recovered.map((r) => r.offset)).toEqual(expectedOffsets);
   });
 });

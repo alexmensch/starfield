@@ -304,6 +304,12 @@ export interface SliderOpts {
   min: number;
   max: number;
   step: number;
+  /**
+   * Slider position at build time. No reverse sync: if something else
+   * writes the underlying param (URL state, future presets) after the
+   * panel is built, the slider thumb won't track — only the underlying
+   * value moves. Callers snapshot a getter once at panel-build time.
+   */
   initial: number;
   format?: (v: number) => string;
   onChange: (v: number) => void;

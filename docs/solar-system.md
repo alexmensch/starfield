@@ -212,8 +212,10 @@ on Sol, aligned to the solar apex of motion through the local
 interstellar medium. Geometry is fixed (no `t` dependence on human
 timescales):
 
-- Upwind boundary at **122 AU** — Voyager 1, 2012-08-25.
-- Flank at **115 AU** — Voyager 2, 2018-11-05.
+- Upwind boundary at **122 AU** — Voyager 1 heliopause crossing,
+  2012-08-25.
+- Flank inferred at **~115 AU** from Voyager 2 heliopause crossing
+  2018-11-05, combined with the apex-aligned ellipsoid model.
 - Heliotail at **200 AU** — IBEX / Cassini ENA estimate.
 - Apex direction: ICRS RA 17h53m, Dec +27.4°, after Frisch & Slavin
   2013.

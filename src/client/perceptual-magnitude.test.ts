@@ -3,7 +3,9 @@ import {
   apparentMagnitude,
   perceptualDmEff,
   perceptualAppSizePx,
+  planetApparentMagnitude,
 } from './perceptual-magnitude';
+import { AU_PC } from './ephemeris';
 
 describe('apparentMagnitude', () => {
   it('returns the absolute magnitude at 10 pc by definition', () => {
@@ -121,5 +123,84 @@ describe('perceptualAppSizePx', () => {
     const canHard = perceptualAppSizePx(
       perceptualDmEff(-5, 15, SPAN, 0), 2, 24, SPAN);
     expect(Math.abs(solHard - canHard)).toBeLessThan(1e-9);
+  });
+});
+
+describe('planetApparentMagnitude', () => {
+  // Jupiter (R = 69,911 km, geometric albedo p = 0.538) at full phase
+  // φ(0) = 1. Reference points are the same three the GLSL shader was
+  // hand-verified against.
+  const JUPITER_RADIUS_PC = 69911 / 3.0857e13; // km → pc
+  const JUPITER_ALBEDO = 0.538;
+  const SOL_ABSMAG = 4.83;
+
+  it('returns m_host_at_viewer when reflectance product = 1', () => {
+    // Construct geometry such that the reflected-light correction is
+    // zero: albedo·(R/d_vp)²·(d_vh/d_hp)²·φ = 1.
+    const m = planetApparentMagnitude(0, 10, 1, 10, 1, 1, 1);
+    expect(m).toBeCloseTo(0, 12); // hostAbsmag=0 at d_vh=10pc, refl=1 → 0
+  });
+
+  it('Jupiter from Earth at opposition: ≈ -2.7 V', () => {
+    // d_vh = 1 AU, d_hp = 5.2 AU, d_vp = 4.2 AU, φ ≈ 1.
+    const m = planetApparentMagnitude(
+      SOL_ABSMAG,
+      1 * AU_PC, 4.2 * AU_PC, 5.2 * AU_PC,
+      JUPITER_ALBEDO, JUPITER_RADIUS_PC, 1,
+    );
+    expect(m).toBeCloseTo(-2.7, 1);
+  });
+
+  it('Jupiter from outside the heliopause (150 AU upwind): ≈ +5.2 V', () => {
+    // Viewer 150 AU upwind from Sol along Sol→Jupiter line. Jupiter at
+    // 5.2 AU on the same line ⇒ d_vp = 144.8 AU.
+    const m = planetApparentMagnitude(
+      SOL_ABSMAG,
+      150 * AU_PC, 144.8 * AU_PC, 5.2 * AU_PC,
+      JUPITER_ALBEDO, JUPITER_RADIUS_PC, 1,
+    );
+    expect(m).toBeCloseTo(5.2, 0);
+  });
+
+  it('Jupiter from α Cen (1.34 pc, Sol→Jupiter colinear with viewer): ≈ +21 V', () => {
+    // Distance from α Cen to Sol is 1.34 pc; Jupiter is 5.2 AU from Sol
+    // — negligible against 1.34 pc, so d_vh ≈ d_vp.
+    const dVh = 1.34;
+    const dVp = dVh - 5.2 * AU_PC;
+    const m = planetApparentMagnitude(
+      SOL_ABSMAG, dVh, dVp, 5.2 * AU_PC,
+      JUPITER_ALBEDO, JUPITER_RADIUS_PC, 1,
+    );
+    expect(m).toBeCloseTo(21, 0);
+  });
+
+  it('halving albedo dims the planet by 2.5·log10(2) ≈ 0.753 mag', () => {
+    const m1 = planetApparentMagnitude(
+      0, 10, 1, 10, 1, 1, 1,
+    );
+    const m2 = planetApparentMagnitude(
+      0, 10, 1, 10, 0.5, 1, 1,
+    );
+    expect(m2 - m1).toBeCloseTo(2.5 * Math.log10(2), 12);
+  });
+
+  it('halving the phase factor dims the planet by 2.5·log10(2) mag', () => {
+    const m1 = planetApparentMagnitude(
+      0, 10, 1, 10, 1, 1, 1,
+    );
+    const m2 = planetApparentMagnitude(
+      0, 10, 1, 10, 1, 1, 0.5,
+    );
+    expect(m2 - m1).toBeCloseTo(2.5 * Math.log10(2), 12);
+  });
+
+  it('zero phase factor floors at the 1e-30 clamp (finite, not -Inf)', () => {
+    const m = planetApparentMagnitude(0, 10, 1, 10, 1, 1, 0);
+    expect(Number.isFinite(m)).toBe(true);
+  });
+
+  it('does not divide by zero at d_vp = 0', () => {
+    const m = planetApparentMagnitude(0, 10, 0, 10, 0.5, 1, 1);
+    expect(Number.isFinite(m)).toBe(true);
   });
 });

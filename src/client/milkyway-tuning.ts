@@ -11,10 +11,7 @@ import { makeCollapsibleSection, makeColor, makeSlider } from './debug-panel';
 // rules out an HTML colour picker. Disc/bulge palette colours use
 // `<input type="color">` since their channels are bounded to [0,1].
 //
-// No reverse sync: `initial` values snapshot the layer's getters once
-// at build time. If something else writes the params (URL state, future
-// presets) while the panel is open, the slider thumb won't move — only
-// the underlying uniform.
+// No reverse sync — see `SliderOpts.initial` in debug-panel.ts.
 
 const BRIGHTNESS_LOG_MIN = -7; // 10^-7
 const BRIGHTNESS_LOG_MAX = 1;  // 10^1

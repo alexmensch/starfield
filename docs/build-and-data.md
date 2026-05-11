@@ -76,6 +76,10 @@ One JSON array entry per star that has at least one searchable identifier
 `s` field carries the raw spectral designation from the AT-HYG source
 ("G2 V", "M1.5Iab-b", "K0III+K7V", …) for the hover tooltip display.
 
+Field shape pinned in `scripts/catalog-pure.ts` as the `SearchEntry`
+interface — the writer (`build-catalog.ts`) and the reader
+(`src/client/search.ts`) both import it; drift = compile error.
+
 Identifier dispatch in `search.ts`:
 - Regex-prefix forms (`HIP 27989`, `HD 39801`, `HR 2061`, `Gl 559A`) go
   through `Map<number, number>` direct lookups — no fuzzy scoring.

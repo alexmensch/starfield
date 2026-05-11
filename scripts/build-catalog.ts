@@ -20,6 +20,8 @@ import {
   BINARY_VERSION,
   MAGIC,
   NO_COMPANION,
+  NAME_TABLE_PADDING,
+  NAME_LENGTH_PREFIX_BYTES,
   type SearchEntry,
 } from './catalog-pure';
 
@@ -222,9 +224,8 @@ interface VarStarData {
 
 // Both GCVS files (gcvs5.txt and crossid.txt) are pipe-delimited with
 // trailing whitespace inside each cell. Yields per-line trimmed-field
-// arrays; missing files yield nothing so callers can pass through.
+// arrays. Callers are expected to gate on file existence before calling.
 function* readPipeDelimited(path: string): Iterable<string[]> {
-  if (!existsSync(path)) return;
   const text = readFileSync(path, 'utf8');
   for (const line of text.split(/\r?\n/)) {
     if (!line.trim()) continue;
@@ -713,10 +714,10 @@ async function main() {
   const encoder = new TextEncoder();
   const nameChunks: Uint8Array[] = [];
   const nameOffsets = new Uint32Array(stars.length);
-  // Offset 0 is reserved as the "no name" sentinel. Any real name starts at
-  // offset ≥ 2 because of the length prefix we write first.
-  let nameTableLength = 2;
-  nameChunks.push(new Uint8Array([0, 0])); // padding so offset 0 is never a real name
+  // Offset 0 is reserved as the "no name" sentinel. Real names start at
+  // offset >= NAME_TABLE_PADDING after the leading zero-bytes.
+  let nameTableLength = NAME_TABLE_PADDING;
+  nameChunks.push(new Uint8Array(NAME_TABLE_PADDING));
   for (let i = 0; i < stars.length; i++) {
     if (!stars[i].proper) continue;
     const bytes = encoder.encode(stars[i].proper!);
@@ -724,11 +725,11 @@ async function main() {
       throw new Error(`Name too long: ${stars[i].proper}`);
     }
     nameOffsets[i] = nameTableLength;
-    const lenHeader = new Uint8Array(2);
+    const lenHeader = new Uint8Array(NAME_LENGTH_PREFIX_BYTES);
     new DataView(lenHeader.buffer).setUint16(0, bytes.length, true);
     nameChunks.push(lenHeader);
     nameChunks.push(bytes);
-    nameTableLength += 2 + bytes.length;
+    nameTableLength += NAME_LENGTH_PREFIX_BYTES + bytes.length;
   }
 
   // Allocate output buffer.
