@@ -24,6 +24,11 @@ import {
   NAME_LENGTH_PREFIX_BYTES,
   type SearchEntry,
 } from './catalog-pure';
+import {
+  compareBuildCounts,
+  formatCountDiff,
+  type BuildCounts,
+} from './build-counts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -37,6 +42,7 @@ const SRC_HIP_CCDM = resolve(ROOT, 'data/hip_ccdm.tsv');
 const OUT_BIN = resolve(ROOT, 'public/catalog.bin');
 const OUT_CON = resolve(ROOT, 'public/constellations.json');
 const OUT_SEARCH = resolve(ROOT, 'public/search-index.json');
+const EXPECTED_COUNTS = resolve(__dirname, 'build-catalog-expected.json');
 
 const MAX_DIST_PC = 50_000;
 const DEFAULT_CI = 0.65;
@@ -647,12 +653,37 @@ async function main() {
     return;
   }
 
+  // Accumulator for the headline counts asserted against
+  // scripts/build-catalog-expected.json at the end of the build
+  // (stellata-9mm.183). Every field has a default so a code path that
+  // legitimately skips a section (missing GCVS files, no Sol) doesn't
+  // leave the field undefined.
+  const counts: BuildCounts = {
+    recordCount: 0,
+    binaryPairs: 0,
+    binaryMutualPairs: 0,
+    gcvsEntries: 0,
+    gcvsHipXrefs: 0,
+    gcvsHdXrefs: 0,
+    gcvsMatched: 0,
+    ccdmGroups: 0,
+    ccdmResolved: 0,
+    ccdmFlagged: 0,
+    nameTableEntries: 0,
+    variableCount: 0,
+    searchEntries: 0,
+    solIndex: -1,
+    figureCount: 0,
+    figureConstellations: 0,
+  };
+
   console.log(`Reading ${SRC_CSV}...`);
   const t0 = Date.now();
   const { stars, stats } = await readStars();
   console.log(`  parsed ${stats.total} rows in ${Date.now() - t0}ms`);
   console.log(`  kept ${stars.length} stars`);
   console.log(`  dropped:`, stats.dropped);
+  counts.recordCount = stars.length;
 
   // Sort by absolute magnitude ascending (brightest first). Record indices
   // are final after this point.
@@ -677,6 +708,8 @@ async function main() {
   console.log(
     `  ${binStats.pairs} companion assignments, ${binStats.mutualPairs} mutual pairs in ${Date.now() - tBin}ms`,
   );
+  counts.binaryPairs = binStats.pairs;
+  counts.binaryMutualPairs = binStats.mutualPairs;
 
   // GCVS variable-star cross-match. Optional — if the files aren't present
   // we just skip, no variability rendered.
@@ -689,6 +722,10 @@ async function main() {
     console.log(
       `  ${gcvsData.size} GCVS entries, ${xref.byHip.size} Hip + ${xref.byHd.size} HD xrefs, ${matched} catalog stars matched in ${Date.now() - tGcvs}ms`,
     );
+    counts.gcvsEntries = gcvsData.size;
+    counts.gcvsHipXrefs = xref.byHip.size;
+    counts.gcvsHdXrefs = xref.byHd.size;
+    counts.gcvsMatched = matched;
   } else {
     console.log('GCVS files not found; skipping variability cross-match.');
   }
@@ -705,6 +742,9 @@ async function main() {
     console.log(
       `  ${ccdmGroups.size} CCDM systems → ${systems} resolved in catalog, ${flagged} new primaries flagged in ${Date.now() - tCcdm}ms`,
     );
+    counts.ccdmGroups = ccdmGroups.size;
+    counts.ccdmResolved = systems;
+    counts.ccdmFlagged = flagged;
   } else {
     console.log('Hipparcos CCDM file not found; skipping double-star cross-match.');
   }
@@ -730,6 +770,7 @@ async function main() {
     nameChunks.push(lenHeader);
     nameChunks.push(bytes);
     nameTableLength += NAME_LENGTH_PREFIX_BYTES + bytes.length;
+    counts.nameTableEntries++;
   }
 
   // Allocate output buffer.
@@ -841,6 +882,43 @@ async function main() {
     );
   } else {
     console.warn(`Warning: Sol not found in catalog.`);
+  }
+
+  counts.variableCount = variableCount;
+  counts.searchEntries = searchEntries.length;
+  counts.solIndex = solIndex;
+  counts.figureCount = figureCount;
+  counts.figureConstellations = figureLines.size;
+
+  await assertOrUpdateBuildCounts(counts);
+}
+
+/** Compare actual build counts against the committed expected manifest
+ *  (or refresh the manifest when run with UPDATE_BUILD_COUNTS=1).
+ *  stellata-9mm.183 — replaces the per-PR eyeball smoke step on the
+ *  build-catalog log lines with a programmatic assertion. */
+async function assertOrUpdateBuildCounts(actual: BuildCounts): Promise<void> {
+  const shouldUpdate = process.env.UPDATE_BUILD_COUNTS === '1';
+  const expectedExists = existsSync(EXPECTED_COUNTS);
+
+  if (shouldUpdate || !expectedExists) {
+    await writeFile(EXPECTED_COUNTS, JSON.stringify(actual, null, 2) + '\n');
+    console.log(
+      `${shouldUpdate ? 'Updated' : 'Wrote initial'} ${EXPECTED_COUNTS}`,
+    );
+    return;
+  }
+
+  const expected = JSON.parse(readFileSync(EXPECTED_COUNTS, 'utf8')) as BuildCounts;
+  const diff = compareBuildCounts(expected, actual);
+  const report = formatCountDiff(diff);
+  console.log(report);
+  if (diff.some((d) => d.status === 'mismatch')) {
+    console.error(
+      `\nbuild-catalog count assertion failed. If the change is intentional,\n` +
+      `refresh the snapshot with: UPDATE_BUILD_COUNTS=1 npm run build:catalog`,
+    );
+    process.exit(1);
   }
 }
 
