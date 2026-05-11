@@ -6,7 +6,7 @@ Paper-aesthetic alternate render path inspired by Sky Atlas 2000.0
 orchestrator listens to `onCameraModeChange` and auto-clears the flag
 on observe→navigate. URL state persists `chart=1` only when both flags
 are set (FLAG_CHART = 1 << 6 in the flags byte; see
-`docs/architecture.md` §URL state).
+`docs/url-state.md`).
 
 `chart-mode.ts` toggles five things on entry:
 

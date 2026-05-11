@@ -2,9 +2,10 @@
 
 The right-side settings panel, top-left brand surface, keyboard
 shortcuts, layout containers, and a few CSS gotchas that bit hard
-enough to be worth documenting. For TrackballControls tuning, the
-warp animation, OBSERVE camera mode, and the two-finger roll gesture,
-see `docs/camera-modes.md`.
+enough to be worth documenting. For TrackballControls tuning and the
+two-finger roll gesture, see `docs/camera-controls.md`; for the warp
+animation see `docs/camera-warp.md`; for OBSERVE camera mode see
+`docs/camera-observe.md`.
 
 ## Brand box and About / Credits modals
 
@@ -222,8 +223,7 @@ URL state encodes the preset only when not on the default
 (`naked-eye`); `mag` only when diverged from the active preset's
 value; `smin/smax/span` only when their override flag is true.
 Receiver applies the preset first, then layers the explicit overrides
-on top. See `docs/architecture.md` §URL state for the binary `?v=`
-format.
+on top. See `docs/url-state.md` for the binary `?v=` format.
 
 **Active-preset highlight.** The reverse-sync in `controls.ts` compares
 `f.maxAppMag` against `MAG_PRESETS[*].maxAppMag` (epsilon 0.05) and
@@ -360,7 +360,7 @@ future curved-warp paths (a7d.2.9). Reads `Stellata.getWarpInfo()` for
 the destination identity + endpoints. The horizontal scale-bar
 behaviour is independent: its scene-scale already targets B from warp
 start (since `controls.target` is repointed at B at warp launch — see
-`docs/camera-modes.md` § Scale-bar smoothness).
+`docs/camera-warp.md` § Scale-bar smoothness).
 
 **SVG sizing.** `overflow: visible` on the SVG so off-default-angle
 z-axis lines and long names extend past the SVG bounds without being

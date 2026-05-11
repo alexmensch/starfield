@@ -137,9 +137,13 @@ Claude Code should read on demand when working on the relevant area.
   Stellarium HIP resolution, geometric-binary inference, GCVS
   cross-match, idempotency. Read when touching `scripts/` or `data/`.
 - **`docs/architecture.md`** — event bus, click-state machine, focused
-  constellation aim, URL state, floating origin. The cross-cutting
+  constellation aim, floating origin, pin-to-center. The cross-cutting
   patterns the rest of the codebase assumes. Read when changing state
   flow, focus/vector behaviour, or anything that reads star positions.
+- **`docs/url-state.md`** — `?v=` URL wire format: v3 envelope,
+  presence mask, per-component vec3 sub-masks, legacy v1/v2 decode,
+  process for adding a field, console helpers. Read when touching
+  `url-state.ts` or changing what serialises to `?v=`.
 - **`docs/rendering.md`** — full render stack table (WebGL renderOrder
   + SVG source order + per-layer visibility gates), then the star
   pipeline core: instanced quads, three passes (core depth-mask + disc
@@ -184,11 +188,17 @@ Claude Code should read on demand when working on the relevant area.
   phase listener + DOM-relocate modal for the Go / Constellation
   pickers), CSS gotchas (`[hidden]` specificity, `backdrop-filter`
   stacking contexts). Read when touching the panel/topbar.
-- **`docs/camera-modes.md`** — TrackballControls tuning, near-plane
-  vs minDistance invariant, warp animation (3-phase state machine),
-  OBSERVE camera mode + look-around controller, two-finger roll
-  gesture (platform-split). Read when touching camera state, focus
-  travel, or gesture handling.
+- **`docs/camera-controls.md`** — near-plane vs minDistance invariant,
+  TrackballControls tuning, two-finger roll gesture (platform-split).
+  Read when touching camera geometry or gesture handling.
+- **`docs/camera-warp.md`** — warp animation (3-phase state machine),
+  scale-bar smoothness, navigate↔observe interactions at launch /
+  arrival, floating-origin recentre. Read when touching focus travel
+  or warp UX.
+- **`docs/camera-observe.md`** — OBSERVE mode: look-around controller,
+  drag mechanics, momentum, FOV-on-wheel, aim slerps, POI dispatch,
+  single/double click handlers, navigate-mode close-zoom unfocus.
+  Read when touching observe-mode behaviour.
 - **`docs/deployment.md`** — Wrangler config, `@cloudflare/workers-types`
   global leak, `compatibility_date`, `custom_domain` DNS auto-registration.
   Read when changing deployment or worker code.

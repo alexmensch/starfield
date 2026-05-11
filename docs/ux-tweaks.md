@@ -3,7 +3,8 @@
 Reference table of common tweaks the user may ask for and where to find them.
 See also `docs/rendering.md`, `docs/galactic-overlay.md`,
 `docs/molecular-clouds.md`, `docs/milky-way.md`, `docs/chart-mode.md`,
-`docs/camera-modes.md`, `docs/ui-and-controls.md`, and `docs/overlays.md`
+`docs/camera-controls.md`, `docs/camera-warp.md`, `docs/camera-observe.md`,
+`docs/ui-and-controls.md`, and `docs/overlays.md`
 for the surrounding context.
 
 ## Known UX knobs you may be asked to tweak
