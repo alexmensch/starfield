@@ -70,7 +70,7 @@ src/
     distance-util.ts      fmtDist + fmtDistAuto (pc/ly above 0.01 pc, AU below), unit state + broadcast, niceRound
     url-state.ts          URL ↔ state sync (debounced)
     info-modal.ts         first-visit welcome modal (localStorage opt-out)
-    brand-modal.ts        about / credits modals from the top-left brand box
+    brand-modal.ts        about / credits modals + share-link copy-URL affordance, top-left brand box
     constellation-typeahead.ts  filter-by-name+code picker for #con-input
     typeahead.ts          generic Typeahead<T> + TypeaheadGroup (used by search.ts and constellation-typeahead.ts)
     typeahead-util.ts     shared helpers for the two typeaheads (cap, hover-class swap)

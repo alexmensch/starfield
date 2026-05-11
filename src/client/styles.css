@@ -137,6 +137,13 @@ html, body {
   opacity: 0.4;
   margin: 0 6px;
 }
+/* Width-lock so the trailing glyph swap (⧉ → ✓ / ⨯) on click never
+ * reflows the brand-links flex row. 8ch covers "share ⧉" with slack. */
+.share-link {
+  min-width: 8ch;
+  text-align: left;
+  display: inline-block;
+}
 
 .ui-bottom {
   position: fixed;

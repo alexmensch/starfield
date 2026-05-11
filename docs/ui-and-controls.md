@@ -10,16 +10,24 @@ animation see `docs/camera-warp.md`; for OBSERVE camera mode see
 ## Brand box and About / Credits modals
 
 `.ui-top-left` is a fixed top-left container holding the "Stellata"
-title plus a small `about · credits` link row (always visible — no
-hover affordance, since touch devices have no hover state). Both
-links open `<div class="modal">` cards that reuse the welcome-modal
-styling. ESC, the close button, or the backdrop dismisses; there's
-no "don't show again" opt-out because the modals are user-initiated.
+title plus a small `about · credits · share ⧉` link row (always
+visible — no hover affordance, since touch devices have no hover
+state). The first two open `<div class="modal">` cards that reuse
+the welcome-modal styling; ESC, the close button, or the backdrop
+dismisses. There's no "don't show again" opt-out because the modals
+are user-initiated.
+
+`share ⧉` copies `window.location.href` (which encodes the full
+view via `url-state.ts`) to the clipboard and briefly flips its
+trailing glyph to `✓` on success or `⨯` on failure (insecure context
+/ no `navigator.clipboard`). The `.share-link` class width-locks the
+slot so the glyph swap never reflows the flex row.
 
 `brand-modal.ts` wires both modals via `data-modal-dismiss`
-attributes on the close button and backdrop. The `.ui-top-left`
-container sits independently of `.ui-top` so changes to the
-right-side stack's width / wrap behaviour don't affect the brand.
+attributes on the close button and backdrop, plus the share-button
+click handler. The `.ui-top-left` container sits independently of
+`.ui-top` so changes to the right-side stack's width / wrap behaviour
+don't affect the brand.
 
 ## Keyboard shortcuts
 
