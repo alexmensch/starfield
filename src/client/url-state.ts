@@ -1097,7 +1097,7 @@ export function applyDecodedView(
       const idx = resolveStarRef(view.focus, idMaps, idMaps.solIndex);
       if (idx >= 0 && idx < idMaps.starCount) {
         if (hasCam || hasTgt) stellata.setOrbitTarget(idx);
-        else stellata.focusStar(idx);
+        else stellata.focusStar(idx, { animate: false });
       }
     }
   }
@@ -1106,7 +1106,7 @@ export function applyDecodedView(
   // are present in a hand-crafted blob.
   if (view.cloud !== undefined && view.cloud >= 0) {
     if (hasCam || hasTgt) stellata.setFocusedCloud(view.cloud);
-    else stellata.flyToCloud(view.cloud);
+    else stellata.flyToCloud(view.cloud, { animate: false });
   }
   if (view.toc !== undefined && view.toc >= 0) stellata.setVectorToCloud(view.toc);
   if (view.to) {

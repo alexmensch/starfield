@@ -49,13 +49,14 @@ mutually-exclusive pairs: `focusedStar` / `focusedCloud` and `vectorTo`
 picked under the cursor — a cloud pick from a star focus sets a
 star→cloud measurement vector; a cloud pick from a cloud focus sets a
 cloud→cloud vector; clicking the current vector tip (star or cloud)
-triggers the appropriate teleport (`focusStar` or `flyToCloud`); pressing
-W or clicking the distance label dispatches to `warpTo` or `warpToCloud`
-based on which vector slot is active. The two cloud-specific carve-outs
-are (a) no focus ring (the SVG overlay reads `getFocusedStar` only and
-naturally ignores `focusedCloud`) and (b) arrival distance is
-`cloudViewingDistancePc` (= `2.4 × max(axes)`, with a 5 pc floor)
-instead of `minDistForStar`.
+triggers a focus-park lerp via `focusStar` or `flyToCloud` (see
+`docs/camera-controls.md` § Focus-park lerp); pressing W or clicking
+the distance label dispatches to `warpTo` or `warpToCloud` based on
+which vector slot is active. The two cloud-specific carve-outs are
+(a) no focus ring (the SVG overlay reads `getFocusedStar` only and
+naturally ignores `focusedCloud`) and (b) the park-distance inputs
+use `cloudViewingDistancePc` (= `2.4 × max(axes)`, with a 5 pc floor)
+as the cloud's `dMinFloor` instead of the star 90 %-fill solve.
 
 **Picking + hover:** per-cloud `Mesh` objects participate in
 `THREE.Raycaster` intersection via the cloud `Group`.
@@ -67,9 +68,10 @@ body shows its name + distance + axes in the existing tooltip element.
 
 **Search:** cloud entries share the same Fuse fuzzy index as star
 entries, discriminated by a `kind: 'star' | 'cloud'` tag. The Focus
-search box dispatches by kind — cloud picks call `flyToCloud` (teleport
-to viewing distance + set cloud focus); the To (distance vector) box
-accepts both, dispatching to `setVectorToCloud` for cloud picks.
+search box dispatches by kind — cloud picks call `flyToCloud`
+(focus-park lerp to viewing distance + set cloud focus); the To
+(distance vector) box accepts both, dispatching to `setVectorToCloud`
+for cloud picks.
 
 **`setOrbitTargetCloud(cloudIdx)`:** the click-without-focus path —
 mirrors `setOrbitTarget` for stars. Moves orbit pivot to the cloud
@@ -81,11 +83,14 @@ focal star instead of snapping back to Sol, so the cloud's absolute
 centroid is converted to local-frame coordinates by subtracting
 `worldOffset` before assigning to `controls.target`.
 
-**`flyToCloud(cloudIdx)`:** the teleport path — used by search-select
+**`flyToCloud(cloudIdx)`:** the focus-park path — used by search-select
 and click-vector-tip. Mirrors `focusStar`: clears prior focus + vector,
-positions camera at `cloud.centerAbs + viewDir × cloudViewingDistancePc`,
-and sets the cloud focus. Snap, not animation; for animated travel the
-user warps via the distance label.
+then composes the generic `parkDistance(...)` primitive with the cloud's
+max-semi-axis as `R_pc` and `cloudViewingDistancePc(cloud)` as
+`dMinFloor`. Lerps over `FOCUS_LERP_MS` when the camera is currently
+outside park, or stays put when inside. `animate: false` (URL-restore)
+snaps. For animated travel between distant focal points the user warps
+via the distance label.
 
 **`warpToCloud(destIdx)`:** the cloud-destination warp. Source point is
 the currently-focused star OR cloud (`currentFocusLocalPos`); destination

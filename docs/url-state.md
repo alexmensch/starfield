@@ -48,9 +48,10 @@ bit order, so mode isn't known until the field loop completes).
   three states (default Sol / specific star / cleared) stay
   unambiguous.
 - If `?v=` carries a focus without camera params (a hand-typed share),
-  `applyDecodedView` calls `focusStar` which teleports the camera. If
-  camera params are also present, it uses `setOrbitTarget` so the
-  explicit camera wins.
+  `applyDecodedView` calls `focusStar(idx, { animate: false })` which
+  snaps the camera to the park pose — URL restore must not surface as a
+  2 s glide on page load. If camera params are also present, it uses
+  `setOrbitTarget` so the explicit camera wins.
 - Camera changes are tracked via `onFrame` with a stringified-coord hash
   and a 300 ms debounced writer. The hash covers position, target,
   **and** `camera.up` — so two-finger roll (which only mutates `up`)
