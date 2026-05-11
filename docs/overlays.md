@@ -134,7 +134,7 @@ centroid math.
 ## Points of interest (OBSERVE-only)
 
 `poi-overlay.ts` renders user-pinned stars (single-click on a star in
-OBSERVE — see `docs/camera-modes.md` for the click dispatcher). Three
+OBSERVE — see `docs/camera-observe.md` for the click dispatcher). Three
 SVG groups under `#overlay`:
 
 - `<g id="poi-arrows">` — pooled `<path>` + `<text>` per POI for

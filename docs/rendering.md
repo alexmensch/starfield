@@ -217,7 +217,7 @@ camera dollying from `~1e-10` pc (intra-star) to `~3e4` pc (galactic
 centre) without z-fighting at intermediate scales — log depth maps
 `log(z+1) / log(far+1)` into the depth buffer so precision is roughly
 constant in `log(z)` instead of collapsing near the far plane. This is
-what enables `camera.near = 1e-10` (see `docs/camera-modes.md`).
+what enables `camera.near = 1e-10` (see `docs/camera-controls.md`).
 
 Per-pass overrides on top of the chunk default:
 
