@@ -116,7 +116,7 @@ describe('PlanetBodyField lifecycle', () => {
 
   it('attaches a host and grows the geometry instance count', () => {
     const f = new PlanetBodyField(makeSharedUniforms());
-    f.attachHost(0, makePlanetSystem(0, 3), 4.83, new THREE.Vector3(), 0);
+    f.attachHost(0, makePlanetSystem(0, 3), 4.83, new THREE.Vector3(), 0, 0);
     // group becomes visible; positions buffer holds 3 entries.
     expect(f.group.visible).toBe(true);
     const positions = f.getHostLocalPositions(0);
@@ -127,7 +127,7 @@ describe('PlanetBodyField lifecycle', () => {
 
   it('detachHost clears the host slot and hides the group when empty', () => {
     const f = new PlanetBodyField(makeSharedUniforms());
-    f.attachHost(0, makePlanetSystem(0, 3), 4.83, new THREE.Vector3(), 0);
+    f.attachHost(0, makePlanetSystem(0, 3), 4.83, new THREE.Vector3(), 0, 0);
     f.detachHost(0);
     expect(f.getHostLocalPositions(0)).toBeNull();
     expect(f.group.visible).toBe(false);
@@ -137,14 +137,14 @@ describe('PlanetBodyField lifecycle', () => {
   it('recenter shifts hostLocalPos by the new world offset', () => {
     const f = new PlanetBodyField(makeSharedUniforms());
     const hostAbs = new THREE.Vector3(1.5, 0, 2.0);
-    f.attachHost(0, makePlanetSystem(0, 1), 4.83, hostAbs, 0);
+    f.attachHost(0, makePlanetSystem(0, 1), 4.83, hostAbs, 0, 0);
     // Pre-recenter: hostLocalPos = hostAbsPos - (0,0,0) = (1.5, 0, 2.0).
     // Apply recenter to (1.5, 0, 2.0) — host should land at origin.
     f.recenter(new THREE.Vector3(1.5, 0, 2.0));
     // Internal hostLocalPos isn't directly exposed, but we can verify
     // through attachHost behaviour after recenter — re-attach the
     // same host with the same absPos and confirm idempotence.
-    f.attachHost(0, makePlanetSystem(0, 1), 4.83, hostAbs, 0);
+    f.attachHost(0, makePlanetSystem(0, 1), 4.83, hostAbs, 0, 0);
     // Visible (re-attached fresh).
     expect(f.group.visible).toBe(true);
     f.dispose();
@@ -152,8 +152,8 @@ describe('PlanetBodyField lifecycle', () => {
 
   it('handles multiple hosts in one field', () => {
     const f = new PlanetBodyField(makeSharedUniforms());
-    f.attachHost(0, makePlanetSystem(0, 2), 4.83, new THREE.Vector3(), 0);
-    f.attachHost(1, makePlanetSystem(1, 4), 4.83, new THREE.Vector3(0.5, 0, 0), 0);
+    f.attachHost(0, makePlanetSystem(0, 2), 4.83, new THREE.Vector3(), 0, 0);
+    f.attachHost(1, makePlanetSystem(1, 4), 4.83, new THREE.Vector3(0.5, 0, 0), 0, 0);
     expect(f.getHostLocalPositions(0)!.length).toBe(6);
     expect(f.getHostLocalPositions(1)!.length).toBe(12);
     f.dispose();
@@ -161,8 +161,8 @@ describe('PlanetBodyField lifecycle', () => {
 
   it('detaching the first host compacts the buffer; the second still resolves', () => {
     const f = new PlanetBodyField(makeSharedUniforms());
-    f.attachHost(0, makePlanetSystem(0, 2), 4.83, new THREE.Vector3(), 0);
-    f.attachHost(1, makePlanetSystem(1, 3), 4.83, new THREE.Vector3(0.5, 0, 0), 0);
+    f.attachHost(0, makePlanetSystem(0, 2), 4.83, new THREE.Vector3(), 0, 0);
+    f.attachHost(1, makePlanetSystem(1, 3), 4.83, new THREE.Vector3(0.5, 0, 0), 0, 0);
     f.detachHost(0);
     const stillThere = f.getHostLocalPositions(1);
     expect(stillThere).not.toBeNull();
@@ -173,15 +173,15 @@ describe('PlanetBodyField lifecycle', () => {
 
   it('attachHost is idempotent — re-attach replaces in place', () => {
     const f = new PlanetBodyField(makeSharedUniforms());
-    f.attachHost(0, makePlanetSystem(0, 3), 4.83, new THREE.Vector3(), 0);
-    f.attachHost(0, makePlanetSystem(0, 5), 4.83, new THREE.Vector3(), 0);
+    f.attachHost(0, makePlanetSystem(0, 3), 4.83, new THREE.Vector3(), 0, 0);
+    f.attachHost(0, makePlanetSystem(0, 5), 4.83, new THREE.Vector3(), 0, 0);
     expect(f.getHostLocalPositions(0)!.length).toBe(15);
     f.dispose();
   });
 
   it('setMaxAppMag is a no-op smoke (cull distances refresh internally)', () => {
     const f = new PlanetBodyField(makeSharedUniforms(6.5));
-    f.attachHost(0, makePlanetSystem(0, 1), 4.83, new THREE.Vector3(), 0);
+    f.attachHost(0, makePlanetSystem(0, 1), 4.83, new THREE.Vector3(), 0, 0);
     f.setMaxAppMag(15);
     f.setMaxAppMag(6.5);
     expect(f.group.visible).toBe(true);
@@ -214,7 +214,7 @@ describe('PlanetBodyField lifecycle', () => {
     const f = new PlanetBodyField(makeSharedUniforms());
     // Initial capacity is 16; attach 20 single-planet hosts.
     for (let i = 0; i < 20; i++) {
-      f.attachHost(i, makePlanetSystem(i, 1), 4.83, new THREE.Vector3(), 0);
+      f.attachHost(i, makePlanetSystem(i, 1), 4.83, new THREE.Vector3(), 0, 0);
     }
     for (let i = 0; i < 20; i++) {
       const slice = f.getHostLocalPositions(i);
@@ -242,7 +242,7 @@ describe('PlanetBodyField lifecycle', () => {
         makePlanet({ name: 'P2-Saturn', phaseCoefficients: SATURN_PHASE }),
       ],
     };
-    f.attachHost(0, ps, 4.83, new THREE.Vector3(), 0);
+    f.attachHost(0, ps, 4.83, new THREE.Vector3(), 0, 0);
     // Reach into the geometry. The cast is narrow and stable: the
     // class always exposes these as InstancedBufferAttribute.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -284,6 +284,7 @@ describe('PlanetBodyField lifecycle', () => {
       4.83,
       new THREE.Vector3(),
       0,
+      0,
     );
     // Saturn-coefs planet (same albedo / R / a) → cull widened by
     // √peakPhaseFactor(SATURN_PHASE).
@@ -302,6 +303,7 @@ describe('PlanetBodyField lifecycle', () => {
       4.83,
       new THREE.Vector3(),
       0,
+      0,
     );
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const hosts = (f as any).hosts as Map<number, { cullDistance: number }>;
@@ -317,6 +319,60 @@ describe('PlanetBodyField lifecycle', () => {
       cullDistancePc(4.83, baseRefl * peakPhaseFactor(SATURN_PHASE), 6.5),
       6,
     );
+    f.dispose();
+  });
+
+  it('update() per-host cull gate: skips positionsAt past cullDistance', () => {
+    // The architectural promise of PlanetBodyField is the per-host cull
+    // gate at update():L353 — `if (dToHost > host.cullDistance) continue`
+    // is what makes the bk5 "hundreds of hosts" scaling tractable. The
+    // gate has unit-test coverage on its derived inputs (cullDistance
+    // formula above) but none on the gate behaviour itself. A stub
+    // positionsAt with a counter pins it: inside cullDistance the
+    // counter increments per update; past cullDistance it stays frozen.
+    const f = new PlanetBodyField(makeSharedUniforms(6.5));
+    let calls = 0;
+    const positionsAt = (_t: number, out: Float32Array): void => {
+      calls++;
+      for (let i = 0; i < out.length; i++) out[i] = 0;
+    };
+    const ps: PlanetSystem = {
+      hostStarIdx: 0,
+      planets: [makePlanet({ semiMajorAxisAu: 1, radiusKm: 6000 })],
+      positionsAt,
+    };
+    f.attachHost(0, ps, 4.83, new THREE.Vector3(), 0, 0);
+    // attachHost calls writeHostPositions once for the initial fill, so
+    // we expect 1 prior call before update() ticks fire.
+    expect(calls).toBe(1);
+
+    // Reach into the host's computed cullDistance — the test stays
+    // agnostic to the exact value but lands the camera at known offsets
+    // either side of it.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const hosts = (f as any).hosts as Map<number, { cullDistance: number }>;
+    const cull = hosts.get(0)!.cullDistance;
+    expect(cull).toBeGreaterThan(0);
+
+    const camera = new THREE.PerspectiveCamera();
+    // Camera at half cullDistance from the host → gate open, positionsAt fires.
+    camera.position.set(cull * 0.5, 0, 0);
+    f.update(camera, 0);
+    expect(calls).toBe(2);
+    f.update(camera, 1);
+    expect(calls).toBe(3);
+
+    // Camera past cullDistance → gate closes, positionsAt frozen.
+    camera.position.set(cull * 2, 0, 0);
+    f.update(camera, 2);
+    expect(calls).toBe(3);
+    f.update(camera, 3);
+    expect(calls).toBe(3);
+
+    // Back inside cullDistance → gate reopens.
+    camera.position.set(cull * 0.5, 0, 0);
+    f.update(camera, 4);
+    expect(calls).toBe(4);
     f.dispose();
   });
 });
