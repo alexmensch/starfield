@@ -40,6 +40,28 @@ into them where relevant.
   did not model. Unlike TDSC there is no bright-star saturation
   gap (Sirius, Mizar, Castor, α Cen, Albireo all carry CCDM IDs
   with confirming `MultFlag`).
+- **Washington Double Star Catalog (WDS)** + **Sixth Catalog of Orbits
+  of Visual Binary Stars (ORB6)**: Mason et al (2001), AJ 122, 3466
+  (WDS); Hartkopf, Mason & Worley (2001), AJ 122, 3472 (ORB6).
+  Maintained continuously at the U.S. Naval Observatory and Georgia
+  State University. Used to recover binary-pair geometry that AT-HYG
+  collapses to a single row: visually-resolved separations ρ and
+  position angles θ from WDS, full orbital element fits (P, T, e,
+  a, i, ω, Ω) from ORB6 for ~4k systems. Raw fixed-width text files
+  committed under `data/`, downloaded directly from
+  http://www.astro.gsu.edu/wds/:
+    - `wds_summ.txt` — main summary, ~157k pair systems with ρ/θ,
+      component magnitudes, spectral types, HIP/HD cross-IDs
+      (`Webtextfiles/wdsweb_summ2.txt`).
+    - `wds_notes.txt` — notes accompanying the catalog
+      (`Webtextfiles/wdsnewnotes_main.txt`).
+    - `wds_refs.txt` — discoverer codes and references
+      (`Webtextfiles/wdsnewref.txt`).
+    - `orb6_orbits.txt` — orbital elements (`orb6/orb6orbits.txt`).
+  Field offsets are documented upstream in `wdsweb_format.txt` and
+  the ORB6 ReadMe; consulted by `scripts/build-binaries.py` but not
+  committed. Retrieved 2026-05-11. Public-domain (U.S. Government
+  work).
 - **Stellarium modern sky culture** (constellation stick figures):
   https://github.com/Stellarium/stellarium/tree/master/skycultures/modern
   — MIT-licensed JSON, HIP-indexed polylines. Committed as
