@@ -8,21 +8,27 @@ import { selectMaskCandidates } from './disc-mask-pure';
 // keeps the mask's cutout circles aligned with the currently visible discs.
 //
 // Cutouts are placed for:
-//   1. The focused star + its binary companion — common single + binary case.
+//   1. The most-recently-focused star + its binary companion. We track the
+//      last focused index rather than the *current* focused index so that
+//      Esc-unfocusing doesn't drop the mask while the camera is still close
+//      enough to render the disc — the bug stellata-rmo reports. The stale
+//      entry self-evicts naturally: placeCircle returns false once the disc
+//      shrinks below the threshold, so as the camera pulls away the mask
+//      circle quietly goes to r=0.
 //   2. Every vertex star in the highlighted constellation whose disc still
-//      exceeds the threshold. Without (2), unfocusing a constellation member
-//      whose disc remains rendered (camera hasn't moved) leaves the lines
-//      painted on top of its disc — the bug stellata-rmo reports. Iterating
-//      the highlighted constellation (rather than scanning the full catalog)
-//      bounds work to the dozens of vertex stars per constellation, since
-//      only a star at a line endpoint can intersect the painted segments.
+//      exceeds the threshold. Catches close vertices that were never the
+//      focal star (e.g. binaries where the user focused the secondary).
+//      Iterating the highlighted constellation (rather than scanning the
+//      full catalog) bounds work to the dozens of vertex stars per
+//      constellation, since only a star at a line endpoint can intersect
+//      the painted segments.
 //
-// Not covered: a close star that is neither focal, focal's companion, nor a
-// vertex of the highlighted constellation. In practice the user has to
-// deliberately park near a non-vertex, non-companion bright star while a
-// constellation is highlighted, so this residual gap is a deliberate scope
-// (see stellata-9mm.147). The index-selection contract is unit-tested in
-// disc-mask-pure.test.ts.
+// Not covered: a close-disc star that has never been focused and is not a
+// vertex of the highlighted constellation — e.g. drifting past a bright
+// star post-warp without focusing it. Closing that class requires a
+// spatial scan over close stars rather than the catalog at large; tracked
+// as stellata-9mm.182 (deferred). The index-selection contract is
+// unit-tested in disc-mask-pure.test.ts.
 const DISC_THRESHOLD_PX = 48;
 // Soft cap on the cutout pool. Today's ceiling is the largest Stellarium
 // asterism (~40 vertices) + 2 for focal + companion; 64 leaves headroom
@@ -92,6 +98,18 @@ export function createDiscMask(stellata: Stellata) {
     highlightCon = f.highlightCon;
   });
 
+  // Track the most-recently-focused star + its companion. Updated only on
+  // focus *acquisition* (idx !== null); never cleared. This is what keeps
+  // the focal-pair mask alive after Esc-unfocus until the disc shrinks.
+  let recentFocus: number | null = null;
+  let recentCompanion = -1;
+  stellata.onFocusChange((idx) => {
+    if (idx !== null) {
+      recentFocus = idx;
+      recentCompanion = stellata.catalog.companion[idx];
+    }
+  });
+
   // Track how many circles were active last frame so we only clear the
   // tail end of the pool that is no longer used.
   let lastUsed = 0;
@@ -114,11 +132,9 @@ export function createDiscMask(stellata: Stellata) {
       return;
     }
 
-    const focus = stellata.getFocusedStar();
-    const companion = focus !== null ? stellata.catalog.companion[focus] : -1;
     const candidates = selectMaskCandidates(
-      focus,
-      companion,
+      recentFocus,
+      recentCompanion,
       highlightCon,
       stellata.catalog.constellations,
     );

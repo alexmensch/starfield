@@ -31,15 +31,16 @@ vertex star, so the actual star glyphs remain visible through the figure.
 The `<path>` also applies `mask="url(#disc-occlude-mask)"`. The mask is
 driven per-frame by `disc-mask.ts` which cuts out circles at the
 projected position + rendered size of every visible disc that the lines
-might pass through: the focused star, its binary companion, and every
-vertex star in the highlighted constellation whose disc still exceeds
-the threshold. Iterating constellation members (rather than scanning
-the catalog) bounds the work to the few dozen vertex stars per
+might pass through: the **most-recently-focused** star + its binary
+companion (not the *current* focus — the mask persists after Esc so the
+just-unfocused star stays masked while its disc still clears the
+threshold; the entry self-evicts when the disc shrinks below it), plus
+every vertex star in the highlighted constellation whose disc still
+exceeds the threshold. Iterating constellation members (rather than
+scanning the catalog) bounds the work to the few dozen vertex stars per
 constellation; the cutout pool grows on demand. That gives the visual
 effect of constellation lines passing *behind* a close-range resolved
-disc rather than being painted on top of it — including the case where
-the user unfocuses a constellation member but the camera is still close
-enough to that star to render its disc. The cutout circle's radius
+disc rather than being painted on top of it. The cutout circle's radius
 tracks the disc's variable-star pulsation exactly via `renderedSizePx`
 replicating the shader math, so there's no stale gap as a variable
 shrinks. SVG renders above the canvas unconditionally, so this masking
