@@ -140,11 +140,13 @@ Claude Code should read on demand when working on the relevant area.
   constellation aim, URL state, floating origin. The cross-cutting
   patterns the rest of the codebase assumes. Read when changing state
   flow, focus/vector behaviour, or anything that reads star positions.
-- **`docs/rendering.md`** — star pipeline core: instanced quads, three
-  passes (core depth-mask + disc + glow), super-Gaussian intensity
-  profile, physical-size, luminosity softness, variable pulsation,
-  per-star dust extinction. Read when touching the star shaders or
-  the magnitude / size / dust knobs.
+- **`docs/rendering.md`** — full render stack table (WebGL renderOrder
+  + SVG source order + per-layer visibility gates), then the star
+  pipeline core: instanced quads, three passes (core depth-mask + disc
+  + glow), super-Gaussian intensity profile, physical-size, luminosity
+  softness, variable pulsation, per-star dust extinction. Read when
+  touching the star shaders or the magnitude / size / dust knobs, or
+  when reasoning about why one layer paints on top of another.
 - **`docs/galactic-overlay.md`** — galactic disc outline, coordinate
   sphere (b/l grid), Sol/GC SVG arrows, HUD ring, navigate↔observe
   shaft-start lerp. Read when touching any of those layers.

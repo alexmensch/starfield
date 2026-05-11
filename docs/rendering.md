@@ -13,6 +13,81 @@ docs:
 
 For the underlying physics and density profiles, see `SCIENCE.md`.
 
+## Full render stack — front to back
+
+There is no z-ordering between WebGL and SVG. The WebGL canvas paints
+first; the SVG `#overlay` always sits above it (`z-index: 5`,
+`pointer-events: none`). Inside each layer the ordering is local:
+WebGL by `THREE.Object3D.renderOrder`, SVG by source order in
+`src/client/index.html` (later child = on top). The disc-mask cuts
+holes through the constellation stick-figure path so close discs read
+as if they were in front of the lines — it is not a real z-order
+mechanism.
+
+| Layer                                            | Surface | Mechanism                                          | Order |
+| ------------------------------------------------ | ------- | -------------------------------------------------- | :---: |
+| Focus ring                                       | SVG     | source order (last child)                          | front |
+| Heliopause label                                 | SVG     | source order                                       |       |
+| Planet labels                                    | SVG     | source order                                       |       |
+| POI labels                                       | SVG     | source order                                       |       |
+| POI rings                                        | SVG     | source order                                       |       |
+| POI arrows                                       | SVG     | source order                                       |       |
+| Sol/GC arrow labels                              | SVG     | source order                                       |       |
+| Distance label + warp pill                       | SVG     | source order                                       |       |
+| Distance vector + bg                             | SVG     | source order                                       |       |
+| Sol/GC arrows + bg                               | SVG     | source order                                       |       |
+| HUD ring                                         | SVG     | source order                                       |       |
+| **Constellation stick-figure**                   | SVG     | first SVG child + `mask="url(#disc-occlude-mask)"` |       |
+| *— SVG / WebGL boundary —*                       | —       | `.overlay { z-index: 5 }`                          | —     |
+| Planet glow                                      | WebGL   | `renderOrder: 4`                                   |       |
+| Planet disc                                      | WebGL   | `renderOrder: 3`                                   |       |
+| Planet restore (depth-only)                      | WebGL   | `renderOrder: 2.5`                                 |       |
+| Orbit rings                                      | WebGL   | `renderOrder: 2`                                   |       |
+| Dust particles                                   | WebGL   | `renderOrder: 2`                                   |       |
+| Planet corrupt (depth-only)                      | WebGL   | `renderOrder: 1.5`                                 |       |
+| Star glow + heliopause shell                     | WebGL   | `renderOrder: 1`                                   |       |
+| Star disc                                        | WebGL   | `renderOrder: 0`                                   |       |
+| Galactic disc + grid                             | WebGL   | `renderOrder: -1`                                  |       |
+| Molecular clouds (shelved v1.0)                  | WebGL   | `renderOrder: -2`                                  |       |
+| Milky Way volume                                 | WebGL   | `renderOrder: -3`                                  |       |
+| Star core depth-mask + planet core (depth-only)  | WebGL   | `renderOrder: -4`, `colorWrite: false`             | back  |
+
+### Per-layer visibility gates
+
+Several layers hide/show as state changes — observed as "the order
+changed" but actually visibility flips with a fixed paint order.
+
+| Layer                              | Hides when…                                                                                                                                                            | Source                                        |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| Constellation stick-figure         | `!filter.showConstellation`; `highlightCon < 0` and not chart-mode                                                                                                     | `constellation-overlay.ts`                    |
+| Disc-mask cutouts (whole-mask)     | `cameraMode === 'observe'` or observe transition active                                                                                                                | `disc-mask.ts`                                |
+| Disc-mask cutout SOURCES           | always: most-recently-focused star + companion (persists across Esc-unfocus until disc shrinks); + vertices of the highlighted constellation whose disc > 48 px        | `disc-mask.ts`, `disc-mask-pure.ts`           |
+| Focus ring                         | no focus; observe + no transition; `renderedSizePx(focus) > 48 px`; `anyOrbitRingVisible()`                                                                            | `focus-ring-overlay.ts`                       |
+| HUD ring + Sol/GC arrows           | `!filter.showHud`; `body.warping` (CSS hide during warp)                                                                                                               | `hud-overlay.ts`                              |
+| POI overlay                        | `cameraMode !== 'observe'`; `!filter.showHud`; warp; navigate↔observe transition                                                                                       | `poi-overlay.ts`                              |
+| Planet labels                      | no planet system attached; chart mode active                                                                                                                           | `planet-labels.ts`                            |
+| Distance vector + To-row           | no destination; observe (defensive); near-plane clipped beyond viewport                                                                                                | `distance-vector-overlay.ts`                  |
+| Star core depth-mask (WebGL -4)    | no star is close enough to enter the disc pass — gated each frame by a Float32Array scan of `_localPositions`                                                          | `stellata.ts` (see *Star rendering* below)    |
+| Variable star disc + glow          | `renderableAppMag` magnitude cap                                                                                                                                       | star vertex shader                            |
+
+### Where constellation lines can still paint on top of a disc
+
+The disc-mask is keyed to four sources: most-recently-focused, its
+companion, vertices of the highlighted constellation, and a 48 px
+threshold gate. Lines paint on top in these cases:
+
+1. **Disc below 48 px.** Intended — the visual delta is too small to be
+   worth a cutout. Threshold: `DISC_THRESHOLD_PX` in `disc-mask.ts`.
+2. **Close-disc star that has never been focused and is not a vertex of
+   the highlighted constellation** (e.g. drifting past a bright star
+   post-warp). Tracked as `stellata-9mm.182` (deferred); requires a
+   spatial scan over close stars rather than the catalog at large.
+3. **Renderable-mag gate hides the disc but the mask still cuts** — the
+   mask circle uses `renderedSizePx`, which mirrors shader math. If the
+   disc is magnitude-gated out, the cutout still appears but reveals an
+   empty hole rather than a disc. Worth checking if you observe a black
+   hole in the lines while sweeping the magnitude slider.
+
 ## Star rendering: instanced quads, two passes
 
 Stars are rendered as **instanced unit-quads**, not `THREE.Points`. Points

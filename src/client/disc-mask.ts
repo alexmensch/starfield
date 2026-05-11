@@ -1,19 +1,40 @@
 import * as THREE from 'three';
 import type { Stellata } from './stellata';
 import { projectToScreen } from './overlay-project';
+import { selectMaskCandidates } from './disc-mask-pure';
 
 // Per-frame SVG mask updater. Overlays that should appear BEHIND any close
 // rendered-disc star apply `mask="url(#disc-occlude-mask)"`. This module
 // keeps the mask's cutout circles aligned with the currently visible discs.
 //
-// Which stars to check? In practice, only the few stars the camera is close
-// to render as discs. We check the focused star + its binary companion —
-// covers the common single and binary-system cases without scanning the
-// full catalog. If a star is rendering as a disc without being focused
-// (unusual — camera parked close without re-focusing), it won't be masked.
-// Can be extended if that edge case starts to matter.
-const MAX_MASK_CIRCLES = 4;
+// Cutouts are placed for:
+//   1. The most-recently-focused star + its binary companion. We track the
+//      last focused index rather than the *current* focused index so that
+//      Esc-unfocusing doesn't drop the mask while the camera is still close
+//      enough to render the disc — the bug stellata-rmo reports. The stale
+//      entry self-evicts naturally: placeCircle returns false once the disc
+//      shrinks below the threshold, so as the camera pulls away the mask
+//      circle quietly goes to r=0.
+//   2. Every vertex star in the highlighted constellation whose disc still
+//      exceeds the threshold. Catches close vertices that were never the
+//      focal star (e.g. binaries where the user focused the secondary).
+//      Iterating the highlighted constellation (rather than scanning the
+//      full catalog) bounds work to the dozens of vertex stars per
+//      constellation, since only a star at a line endpoint can intersect
+//      the painted segments.
+//
+// Not covered: a close-disc star that has never been focused and is not a
+// vertex of the highlighted constellation — e.g. drifting past a bright
+// star post-warp without focusing it. Closing that class requires a
+// spatial scan over close stars rather than the catalog at large; tracked
+// as stellata-9mm.182 (deferred). The index-selection contract is
+// unit-tested in disc-mask-pure.test.ts.
 const DISC_THRESHOLD_PX = 48;
+// Soft cap on the cutout pool. Today's ceiling is the largest Stellarium
+// asterism (~40 vertices) + 2 for focal + companion; 64 leaves headroom
+// without ever firing in practice. Exceeding it warns once (dev signal
+// that the iteration source changed); growth itself is not blocked.
+const MAX_MASK_CIRCLES = 64;
 
 export function createDiscMask(stellata: Stellata) {
   const mask = document.getElementById('disc-occlude-mask') as unknown as SVGMaskElement;
@@ -21,18 +42,28 @@ export function createDiscMask(stellata: Stellata) {
   // mask children fully from here.
   const original = document.getElementById('disc-mask-cutout');
   if (original) original.remove();
-  // Preallocate MAX_MASK_CIRCLES child <circle>s and keep them in a local
-  // array — we only touch attributes per frame, never add/remove nodes.
+
+  // Pool of <circle>s, grown on demand and never shrunk. Allocations are
+  // rare (bounded by max constellation member count + 2 for focal+companion).
   const circles: SVGCircleElement[] = [];
-  for (let i = 0; i < MAX_MASK_CIRCLES; i++) {
-    const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-    c.setAttribute('cx', '-100');
-    c.setAttribute('cy', '-100');
-    c.setAttribute('r', '0');
-    c.setAttribute('fill', 'black');
-    mask.appendChild(c);
-    circles.push(c);
-  }
+  let capExceededWarned = false;
+  const ensureCircles = (n: number) => {
+    if (n > MAX_MASK_CIRCLES && !capExceededWarned) {
+      console.warn(
+        `disc-mask: pool grew to ${n}, exceeds expected ceiling ${MAX_MASK_CIRCLES} — check whether the iteration source changed.`,
+      );
+      capExceededWarned = true;
+    }
+    while (circles.length < n) {
+      const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      c.setAttribute('cx', '-100');
+      c.setAttribute('cy', '-100');
+      c.setAttribute('r', '0');
+      c.setAttribute('fill', 'black');
+      mask.appendChild(c);
+      circles.push(c);
+    }
+  };
 
   const v = new THREE.Vector3();
 
@@ -58,30 +89,62 @@ export function createDiscMask(stellata: Stellata) {
     return true;
   };
 
-  // Track how many circles were active last frame so we only re-clear the
-  // pool when transitioning out of a focused-disc state — avoids the
-  // 4-circle setAttribute sweep every idle frame in observe mode.
+  // Cache the highlighted-constellation index so the per-frame tick doesn't
+  // re-read getFilter() each frame. Mirrors constellation-overlay.ts (which
+  // consumes the same field via onFilterChange) so the two overlays react
+  // to filter mutations through the same mechanism.
+  let highlightCon = stellata.getFilter().highlightCon;
+  stellata.onFilterChange((f) => {
+    highlightCon = f.highlightCon;
+  });
+
+  // Track the most-recently-focused star + its companion. Updated only on
+  // focus *acquisition* (idx !== null); never cleared. This is what keeps
+  // the focal-pair mask alive after Esc-unfocus until the disc shrinks.
+  let recentFocus: number | null = null;
+  let recentCompanion = -1;
+  stellata.onFocusChange((idx) => {
+    if (idx !== null) {
+      recentFocus = idx;
+      recentCompanion = stellata.catalog.companion[idx];
+    }
+  });
+
+  // Track how many circles were active last frame so we only clear the
+  // tail end of the pool that is no longer used.
   let lastUsed = 0;
+
   stellata.onFrame(() => {
-    const focus = stellata.getFocusedStar();
     // In OBSERVE mode the focal star (and its companion if any) are hidden
     // by the vertex shader, so a mask cutout for them would just be a black
-    // hole carved out of overlays for nothing. Skip the focal-system masks
-    // entirely; any other rendered disc isn't a candidate today.
+    // hole carved out of overlays for nothing. Other stars are always far
+    // away from a camera parked at a focal star (camera position is set to
+    // the focal star's local origin in setFocus when observe is engaged),
+    // so they don't reach the disc threshold either. Skip mask updates
+    // entirely.
     const observe =
       stellata.getCameraMode() === 'observe' || stellata.isObserveTransitionActive();
-    if (focus === null || observe) {
+    if (observe) {
       if (lastUsed > 0) {
-        for (let i = 0; i < circles.length; i++) clearCircle(circles[i]);
+        for (let i = 0; i < lastUsed; i++) clearCircle(circles[i]);
         lastUsed = 0;
       }
       return;
     }
+
+    const candidates = selectMaskCandidates(
+      recentFocus,
+      recentCompanion,
+      highlightCon,
+      stellata.catalog.constellations,
+    );
+
     let used = 0;
-    if (used < circles.length && placeCircle(circles[used], focus)) used++;
-    const comp = stellata.catalog.companion[focus];
-    if (comp >= 0 && used < circles.length && placeCircle(circles[used], comp)) used++;
-    for (let i = used; i < circles.length; i++) clearCircle(circles[i]);
+    for (const idx of candidates) {
+      ensureCircles(used + 1);
+      if (placeCircle(circles[used], idx)) used++;
+    }
+    for (let i = used; i < lastUsed; i++) clearCircle(circles[i]);
     lastUsed = used;
   });
 }
