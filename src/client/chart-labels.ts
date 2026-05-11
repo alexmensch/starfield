@@ -745,8 +745,8 @@ export function projectVec(
   // Shared near-clip-safe projection (overlay-project), with chart-mode's
   // viewport-margin cull on top — labels well outside the viewport are
   // dropped here so downstream measurement cost stays off the hot path.
-  // The overlay-project scratch is fresh on every call, so the shared
-  // module-level scratch costs no allocation.
+  // projectToScreen owns its own module-level scratch; passing `p` as
+  // input is safe because it does scratch.copy(p) internally.
   const xy = projectToScreen(p, camera, w, h);
   if (!xy) return null;
   if (xy[0] < -200 || xy[0] > w + 200 || xy[1] < -100 || xy[1] > h + 100) return null;

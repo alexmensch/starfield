@@ -316,33 +316,29 @@ clock that drives variable-star pulsation — they don't share a value.
 
 Per-`t` cache granularity is 60 seconds: at billboarded-disc pixel
 scale, sub-minute planet motion is invisible (Mercury moves ~3e-5 rad
-seen from Earth in 60s ≈ 8″, well below pixel resolution at any
+seen from Earth in 60s ≈ 6″, well below pixel resolution at any
 zoom). Future time-scrubber UI (`stellata-nmu`) plugs in by overriding
 `Stellata.setT()`.
 
 **Heliopause boundary.** Modelled as an asymmetric ellipsoid centred
 on Sol, aligned to the solar apex of motion through the local
-interstellar medium. Geometry:
+interstellar medium. The cited measurements:
 
-- Upwind boundary at **122 AU** — Voyager 1 termination-shock
-  crossing, 2012-08-25.
-- Flank boundaries at **115 AU** — Voyager 2 crossing, 2018-11-05.
+- Upwind boundary at **122 AU** — Voyager 1 heliopause crossing,
+  2012-08-25.
+- Flank inferred at **~115 AU** from Voyager 2 heliopause crossing
+  2018-11-05, combined with the apex-aligned ellipsoid model.
 - Heliotail at **200 AU** — IBEX / Cassini ENA observations.
 - Apex direction: ICRS RA 17h53m, Dec +27.4°, after Frisch &
   Slavin 2013.
-
-Construction: a unit sphere scaled to (115, 115, 161) AU with the
-ellipsoid centre offset 39 AU toward the antiapex, then rotated so +Z
-lands on the antiapex. Result: upwind apex at +122 AU, downwind at
-−200 AU along the apex axis. The shell is rendered as a translucent
-Fresnel-limbed surface — alpha peaks at the silhouette and falls to a
-small floor face-on, so the upwind apex region doesn't paint the
-shell as a flat disc against the starfield.
 
 The heliopause is **static on human timescales**. Solar-cycle
 variations in the upwind distance are at the few-AU level across the
 11-year cycle, well below the 122 AU upwind anchor; we don't animate
 the boundary.
+
+Construction details (sphere scale, offset, rotation), rendering, and
+label anchoring: see `docs/solar-system.md` § Heliopause boundary.
 
 Implementation: `src/client/heliopause.ts` and
 `src/client/shaders/heliopause.{vert,frag}.glsl`.
