@@ -1158,6 +1158,38 @@ body.monochrome #con-results {
   letter-spacing: 0.2em;
   color: var(--fg);
 }
+/* Tabbed modal title: the inactive tab acts as a link to swap which
+ * pane is showing, with `.is-active` keyed to the visible pane. The
+ * active tab matches the h2 weight above; the inactive sits at
+ * `--fg-dim` so it reads as 'clickable, not the current view'. */
+.modal-tabs {
+  display: flex;
+  align-items: baseline;
+  gap: 0;
+  margin: 0 0 16px;
+}
+.modal-tab {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font-family: inherit;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+.modal-tab.is-active {
+  color: var(--fg);
+  cursor: default;
+}
+.modal-tab:not(.is-active):hover { color: var(--accent); }
+.modal-tabs .sep {
+  opacity: 0.4;
+  margin: 0 10px;
+  letter-spacing: 0;
+}
 .modal-card p {
   margin: 0 0 14px;
   color: var(--fg);
