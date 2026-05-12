@@ -17,5 +17,6 @@
   "figureConstellations": 88,
   "multiplesHipOverrides": 22877,
   "multiplesSynInjected": 27905,
-  "multiplesSubThresholdDropped": 1
+  "multiplesSubThresholdDropped": 1,
+  "orbitalElementsRows": 896
 }

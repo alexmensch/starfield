@@ -26,6 +26,7 @@ function baseCounts(): BuildCounts {
     multiplesHipOverrides: 22878,
     multiplesSynInjected: 27905,
     multiplesSubThresholdDropped: 0,
+    orbitalElementsRows: 1200,
   };
 }
 

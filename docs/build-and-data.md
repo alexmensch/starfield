@@ -10,9 +10,9 @@ gets computed (Stefan–Boltzmann radii, etc.), see `SCIENCE.md`.
 Fixed-size records, sorted brightest-first by `absmag`. Current version is
 **v5** with a 48-byte stride. Magic and version step together
 (v3=`HYG3`, v4=`HYG4`, v5=`HYG5`); a unit test pins the convention. v5
-added a `uint32` orbitIdx at bytes 44–47 plus an empty orbital-elements
-section (populated by a follow-up bead) so per-frame Kepler evaluation
-can land without another version bump.
+adds a `uint32` orbitIdx at bytes 44–47 plus an appended orbital-elements
+section so per-frame Kepler evaluation can read runtime-ready elements
+without parsing or unit conversion at load time.
 
 - Header (32 bytes)
   - 0–3   ASCII `HYG5`
@@ -21,7 +21,7 @@ can land without another version bump.
   - 12–15 `uint32` nameTableOffset
   - 16–19 `uint32` nameTableLength
   - 20–23 `uint32` elementsOffset (orbital-elements section start)
-  - 24–27 `uint32` elementsCount (orbital-elements row count; 0 at v5)
+  - 24–27 `uint32` elementsCount (orbital-elements row count)
   - 28–31 reserved
 - Record (48 bytes per star)
   - 0–11  `float32 × 3`  x, y, z in parsecs (equatorial, Sol at origin)
@@ -45,14 +45,23 @@ can land without another version bump.
                           keeps the record stride a multiple of 4.
   - 44–47 `uint32`       **orbitIdx** (row in the orbital-elements section;
                           `0xFFFFFFFF` = no orbital elements / static
-                          position). The section is empty at v5; a follow-up
-                          bead populates it.
+                          position). Both component records of a WDS pair
+                          share the same orbitIdx; flag bit 5
+                          (is_binary_secondary) distinguishes the B side
+                          so the runtime can apply opposite Kepler
+                          offsets.
 - Name table: length-prefixed UTF-8 strings (`uint16` length then bytes).
   **Offset 0 is reserved** as the "no name" sentinel (2 zero bytes of
   padding); real names start at offset ≥ 2.
 - Orbital-elements section: appended after the name table at
-  `elementsOffset`. Empty at v5 (`elementsCount = 0`); a follow-up bead
-  defines the per-row record shape.
+  `elementsOffset`. One 36-byte row per resolved binary pair —
+  9 `float32` fields in `ORBITAL_LAYOUT` order:
+  `P` days, `T` JDE, `e`, `a` AU, `q` (m_B/(m_A+m_B)),
+  `i`, `omega`, `Omega` radians, `dist` parsecs. Units are
+  **runtime-ready** — the loader reads the section into a
+  `Float32Array` without conversion. Populated by the WDS+ORB6
+  cross-match pipeline for Regimes 2 and 3 (`scripts/build-binaries.py`);
+  ~900 rows at v5.
 
 Luminosity class encoding (Morgan–Keenan):
 `0=VII/D (white dwarf), 1=VI/sd, 2=V (dwarf), 3=IV (subgiant), 4=III
@@ -65,8 +74,9 @@ majority of real variables (a few multi-decade symbiotics and extreme
 eclipsers clip but those render imperceptibly slowly anyway).
 
 The byte plan above is encoded once in `scripts/catalog-pure.ts` as
-`HEADER_LAYOUT`, `RECORD_LAYOUT`, `HEADER_SIZE`, `RECORD_SIZE`, `MAGIC`,
-`BINARY_VERSION`, `NO_COMPANION`, and `NO_ORBIT`. Writer
+`HEADER_LAYOUT`, `RECORD_LAYOUT`, `ORBITAL_LAYOUT`, `HEADER_SIZE`,
+`RECORD_SIZE`, `ORBITAL_RECORD_SIZE`, `MAGIC`, `BINARY_VERSION`,
+`NO_COMPANION`, and `NO_ORBIT`. Writer
 (`scripts/build-catalog.ts`), runtime reader (`src/client/catalog-loader.ts`),
 and the verify tool (`scripts/verify-catalog.ts`) all index off those
 constants — there are no inline byte offsets to drift apart. If you

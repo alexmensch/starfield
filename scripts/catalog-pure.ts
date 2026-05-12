@@ -222,16 +222,19 @@ export function parseGcvsNumber(s: string): number | null {
 //   [HEADER_SIZE + count*RECORD_SIZE,                  elementsOffset)            name table
 //   [elementsOffset,         elementsOffset + elementsCount*ORBITAL_RECORD_SIZE)  orbital-elements
 //
-// The orbital-elements section is empty at v5 (elementsCount = 0) — the
-// scaffolding is laid down now so dch.8 can populate it without another
-// version bump. The convention `MAGIC.endsWith(String(BINARY_VERSION))`
-// is pinned by a test.
+// Orbital elements: one row per resolved binary/multiple-star pair fed by
+// the WDS+ORB6 cross-match (Regimes 2+3). Both component records of a
+// pair carry the same `orbitIdx`; FLAG_BINARY_SECONDARY distinguishes B
+// from A so the runtime can apply opposite Kepler offsets. Units are
+// runtime-ready: P in days, T in JDE, i/ω/Ω in radians, a in AU, dist
+// in parsecs, q as m_B/(m_A+m_B). The `MAGIC.endsWith(String(BINARY_VERSION))`
+// invariant is pinned by a test.
 //
-// HEADER_LAYOUT / RECORD_LAYOUT below carry the per-field byte offsets;
-// HEADER_FIELD_SIZES / RECORD_FIELD_SIZES carry the matching byte widths
-// and field kinds. Adding/changing a field means: bump BINARY_VERSION +
-// MAGIC, extend the LAYOUT + SIZES pair with the new offset and kind, and
-// the writer + reader + tests pick the change up automatically.
+// HEADER_LAYOUT / RECORD_LAYOUT / ORBITAL_LAYOUT below carry the per-field
+// byte offsets; their *_FIELD_SIZES siblings carry the matching widths.
+// Adding/changing a field means: bump BINARY_VERSION + MAGIC, extend the
+// LAYOUT + SIZES pair with the new offset and width, and the writer +
+// reader + tests pick the change up automatically.
 
 export const MAGIC = 'HYG5';
 export const BINARY_VERSION = 5;
@@ -299,6 +302,27 @@ export const RECORD_FIELD_SIZES: Record<keyof typeof RECORD_LAYOUT, number> = {
 // uint16 byteLen, then byteLen bytes.
 export const NAME_TABLE_PADDING = 2;
 export const NAME_LENGTH_PREFIX_BYTES = 2;
+
+// Orbital-elements section: 9 × float32 per row. Units are runtime-ready
+// (no boundary conversion at load time): P days, T JDE, i/ω/Ω radians,
+// a AU, dist pc, q dimensionless.
+export const ORBITAL_RECORD_SIZE = 36;
+
+export const ORBITAL_LAYOUT = {
+  P: 0,       // float32 — period (days)
+  T: 4,       // float32 — epoch of periastron (JDE)
+  e: 8,       // float32 — eccentricity
+  a: 12,      // float32 — semi-major axis (AU)
+  q: 16,      // float32 — mass ratio m_B / (m_A + m_B)
+  i: 20,      // float32 — inclination (rad)
+  omega: 24,  // float32 — argument of periastron ω (rad)
+  Omega: 28,  // float32 — longitude of ascending node Ω (rad)
+  dist: 32,   // float32 — heliocentric distance to system (pc)
+} as const;
+
+export const ORBITAL_FIELD_SIZES: Record<keyof typeof ORBITAL_LAYOUT, number> = {
+  P: 4, T: 4, e: 4, a: 4, q: 4, i: 4, omega: 4, Omega: 4, dist: 4,
+};
 
 // ---- search-index.json wire contract ------------------------------------
 
@@ -621,6 +645,11 @@ export function inferBinaries(
 // either an integer HIP (string-encoded) for components already present
 // in AT-HYG, or `SYN-NNN` for synthetic secondaries injected by the
 // pipeline (Sirius B, α Cen B's orbit-resolved position, etc.).
+//
+// Regime 2 + 3 rows additionally carry orbital elements: the A and B rows
+// of a pair share the same `orbitId` and elements tuple but differ in
+// `orbitRole`. The writer collapses identical (orbitId, elements) into a
+// single row in the binary's orbital-elements section.
 export interface MultipleOverrideRow {
   systemId: string;
   comp: string;
@@ -634,6 +663,23 @@ export interface MultipleOverrideRow {
   name: string;
   source: string;
   regime: number;
+  // Orbital fields. Empty string / null when the row has no orbital fit
+  // (Regime 0/1, or a manually-curated override without elements).
+  orbitId: string | null;
+  orbitRole: 'primary' | 'secondary' | null;
+  orbit: OrbitalElements | null;
+}
+
+export interface OrbitalElements {
+  P: number;      // period (days)
+  T: number;      // epoch of periastron (JDE)
+  e: number;      // eccentricity
+  a: number;      // semi-major axis (AU)
+  q: number;      // mass ratio m_B / (m_A + m_B)
+  i: number;      // inclination (rad)
+  omega: number;  // argument of periastron (rad)
+  Omega: number;  // longitude of ascending node (rad)
+  dist: number;   // heliocentric distance to system (pc)
 }
 
 // Subset of the build-catalog Star fields that `applyMultipleOverridesPure`
@@ -654,6 +700,13 @@ export interface OverridableStar {
   hip: number | null;
   spectDisplay: string | null;
   fromOverride: boolean;
+  // Orbital data attached from a Regime 2/3 multiples.tsv row. Null when
+  // the override row carries no orbital fit (Regime 0/1) or when the
+  // star wasn't touched by an override. `orbitRole='secondary'` causes
+  // the writer to OR FLAG_BINARY_SECONDARY into the record's flags byte.
+  orbitId: string | null;
+  orbitRole: 'primary' | 'secondary' | null;
+  orbit: OrbitalElements | null;
 }
 
 /** Apply `data/multiples.tsv` rows to the catalog. HIP rows locate an
@@ -707,6 +760,9 @@ export function applyMultipleOverridesPure<T extends OverridableStar>(
       seenSyn.add(row.hipOrSyn);
       const star = makeSyn(row);
       star.fromOverride = true;
+      star.orbitId = row.orbitId;
+      star.orbitRole = row.orbitRole;
+      star.orbit = row.orbit;
       stars.push(star);
       synInjected++;
       byRegime[row.regime] = (byRegime[row.regime] ?? 0) + 1;
@@ -744,9 +800,81 @@ export function applyMultipleOverridesPure<T extends OverridableStar>(
     }
 
     s.fromOverride = true;
+    s.orbitId = row.orbitId;
+    s.orbitRole = row.orbitRole;
+    s.orbit = row.orbit;
     hipOverridden++;
     byRegime[row.regime] = (byRegime[row.regime] ?? 0) + 1;
   }
 
   return { hipOverridden, hipMissing, synInjected, byRegime };
+}
+
+// ---- Orbital-elements table assembly ------------------------------------
+
+/** Collapse the per-star orbital data into the on-disk elements table:
+ *  one row per unique `orbitId`, deterministic row order, and a map from
+ *  orbitId → row index for the writer to look up when filling each
+ *  star's `orbitIdx` field. Stars whose `orbit` is null or whose
+ *  `orbitId` is null are silently skipped.
+ *
+ *  Returned bytes are little-endian float32 rows, ORBITAL_RECORD_SIZE
+ *  apart, in `orbitIdToRowIndex` insertion order — the catalog-loader
+ *  views them as a contiguous Float32Array.
+ *
+ *  Duplicate orbitIds with diverging elements are silently first-write-
+ *  wins; this matches `applyMultipleOverridesPure`'s dedupe semantics
+ *  for HIP / SYN-NNN rows and means the A row's elements survive even
+ *  if the B row claims slightly different numbers from a different
+ *  ORB6 fit (rare but possible). */
+export function buildOrbitalElementsTable(
+  stars: Pick<OverridableStar, 'orbitId' | 'orbit'>[],
+): { bytes: Uint8Array; orbitIdToRowIndex: Map<string, number> } {
+  const orbitIdToRowIndex = new Map<string, number>();
+  const orbits: OrbitalElements[] = [];
+  for (const s of stars) {
+    if (!s.orbitId || !s.orbit) continue;
+    if (orbitIdToRowIndex.has(s.orbitId)) continue;
+    orbitIdToRowIndex.set(s.orbitId, orbits.length);
+    orbits.push(s.orbit);
+  }
+  const bytes = new Uint8Array(orbits.length * ORBITAL_RECORD_SIZE);
+  const view = new DataView(bytes.buffer);
+  for (let i = 0; i < orbits.length; i++) {
+    const o = orbits[i];
+    const off = i * ORBITAL_RECORD_SIZE;
+    view.setFloat32(off + ORBITAL_LAYOUT.P, o.P, true);
+    view.setFloat32(off + ORBITAL_LAYOUT.T, o.T, true);
+    view.setFloat32(off + ORBITAL_LAYOUT.e, o.e, true);
+    view.setFloat32(off + ORBITAL_LAYOUT.a, o.a, true);
+    view.setFloat32(off + ORBITAL_LAYOUT.q, o.q, true);
+    view.setFloat32(off + ORBITAL_LAYOUT.i, o.i, true);
+    view.setFloat32(off + ORBITAL_LAYOUT.omega, o.omega, true);
+    view.setFloat32(off + ORBITAL_LAYOUT.Omega, o.Omega, true);
+    view.setFloat32(off + ORBITAL_LAYOUT.dist, o.dist, true);
+  }
+  return { bytes, orbitIdToRowIndex };
+}
+
+/** Read one row from a packed orbital-elements section. Mirror of the
+ *  writer in `buildOrbitalElementsTable`; used by the loader and tests
+ *  to round-trip individual rows without depending on the Float32Array
+ *  view setup in catalog-loader. */
+export function readOrbitalElements(
+  bytes: Uint8Array,
+  rowIndex: number,
+): OrbitalElements {
+  const off = rowIndex * ORBITAL_RECORD_SIZE;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  return {
+    P: view.getFloat32(off + ORBITAL_LAYOUT.P, true),
+    T: view.getFloat32(off + ORBITAL_LAYOUT.T, true),
+    e: view.getFloat32(off + ORBITAL_LAYOUT.e, true),
+    a: view.getFloat32(off + ORBITAL_LAYOUT.a, true),
+    q: view.getFloat32(off + ORBITAL_LAYOUT.q, true),
+    i: view.getFloat32(off + ORBITAL_LAYOUT.i, true),
+    omega: view.getFloat32(off + ORBITAL_LAYOUT.omega, true),
+    Omega: view.getFloat32(off + ORBITAL_LAYOUT.Omega, true),
+    dist: view.getFloat32(off + ORBITAL_LAYOUT.dist, true),
+  };
 }

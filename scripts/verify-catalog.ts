@@ -9,6 +9,8 @@ import {
   RECORD_SIZE,
   NO_COMPANION,
   NO_ORBIT,
+  ORBITAL_LAYOUT,
+  ORBITAL_RECORD_SIZE,
 } from './catalog-pure';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -31,7 +33,8 @@ const elementsCount = view.getUint32(HEADER_LAYOUT.elementsCount, true);
 console.log(`magic=${magic} version=${version} count=${count} RECORD_SIZE=${RECORD_SIZE}`);
 console.log(`nameTableOffset=${nameTableOffset} nameTableLength=${nameTableLength}`);
 console.log(`elementsOffset=${elementsOffset} elementsCount=${elementsCount}`);
-console.log(`file size=${ab.byteLength}, expected=${HEADER_SIZE + count * RECORD_SIZE + nameTableLength}`);
+const expectedSize = HEADER_SIZE + count * RECORD_SIZE + nameTableLength + elementsCount * ORBITAL_RECORD_SIZE;
+console.log(`file size=${ab.byteLength}, expected=${expectedSize}`);
 
 const constellations = JSON.parse(await readFile(CON, 'utf-8'));
 
@@ -97,6 +100,40 @@ for (let i = 0; i < count && founds < targets.size; i++) {
     const dist = Math.sqrt(r.x * r.x + r.y * r.y + r.z * r.z);
     console.log({ ...r, dist_pc: dist.toFixed(3) });
     founds++;
+  }
+}
+
+// Orbital-elements section dump: count + first 5 rows decoded, plus
+// famous-system spot-checks (Sirius A+B, α Cen A+B, Algol) so a build
+// regression in the WDS+ORB6 cross-match is visible at a glance.
+function readOrbit(rowIdx: number) {
+  const off = elementsOffset + rowIdx * ORBITAL_RECORD_SIZE;
+  return {
+    rowIdx,
+    P_days: view.getFloat32(off + ORBITAL_LAYOUT.P, true),
+    T_jde: view.getFloat32(off + ORBITAL_LAYOUT.T, true),
+    e: view.getFloat32(off + ORBITAL_LAYOUT.e, true),
+    a_AU: view.getFloat32(off + ORBITAL_LAYOUT.a, true),
+    q: view.getFloat32(off + ORBITAL_LAYOUT.q, true),
+    i_rad: view.getFloat32(off + ORBITAL_LAYOUT.i, true),
+    omega_rad: view.getFloat32(off + ORBITAL_LAYOUT.omega, true),
+    Omega_rad: view.getFloat32(off + ORBITAL_LAYOUT.Omega, true),
+    dist_pc: view.getFloat32(off + ORBITAL_LAYOUT.dist, true),
+  };
+}
+
+console.log(`\nOrbital-elements section: ${elementsCount} rows`);
+console.log('First 3 rows:');
+for (let i = 0; i < Math.min(3, elementsCount); i++) console.log(readOrbit(i));
+
+console.log('\nFamous-system orbital fits (matched by name + orbitIdx):');
+const orbitNamed = new Set(['Sirius', 'Sirius B', 'Rigil Kentaurus', 'Toliman', 'Algol']);
+for (let i = 0; i < count; i++) {
+  const r = readRecord(i);
+  if (r.name && orbitNamed.has(r.name) && r.orbitIdx !== null) {
+    const o = readOrbit(r.orbitIdx);
+    const P_yr = o.P_days / 365.25;
+    console.log(`  ${r.name.padEnd(10)} orbit row=${r.orbitIdx} P=${o.P_days.toFixed(2)}d (${P_yr.toFixed(3)}yr) e=${o.e.toFixed(3)} a=${o.a_AU.toFixed(2)}AU q=${o.q.toFixed(3)}  flags=${r.flags}`);
   }
 }
 

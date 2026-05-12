@@ -103,16 +103,28 @@ ORB6_GRADE_SORT_KEY = {1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 8: 6, 9: 7}
 # overlap. Rare; most pairs survive on WDS-Notes alone.
 MAG_DIFF_REJECT_THRESHOLD = 8.0
 
+# Orbital-element columns appended to multiples.tsv on Regime 2/3 rows.
+# Units are runtime-ready: P days, T JDE, i/ω/Ω radians, a AU, dist pc,
+# q dimensionless. Catalog-loader writes them verbatim into the binary's
+# orbital-elements section — no conversion at load time.
+ORBIT_COLUMNS = [
+    'orbit_id', 'orbit_role',
+    'P_days', 'T_jde', 'e', 'a_AU', 'q',
+    'i_rad', 'omega_rad', 'Omega_rad', 'dist_pc',
+]
+
 # Override schema columns (multiples.tsv schema + a curator-notes column).
 OVERRIDE_COLUMNS = [
     'system_id', 'comp', 'hip', 'x_pc', 'y_pc', 'z_pc',
-    'absmag', 'ci', 'spect', 'name', 'source', 'regime', 'notes',
+    'absmag', 'ci', 'spect', 'name', 'source', 'regime',
+    *ORBIT_COLUMNS, 'notes',
 ]
 
 # Output schema (multiples.tsv).
 OUTPUT_COLUMNS = [
     'system_id', 'comp', 'hip', 'x_pc', 'y_pc', 'z_pc',
     'absmag', 'ci', 'spect', 'name', 'source', 'regime',
+    *ORBIT_COLUMNS,
 ]
 
 DEG2RAD = math.pi / 180.0
@@ -800,8 +812,23 @@ class ComponentRow:
     name: str
     source: str
     regime: int
+    # Orbital fields. Only set for Regime 2/3 pairs; left at None for
+    # Regime 0/1 rows and curator overrides without orbital fits.
+    orbit_id: str | None = None
+    orbit_role: str | None = None   # 'primary' | 'secondary'
+    P_days: float | None = None
+    T_jde: float | None = None
+    e: float | None = None
+    a_AU: float | None = None
+    q: float | None = None
+    i_rad: float | None = None
+    omega_rad: float | None = None
+    Omega_rad: float | None = None
+    dist_pc: float | None = None
 
     def as_tsv_fields(self) -> list[str]:
+        def fmt(v: float | None, decimals: int = 6) -> str:
+            return '' if v is None else f'{v:.{decimals}f}'
         return [
             self.system_id,
             self.comp,
@@ -815,6 +842,17 @@ class ComponentRow:
             self.name,
             self.source,
             str(self.regime),
+            self.orbit_id or '',
+            self.orbit_role or '',
+            fmt(self.P_days, 4),
+            fmt(self.T_jde, 4),
+            fmt(self.e, 6),
+            fmt(self.a_AU, 6),
+            fmt(self.q, 6),
+            fmt(self.i_rad, 8),
+            fmt(self.omega_rad, 8),
+            fmt(self.Omega_rad, 8),
+            fmt(self.dist_pc, 6),
         ]
 
 
@@ -846,6 +884,47 @@ def split_components(components_field: str) -> tuple[str, str]:
 
 def synth_hip_id(counter: int) -> str:
     return f'SYN-{counter:03d}'
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Mass-ratio estimate (q = m_B / (m_A + m_B))
+# ────────────────────────────────────────────────────────────────────────────
+
+# Bolometric correction is small for stars near solar type; we lump the
+# whole derivation into a single MS mass-luminosity law without per-class
+# BC because the worst-case error in q (< ~0.2) is within visualisation
+# tolerance. M ∝ L^(1/3.5) is the canonical MS exponent (Cox 2000 §15.2).
+# Documented in SCIENCE.md alongside the rest of the dch pipeline.
+MBOL_SUN = 4.74
+ML_EXPONENT = 1.0 / 3.5
+
+
+def absmag_to_mass(absmag: float) -> float:
+    """Main-sequence M/M☉ from V-band absmag. Defensive clamp keeps q
+    away from the {0, 1} edges where the center-of-mass split would be
+    degenerate."""
+    L = 10.0 ** ((MBOL_SUN - absmag) / 2.5)
+    M = L ** ML_EXPONENT
+    return max(0.05, min(100.0, M))
+
+
+def estimate_q(absmag_a: float, absmag_b: float) -> float:
+    """Mass ratio m_B / (m_A + m_B) from each component's absmag via the
+    main-sequence M-L relation. ORB6 doesn't publish q; this fallback
+    is good enough for the visual-orbit binaries that dominate Regime
+    2 + 3 (the famous A/B pairs are mostly MS), and the resulting
+    error in the center-of-mass position is bounded by the eccentricity
+    of the assumption rather than its dynamics."""
+    m_a = absmag_to_mass(absmag_a)
+    m_b = absmag_to_mass(absmag_b)
+    return m_b / (m_a + m_b)
+
+
+def make_orbit_id(wds_id: str, components: str) -> str:
+    """Stable key shared by the A row and B row of one WDS pair. The
+    catalog writer (build-catalog.ts) collapses identical IDs to one
+    row in the binary's orbital-elements section."""
+    return f'WDS|{wds_id}|{components}'
 
 
 def process_pair(
@@ -915,23 +994,10 @@ def process_pair(
 
     # ──── Component rows
     source = f'wds[{filter_tag}]{src_orbit_tag}'
-    rows: list[ComponentRow] = []
 
-    # A — uses the anchor (real AT-HYG for top-level, inherited for sub-pair).
-    rows.append(ComponentRow(
-        system_id=pair.wds_id,
-        comp=comp_a,
-        hip=anchor.hip_str,
-        x_pc=anchor.x_pc, y_pc=anchor.y_pc, z_pc=anchor.z_pc,
-        absmag=anchor.absmag,
-        ci=anchor.ci,
-        spect=anchor.spect,
-        name=anchor.name,
-        source=source,
-        regime=regime,
-    ))
-
-    # B — synthesised position; HIP from cone-match / notes-supplement if found.
+    # Resolve secondary photometry first so we can compute q before
+    # constructing rows. The two are emitted together so they share a
+    # consistent orbital-element row.
     if athyg_b is not None:
         b_hip_str = str(athyg_b.hip)
         b_absmag = athyg_b.absmag
@@ -954,6 +1020,63 @@ def process_pair(
         # unknown systems don't pollute search with cryptic labels.
         b_name = f'{anchor.name} {comp_b}' if anchor.name else ''
 
+    # Orbital-element payload for Regimes 2 and 3. Runtime units: days,
+    # JDE, AU, radians, parsecs. Regime 1 (visually-resolved last-epoch
+    # ρ/θ only) gets no element record — the position is a static
+    # snapshot and there is nothing for dch.10 to integrate forward.
+    orbit_fields: dict[str, float | str | None] = {}
+    if regime in (2, 3) and orb6_entry is not None and orb6_entry.P_yr and orb6_entry.a_arcsec is not None:
+        orbit_id = make_orbit_id(pair.wds_id, pair.components)
+        # ORB6 i may be None on Regime 3 (spectroscopic-only); the
+        # convention there is i = π/2 (edge-on) so the Kepler solver
+        # has a value to apply at runtime. ω, Ω likewise default to
+        # 0 if missing.
+        i_deg = orb6_entry.i_deg if orb6_entry.i_deg is not None else 90.0
+        omega_deg = orb6_entry.omega_deg if orb6_entry.omega_deg is not None else 0.0
+        Omega_deg = orb6_entry.Omega_deg if orb6_entry.Omega_deg is not None else 0.0
+        # a (ORB6) is in arcsec — total semi-major axis on the sky.
+        # Convert to AU at the system's heliocentric distance.
+        a_AU = orb6_entry.a_arcsec * anchor.dist_pc
+        orbit_fields = {
+            'orbit_id': orbit_id,
+            'P_days': orb6_entry.P_yr * 365.25,
+            'T_jde': orb6_entry.T0_jd,
+            'e': orb6_entry.e if orb6_entry.e is not None else 0.0,
+            'a_AU': a_AU,
+            'q': estimate_q(anchor.absmag, b_absmag),
+            'i_rad': i_deg * DEG2RAD,
+            'omega_rad': omega_deg * DEG2RAD,
+            'Omega_rad': Omega_deg * DEG2RAD,
+            'dist_pc': anchor.dist_pc,
+        }
+
+    rows: list[ComponentRow] = []
+
+    # A — uses the anchor (real AT-HYG for top-level, inherited for sub-pair).
+    rows.append(ComponentRow(
+        system_id=pair.wds_id,
+        comp=comp_a,
+        hip=anchor.hip_str,
+        x_pc=anchor.x_pc, y_pc=anchor.y_pc, z_pc=anchor.z_pc,
+        absmag=anchor.absmag,
+        ci=anchor.ci,
+        spect=anchor.spect,
+        name=anchor.name,
+        source=source,
+        regime=regime,
+        orbit_id=orbit_fields.get('orbit_id'),  # type: ignore[arg-type]
+        orbit_role='primary' if orbit_fields else None,
+        P_days=orbit_fields.get('P_days'),  # type: ignore[arg-type]
+        T_jde=orbit_fields.get('T_jde'),    # type: ignore[arg-type]
+        e=orbit_fields.get('e'),            # type: ignore[arg-type]
+        a_AU=orbit_fields.get('a_AU'),      # type: ignore[arg-type]
+        q=orbit_fields.get('q'),            # type: ignore[arg-type]
+        i_rad=orbit_fields.get('i_rad'),    # type: ignore[arg-type]
+        omega_rad=orbit_fields.get('omega_rad'),  # type: ignore[arg-type]
+        Omega_rad=orbit_fields.get('Omega_rad'),  # type: ignore[arg-type]
+        dist_pc=orbit_fields.get('dist_pc'),      # type: ignore[arg-type]
+    ))
+
     rows.append(ComponentRow(
         system_id=pair.wds_id,
         comp=comp_b,
@@ -965,6 +1088,17 @@ def process_pair(
         name=b_name,
         source=source,
         regime=regime,
+        orbit_id=orbit_fields.get('orbit_id'),  # type: ignore[arg-type]
+        orbit_role='secondary' if orbit_fields else None,
+        P_days=orbit_fields.get('P_days'),  # type: ignore[arg-type]
+        T_jde=orbit_fields.get('T_jde'),    # type: ignore[arg-type]
+        e=orbit_fields.get('e'),            # type: ignore[arg-type]
+        a_AU=orbit_fields.get('a_AU'),      # type: ignore[arg-type]
+        q=orbit_fields.get('q'),            # type: ignore[arg-type]
+        i_rad=orbit_fields.get('i_rad'),    # type: ignore[arg-type]
+        omega_rad=orbit_fields.get('omega_rad'),  # type: ignore[arg-type]
+        Omega_rad=orbit_fields.get('Omega_rad'),  # type: ignore[arg-type]
+        dist_pc=orbit_fields.get('dist_pc'),      # type: ignore[arg-type]
     ))
     return rows, filter_tag, regime
 
@@ -985,6 +1119,10 @@ def parse_overrides(path: Path) -> list[ComponentRow]:
     reader = csv.DictReader(lines, delimiter='\t')
     for r in reader:
         try:
+            orbit_id = (r.get('orbit_id') or '').strip() or None
+            orbit_role = (r.get('orbit_role') or '').strip() or None
+            if orbit_role not in (None, 'primary', 'secondary'):
+                orbit_role = None
             rows.append(ComponentRow(
                 system_id=r['system_id'].strip(),
                 comp=r['comp'].strip(),
@@ -998,6 +1136,17 @@ def parse_overrides(path: Path) -> list[ComponentRow]:
                 name=(r.get('name') or '').strip(),
                 source=(r.get('source') or 'override').strip() or 'override',
                 regime=int(r.get('regime') or 0),
+                orbit_id=orbit_id,
+                orbit_role=orbit_role,
+                P_days=safe_float(r.get('P_days', '')),
+                T_jde=safe_float(r.get('T_jde', '')),
+                e=safe_float(r.get('e', '')),
+                a_AU=safe_float(r.get('a_AU', '')),
+                q=safe_float(r.get('q', '')),
+                i_rad=safe_float(r.get('i_rad', '')),
+                omega_rad=safe_float(r.get('omega_rad', '')),
+                Omega_rad=safe_float(r.get('Omega_rad', '')),
+                dist_pc=safe_float(r.get('dist_pc', '')),
             ))
         except (KeyError, ValueError) as exc:
             print(f'warning: skipping malformed override row: {exc}', file=sys.stderr)
@@ -1286,6 +1435,12 @@ def main() -> None:
     print(f'    regime 1 (ρ/θ visual)         : {stats["regime_1"]}')
     print(f'    regime 2 (ORB6 orbit)          : {stats["regime_2"]}')
     print(f'    regime 3 (ORB6 spectroscopic)  : {stats["regime_3"]}')
+    # One orbit_id per pair (shared by A and B); ~Regime 2 + Regime 3
+    # before dedupe collapses any duplicates the override layer may add.
+    unique_orbit_ids = {
+        r.orbit_id for r in component_rows if r.orbit_id
+    }
+    print(f'  unique orbit_ids  : {len(unique_orbit_ids)}  (Regime 2 + 3 pairs with elements)')
     print(f'  ORB6 matched      : {stats["orb6_matched"]}')
     print(f'  sub-pairs         : {stats["sub_pair"]}  (anchored to a previously-resolved B/C/…)')
     print(f'  B from AT-HYG     : {stats["athyg_b"]}')

@@ -34,6 +34,7 @@ function stubCatalog(solIndex: number, count = Math.max(solIndex + 1, 1)): Catal
     amplitudeMag: new Float32Array(count),
     hip: new Uint32Array(count),
     orbitIdx: new Int32Array(count).fill(-1),
+    orbitalElements: new Float32Array(0),
     elementsCount: 0,
     names: new Map(),
     solIndex,

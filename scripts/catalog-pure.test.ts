@@ -12,6 +12,8 @@ import {
   markPrimaryIfUnflagged,
   applyDoublesFlag,
   applyMultipleOverridesPure,
+  buildOrbitalElementsTable,
+  readOrbitalElements,
   BINARY_MAX_SEP_PC,
   MIN_RENDER_SEPARATION_PC,
   FLAG_HAS_NAME,
@@ -23,10 +25,13 @@ import {
   RESERVED_FLAG_BITS,
   HEADER_LAYOUT,
   RECORD_LAYOUT,
+  ORBITAL_LAYOUT,
   HEADER_FIELD_SIZES,
   RECORD_FIELD_SIZES,
+  ORBITAL_FIELD_SIZES,
   HEADER_SIZE,
   RECORD_SIZE,
+  ORBITAL_RECORD_SIZE,
   MAGIC,
   BINARY_VERSION,
   NAME_TABLE_PADDING,
@@ -36,6 +41,7 @@ import {
   type DoublesStar,
   type MultipleOverrideRow,
   type OverridableStar,
+  type OrbitalElements,
 } from './catalog-pure';
 
 describe('catalog-pure / spectClassIndex', () => {
@@ -546,6 +552,7 @@ describe('catalog-pure / applyMultipleOverridesPure', () => {
       proper: null,
       spectDisplay: null,
       fromOverride: false,
+      orbitId: null, orbitRole: null, orbit: null,
       ...opts,
     };
   }
@@ -556,6 +563,7 @@ describe('catalog-pure / applyMultipleOverridesPure', () => {
       x: 0, y: 0, z: 0,
       absmag: 5, ci: 0.5,
       spect: 'G2V', name: '', source: 'test', regime: 1,
+      orbitId: null, orbitRole: null, orbit: null,
       ...opts,
     };
   }
@@ -572,6 +580,7 @@ describe('catalog-pure / applyMultipleOverridesPure', () => {
       hip: null,
       spectDisplay: r.spect,
       fromOverride: false,
+      orbitId: null, orbitRole: null, orbit: null,
     };
   }
 
@@ -1067,5 +1076,220 @@ describe('catalog-pure / binary-format constants', () => {
     }
     expect(recovered.map((r) => r.name)).toEqual(names);
     expect(recovered.map((r) => r.offset)).toEqual(expectedOffsets);
+  });
+
+  it('orbital offsets are non-overlapping and fit within ORBITAL_RECORD_SIZE', () => {
+    const fields = Object.entries(ORBITAL_LAYOUT) as [keyof typeof ORBITAL_LAYOUT, number][];
+    for (const [name, off] of fields) {
+      expect(ORBITAL_FIELD_SIZES[name]).toBeDefined();
+      expect(off + ORBITAL_FIELD_SIZES[name]).toBeLessThanOrEqual(ORBITAL_RECORD_SIZE);
+    }
+    for (let i = 0; i < fields.length; i++) {
+      for (let j = i + 1; j < fields.length; j++) {
+        const [na, oa] = fields[i];
+        const [nb, ob] = fields[j];
+        const ea = oa + ORBITAL_FIELD_SIZES[na];
+        const eb = ob + ORBITAL_FIELD_SIZES[nb];
+        const overlap = oa < eb && ob < ea;
+        expect(overlap, `${na}@${oa}+${ORBITAL_FIELD_SIZES[na]} overlaps ${nb}@${ob}+${ORBITAL_FIELD_SIZES[nb]}`).toBe(false);
+      }
+    }
+  });
+
+  it('orbital layout fills ORBITAL_RECORD_SIZE exactly (9 × float32)', () => {
+    const total = (Object.values(ORBITAL_FIELD_SIZES) as number[])
+      .reduce((acc, n) => acc + n, 0);
+    expect(total).toBe(ORBITAL_RECORD_SIZE);
+    expect(ORBITAL_RECORD_SIZE).toBe(36);
+  });
+
+  it('orbital layout and size maps cover identical key sets', () => {
+    expect(Object.keys(ORBITAL_FIELD_SIZES).sort()).toEqual(Object.keys(ORBITAL_LAYOUT).sort());
+  });
+});
+
+describe('catalog-pure / buildOrbitalElementsTable', () => {
+  const sampleOrbit: OrbitalElements = {
+    P: 29200.32, T: 2447836.0,
+    e: 0.5179, a: 17.57, q: 0.466,
+    i: 2.380, omega: 2.604, Omega: 0.7779,
+    dist: 1.3389,
+  };
+
+  function makeStar(orbitId: string | null, orbit: OrbitalElements | null): {
+    orbitId: string | null;
+    orbit: OrbitalElements | null;
+  } {
+    return { orbitId, orbit };
+  }
+
+  it('emits one row per unique orbitId in insertion order', () => {
+    const stars = [
+      makeStar('alpha', sampleOrbit),
+      makeStar('alpha', sampleOrbit),    // duplicate orbitId — collapses
+      makeStar('beta',  { ...sampleOrbit, P: 1000 }),
+    ];
+    const { bytes, orbitIdToRowIndex } = buildOrbitalElementsTable(stars);
+    expect(orbitIdToRowIndex.size).toBe(2);
+    expect(orbitIdToRowIndex.get('alpha')).toBe(0);
+    expect(orbitIdToRowIndex.get('beta')).toBe(1);
+    expect(bytes.byteLength).toBe(2 * ORBITAL_RECORD_SIZE);
+  });
+
+  it('skips stars with null orbitId or null orbit', () => {
+    const stars = [
+      makeStar(null, sampleOrbit),
+      makeStar('id-only', null),
+      makeStar('real', sampleOrbit),
+    ];
+    const { orbitIdToRowIndex } = buildOrbitalElementsTable(stars);
+    expect(orbitIdToRowIndex.size).toBe(1);
+    expect(orbitIdToRowIndex.get('real')).toBe(0);
+  });
+
+  it('round-trips float32 values within float32 precision', () => {
+    const stars = [makeStar('alpha-cen', sampleOrbit)];
+    const { bytes } = buildOrbitalElementsTable(stars);
+    const recovered = readOrbitalElements(bytes, 0);
+    // float32 has ~7 significant digits; sample values are picked to
+    // survive that.
+    expect(recovered.P).toBeCloseTo(sampleOrbit.P, 1);
+    expect(recovered.T).toBeCloseTo(sampleOrbit.T, 0);
+    expect(recovered.e).toBeCloseTo(sampleOrbit.e, 4);
+    expect(recovered.a).toBeCloseTo(sampleOrbit.a, 4);
+    expect(recovered.q).toBeCloseTo(sampleOrbit.q, 5);
+    expect(recovered.i).toBeCloseTo(sampleOrbit.i, 5);
+    expect(recovered.omega).toBeCloseTo(sampleOrbit.omega, 5);
+    expect(recovered.Omega).toBeCloseTo(sampleOrbit.Omega, 5);
+    expect(recovered.dist).toBeCloseTo(sampleOrbit.dist, 4);
+  });
+
+  it('returns empty bytes + empty map for stars with no orbital data', () => {
+    const stars = [
+      makeStar(null, null),
+      makeStar(null, null),
+    ];
+    const { bytes, orbitIdToRowIndex } = buildOrbitalElementsTable(stars);
+    expect(bytes.byteLength).toBe(0);
+    expect(orbitIdToRowIndex.size).toBe(0);
+  });
+
+  it('first-write-wins when duplicate orbitId carries different elements', () => {
+    // build-binaries.py guarantees identical elements per orbit_id; this
+    // pins the defensive contract so a slightly-different second fit
+    // doesn't silently overwrite the first.
+    const stars = [
+      makeStar('shared', sampleOrbit),
+      makeStar('shared', { ...sampleOrbit, P: 999 }),
+    ];
+    const { bytes, orbitIdToRowIndex } = buildOrbitalElementsTable(stars);
+    expect(orbitIdToRowIndex.size).toBe(1);
+    const row = readOrbitalElements(bytes, 0);
+    expect(row.P).toBeCloseTo(sampleOrbit.P, 1);
+  });
+});
+
+describe('catalog-pure / applyMultipleOverridesPure — orbital fields', () => {
+  // Mini-fixture: an OverridableStar factory that includes the new
+  // orbital slots, plus a row factory that takes optional orbital data.
+  function star(opts: Partial<OverridableStar> & { hip: number | null }): OverridableStar {
+    return {
+      x: 0, y: 0, z: 0, absmag: 5, ci: 0.5,
+      spectClass: 8, lumClass: 255, physicalRadius: 1,
+      flags: 0, proper: null, spectDisplay: null,
+      fromOverride: false,
+      orbitId: null, orbitRole: null, orbit: null,
+      ...opts,
+    };
+  }
+  function row(opts: Partial<MultipleOverrideRow> & { hipOrSyn: string }): MultipleOverrideRow {
+    return {
+      systemId: 'TEST', comp: 'A',
+      x: 0, y: 0, z: 0, absmag: 5, ci: 0.5,
+      spect: 'G2V', name: '', source: 'test', regime: 1,
+      orbitId: null, orbitRole: null, orbit: null,
+      ...opts,
+    };
+  }
+  function makeSyn(r: MultipleOverrideRow): OverridableStar {
+    return {
+      x: r.x, y: r.y, z: r.z, absmag: r.absmag, ci: r.ci,
+      spectClass: 4, lumClass: 2, physicalRadius: 1,
+      flags: r.name ? FLAG_HAS_NAME : 0,
+      proper: r.name || null, hip: null, spectDisplay: r.spect,
+      fromOverride: false,
+      orbitId: null, orbitRole: null, orbit: null,
+    };
+  }
+
+  const orbit: OrbitalElements = {
+    P: 18313.0, T: 2449416.4,
+    e: 0.5923, a: 19.8, q: 0.33,
+    i: 2.380, omega: 2.604, Omega: 0.7779,
+    dist: 2.64,
+  };
+
+  it('propagates orbitId, orbitRole, and elements onto a matched HIP row', () => {
+    const stars = [star({ hip: 32349 })];
+    applyMultipleOverridesPure(
+      stars,
+      [row({
+        hipOrSyn: '32349', regime: 2,
+        orbitId: 'WDS|06451-1643|AB', orbitRole: 'primary', orbit,
+      })],
+      makeSyn,
+    );
+    expect(stars[0].orbitId).toBe('WDS|06451-1643|AB');
+    expect(stars[0].orbitRole).toBe('primary');
+    expect(stars[0].orbit).toEqual(orbit);
+  });
+
+  it('propagates orbital fields onto a SYN-NNN injection', () => {
+    const stars: OverridableStar[] = [];
+    applyMultipleOverridesPure(
+      stars,
+      [row({
+        hipOrSyn: 'SYN-7261', regime: 2, name: 'Sirius B',
+        orbitId: 'WDS|06451-1643|AB', orbitRole: 'secondary', orbit,
+      })],
+      makeSyn,
+    );
+    expect(stars[0].orbitId).toBe('WDS|06451-1643|AB');
+    expect(stars[0].orbitRole).toBe('secondary');
+    expect(stars[0].orbit).toEqual(orbit);
+  });
+
+  it('end-to-end: A+B share orbitIdx, only secondary carries FLAG_BINARY_SECONDARY', () => {
+    // Apply primary + secondary rows. Then build the table; expect both
+    // stars to map to the same row index.
+    const stars = [star({ hip: 32349 })];
+    applyMultipleOverridesPure(
+      stars,
+      [
+        row({
+          hipOrSyn: '32349', regime: 2, name: 'Sirius',
+          orbitId: 'WDS|06451-1643|AB', orbitRole: 'primary', orbit,
+        }),
+        row({
+          hipOrSyn: 'SYN-7261', regime: 2, name: 'Sirius B',
+          orbitId: 'WDS|06451-1643|AB', orbitRole: 'secondary', orbit,
+        }),
+      ],
+      makeSyn,
+    );
+    const { orbitIdToRowIndex } = buildOrbitalElementsTable(stars);
+    expect(orbitIdToRowIndex.size).toBe(1);
+    const sharedIdx = orbitIdToRowIndex.get('WDS|06451-1643|AB');
+    expect(sharedIdx).toBe(0);
+
+    // Writer-side: replicate the per-record flag logic so the contract
+    // is pinned without depending on build-catalog.ts internals.
+    const flags = stars.map((s) => {
+      let f = s.flags;
+      if (s.orbitId && s.orbitRole === 'secondary') f |= FLAG_BINARY_SECONDARY;
+      return f;
+    });
+    expect(flags[0] & FLAG_BINARY_SECONDARY).toBeFalsy();  // primary
+    expect(flags[1] & FLAG_BINARY_SECONDARY).toBeTruthy(); // secondary
   });
 });

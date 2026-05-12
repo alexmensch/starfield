@@ -55,6 +55,11 @@ export interface BuildCounts {
    *  came from the multiples pipeline — `inferBinaries` drops the fainter
    *  member as a safety net for AT-HYG-native collapsed-parallax rows. */
   multiplesSubThresholdDropped: number;
+  /** Unique orbital-elements rows packed into the binary's elements
+   *  section. Each row covers one WDS pair (Regime 2 + 3); both
+   *  component records of the pair point at the same row via
+   *  `orbitIdx`. */
+  orbitalElementsRows: number;
 }
 
 export type CountDiff =

@@ -11,7 +11,10 @@ import {
   NO_ORBIT,
   NAME_TABLE_PADDING,
   NAME_LENGTH_PREFIX_BYTES,
+  ORBITAL_RECORD_SIZE,
 } from '../../scripts/catalog-pure';
+
+const ORBITAL_FLOATS_PER_ROW = ORBITAL_RECORD_SIZE / 4;
 
 export interface Constellation {
   code: string;
@@ -44,7 +47,12 @@ export interface Catalog {
   amplitudeMag: Float32Array;    // length = count, 0 = not variable
   hip: Uint32Array;              // length = count, 0 = no HIP
   orbitIdx: Int32Array;          // length = count, -1 = no orbital elements
-  elementsCount: number;         // number of orbital-elements rows (0 at v5)
+  // Packed orbital elements: ORBITAL_FLOATS_PER_ROW (9) consecutive
+  // float32s per row in ORBITAL_LAYOUT order (P, T, e, a, q, i, ω, Ω,
+  // dist). length = elementsCount * 9. Runtime layers read rows via
+  // `orbitIdx[i] * ORBITAL_FLOATS_PER_ROW`.
+  orbitalElements: Float32Array;
+  elementsCount: number;         // number of orbital-elements rows
   names: Map<number, string>;    // star index -> proper name (named stars only)
   solIndex: number;              // -1 if not found
   constellations: Constellation[];
@@ -112,6 +120,7 @@ export function parseBinary(ab: ArrayBuffer, constellations: Constellation[]): C
   const count = view.getUint32(HEADER_LAYOUT.count, true);
   const nameTableOffset = view.getUint32(HEADER_LAYOUT.nameTableOffset, true);
   const nameTableLength = view.getUint32(HEADER_LAYOUT.nameTableLength, true);
+  const elementsOffset = view.getUint32(HEADER_LAYOUT.elementsOffset, true);
   const elementsCount = view.getUint32(HEADER_LAYOUT.elementsCount, true);
 
   const positions = new Float32Array(count * 3);
@@ -179,6 +188,18 @@ export function parseBinary(ab: ArrayBuffer, constellations: Constellation[]): C
     }
   }
 
+  // Orbital-elements section. The fetch path doesn't guarantee
+  // 4-byte alignment of the section start (it depends on the
+  // name table's UTF-8 byte layout), so we copy into a fresh
+  // Float32Array rather than view in place — the section is
+  // small (~100 KB at v5) and accessed once per attach, so the
+  // copy cost is negligible compared to the alignment hazard.
+  const orbitalElements = new Float32Array(elementsCount * ORBITAL_FLOATS_PER_ROW);
+  if (elementsCount > 0) {
+    const src = new Uint8Array(ab, elementsOffset, elementsCount * ORBITAL_RECORD_SIZE);
+    new Uint8Array(orbitalElements.buffer).set(src);
+  }
+
   return {
     count,
     positions,
@@ -194,6 +215,7 @@ export function parseBinary(ab: ArrayBuffer, constellations: Constellation[]): C
     amplitudeMag,
     hip,
     orbitIdx,
+    orbitalElements,
     elementsCount,
     names,
     solIndex,

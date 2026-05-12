@@ -149,6 +149,35 @@ replace the programmatic row, and rows with a novel key append. Used
 for the few edge cases that the WDS+ORB6+Gaia chain can't resolve
 cleanly. Empty at the time `build-binaries.py` first lands.
 
+**Orbital elements emission (Regimes 2 + 3).** Each Regime 2/3 pair
+emits 9 orbital fields per component row in `multiples.tsv` —
+`P_days`, `T_jde`, `e`, `a_AU`, `q`, `i_rad`, `omega_rad`, `Omega_rad`,
+`dist_pc`. A and B rows of one pair share the same `orbit_id`
+(`WDS|<wds_id>|<components>`) and elements tuple, differing only in
+`orbit_role` (`primary`/`secondary`). Units are runtime-ready: ORB6's
+years/arcsec/degrees are converted at the build boundary into
+days/AU/radians, matching `src/client/ephemeris.ts` and
+`src/client/time.ts` conventions. Time epochs are stored as JDE; the
+TT-UT1 offset (<70 s over the relevant epochs) is below the
+visualisation's accuracy budget. Spectroscopic-only entries (Regime 3)
+default to `i=π/2`, `ω=0`, `Ω=0` so the runtime Kepler solver has
+values to apply — the resulting on-sky direction is conventional, not
+measured.
+
+**Mass-ratio q.** ORB6 publishes orbital elements but not mass ratios.
+The pipeline estimates `q = m_B / (m_A + m_B)` from each component's
+absmag via the main-sequence mass-luminosity relation
+`M / M☉ = L^(1/3.5)` (Cox 2000 §15.2), without bolometric correction.
+This is accurate to within ~20% on the equal-mass MS pairs that
+dominate Regime 2 + 3 (the famous A/B visual binaries), but fails
+badly for white-dwarf companions: Sirius B's V≈11.36 absmag yields
+q ≈ 0.07 when the true value is ≈ 0.33 (m_A≈2.06 M☉, m_B≈1.02 M☉).
+The orbit's shape (P, e, a, i, ω, Ω) is unaffected — only the split
+of motion between the two components is skewed. For pairs where q is
+critical (the runtime evolution layer scales each component's offset
+by q vs (1-q)), a follow-up bead may swap in spectral-class-aware
+mass tables; for v1 this is documented and accepted.
+
 **Tangent-plane consistency.** Both the primary HIP cone-match and
 the secondary HIP cone-match use AT-HYG's `(ra, dec)` as the tangent
 basis (not the WDS precise coordinate), because AT-HYG stores xyz at

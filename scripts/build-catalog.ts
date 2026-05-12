@@ -11,9 +11,11 @@ import {
   inferBinaries,
   applyDoublesFlag as applyDoublesFlagPure,
   applyMultipleOverridesPure,
+  buildOrbitalElementsTable,
   FLAG_HAS_NAME,
   FLAG_IS_SOL,
   FLAG_HAS_BAYER,
+  FLAG_BINARY_SECONDARY,
   HEADER_LAYOUT,
   RECORD_LAYOUT,
   HEADER_SIZE,
@@ -26,6 +28,7 @@ import {
   NAME_LENGTH_PREFIX_BYTES,
   type SearchEntry,
   type MultipleOverrideRow,
+  type OrbitalElements,
 } from './catalog-pure';
 import {
   compareBuildCounts,
@@ -414,6 +417,9 @@ function parseMultiplesTsv(path: string): MultipleOverrideRow[] {
   let header: string[] | null = null;
   let idxSys = -1, idxComp = -1, idxHip = -1, idxX = -1, idxY = -1, idxZ = -1;
   let idxAbs = -1, idxCi = -1, idxSpect = -1, idxName = -1, idxSrc = -1, idxReg = -1;
+  let idxOrbId = -1, idxOrbRole = -1;
+  let idxP = -1, idxT = -1, idxE = -1, idxA = -1, idxQ = -1;
+  let idxI = -1, idxOmega = -1, idxBigOmega = -1, idxDist = -1;
 
   for (const raw of lines) {
     if (!raw) continue;
@@ -432,12 +438,27 @@ function parseMultiplesTsv(path: string): MultipleOverrideRow[] {
       idxName = header.indexOf('name');
       idxSrc = header.indexOf('source');
       idxReg = header.indexOf('regime');
+      idxOrbId = header.indexOf('orbit_id');
+      idxOrbRole = header.indexOf('orbit_role');
+      idxP = header.indexOf('P_days');
+      idxT = header.indexOf('T_jde');
+      idxE = header.indexOf('e');
+      idxA = header.indexOf('a_AU');
+      idxQ = header.indexOf('q');
+      idxI = header.indexOf('i_rad');
+      idxOmega = header.indexOf('omega_rad');
+      idxBigOmega = header.indexOf('Omega_rad');
+      idxDist = header.indexOf('dist_pc');
       const missing: string[] = [];
       for (const [i, n] of [
         [idxSys, 'system_id'], [idxComp, 'comp'], [idxHip, 'hip'],
         [idxX, 'x_pc'], [idxY, 'y_pc'], [idxZ, 'z_pc'],
         [idxAbs, 'absmag'], [idxCi, 'ci'], [idxSpect, 'spect'],
         [idxName, 'name'], [idxSrc, 'source'], [idxReg, 'regime'],
+        [idxOrbId, 'orbit_id'], [idxOrbRole, 'orbit_role'],
+        [idxP, 'P_days'], [idxT, 'T_jde'], [idxE, 'e'], [idxA, 'a_AU'],
+        [idxQ, 'q'], [idxI, 'i_rad'], [idxOmega, 'omega_rad'],
+        [idxBigOmega, 'Omega_rad'], [idxDist, 'dist_pc'],
       ] as [number, string][]) {
         if (i < 0) missing.push(n);
       }
@@ -462,6 +483,37 @@ function parseMultiplesTsv(path: string): MultipleOverrideRow[] {
     ) {
       continue;
     }
+
+    // Orbit fields: present only on Regime 2/3 rows. A row with non-empty
+    // orbit_id must also carry all 9 element values; partial rows are
+    // skipped (orbit treated as absent) so a malformed source can't
+    // poison the elements table with NaN floats.
+    const orbitIdRaw = cols[idxOrbId].trim();
+    const roleRaw = cols[idxOrbRole].trim();
+    let orbitId: string | null = null;
+    let orbitRole: 'primary' | 'secondary' | null = null;
+    let orbit: OrbitalElements | null = null;
+    if (orbitIdRaw && (roleRaw === 'primary' || roleRaw === 'secondary')) {
+      const P = Number(cols[idxP]);
+      const T = Number(cols[idxT]);
+      const e = Number(cols[idxE]);
+      const a = Number(cols[idxA]);
+      const q = Number(cols[idxQ]);
+      const i = Number(cols[idxI]);
+      const om = Number(cols[idxOmega]);
+      const Om = Number(cols[idxBigOmega]);
+      const dist = Number(cols[idxDist]);
+      if (
+        Number.isFinite(P) && Number.isFinite(T) && Number.isFinite(e) &&
+        Number.isFinite(a) && Number.isFinite(q) && Number.isFinite(i) &&
+        Number.isFinite(om) && Number.isFinite(Om) && Number.isFinite(dist)
+      ) {
+        orbitId = orbitIdRaw;
+        orbitRole = roleRaw;
+        orbit = { P, T, e, a, q, i, omega: om, Omega: Om, dist };
+      }
+    }
+
     out.push({
       systemId: cols[idxSys].trim(),
       comp: cols[idxComp].trim(),
@@ -471,6 +523,9 @@ function parseMultiplesTsv(path: string): MultipleOverrideRow[] {
       name: cols[idxName].trim(),
       source: cols[idxSrc].trim(),
       regime,
+      orbitId,
+      orbitRole,
+      orbit,
     });
   }
   return out;
@@ -501,6 +556,7 @@ function makeStarFromSynRow(row: MultipleOverrideRow): Star {
     periodDays: 0,
     amplitudeMag: 0,
     fromOverride: false,
+    orbitId: null, orbitRole: null, orbit: null,
   };
 }
 
@@ -554,6 +610,12 @@ interface Star {
   // indices and hands it to `inferBinaries` so the sub-threshold
   // safety-net drop only fires on AT-HYG-native artefacts.
   fromOverride: boolean;
+  // Orbital data attached from a Regime 2/3 multiples.tsv row. Resolved
+  // into a row index in the binary's orbital-elements section at write
+  // time. `orbitRole='secondary'` propagates to FLAG_BINARY_SECONDARY.
+  orbitId: string | null;
+  orbitRole: 'primary' | 'secondary' | null;
+  orbit: OrbitalElements | null;
 }
 
 function parseFloatOrNull(s: string | undefined | null): number | null {
@@ -676,6 +738,7 @@ async function readStars(): Promise<{
       periodDays: 0,
       amplitudeMag: 0,
       fromOverride: false,
+      orbitId: null, orbitRole: null, orbit: null,
     });
   }
 
@@ -799,6 +862,7 @@ async function main() {
     multiplesHipOverrides: 0,
     multiplesSynInjected: 0,
     multiplesSubThresholdDropped: 0,
+    orbitalElementsRows: 0,
   };
 
   console.log(`Reading ${SRC_CSV}...`);
@@ -933,11 +997,15 @@ async function main() {
     counts.nameTableEntries++;
   }
 
-  // Allocate output buffer. The orbital-elements section is empty in v5
-  // — dch.8 will populate it without another version bump.
+  // Build the orbital-elements table from per-star orbit data, then
+  // allocate the output buffer. One row per unique `orbitId`; both
+  // component records of a pair share that row.
+  const { bytes: elementsBytes, orbitIdToRowIndex } = buildOrbitalElementsTable(stars);
+  const elementsCount = orbitIdToRowIndex.size;
+  const elementsLength = elementsBytes.byteLength;
+  counts.orbitalElementsRows = elementsCount;
+
   const recordsLength = stars.length * RECORD_SIZE;
-  const elementsCount = 0;
-  const elementsLength = 0;
   const totalLength = HEADER_SIZE + recordsLength + nameTableLength + elementsLength;
   const out = new ArrayBuffer(totalLength);
   const view = new DataView(out);
@@ -985,7 +1053,21 @@ async function main() {
       view.setUint16(off + RECORD_LAYOUT.period, 0, true);
     }
     view.setUint32(off + RECORD_LAYOUT.hip, s.hip ?? 0, true);
-    view.setUint32(off + RECORD_LAYOUT.orbitIdx, NO_ORBIT, true);
+    // Orbit pointer: walk-time row index resolved via the orbitId map.
+    // Secondary-side records additionally OR FLAG_BINARY_SECONDARY into
+    // their flags byte so the runtime can apply the opposite Kepler
+    // offset (∝ +(1-q) vs primary's −q).
+    let orbitIdx = NO_ORBIT;
+    let recordFlags = s.flags;
+    if (s.orbitId) {
+      const rowIdx = orbitIdToRowIndex.get(s.orbitId);
+      if (rowIdx !== undefined) {
+        orbitIdx = rowIdx;
+        if (s.orbitRole === 'secondary') recordFlags |= FLAG_BINARY_SECONDARY;
+      }
+    }
+    view.setUint32(off + RECORD_LAYOUT.orbitIdx, orbitIdx, true);
+    view.setUint8(off + RECORD_LAYOUT.flags, recordFlags);
     if (s.flags & FLAG_IS_SOL) solIndex = i;
     off += RECORD_SIZE;
   }
@@ -995,6 +1077,10 @@ async function main() {
     bytes.set(chunk, off);
     off += chunk.length;
   }
+
+  // Orbital-elements section.
+  bytes.set(elementsBytes, off);
+  off += elementsLength;
 
   if (off !== totalLength) {
     throw new Error(`Size mismatch: wrote ${off}, expected ${totalLength}`);
@@ -1037,6 +1123,9 @@ async function main() {
   );
   const mb = (totalLength / 1024 / 1024).toFixed(2);
   console.log(`Wrote ${OUT_BIN} (${mb} MB, ${stars.length} records, v${BINARY_VERSION})`);
+  console.log(
+    `  orbital-elements section: ${elementsCount} rows (${(elementsLength / 1024).toFixed(1)} KB)`,
+  );
   console.log(
     `Wrote ${OUT_CON} (${CONSTELLATIONS.length} constellations, ${figureCount} stick-figure polylines across ${figureLines.size})`,
   );
