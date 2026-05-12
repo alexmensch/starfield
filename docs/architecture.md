@@ -26,7 +26,7 @@ anything that reads star positions. For the `?v=` URL wire format see
 | no focus | focus on clicked |
 | clicked = focused, no vector | unfocus |
 | clicked = focused, vector drawn | clear vector (stay focused) |
-| clicked = vector tip | `focusStar(tip)` — teleport to 2 pc from tip, clear vector |
+| clicked = vector tip | `focusStar(tip)` — focus-park lerp (or no-op when already inside park), clear vector |
 | clicked = other | draw/replace vector from focus → clicked |
 
 This is the UX the user settled on. No double-click, no modifier keys.

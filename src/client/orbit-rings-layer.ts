@@ -27,17 +27,9 @@
 
 import * as THREE from 'three';
 import type { PlanetSystem, Planet, PlanetType } from './planet-system';
-import { AU_PC, type OrbitOrientationRad } from './ephemeris';
+import { AU_PC } from './astronomy-constants';
+import type { OrbitOrientationRad } from './ephemeris';
 import { GALACTIC_NORTH_POLE_ICRS } from './galactic-coords';
-
-// Re-export AU_PC for tests + downstream callers that already imported
-// it from this module. Canonical definition lives in ephemeris.ts.
-export { AU_PC };
-
-// 1 km expressed in parsecs (= AU_PC / 1.495978707e8 km/AU).
-// Used to convert per-planet equatorial radii (km) into the parsec
-// scale the rest of the renderer works in. Consumed by PlanetBodyField.
-export const KM_PC = AU_PC / 1.495978707e8;
 
 // J2000 obliquity of the ecliptic (IAU). Sol's orbital plane is tilted
 // from the ICRS equatorial plane by this angle around the +X (vernal

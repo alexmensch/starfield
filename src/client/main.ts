@@ -148,6 +148,13 @@ async function main() {
     createScaleBar(stellata, starLabels);
     bindWarpButton(stellata);
     bindModeToggle(stellata);
+    // Hide the #overlay SVG (HUD arrows, focus ring, distance vector,
+    // POI labels, etc.) while the focus-park lerp is in flight — same
+    // body-class hide pattern the warp uses. CSS selector matches
+    // `body.warping` so we don't have to duplicate the rule per source.
+    stellata.onFocusLerpChange((active) => {
+      document.body.classList.toggle('focus-lerping', active);
+    });
 
     // Apply any URL state before starting the URL writer so we don't echo
     // the same params back into history on load. With no `?v=`, fall back

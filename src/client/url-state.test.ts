@@ -12,7 +12,7 @@ import {
   type IdMaps,
 } from './url-state';
 import { DEFAULT_FILTER, DEFAULT_FOV, type Stellata } from './stellata';
-import { AU_PC } from './ephemeris';
+import { AU_PC } from './astronomy-constants';
 
 // Round-trips the view through the wire format and returns the decoded
 // view + version. Anything the encoder omits (e.g. default values) reads

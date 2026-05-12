@@ -138,17 +138,17 @@ animation phase 3.
 **X button (clear focus from observe):** `unfocus()` detects observe +
 focused-star and immediately clears focus *before* starting the
 zoom-out animation. The search box empties via `onFocusChange` on the
-click, then the camera pulls back to `minDistForStar(formerFocal)`
+click, then the camera pulls back to `parkDistForStar(formerFocal)`
 along its current view direction over `OBSERVE_TRANSITION_MS`.
 
 **Navigate-mode close-zoom unfocus** (a7d.2.6) takes the same shape:
 when the user hits Esc / clicks the focused star / clicks the X while
 already in navigate, and the camera sits closer than
-`minDistForStar(focal)`, `unfocus()` lerps the camera outward along
-its view direction to `minDistForStar` over `OBSERVE_TRANSITION_MS`
+`parkDistForStar(focal)`, `unfocus()` lerps the camera outward along
+its view direction to `parkDistForStar` over `OBSERVE_TRANSITION_MS`
 instead of teleporting. Reuses `observeTransition` with a third
 `kind: 'unfocus'`. `setFocus(null)` runs at lerp start so UI clears
-immediately; `controls.minDistance` is tightened to `minDistForStar`
+immediately; `controls.minDistance` is tightened to `parkDistForStar`
 on landing so manual zoom-in is bounded by the same parking distance.
 Skipped (snap) when already at or beyond the floor; cancelled cleanly
 by any new camera-changing action via `cancelUnfocusLerp` calls at

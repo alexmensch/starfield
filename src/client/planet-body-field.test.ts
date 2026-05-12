@@ -5,7 +5,7 @@ import {
   PlanetBodyField,
   type PlanetMaterialUniforms,
 } from './planet-body-field';
-import { AU_PC, KM_PC } from './orbit-rings-layer';
+import { AU_PC, KM_PC } from './astronomy-constants';
 import type { PlanetSystem, Planet } from './planet-system';
 import { SATURN_PHASE, peakPhaseFactor } from './phase-function';
 

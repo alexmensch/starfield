@@ -3,7 +3,6 @@ import * as THREE from 'three';
 import {
   ELEMENTS,
   PLANET_ORDER,
-  AU_PC,
   CACHE_GRANULARITY_SEC,
   getPlanetOrbitOrientations,
   getPlanetPositions,
@@ -11,6 +10,7 @@ import {
   _resetCacheForTests,
   type Vec3,
 } from './ephemeris';
+import { AU_PC } from './astronomy-constants';
 import { composeOrbitOrientationQuat } from './orbit-rings-layer';
 
 // J2000.0 in Unix-seconds: 2000-01-01T12:00:00 (TT, but treated as UTC

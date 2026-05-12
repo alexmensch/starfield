@@ -1,8 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import {
-  AU_PC,
-  KM_PC,
   ECLIPTIC_NORTH_POLE_ICRS,
   RING_VISIBILITY_THRESHOLD_PX,
   OrbitRingsLayer,
@@ -13,6 +11,7 @@ import {
   ringVisibility,
   solidityForType,
 } from './orbit-rings-layer';
+import { AU_KM, AU_PC, KM_PC } from './astronomy-constants';
 import { GALACTIC_NORTH_POLE_ICRS } from './galactic-coords';
 import type { Planet, PlanetSystem } from './planet-system';
 
@@ -169,7 +168,7 @@ describe('RING_VISIBILITY_THRESHOLD_PX', () => {
 
 describe('KM_PC', () => {
   it('relates to AU_PC via 1 AU = 149597870.7 km', () => {
-    expect(KM_PC * 1.495978707e8).toBeCloseTo(AU_PC, 12);
+    expect(KM_PC * AU_KM).toBeCloseTo(AU_PC, 12);
   });
 
   it('agrees with the published 1 km ≈ 3.241e-14 pc figure', () => {

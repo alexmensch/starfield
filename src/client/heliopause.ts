@@ -26,7 +26,7 @@
 
 import * as THREE from 'three';
 import type { Stellata } from './stellata';
-import { AU_PC } from './ephemeris';
+import { AU_PC } from './astronomy-constants';
 import { LABEL_OFFSET_PX } from './planet-labels';
 import heliopauseVert from './shaders/heliopause.vert.glsl?raw';
 import heliopauseFrag from './shaders/heliopause.frag.glsl?raw';

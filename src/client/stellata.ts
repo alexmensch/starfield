@@ -36,6 +36,13 @@ import { getPlanetSystem, hasPlanets, type PlanetSystem } from './planet-system'
 import { OrbitRingsLayer } from './orbit-rings-layer';
 import { PlanetBodyField } from './planet-body-field';
 import { Heliopause } from './heliopause';
+import { R_SUN_PC } from './astronomy-constants';
+import {
+  type FocusLerpState,
+  newFocusLerpFrom,
+  parkDistance,
+  tickFocusLerp,
+} from './focus-transition';
 import { shiftWarpWaypoints } from './warp-pure';
 
 export type MagPresetName = 'naked-eye' | 'binoculars' | 'all';
@@ -231,23 +238,9 @@ const DCAM_LOG_FLOOR_PC = 1e-30;
 // — under this, the geometric pin is the right answer.
 const PIN_ENGAGE_THRESHOLD_SQ_PC = 1e-12;
 
-// Fraction of the viewport's minor axis that a destination star fills
-// when the camera auto-parks at it (warp arrival, observe-exit landing,
-// search-select teleport). 0.10 = the disc reads as a clear feature
-// without dominating the frame, leaving room to see the surrounding
-// star field. Drives minDistForStar.
-const TARGET_PARK_FRACTION = 0.10;
-
 // Default vertical FOV (degrees). User-tunable via the FOV slider; the
 // reset button snaps back to this value.
 export const DEFAULT_FOV = 50;
-
-// One solar radius in parsecs. catalog.physicalRadius (and therefore
-// iLogRadius) is in solar radii; the angular-diameter formula needs
-// physical radius in pc to match the camera-distance units. Used both
-// in stellata.ts and in the star vertex shader (uRSunPc).
-//   1 R_sun = 6.957e8 m, 1 pc = 3.0857e16 m  →  R_sun = 2.2543e-8 pc
-const R_SUN_PC = 2.2543e-8;
 
 // When a focused star has a binary companion, minDistance is set so the
 // companion subtends at most this half-angle from the camera axis — gives
@@ -269,7 +262,15 @@ const BINARY_MIN_DIST_FACTOR = 1 / Math.tan(BINARY_VIEWPORT_HALF_ANGLE_RAD);
 export const WARP_T_MIN_MS = 5000;
 export const WARP_T_MAX_MS = 20000;
 export const WARP_T_K_MS = 2000;
-export const WARP_REORIENT_MS = 2000;
+
+// Canonical 2 s duration used everywhere the camera lerps under
+// non-warp dispatch — focus-park glide, warp reorient phase, aim
+// animation upper bound. One literal so the three motions read as
+// the same family. (WARP_T_K_MS above is a log-scale flight
+// coefficient with different semantics — it stays separate.)
+export const CAMERA_LERP_MS = 2000;
+export const WARP_REORIENT_MS = CAMERA_LERP_MS;
+export const FOCUS_LERP_MS = CAMERA_LERP_MS;
 
 // Arbitrary reference axis for the reorient slerp. Any fixed unit vector
 // works — the two setFromUnitVectors calls each produce a quaternion rotating
@@ -280,11 +281,11 @@ const WARP_BASE_DIR = new THREE.Vector3(0, 0, 1);
 // Aim animation: rotate the camera around `controls.target` so a chosen
 // world point lands at the centre of the view. Capped at 2 s so even a
 // 180° swing stays snappy; floored at 250 ms so trivial nudges still ease.
-export const AIM_T_MAX_MS = 2000;
+export const AIM_T_MAX_MS = CAMERA_LERP_MS;
 export const AIM_T_MIN_MS = 250;
 
 // OBSERVE-mode entry/exit translate animation. Travel distance is always
-// minDistForStar (sub-parsec) so a fixed duration reads as a brief glide
+// parkDistForStar (sub-parsec) so a fixed duration reads as a brief glide
 // rather than a warp.
 export const OBSERVE_TRANSITION_MS = 1200;
 
@@ -350,7 +351,7 @@ interface WarpState {
   pStart: THREE.Vector3;   // fly start = A + dirBack * sourceOffset
   pEnd: THREE.Vector3;     // fly end = B - forward * endOffset
   endOffset: number;       // arrival viewing distance for the destination
-  // Source-side reorient distance — minDistForStar(source) when warping
+  // Source-side reorient distance — parkDistForStar(source) when warping
   // from a focused star, cloudViewingDistancePc(source) when warping
   // from a focused cloud. Decoupled from endOffset so warps from a
   // giant source (e.g. Betelgeuse) to a small destination (Sol) don't
@@ -520,6 +521,7 @@ export class Stellata {
   private onVectorCloudHandlers: Array<(toCloudIdx: number | null) => void> = [];
   private onStateHandlers: Array<() => void> = [];
   private onWarpHandlers: Array<(active: boolean) => void> = [];
+  private onFocusLerpHandlers: Array<(active: boolean) => void> = [];
   private onCameraModeHandlers: Array<(mode: CameraMode) => void> = [];
 
   private cameraMode: CameraMode = 'navigate';
@@ -561,6 +563,11 @@ export class Stellata {
   private monochrome = false;
   private warpState: WarpState | null = null;
   private aimState: AimState | null = null;
+  // Smooth focus-park lerp (stellata-r9q.2): glides the camera from the
+  // current pose to parkDistForStar(idx) when the user focuses a star they
+  // aren't already inside. Branching + animate-loop dispatch live in
+  // focusStar / updateFocusLerp.
+  private focusLerpState: FocusLerpState | null = null;
   // Scratch quaternion + direction reused by updateAim each frame so the
   // animation never allocates.
   private aimQ = new THREE.Quaternion();
@@ -1039,6 +1046,12 @@ export class Stellata {
   onVectorCloudChange(h: (toCloudIdx: number | null) => void) { this.onVectorCloudHandlers.push(h); }
   onStateChange(h: () => void) { this.onStateHandlers.push(h); }
   onWarpChange(h: (active: boolean) => void) { this.onWarpHandlers.push(h); }
+  /** Fires on focus-park lerp start (true) and end (false). Overlays that
+   *  shouldn't flail against the moving camera (HUD arrows, focus ring,
+   *  distance vector, etc.) listen and hide themselves — same precedent
+   *  as `onWarpChange` and the `body.warping` CSS hide rule. */
+  onFocusLerpChange(h: (active: boolean) => void) { this.onFocusLerpHandlers.push(h); }
+  getFocusLerpActive(): boolean { return this.focusLerpState !== null; }
 
   getFocusedStar(): number | null { return this.focusedStar; }
   getFocusedCloud(): number | null { return this.focusedCloud; }
@@ -1153,6 +1166,7 @@ export class Stellata {
   isCameraBusy(): boolean {
     return this.warpState !== null
       || this.aimState !== null
+      || this.focusLerpState !== null
       || this.isObserveTransitionActive();
   }
 
@@ -1163,6 +1177,34 @@ export class Stellata {
   private cancelUnfocusLerp() {
     if (this.observeTransition?.kind === 'unfocus') {
       this.observeTransition = null;
+    }
+  }
+
+  // Cancel an in-flight focus-park lerp (r9q.2). controls.enabled is
+  // not touched here because focusStar / flyToCloud don't disable it
+  // when starting the lerp — see the unfocus-lerp precedent for why
+  // toggling controls during a click-driven animation races with
+  // TrackballControls' pointerup handler.
+  private cancelFocusLerp() {
+    this.endFocusLerp();
+  }
+
+  // Set/clear the focus-lerp slot through these helpers so overlays
+  // subscribed to onFocusLerpChange see exactly one true → false edge
+  // per lerp. Calling startFocusLerp twice in a row emits a single
+  // 'true' (state changed shape but stays active); endFocusLerp() is a
+  // no-op when no lerp is running.
+  private startFocusLerp(state: FocusLerpState) {
+    const wasInactive = this.focusLerpState === null;
+    this.focusLerpState = state;
+    if (wasInactive) {
+      for (const h of this.onFocusLerpHandlers) h(true);
+    }
+  }
+  private endFocusLerp() {
+    if (this.focusLerpState !== null) {
+      this.focusLerpState = null;
+      for (const h of this.onFocusLerpHandlers) h(false);
     }
   }
   /** Threshold squared-length below which `controls.target` engages the
@@ -1178,7 +1220,7 @@ export class Stellata {
     return (
       this.focusedStar !== null &&
       this.cameraMode === 'navigate' &&
-      !this.warpState && !this.aimState &&
+      !this.warpState && !this.aimState && !this.focusLerpState &&
       this.controls.target.lengthSq() < PIN_ENGAGE_THRESHOLD_SQ_PC
     );
   }
@@ -1368,7 +1410,7 @@ export class Stellata {
       // = the focal star's effective minDistance, so orbit picks up exactly
       // where it would on a fresh focus.
       const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
-      const minDist = this.minDistForStar(this.focusedStar);
+      const minDist = this.parkDistForStar(this.focusedStar);
       this.observeTransition = {
         startTimeMs: performance.now(),
         durationMs: OBSERVE_TRANSITION_MS,
@@ -1653,35 +1695,59 @@ export class Stellata {
   private cloudRaycaster = new THREE.Raycaster();
   private tmpNdc = new THREE.Vector2();
 
-  /** Teleport the camera to a comfortable viewing distance from the
-   *  cloud's centroid and make the cloud the new focus. Cloud-side
-   *  analogue of focusStar — used by search-select and click-vector-tip.
-   *  Clears any prior focus + measurement vector since the user has
-   *  effectively "arrived" at the new target. */
-  flyToCloud(idx: number) {
+  /** Cloud-side analogue of focusStar — used by search-select and
+   *  click-vector-tip. Routes through the same focus-park primitives
+   *  (r9q.3) so the lerp-or-noop UX matches stars. `animate: false`
+   *  (URL restore) snaps without a transition. setFocus(null) below
+   *  leaves worldOffset alone (a7d.2.11), so no frame-shift handling
+   *  is needed here — target is `cloud.centerAbs - worldOffset` in the
+   *  current local frame both before and after the focus clear. */
+  flyToCloud(idx: number, opts: { animate?: boolean } = {}) {
     if (!this.clouds) return;
     const cloud = this.clouds.clouds[idx];
     if (!cloud) return;
     if (this.warpState) return;
+    this.cancelUnfocusLerp();
+    this.cancelFocusLerp();
 
-    // Drop any star focus first. Since a7d.2.11, setFocus(null) leaves
-    // worldOffset at the former focal star (so the projection chain
-    // stays float32-clean across unfocus); we therefore can't assume
-    // the local frame is Sol-relative here. Subtract worldOffset
-    // explicitly when placing camera/target so the cloud's absolute
-    // centroid translates correctly into the current local frame.
     if (this.focusedStar !== null) this.setFocus(null);
     this.setVectorTo(null);
     this.setVectorToCloud(null);
 
-    const offsetDist = cloudViewingDistancePc(cloud);
-    const dir = this.tmpVec3b.subVectors(this.camera.position, this.controls.target);
-    if (dir.lengthSq() < 1e-6) dir.set(0, 0, 1);
-    dir.normalize().multiplyScalar(offsetDist);
+    const animate = opts.animate ?? true;
+    const startQuat = this.camera.quaternion.clone();
+    const startUp = this.camera.up.clone();
 
-    this.controls.target.copy(cloud.centerAbs).sub(this.worldOffset);
-    this.camera.position.copy(this.controls.target).add(dir);
-    this.controls.update();
+    const target = new THREE.Vector3().copy(cloud.centerAbs).sub(this.worldOffset);
+    this.controls.target.copy(target);
+    const parkDist = parkDistance({
+      R_pc: Math.max(cloud.axes[0], cloud.axes[1], cloud.axes[2]),
+      dMinFloor: cloudViewingDistancePc(cloud),
+    });
+    const eyeDist = this.camera.position.distanceTo(target);
+
+    if (animate && eyeDist > parkDist) {
+      this.startFocusLerp(newFocusLerpFrom(
+        this.camera.position,
+        startQuat,
+        startUp,
+        target,
+        parkDist,
+        FOCUS_LERP_MS,
+        performance.now(),
+      ));
+      // controls.enabled stays true — see focusStar's comment.
+    } else if (eyeDist > parkDist) {
+      const dir = new THREE.Vector3()
+        .subVectors(this.camera.position, target)
+        .normalize();
+      if (dir.lengthSq() === 0) dir.set(0, 0, 1);
+      this.camera.position.copy(target).addScaledVector(dir, parkDist);
+      this.camera.lookAt(target);
+      this.controls.update();
+    } else {
+      this.controls.update();
+    }
     this.setFocusedCloud(idx);
   }
 
@@ -1813,6 +1879,9 @@ export class Stellata {
       this.focusedStar === null && this.focusedCloud === null &&
       this.vectorTo === null && this.vectorToCloud === null
     ) return;
+    // A focus-park lerp inbound to the same star we're now unfocusing
+    // away from would otherwise race the unfocus zoom-out below.
+    this.cancelFocusLerp();
     const animate = opts.animate ?? true;
     this.setVectorTo(null);
     this.setVectorToCloud(null);
@@ -1824,7 +1893,7 @@ export class Stellata {
     // are captured in that same frame.
     if (animate && this.cameraMode === 'observe' && this.focusedStar !== null) {
       const focalIdx = this.focusedStar;
-      const minDist = this.minDistForStar(focalIdx);
+      const minDist = this.parkDistForStar(focalIdx);
       // Quaternion → forward is frame-invariant — capturing here is
       // historical (a7d.2.11 made setFocus(null) below frame-preserving
       // too) but harmless and self-documenting.
@@ -1861,7 +1930,7 @@ export class Stellata {
     }
     // Navigate-mode close-zoom unfocus: animate the camera back to the
     // former focal star's parking distance instead of teleporting (a7d.2.6).
-    // Skip when the camera is already further out than minDistForStar (the
+    // Skip when the camera is already further out than parkDistForStar (the
     // acceptance "no-op when at or beyond the floor" criterion), or when
     // there's no focused star to anchor on (cloud-only / vector-only
     // unfocus, no animation reference). Pin disengages naturally because
@@ -1875,7 +1944,7 @@ export class Stellata {
       !this.observeTransition
     ) {
       const focalIdx = this.focusedStar;
-      const minDist = this.minDistForStar(focalIdx);
+      const minDist = this.parkDistForStar(focalIdx);
       const fromPos = this.camera.position.clone();
       const eye = fromPos.distanceTo(this.controls.target);
       if (eye < minDist) {
@@ -2156,34 +2225,80 @@ export class Stellata {
     };
   }
 
-  focusStar(starIndex: number, distancePc?: number) {
+  /**
+   * Focus a star. With `animate: true` (default), the camera glides to
+   * `parkDistForStar(idx)` over `FOCUS_LERP_MS` when the camera is
+   * currently outside that park distance; otherwise the camera stays put
+   * and only the focus state / orbit floor are updated. With
+   * `animate: false`, the camera snaps to the park pose directly
+   * (URL-restore path).
+   *
+   * Flow: `setFocus` translates the camera into the new floating-origin
+   * frame (new star at local (0,0,0)). We capture starting orientation
+   * BEFORE `setFocus`, then build the lerp AFTER — the lerp's
+   * fromPos/toPos must live in the post-recentre frame, otherwise the
+   * camera teleports backward and lands at `|targetOld|` past the star.
+   */
+  focusStar(starIndex: number, opts: { animate?: boolean } = {}) {
     if (this.warpState) return;
-    // Interrupt any in-flight unfocus zoom-out (a7d.2.6) cleanly so the
-    // lerp's next tick doesn't drag the camera away from the new park
-    // position. Observe enter/exit transitions still gate via the regular
-    // call sites (e.g. setCameraMode); focusStar is reached through them.
     this.cancelUnfocusLerp();
-    // Default park = the same auto-arrival distance every other landing
-    // uses (warp arrival, observe→navigate, boot). Callers can still
-    // override for e.g. URL restores that want a specific pose.
-    const d = distancePc ?? this.minDistForStar(starIndex);
-    const target = this.starLocalPosition(starIndex);
-    const offset = new THREE.Vector3()
-      .subVectors(this.camera.position, this.controls.target)
-      .normalize()
-      .multiplyScalar(d);
-    if (offset.lengthSq() === 0) offset.set(0, 0, d);
-    this.camera.position.copy(target).add(offset);
-    this.controls.target.copy(target);
-    // Set the new star's orbit floor BEFORE controls.update(). Without this,
-    // TrackballControls clamps the eye vector to the OLD focal star's
-    // minOrbit (or GLOBAL_MIN_DIST_PC when previously unfocused), which can
-    // be larger than the new park distance — pushing the camera outward and
-    // leaving the user farther from the star than the 10% disc-fill target.
-    this.controls.minDistance = this.minOrbitDistForStar(starIndex);
-    this.controls.update();
+    this.cancelFocusLerp();
+    const animate = opts.animate ?? true;
+
+    // Orientation is frame-shift-invariant; capture once. After setFocus
+    // we still want `fromQuat` to be the user's pre-click camera view.
+    const startQuat = this.camera.quaternion.clone();
+    const startUp = this.camera.up.clone();
+
+    const parkDist = this.parkDistForStar(starIndex);
+    const minOrbit = this.minOrbitDistForStar(starIndex);
+
+    // setFocus's contract: caller seeds controls.target with the new
+    // star's local position in the CURRENT (pre-recentre) frame; setFocus
+    // then recentres worldOffset to the new star and translates camera +
+    // target by -target so both land in the new frame with target at
+    // (0,0,0). Match that contract.
+    this.controls.target.copy(this.starLocalPosition(starIndex));
+    this.controls.minDistance = minOrbit;
     this.setVectorTo(null);
     this.setFocus(starIndex);
+    // From here on: the new star sits at local (0,0,0); camera.position
+    // is already translated into the new frame.
+
+    const target = this.controls.target; // (0,0,0) post-recentre
+    const eyeDist = this.camera.position.length();
+
+    if (animate && eyeDist > parkDist) {
+      this.startFocusLerp(newFocusLerpFrom(
+        this.camera.position,
+        startQuat,
+        startUp,
+        target,
+        parkDist,
+        FOCUS_LERP_MS,
+        performance.now(),
+      ));
+      // Deliberately do NOT toggle controls.enabled. The animate-loop
+      // dispatcher routes through updateFocusLerp before
+      // controls.update(), so user input accumulates inside
+      // TrackballControls but doesn't apply visually. Disabling here
+      // would race the click-to-focus event chain — Stellata's pointerup
+      // runs before TC's dynamically-added pointerup, and TC's _state
+      // would stay stuck at ROTATE until the next click clears it (cursor
+      // appears captured). Same precedent as the unfocus lerp.
+    } else if (eyeDist > parkDist) {
+      // animate: false snap path — outside park: place at park along
+      // current eye direction with an explicit lookAt so orientation
+      // matches what TC would resolve.
+      const dir = this.camera.position.clone().normalize();
+      if (dir.lengthSq() === 0) dir.set(0, 0, 1);
+      this.camera.position.copy(target).addScaledVector(dir, parkDist);
+      this.camera.lookAt(target);
+      this.controls.update();
+    } else {
+      // Inside park: stay-put. Nothing to move.
+      this.controls.update();
+    }
   }
 
   setOrbitTarget(starIndex: number) {
@@ -2222,7 +2337,7 @@ export class Stellata {
     if (!A) return;
     if (destIdx === this.focusedStar) return;
     const B = this.starLocalPosition(destIdx);
-    this.startWarp(A, B, 'star', destIdx, this.minDistForStar(destIdx));
+    this.startWarp(A, B, 'star', destIdx, this.parkDistForStar(destIdx));
   }
 
   /** Cloud-destination warp — flies from the currently focused thing
@@ -2260,6 +2375,7 @@ export class Stellata {
   ) {
     if (this.warpState) return;
     this.cancelUnfocusLerp();
+    this.cancelFocusLerp();
     if (this.isObserveTransitionActive()) return;
     // Warp launched from OBSERVE: leave cameraMode='observe' for the
     // duration so the search-row label, mode toggle, and any other
@@ -2305,7 +2421,7 @@ export class Stellata {
     // cloud when warping toward something tiny.
     let sourceOffset = endOffset;
     if (this.focusedStar !== null) {
-      sourceOffset = this.minDistForStar(this.focusedStar);
+      sourceOffset = this.parkDistForStar(this.focusedStar);
     } else if (this.focusedCloud !== null && this.clouds) {
       const c = this.clouds.clouds[this.focusedCloud];
       if (c) sourceOffset = cloudViewingDistancePc(c);
@@ -2565,6 +2681,7 @@ export class Stellata {
   // travelled deep into 3D space.
   aimAtConstellation(conIndex: number) {
     this.cancelUnfocusLerp();
+    this.cancelFocusLerp();
     if (this.isObserveTransitionActive()) return;
     const cons = this.catalog.constellations;
     const lines = conIndex >= 0 && conIndex < cons.length ? cons[conIndex].lines : undefined;
@@ -2633,6 +2750,7 @@ export class Stellata {
   aimAt(pointLocal: THREE.Vector3) {
     if (this.warpState || this.aimState) return;
     this.cancelUnfocusLerp();
+    this.cancelFocusLerp();
     if (this.isObserveTransitionActive()) return;
     if (this.cameraMode === 'observe') {
       if (this.observeAimState) return;
@@ -2730,6 +2848,21 @@ export class Stellata {
     if (u >= 1) {
       this.aimState = null;
       this.controls.enabled = true;
+      this.controls.update();
+    }
+  }
+
+  // Tick the focus-park lerp (r9q.2). controls.enabled is left true
+  // throughout the lerp; the animate() dispatcher routes here instead
+  // of controls.update(), so user drag accumulates in TC without
+  // visible effect until the lerp lands. On landing we re-issue
+  // controls.update() so TC re-syncs against the final camera pose.
+  private updateFocusLerp() {
+    const state = this.focusLerpState;
+    if (!state) return;
+    const stillActive = tickFocusLerp(state, performance.now(), this.camera);
+    if (!stillActive) {
+      this.endFocusLerp();
       this.controls.update();
     }
   }
@@ -3154,23 +3287,23 @@ export class Stellata {
   }
 
   // Auto-park target — used by observe-exit landing, warp source
-  // departure, and warp arrival. Distance solves `2·atan(R/d) =
-  // TARGET_PARK_FRACTION · fov_minor`, so every star fills the same
-  // fraction of the viewport on arrival regardless of physical radius
-  // (supergiants land much further out than dwarfs in absolute parsecs).
-  // For variables, R is bumped to peak-amplitude so the parking pulse
-  // reads at TARGET_PARK_FRACTION on its peak (high-amplitude variables
-  // park further out than their static R alone would suggest). Floored
-  // at twice the orbit floor so the parking distance always sits
-  // clearly above the manual-zoom limit. For binaries the result is
-  // bumped so the companion stays within the viewport half-angle.
-  minDistForStar(idx: number): number {
+  // departure, and warp arrival. Composes the generic parkDistance
+  // primitive from focus-transition.ts with the star-specific
+  // inputs: Reff = R · peakAmplitudeFactor (so variables park clear of
+  // their pulse peak), the 90 %-fill manual-zoom floor as dMinFloor,
+  // and the binary-companion bump as the optional extraFloor. Result
+  // is "1 AU outside the surface, but never closer than dMin or the
+  // companion floor."
+  parkDistForStar(idx: number): number {
     const fovMinor = this.fovMinorRad();
     const R = Math.max(this.catalog.physicalRadius[idx], 1e-9) * R_SUN_PC;
     const Reff = R * this.peakAmplitudeFactor(idx);
-    const dPark = distAtFillFraction(Reff, fovMinor, TARGET_PARK_FRACTION);
-    const dMin = distAtFillFraction(Reff, fovMinor, ZOOM_FLOOR_FRACTION);
-    return Math.max(dPark, 2 * dMin, this.binaryCompanionFloorPc(idx));
+    const dMinFloor = distAtFillFraction(Reff, fovMinor, ZOOM_FLOOR_FRACTION);
+    return parkDistance({
+      R_pc: Reff,
+      dMinFloor,
+      extraFloor: this.binaryCompanionFloorPc(idx),
+    });
   }
 
   // Peak-amplitude rendered disc diameter in pixels. Mirrors the physSize
@@ -3210,6 +3343,7 @@ export class Stellata {
     if (!down) return;
     if (this.warpState || this.aimState) return;
     this.cancelUnfocusLerp();
+    this.cancelFocusLerp();
     if (this.isObserveTransitionActive()) return;
     const dx = e.clientX - down.x;
     const dy = e.clientY - down.y;
@@ -3238,7 +3372,7 @@ export class Stellata {
     // special cases the user called out are: (a) focus ring stays a
     // star-only overlay (skipped naturally — no focus ring code touches
     // focusedCloud), and (b) viewing distance for clouds is
-    // cloudViewingDistancePc rather than minDistForStar.
+    // cloudViewingDistancePc rather than parkDistForStar.
     const focusedThing =
       this.focusedStar !== null
         ? { kind: 'star' as const, idx: this.focusedStar }
@@ -3257,7 +3391,7 @@ export class Stellata {
           : null;
 
     // No focus → click parks the camera at the clicked thing, matching
-    // search-select and URL-restore. For stars that's minDistForStar (10%
+    // search-select and URL-restore. For stars that's parkDistForStar (10%
     // disc fill); clouds keep their orbit-target-only behaviour for now
     // (cloud focus UX is shelved — see CLAUDE.md).
     if (!focusedThing) {
@@ -3279,7 +3413,7 @@ export class Stellata {
 
     // Click on the current vector destination → travel to it.
     // For stars, focusStar matches the search-select teleport
-    // (parks at minDistForStar(idx)). For clouds, flyToCloud is the
+    // (parks at parkDistForStar(idx)). For clouds, flyToCloud is the
     // search-select analogue (cloudViewingDistancePc).
     if (vectorThing && sameTarget(clickedThing, vectorThing)) {
       if (clickedThing.kind === 'star') this.focusStar(clickedThing.idx);
@@ -3476,6 +3610,8 @@ export class Stellata {
       this.updateWarp();
     } else if (this.aimState) {
       this.updateAim();
+    } else if (this.focusLerpState) {
+      this.updateFocusLerp();
     } else if (this.observeAimState) {
       this.updateObserveAim();
       // Observe-mode aim slerps the camera quaternion in place. The

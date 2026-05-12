@@ -97,6 +97,8 @@ src/
     planet-labels.ts      per-planet body-anchored labels for the focused host (3re.4 / 3re.9 contract)
     time.ts               wall-clock `t` helpers for the solar-system layer (3re.1: tToJDE, isLive)
     ephemeris.ts          JPL Standish 1992 planet positions for Sol (3re.3: ±arcmin over ±3000 yr)
+    astronomy-constants.ts  canonical AU_PC / AU_PER_PC / AU_KM / KM_PC / R_SUN_PC
+    focus-transition.ts   parkDistance + focus-park lerp primitives (r9q.2; generic across focusables)
     time-readout.ts       plain-English UTC `t` readout under the bottom-right star count (3re.11; planet-host + warp gated)
     heliopause.ts         Sol's heliopause translucent shell + apex label (3re.5; ~122 AU upwind)
     shaders/

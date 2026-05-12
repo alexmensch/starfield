@@ -17,10 +17,8 @@
 // in the ecliptic and other hosts (stellata-bk5 exoplanets) land in the
 // galactic plane per stellata-3re.8.
 
+import { AU_PC } from './astronomy-constants';
 import { tToJDE } from './time';
-
-// 1 AU in parsecs (IAU 2012). 1 pc / (180·3600/π) AU = 1/206264.806 AU.
-const AU_PC = 1 / 206264.80624709636;
 
 // JD at J2000.0 (2000-01-01T12:00 TT).
 const J2000_JD = 2451545.0;
@@ -321,4 +319,4 @@ export function _resetCacheForTests(): void {
 }
 
 export type { ElementSet };
-export { ELEMENTS, J2000_JD, AU_PC, CACHE_GRANULARITY_SEC };
+export { ELEMENTS, J2000_JD, CACHE_GRANULARITY_SEC };

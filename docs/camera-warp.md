@@ -13,9 +13,11 @@ An animated camera flight between the focused star (A) and the distance
 vector destination (B). Trigger: click the yellow distance label on the
 SVG overlay (hovering reveals a "→ Warp" suffix), or press `W`. Skip: the
 muted ghost pill at top-center (shown only while warping), or `Esc` /
-`Space`. Click-tip-to-travel is an instant teleport that routes through
-`focusStar(idx)` for consistency with search-select (parks at
-`minDistForStar(idx)` — same geometric auto-park every landing uses).
+`Space`. Click-tip-to-travel routes through `focusStar(idx)` for
+consistency with search-select (parks at `parkDistForStar(idx)` — same
+auto-park every landing uses; lerps over `FOCUS_LERP_MS` or stays put
+when already inside park, see `docs/camera-observe.md` § Focus-park
+lerp).
 
 Two- or three-phase animation in `stellata.ts updateWarp`, depending
 on whether the warp re-enters OBSERVE on arrival:

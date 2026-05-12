@@ -55,7 +55,7 @@ uniform float uMonochrome;       // 0 = colour mode, 1 = chart mode (shared with
 // radiusFactor is the variability modulation. Falls off as 1/d in the
 // small-angle regime and saturates as d → R (disc fills the frame).
 uniform float uFovYRad;   // camera vertical FOV in radians
-uniform float uRSunPc;    // 1 R_sun in parsecs (≈ 2.2543e-8)
+uniform float uRSunPc;    // 1 R_sun in parsecs; canonical R_SUN_PC in astronomy-constants.ts
 uniform vec2 uViewport;   // viewport size in CSS pixels (for quad expansion)
 // Variability headroom drivers, mirroring the TS-side ZOOM_FLOOR_FRACTION
 // and VAR_TROUGH_FLOOR_FRACTION. Driven from a single source in stellata.ts.

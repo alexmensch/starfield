@@ -42,40 +42,99 @@ disc through the camera lens — `θ = 2·atan(R / d)`:
    inspecting a Sol-class star vs Betelgeuse vs Sirius B looks the same
    on screen.
 
-2. **Auto-park target** — `minDistForStar(idx)`: where the camera
+2. **Auto-park target** — `parkDistForStar(idx)`: where the camera
    automatically lands. Used by:
 
    - `focusStar(idx)`'s default park distance (search-select,
-     click-vector-tip, default-load Sol focus). Was a fixed 2 pc
-     before a7d.2.4; now uses the same geometric solve as every other
-     auto-park so all entry points land at the same on-screen disc
-     coverage.
+     click-vector-tip, default-load Sol focus). Since r9q.2, focus is
+     a lerp-or-noop: the camera glides over `FOCUS_LERP_MS` when
+     currently outside park, and stays put when already inside.
    - Observe-exit landing position (camera pulls back to
-     `minDistForStar` along its current view direction when leaving
+     `parkDistForStar` along its current view direction when leaving
      observe).
    - Warp source departure (`pStart = A + dirBack × sourceOffset`,
-     where `sourceOffset = minDistForStar(source)` for star sources or
+     where `sourceOffset = parkDistForStar(source)` for star sources or
      `cloudViewingDistancePc(source)` for cloud sources — decoupled
      from `endOffset` so a giant source like Betelgeuse warping to
      Sol doesn't place `pStart` inside the source's rendered disc).
    - Warp arrival (`pEnd = B − forward × endOffset`, with
-     `endOffset = minDistForStar(destIdx)`).
+     `endOffset = parkDistForStar(destIdx)`).
 
-   Same geometric solve at a smaller fraction so the disc reads as a
-   clear feature without dominating the frame:
+   Composes the generic `parkDistance(...)` primitive from
+   `focus-transition.ts` with star-specific inputs:
    ```
-   d_park = R / tan(TARGET_PARK_FRACTION × fov_minor / 2)
+   parkDistForStar = max(AU_PC + Reff, dMinFloor, binaryFloor)
+     Reff       = R_pc · peakAmplitudeFactor       (handles variables)
+     dMinFloor  = distAtFillFraction(Reff, fov_minor, ZOOM_FLOOR_FRACTION=0.9)
+     binaryFloor = binaryCompanionFloorPc(idx)     (0 for non-binaries)
    ```
-   `TARGET_PARK_FRACTION` = 0.10. Floored at `2 × d_min` so the parking
-   distance always sits clearly above the manual-zoom limit (only
-   matters at extreme aspect ratios; for reasonable viewports
-   `d_park ≈ 9 × d_min` naturally). Binary companions get the same
-   half-angle bump on top.
+   Sol parks at ~1.005 AU (just outside Earth's orbit); a supergiant
+   parks at the 90 %-fill clamp.
 
-   Mirrors `renderedSizePx`'s physical-size term exactly. Both
-   `minOrbitDistForStar` and `minDistForStar` re-evaluate on focus
-   change, FOV change (via `setCameraFov`), and viewport resize (since
-   aspect changes shift `fov_minor`).
+   `minOrbitDistForStar` (the manual-zoom floor — same fov-fraction
+   solve at 0.9) and `parkDistForStar` re-evaluate on focus change,
+   FOV change (via `setCameraFov`), and viewport resize (since aspect
+   changes shift `fov_minor`).
+
+## Focus-park lerp (r9q.2)
+
+Click-focus on a star (or `flyToCloud` for clouds) no longer teleports.
+The lerp lives in `src/client/focus-transition.ts` as the generic
+`parkDistance(...)` + `newFocusLerpFrom(...)` + `tickFocusLerp(...)`
+trio — stars consume it now; clouds compose the same primitives;
+future focusable types (nebulae, etc.) plug in the same way.
+
+Branch in `focusStar` / `flyToCloud`:
+
+- **`eyeDist <= parkDist` → stay put.** Camera doesn't move; only
+  `controls.target`, `controls.minDistance`, and focus state update.
+- **`eyeDist > parkDist` → lerp.** Camera position lerps from
+  `fromPos` to `toPos = target + (eye-direction × parkDist)` and
+  camera orientation slerps in parallel from `fromQuat` to a quaternion
+  that looks at the target from `toPos`. Both interpolations are
+  driven by the same smoothstep, so the camera continuously rotates
+  toward the new target as it flies in — "start view → pointing at
+  new star from same location → flying right up to it, still facing it"
+  as one continuous animation, not phased like the warp. Builds the
+  lerp **after** `setFocus` recentres the floating origin so
+  `fromPos` / `toPos` live in the post-recentre frame.
+- **`opts.animate === false`** (URL restore) bypasses the lerp and
+  snaps to the park pose. Matches the existing `unfocus({animate:false})`
+  contract for URL-driven state restoration.
+
+`controls.enabled` is **not** toggled during the lerp — the `animate()`
+dispatcher routes through `updateFocusLerp` before `controls.update()`,
+so user drag accumulates inside `TrackballControls` without visible
+effect until the lerp lands. Disabling explicitly would race
+`TrackballControls`' pointerup handler (Stellata's pointerup → focus
+click runs *before* TC's dynamically-added pointerup), leaving TC's
+`_state` stuck at `ROTATE` and the cursor "captured" until the next
+click. Same precedent as the unfocus lerp (`docs/camera-observe.md`).
+
+The focus-star pin (`uPinFocusToCenter`) is suppressed while the lerp
+is in flight — `controls.target` is already `(0,0,0)` in the
+post-recentre frame, so the pin would otherwise snap the focal star
+to NDC origin while the camera is mid-rotation, making the star
+appear pasted at screen centre instead of following the rotation
+naturally.
+
+`#overlay` (HUD arrows + ring, focus ring, distance vector,
+constellation lines, POI labels, etc.) is hidden for the lerp's
+duration via a `body.focus-lerping` class — same mechanism the warp
+uses (`body.warping`), CSS rule shares the selector. Stellata fires
+`onFocusLerpChange(active)` on start / end edges; `main.ts` toggles
+the body class.
+
+`CAMERA_LERP_MS = 2000` is the canonical 2 s constant — `WARP_REORIENT_MS`,
+`AIM_T_MAX_MS`, and `FOCUS_LERP_MS` all alias it so the three
+camera-move animations read as the same family. `WARP_T_K_MS = 2000`
+stays a separate literal because it's a log-scale flight coefficient
+(see `docs/camera-warp.md`), not a duration.
+
+`cancelFocusLerp` is wired at every site that already calls
+`cancelUnfocusLerp` (`focusStar`, `flyToCloud`, `unfocus`, `startWarp`,
+`aimAt`, `aimAtConstellation`, `onPointerUp`) so a follow-up
+camera-changing action can't race the in-flight lerp.
 
 ## TrackballControls tuning
 
