@@ -10,6 +10,7 @@ import {
   parseGcvsNumber,
   inferBinaries,
   applyDoublesFlag as applyDoublesFlagPure,
+  applyMultipleOverridesPure,
   FLAG_HAS_NAME,
   FLAG_IS_SOL,
   FLAG_HAS_BAYER,
@@ -23,6 +24,7 @@ import {
   NAME_TABLE_PADDING,
   NAME_LENGTH_PREFIX_BYTES,
   type SearchEntry,
+  type MultipleOverrideRow,
 } from './catalog-pure';
 import {
   compareBuildCounts,
@@ -39,6 +41,7 @@ const SRC_STELLARIUM = resolve(ROOT, 'data/stellarium-modern-skyculture.json');
 const SRC_GCVS = resolve(ROOT, 'data/gcvs5.txt');
 const SRC_GCVS_XREF = resolve(ROOT, 'data/crossid.txt');
 const SRC_HIP_CCDM = resolve(ROOT, 'data/hip_ccdm.tsv');
+const SRC_MULTIPLES = resolve(ROOT, 'data/multiples.tsv');
 const OUT_BIN = resolve(ROOT, 'public/catalog.bin');
 const OUT_CON = resolve(ROOT, 'public/constellations.json');
 const OUT_SEARCH = resolve(ROOT, 'public/search-index.json');
@@ -202,6 +205,7 @@ function isUpToDate(): boolean {
   const gcvsMtime = existsSync(SRC_GCVS) ? statSync(SRC_GCVS).mtimeMs : 0;
   const xrefMtime = existsSync(SRC_GCVS_XREF) ? statSync(SRC_GCVS_XREF).mtimeMs : 0;
   const hipCcdmMtime = existsSync(SRC_HIP_CCDM) ? statSync(SRC_HIP_CCDM).mtimeMs : 0;
+  const multiplesMtime = existsSync(SRC_MULTIPLES) ? statSync(SRC_MULTIPLES).mtimeMs : 0;
   const scriptMtime = statSync(__filename).mtimeMs;
   return (
     binMtime > srcMtime &&
@@ -209,7 +213,8 @@ function isUpToDate(): boolean {
     binMtime > stellariumMtime &&
     binMtime > gcvsMtime &&
     binMtime > xrefMtime &&
-    binMtime > hipCcdmMtime
+    binMtime > hipCcdmMtime &&
+    binMtime > multiplesMtime
   );
 }
 
@@ -398,6 +403,114 @@ function parseHipCcdm(): Map<string, number[]> {
   return groups;
 }
 
+// Parse data/multiples.tsv (emitted by scripts/build-binaries.py) into
+// `MultipleOverrideRow[]`. Header row + tab-delimited body; the script
+// guarantees the column order documented in OUTPUT_COLUMNS.
+function parseMultiplesTsv(path: string): MultipleOverrideRow[] {
+  const text = readFileSync(path, 'utf8');
+  const lines = text.split(/\r?\n/);
+  const out: MultipleOverrideRow[] = [];
+  let header: string[] | null = null;
+  let idxSys = -1, idxComp = -1, idxHip = -1, idxX = -1, idxY = -1, idxZ = -1;
+  let idxAbs = -1, idxCi = -1, idxSpect = -1, idxName = -1, idxSrc = -1, idxReg = -1;
+
+  for (const raw of lines) {
+    if (!raw) continue;
+    const cols = raw.split('\t');
+    if (!header) {
+      header = cols.map((c) => c.trim());
+      idxSys = header.indexOf('system_id');
+      idxComp = header.indexOf('comp');
+      idxHip = header.indexOf('hip');
+      idxX = header.indexOf('x_pc');
+      idxY = header.indexOf('y_pc');
+      idxZ = header.indexOf('z_pc');
+      idxAbs = header.indexOf('absmag');
+      idxCi = header.indexOf('ci');
+      idxSpect = header.indexOf('spect');
+      idxName = header.indexOf('name');
+      idxSrc = header.indexOf('source');
+      idxReg = header.indexOf('regime');
+      const missing: string[] = [];
+      for (const [i, n] of [
+        [idxSys, 'system_id'], [idxComp, 'comp'], [idxHip, 'hip'],
+        [idxX, 'x_pc'], [idxY, 'y_pc'], [idxZ, 'z_pc'],
+        [idxAbs, 'absmag'], [idxCi, 'ci'], [idxSpect, 'spect'],
+        [idxName, 'name'], [idxSrc, 'source'], [idxReg, 'regime'],
+      ] as [number, string][]) {
+        if (i < 0) missing.push(n);
+      }
+      if (missing.length) {
+        throw new Error(
+          `data/multiples.tsv missing required columns: ${missing.join(', ')}.\n` +
+            `Re-run scripts/build-binaries.py to regenerate.`,
+        );
+      }
+      continue;
+    }
+    if (cols.length < header.length) continue;
+    const x = Number(cols[idxX]);
+    const y = Number(cols[idxY]);
+    const z = Number(cols[idxZ]);
+    const absmag = Number(cols[idxAbs]);
+    const ci = Number(cols[idxCi]);
+    const regime = parseInt(cols[idxReg], 10);
+    if (
+      !Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z) ||
+      !Number.isFinite(absmag) || !Number.isFinite(ci) || !Number.isFinite(regime)
+    ) {
+      continue;
+    }
+    out.push({
+      systemId: cols[idxSys].trim(),
+      comp: cols[idxComp].trim(),
+      hipOrSyn: cols[idxHip].trim(),
+      x, y, z, absmag, ci,
+      spect: cols[idxSpect].trim(),
+      name: cols[idxName].trim(),
+      source: cols[idxSrc].trim(),
+      regime,
+    });
+  }
+  return out;
+}
+
+// Factory for SYN-NNN secondary rows: build a complete Star with no HIP,
+// no GCVS lookup, no constellation membership. Matches the
+// `applyMultipleOverridesPure` contract — the pure helper sets
+// `fromOverride = true` after the factory returns.
+function makeStarFromSynRow(row: MultipleOverrideRow): Star {
+  const spectInfo = parseSpectral(row.spect);
+  const physRadius = physicalRadius(row.absmag, spectInfo);
+  const spectDisplay = row.spect
+    ? row.spect.replace(/\*+$/, '').trim().replace(/\s+/g, ' ')
+    : null;
+  return {
+    x: row.x, y: row.y, z: row.z,
+    absmag: row.absmag, ci: row.ci,
+    spectClass: spectInfo.classIdx,
+    lumClass: spectInfo.lumClass,
+    physicalRadius: physRadius,
+    conIndex: 255,
+    flags: row.name ? FLAG_HAS_NAME : 0,
+    proper: row.name || null,
+    bayer: null, hip: null, hd: null, hr: null, flam: null, gl: null,
+    spectDisplay,
+    companionIdx: -1,
+    periodDays: 0,
+    amplitudeMag: 0,
+    fromOverride: false,
+  };
+}
+
+// Format a per-regime tally (e.g. `{1: 28645, 2: 911}`) into a stable
+// log-string like `r1=28645 r2=911 r3=0`. Empty buckets are shown so the
+// log-line shape is stable across catalog drifts (zero is meaningful —
+// "ORB6 fell off" is a regression-worthy signal).
+function formatRegimeBreakdown(byRegime: Record<number, number>): string {
+  return [1, 2, 3].map((r) => `r${r}=${byRegime[r] ?? 0}`).join(' ');
+}
+
 // Build the union of CCDM groups (parsed from Hipparcos) and the curated
 // KNOWN_VISUAL_DOUBLES overrides, then delegate to the pure
 // `applyDoublesFlag` helper. The pure helper handles the per-group
@@ -434,6 +547,12 @@ interface Star {
   companionIdx: number;     // assigned later in inferBinaries; -1 = none
   periodDays: number;       // 0 = not a variable known to GCVS
   amplitudeMag: number;     // 0 if not variable
+  // Transient build-time marker set by `applyMultipleOverridesPure` on
+  // any star this build touched or appended via data/multiples.tsv. After
+  // the absmag sort, the caller derives a Set<number> of "protected"
+  // indices and hands it to `inferBinaries` so the sub-threshold
+  // safety-net drop only fires on AT-HYG-native artefacts.
+  fromOverride: boolean;
 }
 
 function parseFloatOrNull(s: string | undefined | null): number | null {
@@ -555,6 +674,7 @@ async function readStars(): Promise<{
       companionIdx: -1,
       periodDays: 0,
       amplitudeMag: 0,
+      fromOverride: false,
     });
   }
 
@@ -675,6 +795,9 @@ async function main() {
     solIndex: -1,
     figureCount: 0,
     figureConstellations: 0,
+    multiplesHipOverrides: 0,
+    multiplesSynInjected: 0,
+    multiplesSubThresholdDropped: 0,
   };
 
   console.log(`Reading ${SRC_CSV}...`);
@@ -683,14 +806,60 @@ async function main() {
   console.log(`  parsed ${stats.total} rows in ${Date.now() - t0}ms`);
   console.log(`  kept ${stars.length} stars`);
   console.log(`  dropped:`, stats.dropped);
-  counts.recordCount = stars.length;
+
+  // Apply multiple-star overrides emitted by scripts/build-binaries.py.
+  // HIP rows relocate existing stars to WDS/ORB6-resolved positions; SYN
+  // rows append new BinaryStars (Sirius B, Castor Aa1/Aa2, …). Sets a
+  // transient `fromOverride` flag we use after the sort to build the
+  // protected-index set passed to `inferBinaries`.
+  if (existsSync(SRC_MULTIPLES)) {
+    console.log('Applying multiple-star overrides from data/multiples.tsv...');
+    const tMult = Date.now();
+    const overrides = parseMultiplesTsv(SRC_MULTIPLES);
+    const multStats = applyMultipleOverridesPure(stars, overrides, makeStarFromSynRow);
+    console.log(
+      `  ${multStats.hipOverridden} HIP overrides, ` +
+        `${multStats.synInjected} SYN injected, ` +
+        `${multStats.hipMissing} HIPs not in catalog; ` +
+        `by regime: ${formatRegimeBreakdown(multStats.byRegime)} ` +
+        `in ${Date.now() - tMult}ms`,
+    );
+    counts.multiplesHipOverrides = multStats.hipOverridden;
+    counts.multiplesSynInjected = multStats.synInjected;
+  } else {
+    console.log('data/multiples.tsv not found; skipping multiple-star overrides.');
+  }
 
   // Sort by absolute magnitude ascending (brightest first). Record indices
-  // are final after this point.
+  // are final after this point (modulo `inferBinaries` sub-threshold
+  // drops below).
   stars.sort((a, b) => a.absmag - b.absmag);
 
-  // Build HIP → record index map against the post-sort order. Duplicate HIPs
-  // are rare (binary companions sharing an identifier); keep the brightest.
+  // Build the protected-index set from the post-sort `fromOverride`
+  // markers; `inferBinaries` uses this to gate the sub-threshold drop.
+  const protectedIndices = new Set<number>();
+  for (let i = 0; i < stars.length; i++) {
+    if (stars[i].fromOverride) protectedIndices.add(i);
+  }
+
+  // Geometric binary inference. May drop sub-threshold AT-HYG-native
+  // mutual pairs whose components are not in `protectedIndices` (safety
+  // net for collapsed-parallax rows the multiples pipeline missed).
+  console.log('Inferring binary/multiple systems...');
+  const tBin = Date.now();
+  const binStats = inferBinaries(stars, protectedIndices);
+  console.log(
+    `  ${binStats.pairs} companion assignments, ${binStats.mutualPairs} mutual pairs, ` +
+      `${binStats.droppedSubThreshold} sub-threshold drops in ${Date.now() - tBin}ms`,
+  );
+  counts.binaryPairs = binStats.pairs;
+  counts.binaryMutualPairs = binStats.mutualPairs;
+  counts.multiplesSubThresholdDropped = binStats.droppedSubThreshold;
+  counts.recordCount = stars.length;
+
+  // Build HIP → record index map against the final post-sort, post-drop
+  // order. Duplicate HIPs are rare (binary companions sharing an
+  // identifier); keep the brightest.
   const hipToIndex = new Map<number, number>();
   for (let i = 0; i < stars.length; i++) {
     const h = stars[i].hip;
@@ -700,16 +869,6 @@ async function main() {
   // Resolve Stellarium stick-figure lines to star indices. Throws if any
   // referenced HIP is missing from the catalog.
   const figureLines = buildFigureLines(hipToIndex);
-
-  // Geometric binary inference.
-  console.log('Inferring binary/multiple systems...');
-  const tBin = Date.now();
-  const binStats = inferBinaries(stars);
-  console.log(
-    `  ${binStats.pairs} companion assignments, ${binStats.mutualPairs} mutual pairs in ${Date.now() - tBin}ms`,
-  );
-  counts.binaryPairs = binStats.pairs;
-  counts.binaryMutualPairs = binStats.mutualPairs;
 
   // GCVS variable-star cross-match. Optional — if the files aren't present
   // we just skip, no variability rendered.

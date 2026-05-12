@@ -43,6 +43,18 @@ export interface BuildCounts {
   figureCount: number;
   /** Constellations that carry at least one stick-figure polyline. */
   figureConstellations: number;
+  /** HIP rows from data/multiples.tsv that updated an existing star's
+   *  position / photometry / spectrum (e.g. α Cen A relocated from its
+   *  collapsed-parallax AT-HYG row to the WDS+ORB6 J2000 position). */
+  multiplesHipOverrides: number;
+  /** SYN-NNN rows from data/multiples.tsv appended as new BinaryStars
+   *  (Sirius B, α Cen B's orbit-resolved twin, Castor's interior
+   *  components, …). */
+  multiplesSynInjected: number;
+  /** Mutual pairs below `MIN_RENDER_SEPARATION_PC` where neither member
+   *  came from the multiples pipeline — `inferBinaries` drops the fainter
+   *  member as a safety net for AT-HYG-native collapsed-parallax rows. */
+  multiplesSubThresholdDropped: number;
 }
 
 export type CountDiff =

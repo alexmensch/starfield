@@ -344,9 +344,22 @@ export const RESERVED_FLAG_BITS = 0x08 | 0x20 | 0x40 | 0x80;
 // renderable cases.
 export const BINARY_MAX_SEP_PC = 0.005;
 
+// Below this 3D separation a pair is considered visually un-renderable —
+// the two discs would overlap to one pixel even at minimum focus distance.
+// 5e-6 pc ≈ 1 AU. Used as the safety-net threshold in `inferBinaries`:
+// mutual pairs below this where *neither* component came from
+// `applyMultipleOverridesPure` are assumed to be AT-HYG rows with a
+// collapsed (shared) parallax solution that the WDS+ORB6 cross-match
+// pipeline didn't catch — the fainter member is dropped from the catalog
+// with a warn-log naming both HIPs. Famous close pairs (α Cen, Sirius,
+// Procyon, Castor) are protected because their components are injected /
+// overridden by the multiples pipeline.
+export const MIN_RENDER_SEPARATION_PC = 5e-6;
+
 // Structural type of a star record consumed by `inferBinaries`. The build
 // script's full Star type extends this; the helper only reads/writes the
-// fields named here.
+// fields named here. `hip` is optional and only used to make the
+// sub-threshold drop warn-log identifiable.
 export interface BinaryStar {
   x: number;
   y: number;
@@ -354,6 +367,7 @@ export interface BinaryStar {
   absmag: number;
   flags: number;
   companionIdx: number;
+  hip?: number | null;
 }
 
 // Pick the brightest star (lowest absmag) of `indices` and OR
@@ -469,7 +483,8 @@ export function applyDoublesFlag(
 //                  since we mark exactly one primary per mutual pair
 export function inferBinaries(
   stars: BinaryStar[],
-): { pairs: number; mutualPairs: number } {
+  protectedIndices: ReadonlySet<number> = new Set(),
+): { pairs: number; mutualPairs: number; droppedSubThreshold: number } {
   const cell = BINARY_MAX_SEP_PC;
   const cellInv = 1 / cell;
   const grid = new Map<number, number[]>();
@@ -526,16 +541,198 @@ export function inferBinaries(
   }
 
   // Second pass: identify mutual pairs (A↔B where each is the other's
-  // directed nearest) and flag the brighter member as primary. Iterate
-  // i < j to count each pair exactly once.
+  // directed nearest). Above MIN_RENDER_SEPARATION_PC, flag the brighter
+  // as primary. Below, when neither member came from the multiples
+  // override layer, the pair is a collapsed-parallax AT-HYG artefact the
+  // multiples pipeline didn't catch — drop the fainter with a warn-log.
+  // Iterate i < j to handle each pair exactly once.
   let mutualPairs = 0;
+  const minSepSq = MIN_RENDER_SEPARATION_PC * MIN_RENDER_SEPARATION_PC;
+  const subDrops: number[] = [];
   for (let i = 0; i < n; i++) {
     const j = stars[i].companionIdx;
     if (j < 0 || j <= i) continue;
     if (stars[j].companionIdx !== i) continue;
+
+    const dxv = stars[j].x - stars[i].x;
+    const dyv = stars[j].y - stars[i].y;
+    const dzv = stars[j].z - stars[i].z;
+    const d2 = dxv * dxv + dyv * dyv + dzv * dzv;
+
+    if (
+      d2 < minSepSq &&
+      !protectedIndices.has(i) &&
+      !protectedIndices.has(j)
+    ) {
+      const fainter = stars[i].absmag > stars[j].absmag ? i : j;
+      const kept = fainter === i ? j : i;
+      const idTag = (s: BinaryStar) =>
+        s.hip != null && s.hip > 0
+          ? `HIP ${s.hip}`
+          : `(no HIP, xyz=${s.x.toFixed(4)},${s.y.toFixed(4)},${s.z.toFixed(4)} absmag=${s.absmag.toFixed(2)})`;
+      console.warn(
+        `sub-threshold mutual pair below MIN_RENDER_SEPARATION_PC ` +
+          `(${Math.sqrt(d2).toExponential(2)} pc): dropping fainter ` +
+          `${idTag(stars[fainter])} (kept ${idTag(stars[kept])})`,
+      );
+      subDrops.push(fainter);
+      continue;
+    }
+
     mutualPairs++;
     markPrimary(stars, [i, j]);
   }
 
-  return { pairs, mutualPairs };
+  // Splice dropped fainter components out, descending so earlier indices
+  // remain valid. Rewrite companionIdx of survivors that pointed at a
+  // dropped slot (set to -1) or at a later slot (shift down by 1).
+  if (subDrops.length > 0) {
+    subDrops.sort((a, b) => b - a);
+    for (const idx of subDrops) {
+      stars.splice(idx, 1);
+      for (const s of stars) {
+        if (s.companionIdx === idx) s.companionIdx = -1;
+        else if (s.companionIdx > idx) s.companionIdx--;
+      }
+    }
+  }
+
+  return { pairs, mutualPairs, droppedSubThreshold: subDrops.length };
+}
+
+// ---- Multiple-star override application ---------------------------------
+
+// One parsed row from data/multiples.tsv. The build-binaries.py pipeline
+// emits per-component rows for every WDS pair it keeps; `hipOrSyn` is
+// either an integer HIP (string-encoded) for components already present
+// in AT-HYG, or `SYN-NNN` for synthetic secondaries injected by the
+// pipeline (Sirius B, α Cen B's orbit-resolved position, etc.).
+export interface MultipleOverrideRow {
+  systemId: string;
+  comp: string;
+  hipOrSyn: string;
+  x: number;
+  y: number;
+  z: number;
+  absmag: number;
+  ci: number;
+  spect: string;
+  name: string;
+  source: string;
+  regime: number;
+}
+
+// Subset of the build-catalog Star fields that `applyMultipleOverridesPure`
+// touches when overwriting a HIP row. Build scripts add their own fields
+// (companion, hd, hr, flam, gl, etc.) on top — those are owned by the SYN
+// factory the caller supplies.
+export interface OverridableStar {
+  x: number;
+  y: number;
+  z: number;
+  absmag: number;
+  ci: number;
+  spectClass: number;
+  lumClass: number;
+  physicalRadius: number;
+  flags: number;
+  proper: string | null;
+  hip: number | null;
+  spectDisplay: string | null;
+  fromOverride: boolean;
+}
+
+/** Apply `data/multiples.tsv` rows to the catalog. HIP rows locate an
+ *  existing star by Hipparcos number and overwrite position + photometry
+ *  + spectrum + (optionally) name; SYN-NNN rows are constructed by the
+ *  caller-supplied factory and appended.
+ *
+ *  Duplicates collapse: build-binaries.py emits the same HIP / SYN-id
+ *  once per WDS pair the component appears in, so famous primaries like
+ *  Sirius A show up 5+ times with identical values. First-write wins;
+ *  subsequent rows are skipped.
+ *
+ *  HIP rows whose HIP is not in `stars` are silently counted as
+ *  `hipMissing` — these are AT-HYG rows that fell out of `readStars`
+ *  upstream (e.g. exceeded MAX_DIST_PC).
+ *
+ *  Sets `fromOverride = true` on every star this helper touched or
+ *  injected so the caller can build a "protected" index set after the
+ *  catalog sort and pass it to `inferBinaries` (sub-threshold drop is
+ *  meant for unfixed AT-HYG-native artefacts, not pipeline output).
+ *
+ *  The override `name` field is only copied onto a HIP row when it is
+ *  non-empty — most rows have a blank name and the helper preserves the
+ *  AT-HYG proper name in that case. */
+export function applyMultipleOverridesPure<T extends OverridableStar>(
+  stars: T[],
+  overrides: MultipleOverrideRow[],
+  makeSyn: (row: MultipleOverrideRow) => T,
+): {
+  hipOverridden: number;
+  hipMissing: number;
+  synInjected: number;
+  byRegime: Record<number, number>;
+} {
+  const hipToIndex = new Map<number, number>();
+  for (let i = 0; i < stars.length; i++) {
+    const h = stars[i].hip;
+    if (h !== null && h > 0) hipToIndex.set(h, i);
+  }
+
+  const seenHip = new Set<number>();
+  const seenSyn = new Set<string>();
+  let hipOverridden = 0;
+  let hipMissing = 0;
+  let synInjected = 0;
+  const byRegime: Record<number, number> = {};
+
+  for (const row of overrides) {
+    if (row.hipOrSyn.startsWith('SYN-')) {
+      if (seenSyn.has(row.hipOrSyn)) continue;
+      seenSyn.add(row.hipOrSyn);
+      const star = makeSyn(row);
+      star.fromOverride = true;
+      stars.push(star);
+      synInjected++;
+      byRegime[row.regime] = (byRegime[row.regime] ?? 0) + 1;
+      continue;
+    }
+
+    const hip = parseInt(row.hipOrSyn, 10);
+    if (!Number.isFinite(hip) || hip <= 0) continue;
+    if (seenHip.has(hip)) continue;
+    seenHip.add(hip);
+    const idx = hipToIndex.get(hip);
+    if (idx === undefined) {
+      hipMissing++;
+      continue;
+    }
+
+    const s = stars[idx];
+    s.x = row.x;
+    s.y = row.y;
+    s.z = row.z;
+    s.absmag = row.absmag;
+    s.ci = row.ci;
+
+    const spectInfo = parseSpectral(row.spect);
+    s.spectClass = spectInfo.classIdx;
+    s.lumClass = spectInfo.lumClass;
+    s.physicalRadius = physicalRadius(row.absmag, spectInfo);
+    s.spectDisplay = row.spect
+      ? row.spect.replace(/\*+$/, '').trim().replace(/\s+/g, ' ')
+      : s.spectDisplay;
+
+    if (row.name) {
+      s.proper = row.name;
+      s.flags |= FLAG_HAS_NAME;
+    }
+
+    s.fromOverride = true;
+    hipOverridden++;
+    byRegime[row.regime] = (byRegime[row.regime] ?? 0) + 1;
+  }
+
+  return { hipOverridden, hipMissing, synInjected, byRegime };
 }

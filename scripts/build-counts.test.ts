@@ -23,6 +23,9 @@ function baseCounts(): BuildCounts {
     solIndex: 100000,
     figureCount: 500,
     figureConstellations: 88,
+    multiplesHipOverrides: 22878,
+    multiplesSynInjected: 27905,
+    multiplesSubThresholdDropped: 0,
   };
 }
 

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   spectClassIndex,
   parseSpectral,
@@ -11,7 +11,9 @@ import {
   markPrimary,
   markPrimaryIfUnflagged,
   applyDoublesFlag,
+  applyMultipleOverridesPure,
   BINARY_MAX_SEP_PC,
+  MIN_RENDER_SEPARATION_PC,
   FLAG_HAS_NAME,
   FLAG_IS_SOL,
   FLAG_HAS_BAYER,
@@ -29,6 +31,8 @@ import {
   type SpectralInfo,
   type BinaryStar,
   type DoublesStar,
+  type MultipleOverrideRow,
+  type OverridableStar,
 } from './catalog-pure';
 
 describe('catalog-pure / spectClassIndex', () => {
@@ -435,7 +439,7 @@ describe('catalog-pure / inferBinaries', () => {
   });
 
   it('returns zero counts for an empty input', () => {
-    expect(inferBinaries([])).toEqual({ pairs: 0, mutualPairs: 0 });
+    expect(inferBinaries([])).toEqual({ pairs: 0, mutualPairs: 0, droppedSubThreshold: 0 });
   });
 
   it('uses 3D distance, not 2D', () => {
@@ -446,6 +450,317 @@ describe('catalog-pure / inferBinaries', () => {
     ];
     inferBinaries(stars);
     expect(stars[0].companionIdx).toBe(1);
+  });
+
+  it('drops the fainter of a sub-threshold mutual pair when neither is protected', () => {
+    // Two unprotected stars at ~0.5 AU separation (well below
+    // MIN_RENDER_SEPARATION_PC = 1 AU). Safety net should drop the
+    // fainter (idx 1, absmag=6) and not flag either as a binary primary.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const stars: BinaryStar[] = [
+        makeStar({ x: 0, y: 0, z: 0, absmag: 4, hip: 100 }),
+        makeStar({ x: MIN_RENDER_SEPARATION_PC / 2, y: 0, z: 0, absmag: 6, hip: 200 }),
+      ];
+      const stats = inferBinaries(stars);
+      expect(stats.droppedSubThreshold).toBe(1);
+      expect(stats.mutualPairs).toBe(0);
+      expect(stars.length).toBe(1);
+      expect(stars[0].hip).toBe(100);
+      expect(stars[0].flags & FLAG_BINARY_PRIMARY).toBeFalsy();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toMatch(/HIP 200/);
+      expect(warn.mock.calls[0][0]).toMatch(/HIP 100/);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('keeps a sub-threshold pair when either component is in protectedIndices', () => {
+    // Same fixture, but one star is protected (came from the multiples
+    // pipeline — its position is curated, not a collapsed-parallax
+    // artefact). Safety net must not fire.
+    const stars: BinaryStar[] = [
+      makeStar({ x: 0, y: 0, z: 0, absmag: 4, hip: 100 }),
+      makeStar({ x: MIN_RENDER_SEPARATION_PC / 2, y: 0, z: 0, absmag: 6, hip: 200 }),
+    ];
+    const stats = inferBinaries(stars, new Set([0]));
+    expect(stats.droppedSubThreshold).toBe(0);
+    expect(stats.mutualPairs).toBe(1);
+    expect(stars.length).toBe(2);
+    // Brighter (lower absmag) gets the primary bit.
+    expect(stars[0].flags & FLAG_BINARY_PRIMARY).toBeTruthy();
+  });
+
+  it('leaves above-threshold mutual pairs untouched by the sub-threshold drop', () => {
+    // Separation = 0.001 pc ≫ MIN_RENDER_SEPARATION_PC. Existing
+    // behaviour: both flagged as a mutual pair, brighter is primary, no
+    // drops.
+    const stars: BinaryStar[] = [
+      makeStar({ x: 0,     y: 0, z: 0, absmag: 4, hip: 100 }),
+      makeStar({ x: 0.001, y: 0, z: 0, absmag: 6, hip: 200 }),
+    ];
+    const stats = inferBinaries(stars);
+    expect(stats.droppedSubThreshold).toBe(0);
+    expect(stats.mutualPairs).toBe(1);
+    expect(stars.length).toBe(2);
+  });
+
+  it('rewrites companionIdx of survivors that pointed at a dropped slot', () => {
+    // Three stars: A and B at exactly the same point (sub-threshold), C
+    // far enough to pair with the brighter survivor. After A↔B is
+    // resolved (B dropped), C's companionIdx must still point to a
+    // valid index (A's slot, shifted to 0).
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const stars: BinaryStar[] = [
+        makeStar({ x: 0,                            y: 0, z: 0, absmag: 4, hip: 100 }),
+        makeStar({ x: MIN_RENDER_SEPARATION_PC / 4, y: 0, z: 0, absmag: 7, hip: 200 }),
+        makeStar({ x: 0.002,                        y: 0, z: 0, absmag: 5, hip: 300 }),
+      ];
+      const stats = inferBinaries(stars);
+      expect(stats.droppedSubThreshold).toBe(1);
+      expect(stars.length).toBe(2);
+      // No survivor's companionIdx may reference a slot past the new
+      // array length (or a stale higher index).
+      for (const s of stars) {
+        expect(s.companionIdx).toBeLessThan(stars.length);
+      }
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
+describe('catalog-pure / applyMultipleOverridesPure', () => {
+  function star(opts: Partial<OverridableStar> & { hip: number | null }): OverridableStar {
+    return {
+      x: 0, y: 0, z: 0,
+      absmag: 5, ci: 0.5,
+      spectClass: 8, lumClass: 255,
+      physicalRadius: 1,
+      flags: 0,
+      proper: null,
+      spectDisplay: null,
+      fromOverride: false,
+      ...opts,
+    };
+  }
+
+  function row(opts: Partial<MultipleOverrideRow> & { hipOrSyn: string }): MultipleOverrideRow {
+    return {
+      systemId: 'TEST', comp: 'A',
+      x: 0, y: 0, z: 0,
+      absmag: 5, ci: 0.5,
+      spect: 'G2V', name: '', source: 'test', regime: 1,
+      ...opts,
+    };
+  }
+
+  function makeSyn(r: MultipleOverrideRow): OverridableStar {
+    const info = parseSpectral(r.spect);
+    return {
+      x: r.x, y: r.y, z: r.z,
+      absmag: r.absmag, ci: r.ci,
+      spectClass: info.classIdx, lumClass: info.lumClass,
+      physicalRadius: physicalRadius(r.absmag, info),
+      flags: r.name ? FLAG_HAS_NAME : 0,
+      proper: r.name || null,
+      hip: null,
+      spectDisplay: r.spect,
+      fromOverride: false,
+    };
+  }
+
+  it('rewrites position, photometry, and spectrum on a matched HIP row', () => {
+    const stars = [star({ hip: 32349, x: -0.49, y: 2.47, z: -0.76, absmag: 1.4, ci: 0.0, spectClass: 2 })];
+    const stats = applyMultipleOverridesPure(
+      stars,
+      [row({ hipOrSyn: '32349', x: -0.494, y: 2.477, z: -0.758, absmag: 1.454, ci: 0.009, spect: 'A0m...' })],
+      makeSyn,
+    );
+    expect(stats.hipOverridden).toBe(1);
+    expect(stats.synInjected).toBe(0);
+    expect(stars[0].x).toBe(-0.494);
+    expect(stars[0].y).toBe(2.477);
+    expect(stars[0].z).toBe(-0.758);
+    expect(stars[0].absmag).toBe(1.454);
+    expect(stars[0].ci).toBe(0.009);
+    expect(stars[0].spectClass).toBe(parseSpectral('A0m...').classIdx);
+    expect(stars[0].fromOverride).toBe(true);
+  });
+
+  it('recomputes physicalRadius from the new spectrum and absmag', () => {
+    // Override changes a fictional cool dwarf into a hot O-class — the
+    // recomputed radius must reflect the new spectral inputs, not the
+    // pre-override values.
+    const stars = [star({ hip: 1, absmag: 10, physicalRadius: 0.2 })];
+    applyMultipleOverridesPure(
+      stars,
+      [row({ hipOrSyn: '1', absmag: -5, spect: 'O5V' })],
+      makeSyn,
+    );
+    const expected = physicalRadius(-5, parseSpectral('O5V'));
+    expect(stars[0].physicalRadius).toBe(expected);
+    expect(stars[0].physicalRadius).toBeGreaterThan(1);
+  });
+
+  it('only overwrites the proper name when the override name is non-empty', () => {
+    // Blank-name rows (the common case from build-binaries.py for HIP
+    // primaries) must not clobber the AT-HYG proper name.
+    const stars = [star({ hip: 1, proper: 'PreservedName', flags: FLAG_HAS_NAME })];
+    applyMultipleOverridesPure(stars, [row({ hipOrSyn: '1', name: '' })], makeSyn);
+    expect(stars[0].proper).toBe('PreservedName');
+    expect(stars[0].flags & FLAG_HAS_NAME).toBeTruthy();
+  });
+
+  it('overwrites name and sets FLAG_HAS_NAME when the override name is non-empty', () => {
+    const stars = [star({ hip: 1, proper: null, flags: 0 })];
+    applyMultipleOverridesPure(stars, [row({ hipOrSyn: '1', name: 'Newly Named' })], makeSyn);
+    expect(stars[0].proper).toBe('Newly Named');
+    expect(stars[0].flags & FLAG_HAS_NAME).toBeTruthy();
+  });
+
+  it('counts hipMissing and continues for HIPs absent from the catalog', () => {
+    const stars = [star({ hip: 1 })];
+    const stats = applyMultipleOverridesPure(
+      stars,
+      [row({ hipOrSyn: '999' })],
+      makeSyn,
+    );
+    expect(stats.hipOverridden).toBe(0);
+    expect(stats.hipMissing).toBe(1);
+    expect(stars.length).toBe(1);
+  });
+
+  it('appends a SYN-NNN row via the factory and marks it fromOverride', () => {
+    const stars = [star({ hip: 1, proper: 'Sirius' })];
+    const stats = applyMultipleOverridesPure(
+      stars,
+      [row({ hipOrSyn: 'SYN-7261', name: 'Sirius B', spect: 'DA2', absmag: 11.36, regime: 2 })],
+      makeSyn,
+    );
+    expect(stats.synInjected).toBe(1);
+    expect(stars.length).toBe(2);
+    expect(stars[1].proper).toBe('Sirius B');
+    expect(stars[1].hip).toBeNull();
+    expect(stars[1].fromOverride).toBe(true);
+    expect(stars[1].flags & FLAG_HAS_NAME).toBeTruthy();
+  });
+
+  it('dedupes duplicate HIP rows (build-binaries emits one per WDS pair)', () => {
+    // Sirius A appears 5x in real multiples.tsv (once per WDS pair the
+    // primary belongs to). All rows carry identical values; the helper
+    // applies the first and skips the rest.
+    const stars = [star({ hip: 32349 })];
+    const stats = applyMultipleOverridesPure(
+      stars,
+      [
+        row({ hipOrSyn: '32349', x: 1 }),
+        row({ hipOrSyn: '32349', x: 1 }),
+        row({ hipOrSyn: '32349', x: 1 }),
+      ],
+      makeSyn,
+    );
+    expect(stats.hipOverridden).toBe(1);
+    expect(stars[0].x).toBe(1);
+  });
+
+  it('dedupes duplicate SYN-NNN rows (factory called once per id)', () => {
+    const stars: OverridableStar[] = [];
+    let factoryCalls = 0;
+    const stats = applyMultipleOverridesPure(
+      stars,
+      [
+        row({ hipOrSyn: 'SYN-7261', name: 'Sirius B' }),
+        row({ hipOrSyn: 'SYN-7261', name: 'Sirius B' }),
+      ],
+      (r) => {
+        factoryCalls++;
+        return makeSyn(r);
+      },
+    );
+    expect(stats.synInjected).toBe(1);
+    expect(factoryCalls).toBe(1);
+    expect(stars.length).toBe(1);
+  });
+
+  it('reports a per-regime breakdown across HIP overrides and SYN injections', () => {
+    const stars = [star({ hip: 1 }), star({ hip: 2 })];
+    const stats = applyMultipleOverridesPure(
+      stars,
+      [
+        row({ hipOrSyn: '1', regime: 1 }),
+        row({ hipOrSyn: '2', regime: 2 }),
+        row({ hipOrSyn: 'SYN-1', regime: 2 }),
+        row({ hipOrSyn: 'SYN-2', regime: 3 }),
+      ],
+      makeSyn,
+    );
+    expect(stats.byRegime).toEqual({ 1: 1, 2: 2, 3: 1 });
+  });
+
+  it('end-to-end: co-located α Cen-style rows + override → two distinct positions, mutual pair preserved', () => {
+    // Simulate AT-HYG's collapsed-parallax problem for α Cen: A and B
+    // share the same (x, y, z). The override moves B to the J2000
+    // orbit-resolved position. Verify (a) both records survive, (b) they
+    // are no longer at identical coords, (c) `inferBinaries` with the
+    // protected set keeps them mutually paired instead of dropping B as
+    // sub-threshold.
+    const aCenA: OverridableStar & BinaryStar = {
+      ...star({ hip: 71683, x: -0.495, y: -0.414, z: -1.157, absmag: 4.379 }),
+      companionIdx: -1,
+    };
+    const aCenB: OverridableStar & BinaryStar = {
+      ...star({ hip: 71681, x: -0.495, y: -0.414, z: -1.157, absmag: 5.739 }),
+      companionIdx: -1,
+    };
+    const stars = [aCenA, aCenB];
+    applyMultipleOverridesPure(
+      stars,
+      [
+        row({ hipOrSyn: '71683', x: -0.495, y: -0.414, z: -1.157, absmag: 4.379, regime: 2 }),
+        row({
+          hipOrSyn: '71681',
+          x: -0.494994451, y: -0.413915477, z: -1.157032646,
+          absmag: 5.739, regime: 2,
+        }),
+      ],
+      makeSyn,
+    );
+    expect(stars[0].x).not.toBe(stars[1].x);
+
+    // Build the protected set as the build script does: every
+    // `fromOverride` star's post-sort index. (No sort here — fixture is
+    // already in absmag order.)
+    const protectedIndices = new Set<number>();
+    for (let i = 0; i < stars.length; i++) {
+      if (stars[i].fromOverride) protectedIndices.add(i);
+    }
+    expect(protectedIndices.size).toBe(2);
+
+    const stats = inferBinaries(stars as BinaryStar[], protectedIndices);
+    expect(stats.droppedSubThreshold).toBe(0);
+    expect(stats.mutualPairs).toBe(1);
+    expect(stars.length).toBe(2);
+
+    // Separation should be ~17 AU = ~8e-5 pc — above MIN_RENDER but well
+    // below BINARY_MAX_SEP_PC, so the mutual pair stays detected.
+    const dx = stars[1].x - stars[0].x;
+    const dy = stars[1].y - stars[0].y;
+    const dz = stars[1].z - stars[0].z;
+    const sep = Math.sqrt(dx*dx + dy*dy + dz*dz);
+    expect(sep).toBeGreaterThan(MIN_RENDER_SEPARATION_PC);
+    expect(sep).toBeLessThan(BINARY_MAX_SEP_PC);
+  });
+});
+
+describe('catalog-pure / MIN_RENDER_SEPARATION_PC', () => {
+  it('is 5e-6 pc (~1 AU) — the visual-mergeability threshold', () => {
+    // Pinned because the safety-net drop in `inferBinaries` is calibrated
+    // off this exact value; the build expects ~zero drops once the
+    // multiples pipeline is in place.
+    expect(MIN_RENDER_SEPARATION_PC).toBe(5e-6);
   });
 });
 

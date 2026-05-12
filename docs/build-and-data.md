@@ -167,25 +167,75 @@ canonical values). Clamped to `[0.08, 2500]` so pathological catalog
 rows don't produce absurd sizes. White dwarfs are special-cased to
 0.013 R☉ (typical WD radius; absmag doesn't translate reliably for them).
 
+## Multiple-star override application
+
+Before the absmag sort and geometric binary pass, `build-catalog.ts`
+calls `applyMultipleOverridesPure` against the per-component rows that
+`scripts/build-binaries.py` emits to `data/multiples.tsv`. Two row
+shapes:
+
+- **HIP rows** (`hip` column is an integer) locate the existing
+  `BinaryStar` by Hipparcos number and overwrite `x/y/z/absmag/ci/spect`
+  — `spectClass`, `lumClass`, `physicalRadius`, and `spectDisplay` are
+  rebuilt from the new spectrum. `proper` is only overwritten when the
+  override row's `name` column is non-empty, so blank-name rows (the
+  common case for HIP primaries) preserve the AT-HYG proper name.
+- **SYN-NNN rows** (`hip` column is the literal token `SYN-` plus an
+  integer) append a brand-new `BinaryStar` constructed via the
+  build-script factory: no HIP, no constellation membership (`conIndex
+  = 255`), no GCVS lookup (`periodDays = amplitudeMag = 0`), and
+  `FLAG_HAS_NAME` set when the override carries a proper name. These are
+  the Sirius B / α Cen B-orbit / Castor Aa1+Aa2 / Algol Aa1+Aa2
+  components that AT-HYG drops or collapses.
+
+Duplicate rows collapse: `build-binaries.py` emits the same HIP / SYN-id
+once per WDS pair the component belongs to (Sirius A appears 5×), so
+the helper applies the first row and skips identical re-applications.
+HIPs that aren't in the post-`readStars` catalog (filtered for distance
+/ missing absmag) are counted under `hipMissing` and silently skipped.
+
+Each touched / appended star carries a transient `fromOverride = true`
+marker; after the absmag sort the caller builds a `Set<number>` of
+those indices and hands it to `inferBinaries` as the protected set for
+the sub-threshold safety net (see next section).
+
+Build-log shape:
+
+```
+Applying multiple-star overrides from data/multiples.tsv...
+  22877 HIP overrides, 27905 SYN injected, 1 HIPs not in catalog;
+  by regime: r1=49361 r2=1421 r3=0 in 104ms
+```
+
+The per-regime breakdown (`r1` visual ρ/θ, `r2` ORB6 orbit at J2000,
+`r3` spectroscopic / inclination-less ORB6) summed across HIP overrides
+and SYN injections is the headline number — drift here signals that
+`build-binaries.py` lost a data source or filter shifted.
+
+If `data/multiples.tsv` is absent the build logs and continues with
+the pre-overrides catalog (the AT-HYG-only path that has the
+collapsed-α-Cen / missing-Sirius-B problem).
+
 ## Geometric binary inference
 
-`inferBinaries` in `build-catalog.ts` runs after the absmag sort so record
-indices are final. Spatial grid keyed at `BINARY_MAX_SEP_PC = 0.005 pc`
-(≈1030 AU) using a three-axis hash; for each star, check own cell + 26
-neighbours and record the nearest neighbour within the threshold.
+`inferBinaries` in `build-catalog.ts` runs after the absmag sort and
+the multiple-star override application (above), so record indices are
+final modulo the sub-threshold drop pass at the bottom of this section.
+Spatial grid keyed at `BINARY_MAX_SEP_PC = 0.005 pc` (≈1030 AU) using a
+three-axis hash; for each star, check own cell + 26 neighbours and
+record the nearest neighbour within the threshold.
 
 Why this threshold: at the current `minDistance = 0.005 pc` orbit,
 anything farther than that subtends >45° from the camera — it wouldn't
 fit the viewport as a visual "system", which is what the render layer
 wants. Wider bound pairs exist in the catalog but won't render usefully.
 
-What you'll see from the classic_ids subset: ~14 pairs. Feels low but is
-accurate. The subset selects stars with classical designations, and most
-"wide binary" companions in physically-bound pairs don't have their own
-classical ID — the brighter primary does. The pairs we do find are
-almost all famous named visual binaries (α Cen A/B, Alula Australis,
-Struve 2398, etc.). Reaching thousands of pairs would require the fuller
-`reduced_m10` subset, which has a different selection profile.
+What you'll see from the classic_ids subset *with* the multiples
+pipeline in place: ~14k mutual pairs. The pure AT-HYG pass alone gives
+~14 (most wide-binary companions of classical-ID primaries don't carry
+classical IDs themselves); the bulk of the pairs come from the SYN
+secondaries injected by `applyMultipleOverridesPure` — Sirius B, Castor
+Aa1/Aa2, Algol Aa1/Aa2, every WDS companion the cross-match resolved.
 
 Each star records its **directed** nearest in `companionIdx`: A's
 nearest may be B while B's nearest is some third star C. The
@@ -199,6 +249,20 @@ Mutual-only avoids over-flagging in dense clusters where a star's
 directed nearest happens to be a third star already paired with
 someone else, and ensures the chart-mode wings glyph appears once
 per system on the canonical anchor.
+
+**Sub-threshold safety net.** Mutual pairs below
+`MIN_RENDER_SEPARATION_PC = 5e-6 pc` (~1 AU) where *neither* component
+is in the protected set passed by the caller are treated as
+collapsed-parallax AT-HYG artefacts the multiples pipeline didn't
+catch — the fainter member is spliced out of `stars[]` with a
+`console.warn` naming both HIPs (or both xyz+absmag when the rows are
+HIP-less), and `companionIdx` pointers of surviving stars are rewritten
+so no index dangles. Protected indices are exactly the
+`fromOverride`-marked rows from the override application step; famous
+close pairs (α Cen, Sirius, Procyon, Castor, Algol) sit in there and
+are never dropped. In a clean build this fires zero or one time —
+existing fires are AT-HYG rows that share an astrometric solution and
+have no HIP.
 
 ## GCVS variability cross-match
 
@@ -374,7 +438,7 @@ binaries.py` to invalidate by mtime alone.
 `scripts/build-catalog.ts isUpToDate` skips rebuild if `catalog.bin`,
 `constellations.json`, **and** `search-index.json` are newer than all
 source inputs (AT-HYG CSV, Stellarium JSON, GCVS files, Hipparcos
-CCDM TSV, and the script itself). If you change field mapping but
-not the script mtime (e.g. edit in a way that updates atime only),
-you may need to `touch scripts/build-catalog.ts` or delete the
-generated files.
+CCDM TSV, `data/multiples.tsv`, and the script itself). If you change
+field mapping but not the script mtime (e.g. edit in a way that updates
+atime only), you may need to `touch scripts/build-catalog.ts` or delete
+the generated files.
