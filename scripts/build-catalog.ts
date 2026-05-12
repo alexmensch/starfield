@@ -21,6 +21,7 @@ import {
   BINARY_VERSION,
   MAGIC,
   NO_COMPANION,
+  NO_ORBIT,
   NAME_TABLE_PADDING,
   NAME_LENGTH_PREFIX_BYTES,
   type SearchEntry,
@@ -932,9 +933,12 @@ async function main() {
     counts.nameTableEntries++;
   }
 
-  // Allocate output buffer.
+  // Allocate output buffer. The orbital-elements section is empty in v5
+  // — dch.8 will populate it without another version bump.
   const recordsLength = stars.length * RECORD_SIZE;
-  const totalLength = HEADER_SIZE + recordsLength + nameTableLength;
+  const elementsCount = 0;
+  const elementsLength = 0;
+  const totalLength = HEADER_SIZE + recordsLength + nameTableLength + elementsLength;
   const out = new ArrayBuffer(totalLength);
   const view = new DataView(out);
   const bytes = new Uint8Array(out);
@@ -946,6 +950,8 @@ async function main() {
   view.setUint32(HEADER_LAYOUT.count, stars.length, true);
   view.setUint32(HEADER_LAYOUT.nameTableOffset, HEADER_SIZE + recordsLength, true);
   view.setUint32(HEADER_LAYOUT.nameTableLength, nameTableLength, true);
+  view.setUint32(HEADER_LAYOUT.elementsOffset, HEADER_SIZE + recordsLength + nameTableLength, true);
+  view.setUint32(HEADER_LAYOUT.elementsCount, elementsCount, true);
 
   // Records.
   let off = HEADER_SIZE;
@@ -979,6 +985,7 @@ async function main() {
       view.setUint16(off + RECORD_LAYOUT.period, 0, true);
     }
     view.setUint32(off + RECORD_LAYOUT.hip, s.hip ?? 0, true);
+    view.setUint32(off + RECORD_LAYOUT.orbitIdx, NO_ORBIT, true);
     if (s.flags & FLAG_IS_SOL) solIndex = i;
     off += RECORD_SIZE;
   }

@@ -198,7 +198,7 @@ applies three filters and nothing else:
 3. Drop rows with `dist > 50,000 pc` (out of any plausible volume of
    interest; safety net for catalog noise).
 
-There is no source-aware filtering. The 44-byte v4 binary record
+There is no source-aware filtering. The 48-byte v5 binary record
 preserves none of the `*_src` columns either, so the renderer can't
 distinguish a Tycho-positioned, Gaia-distanced row from a "pure"
 Hipparcos one — every star is shaded by the same physical model

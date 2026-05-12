@@ -217,9 +217,15 @@ export function parseGcvsNumber(s: string): number | null {
 // (src/client/catalog-loader), and the verify tool (scripts/verify-catalog).
 //
 // File structure:
-//   [0,                       HEADER_SIZE)                              header
-//   [HEADER_SIZE,             HEADER_SIZE + count*RECORD_SIZE)          records
-//   [HEADER_SIZE + count*RECORD_SIZE,                       end)        name table
+//   [0,                                                HEADER_SIZE)               header
+//   [HEADER_SIZE,                  HEADER_SIZE + count*RECORD_SIZE)               records
+//   [HEADER_SIZE + count*RECORD_SIZE,                  elementsOffset)            name table
+//   [elementsOffset,         elementsOffset + elementsCount*ORBITAL_RECORD_SIZE)  orbital-elements
+//
+// The orbital-elements section is empty at v5 (elementsCount = 0) — the
+// scaffolding is laid down now so dch.8 can populate it without another
+// version bump. The convention `MAGIC.endsWith(String(BINARY_VERSION))`
+// is pinned by a test.
 //
 // HEADER_LAYOUT / RECORD_LAYOUT below carry the per-field byte offsets;
 // HEADER_FIELD_SIZES / RECORD_FIELD_SIZES carry the matching byte widths
@@ -227,11 +233,12 @@ export function parseGcvsNumber(s: string): number | null {
 // MAGIC, extend the LAYOUT + SIZES pair with the new offset and kind, and
 // the writer + reader + tests pick the change up automatically.
 
-export const MAGIC = 'HYG4';
-export const BINARY_VERSION = 4;
+export const MAGIC = 'HYG5';
+export const BINARY_VERSION = 5;
 export const HEADER_SIZE = 32;
-export const RECORD_SIZE = 44;
+export const RECORD_SIZE = 48;
 export const NO_COMPANION = 0xffffffff;
+export const NO_ORBIT = 0xffffffff;
 
 export const HEADER_LAYOUT = {
   magic: 0,            // 4 bytes ASCII
@@ -239,7 +246,9 @@ export const HEADER_LAYOUT = {
   count: 8,            // uint32
   nameTableOffset: 12, // uint32
   nameTableLength: 16, // uint32
-  // bytes 20..31 reserved
+  elementsOffset: 20,  // uint32 (orbital-elements section start; 0 when empty)
+  elementsCount: 24,   // uint32 (orbital-elements rows; 0 when section is empty)
+  // bytes 28..31 reserved
 } as const;
 
 /** Per-field byte width keyed by HEADER_LAYOUT name. Single source of
@@ -251,6 +260,8 @@ export const HEADER_FIELD_SIZES: Record<keyof typeof HEADER_LAYOUT, number> = {
   count: 4,
   nameTableOffset: 4,
   nameTableLength: 4,
+  elementsOffset: 4,
+  elementsCount: 4,
 };
 
 export const RECORD_LAYOUT = {
@@ -270,6 +281,7 @@ export const RECORD_LAYOUT = {
   // byte 37 reserved (variability type)
   period: 38,     // uint16 (×0.1 days)
   hip: 40,        // uint32 (0 = no HIP)
+  orbitIdx: 44,   // uint32 (NO_ORBIT = no orbital elements; otherwise row in elements section)
 } as const;
 
 /** Per-field byte width keyed by RECORD_LAYOUT name. As with
@@ -279,7 +291,7 @@ export const RECORD_FIELD_SIZES: Record<keyof typeof RECORD_LAYOUT, number> = {
   x: 4, y: 4, z: 4, absmag: 4, ci: 4, physRadius: 4,
   companion: 4, nameOffset: 4,
   spectClass: 1, lumClass: 1, conIndex: 1, flags: 1, ampUnits: 1,
-  period: 2, hip: 4,
+  period: 2, hip: 4, orbitIdx: 4,
 };
 
 // Name table layout: two zero bytes of padding so name offset 0 reads as
@@ -324,17 +336,19 @@ export const FLAGS = {
   isSol: 0x02,
   hasBayer: 0x04,
   binaryPrimary: 0x10,
+  binarySecondary: 0x20,
 } as const;
 export const FLAG_HAS_NAME = FLAGS.hasName;
 export const FLAG_IS_SOL = FLAGS.isSol;
 export const FLAG_HAS_BAYER = FLAGS.hasBayer;
 export const FLAG_BINARY_PRIMARY = FLAGS.binaryPrimary;
+export const FLAG_BINARY_SECONDARY = FLAGS.binarySecondary;
 
 /** Bits intentionally left free for future use — adding functionality
  *  that fits inside one of these does not require a BINARY_VERSION bump.
  *  The reservation is pinned by a regression test: drifting RESERVED into
  *  any FLAGS value forces a deliberate edit here. */
-export const RESERVED_FLAG_BITS = 0x08 | 0x20 | 0x40 | 0x80;
+export const RESERVED_FLAG_BITS = 0x08 | 0x40 | 0x80;
 
 // ---- Geometric binary inference -----------------------------------------
 

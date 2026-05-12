@@ -8,19 +8,22 @@ gets computed (Stefan–Boltzmann radii, etc.), see `SCIENCE.md`.
 ## Binary catalog format (`public/catalog.bin`)
 
 Fixed-size records, sorted brightest-first by `absmag`. Current version is
-**v4** with a 44-byte stride. Magic and version step together
-(v3=`HYG3`, v4=`HYG4`). v4 added a `uint32` HIP at bytes 40–43 so the
-URL-state encoder can use Hipparcos numbers as stable star IDs that
-survive future catalog reorderings.
+**v5** with a 48-byte stride. Magic and version step together
+(v3=`HYG3`, v4=`HYG4`, v5=`HYG5`); a unit test pins the convention. v5
+added a `uint32` orbitIdx at bytes 44–47 plus an empty orbital-elements
+section (populated by a follow-up bead) so per-frame Kepler evaluation
+can land without another version bump.
 
 - Header (32 bytes)
-  - 0–3   ASCII `HYG4`
-  - 4–7   `uint32` version (currently 4)
+  - 0–3   ASCII `HYG5`
+  - 4–7   `uint32` version (currently 5)
   - 8–11  `uint32` count
   - 12–15 `uint32` nameTableOffset
   - 16–19 `uint32` nameTableLength
-  - 20–31 reserved
-- Record (44 bytes per star)
+  - 20–23 `uint32` elementsOffset (orbital-elements section start)
+  - 24–27 `uint32` elementsCount (orbital-elements row count; 0 at v5)
+  - 28–31 reserved
+- Record (48 bytes per star)
   - 0–11  `float32 × 3`  x, y, z in parsecs (equatorial, Sol at origin)
   - 12–15 `float32`      absmag
   - 16–19 `float32`      ci (B–V colour index, default 0.65 for missing)
@@ -30,7 +33,7 @@ survive future catalog reorderings.
   - 32    `uint8`        spectClass (0=O 1=B 2=A 3=F 4=G 5=K 6=M 7=C/S/W 8=?)
   - 33    `uint8`        luminosityClass (0=VII/D … 9=Ia+/0, 255=unknown — see below)
   - 34    `uint8`        constellation index (0–87 into `constellations.json`; 255=none)
-  - 35    `uint8`        flags (bit 0=has_name, 1=is_sol, 2=has_bayer, 4=is_binary_primary)
+  - 35    `uint8`        flags (bit 0=has_name, 1=is_sol, 2=has_bayer, 4=is_binary_primary, 5=is_binary_secondary)
   - 36    `uint8`        **variability amplitude** in 0.05 mag units (0 = not variable)
   - 37    `uint8`        reserved (future: variability type)
   - 38–39 `uint16`       **variability period** in 0.1 days (0 = not variable, max 6553.5 d)
@@ -40,9 +43,16 @@ survive future catalog reorderings.
                           shared URLs. Max observed HIP is 120,404 (fits in
                           17 bits) so 24 bits would suffice, but `uint32`
                           keeps the record stride a multiple of 4.
+  - 44–47 `uint32`       **orbitIdx** (row in the orbital-elements section;
+                          `0xFFFFFFFF` = no orbital elements / static
+                          position). The section is empty at v5; a follow-up
+                          bead populates it.
 - Name table: length-prefixed UTF-8 strings (`uint16` length then bytes).
   **Offset 0 is reserved** as the "no name" sentinel (2 zero bytes of
   padding); real names start at offset ≥ 2.
+- Orbital-elements section: appended after the name table at
+  `elementsOffset`. Empty at v5 (`elementsCount = 0`); a follow-up bead
+  defines the per-row record shape.
 
 Luminosity class encoding (Morgan–Keenan):
 `0=VII/D (white dwarf), 1=VI/sd, 2=V (dwarf), 3=IV (subgiant), 4=III
@@ -56,15 +66,16 @@ eclipsers clip but those render imperceptibly slowly anyway).
 
 The byte plan above is encoded once in `scripts/catalog-pure.ts` as
 `HEADER_LAYOUT`, `RECORD_LAYOUT`, `HEADER_SIZE`, `RECORD_SIZE`, `MAGIC`,
-`BINARY_VERSION`, and `NO_COMPANION`. Writer (`scripts/build-catalog.ts`),
-runtime reader (`src/client/catalog-loader.ts`), and the verify tool
-(`scripts/verify-catalog.ts`) all index off those constants — there are
-no inline byte offsets to drift apart. If you add fields, keep the
-44-byte stride (pad as needed), extend `RECORD_LAYOUT`, and **bump
+`BINARY_VERSION`, `NO_COMPANION`, and `NO_ORBIT`. Writer
+(`scripts/build-catalog.ts`), runtime reader (`src/client/catalog-loader.ts`),
+and the verify tool (`scripts/verify-catalog.ts`) all index off those
+constants — there are no inline byte offsets to drift apart. If you
+add fields, extend `RECORD_LAYOUT` (pad as needed) and **bump
 `BINARY_VERSION` + `MAGIC`** in `catalog-pure.ts`. Free flag bits today
-are `0x08`, `0x20`, `0x40`, `0x80` (see `FLAG_*` exports). Layout
-consistency is pinned by the `binary-format constants` block in
-`scripts/catalog-pure.test.ts`.
+are `0x08`, `0x40`, `0x80` (see `FLAG_*` exports). Layout consistency
+is pinned by the `binary-format constants` block in
+`scripts/catalog-pure.test.ts`, including a `MAGIC.endsWith(String(BINARY_VERSION))`
+assertion so the digit-suffix convention can't drift silently.
 
 The build script also asserts every headline count (record count, GCVS
 xrefs, binary inference output, CCDM doubles, name-table entries,

@@ -8,6 +8,7 @@ import {
   BINARY_VERSION,
   MAGIC,
   NO_COMPANION,
+  NO_ORBIT,
   NAME_TABLE_PADDING,
   NAME_LENGTH_PREFIX_BYTES,
 } from '../../scripts/catalog-pure';
@@ -30,16 +31,20 @@ export interface Catalog {
   luminosityClass: Uint8Array;   // length = count, 255 = unknown
   physicalRadius: Float32Array;  // length = count, in solar radii
   constellation: Float32Array;   // length = count (as float for vertex attrib)
-  // bit 0 has_name, 1 is_sol, 2 has_bayer, 4 is_binary_primary.
-  // is_binary_primary is set on at most one component per system —
-  // the brighter member of a mutual geometric pair, or the brightest
-  // catalog component of a CCDM-grouped Hipparcos double — so each
-  // binary system gets exactly one chart-mode wings glyph.
+  // bit 0 has_name, 1 is_sol, 2 has_bayer, 4 is_binary_primary,
+  // 5 is_binary_secondary. is_binary_primary is set on at most one
+  // component per system — the brighter member of a mutual geometric
+  // pair, or the brightest catalog component of a CCDM-grouped
+  // Hipparcos double — so each binary system gets exactly one
+  // chart-mode wings glyph. is_binary_secondary is reserved for
+  // orbital-evolution wiring (populated by a future bead).
   flags: Uint8Array;             // length = count
   companion: Int32Array;         // length = count, -1 = no companion
   periodDays: Float32Array;      // length = count, 0 = not variable
   amplitudeMag: Float32Array;    // length = count, 0 = not variable
   hip: Uint32Array;              // length = count, 0 = no HIP
+  orbitIdx: Int32Array;          // length = count, -1 = no orbital elements
+  elementsCount: number;         // number of orbital-elements rows (0 at v5)
   names: Map<number, string>;    // star index -> proper name (named stars only)
   solIndex: number;              // -1 if not found
   constellations: Constellation[];
@@ -107,6 +112,7 @@ export function parseBinary(ab: ArrayBuffer, constellations: Constellation[]): C
   const count = view.getUint32(HEADER_LAYOUT.count, true);
   const nameTableOffset = view.getUint32(HEADER_LAYOUT.nameTableOffset, true);
   const nameTableLength = view.getUint32(HEADER_LAYOUT.nameTableLength, true);
+  const elementsCount = view.getUint32(HEADER_LAYOUT.elementsCount, true);
 
   const positions = new Float32Array(count * 3);
   const absmag = new Float32Array(count);
@@ -120,6 +126,7 @@ export function parseBinary(ab: ArrayBuffer, constellations: Constellation[]): C
   const periodDays = new Float32Array(count);
   const amplitudeMag = new Float32Array(count);
   const hip = new Uint32Array(count);
+  const orbitIdx = new Int32Array(count);
   const nameOffsetArr = new Uint32Array(count);
 
   let solIndex = -1;
@@ -141,6 +148,8 @@ export function parseBinary(ab: ArrayBuffer, constellations: Constellation[]): C
     amplitudeMag[i] = view.getUint8(off + RECORD_LAYOUT.ampUnits) * 0.05;
     periodDays[i] = view.getUint16(off + RECORD_LAYOUT.period, true) * 0.1;
     hip[i] = view.getUint32(off + RECORD_LAYOUT.hip, true);
+    const orb = view.getUint32(off + RECORD_LAYOUT.orbitIdx, true);
+    orbitIdx[i] = orb === NO_ORBIT ? -1 : orb;
     if (flags[i] & FLAG_IS_SOL) solIndex = i;
   }
 
@@ -184,6 +193,8 @@ export function parseBinary(ab: ArrayBuffer, constellations: Constellation[]): C
     periodDays,
     amplitudeMag,
     hip,
+    orbitIdx,
+    elementsCount,
     names,
     solIndex,
     constellations,

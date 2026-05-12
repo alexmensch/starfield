@@ -8,6 +8,7 @@ import {
   HEADER_SIZE,
   RECORD_SIZE,
   NO_COMPANION,
+  NO_ORBIT,
 } from './catalog-pure';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -24,9 +25,12 @@ const version = view.getUint32(HEADER_LAYOUT.version, true);
 const count = view.getUint32(HEADER_LAYOUT.count, true);
 const nameTableOffset = view.getUint32(HEADER_LAYOUT.nameTableOffset, true);
 const nameTableLength = view.getUint32(HEADER_LAYOUT.nameTableLength, true);
+const elementsOffset = view.getUint32(HEADER_LAYOUT.elementsOffset, true);
+const elementsCount = view.getUint32(HEADER_LAYOUT.elementsCount, true);
 
-console.log(`magic=${magic} version=${version} count=${count}`);
+console.log(`magic=${magic} version=${version} count=${count} RECORD_SIZE=${RECORD_SIZE}`);
 console.log(`nameTableOffset=${nameTableOffset} nameTableLength=${nameTableLength}`);
+console.log(`elementsOffset=${elementsOffset} elementsCount=${elementsCount}`);
 console.log(`file size=${ab.byteLength}, expected=${HEADER_SIZE + count * RECORD_SIZE + nameTableLength}`);
 
 const constellations = JSON.parse(await readFile(CON, 'utf-8'));
@@ -55,6 +59,7 @@ function readRecord(i: number) {
   const comp = view.getUint32(off + RECORD_LAYOUT.companion, true);
   const conIdx = view.getUint8(off + RECORD_LAYOUT.conIndex);
   const hip = view.getUint32(off + RECORD_LAYOUT.hip, true);
+  const orb = view.getUint32(off + RECORD_LAYOUT.orbitIdx, true);
   return {
     i,
     x: view.getFloat32(off + RECORD_LAYOUT.x, true),
@@ -71,6 +76,7 @@ function readRecord(i: number) {
     amplitudeMag: view.getUint8(off + RECORD_LAYOUT.ampUnits) * 0.05,
     periodDays: view.getUint16(off + RECORD_LAYOUT.period, true) * 0.1,
     hip: hip === 0 ? null : hip,
+    orbitIdx: orb === NO_ORBIT ? null : orb,
     name,
     con: conIdx === 255 ? null : constellations[conIdx]?.code,
   };

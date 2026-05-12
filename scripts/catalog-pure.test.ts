@@ -18,6 +18,7 @@ import {
   FLAG_IS_SOL,
   FLAG_HAS_BAYER,
   FLAG_BINARY_PRIMARY,
+  FLAG_BINARY_SECONDARY,
   FLAGS,
   RESERVED_FLAG_BITS,
   HEADER_LAYOUT,
@@ -26,6 +27,8 @@ import {
   RECORD_FIELD_SIZES,
   HEADER_SIZE,
   RECORD_SIZE,
+  MAGIC,
+  BINARY_VERSION,
   NAME_TABLE_PADDING,
   NAME_LENGTH_PREFIX_BYTES,
   type SpectralInfo,
@@ -981,13 +984,20 @@ describe('catalog-pure / binary-format constants', () => {
     expect(Object.keys(RECORD_FIELD_SIZES).sort()).toEqual(Object.keys(RECORD_LAYOUT).sort());
   });
 
-  it('record fields cover the v4 byte plan (one byte 37 reserved)', () => {
-    // hip is the last field; with its 4 bytes the record fills exactly
+  it('record fields cover the v5 byte plan (one byte 37 reserved)', () => {
+    // orbitIdx is the last field; with its 4 bytes the record fills exactly
     // RECORD_SIZE except for byte 37 (reserved for future variability type).
-    expect(RECORD_LAYOUT.hip + 4).toBe(RECORD_SIZE);
+    expect(RECORD_LAYOUT.orbitIdx + 4).toBe(RECORD_SIZE);
     // Reserved byte 37 sits between ampUnits (36) and period (38).
     expect(RECORD_LAYOUT.ampUnits + 1).toBe(37);
     expect(RECORD_LAYOUT.period).toBe(38);
+  });
+
+  it('MAGIC trailing digit tracks BINARY_VERSION', () => {
+    // Convention: MAGIC's suffix is the decimal version string. Pins
+    // the "bump both together" contract documented in this file's
+    // header comment and in docs/build-and-data.md.
+    expect(MAGIC.endsWith(String(BINARY_VERSION))).toBe(true);
   });
 
   it('FLAGS registry entries are distinct single-bit values', () => {
@@ -1004,6 +1014,7 @@ describe('catalog-pure / binary-format constants', () => {
     expect(FLAG_IS_SOL).toBe(FLAGS.isSol);
     expect(FLAG_HAS_BAYER).toBe(FLAGS.hasBayer);
     expect(FLAG_BINARY_PRIMARY).toBe(FLAGS.binaryPrimary);
+    expect(FLAG_BINARY_SECONDARY).toBe(FLAGS.binarySecondary);
   });
 
   it('RESERVED_FLAG_BITS does not collide with any registered FLAGS value', () => {

@@ -11,6 +11,7 @@ import {
   RECORD_SIZE,
   MAGIC,
   BINARY_VERSION,
+  NO_ORBIT,
 } from '../../scripts/catalog-pure';
 
 interface StarRecord {
@@ -23,16 +24,18 @@ interface StarRecord {
   spectClass: number;      // 0..255
   luminosityClass: number; // 0..255 (255 = unknown)
   constellation: number;   // 0..87
-  flags: number;           // bit 0 has_name, 1 is_sol, 2 has_bayer, 4 binary primary
+  flags: number;           // bit 0 has_name, 1 is_sol, 2 has_bayer, 4 binary primary, 5 binary secondary
   amplitudeRaw: number;    // uint8 (×0.05 to get magnitudes)
   periodRaw: number;       // uint16 (×0.1 to get days)
   hip: number;             // 0 = none
+  orbitIdx: number;        // 0xFFFFFFFF = NO_ORBIT
 }
 
-// Build a synthetic catalog buffer matching the v4 format. Tests construct
+// Build a synthetic catalog buffer matching the v5 format. Tests construct
 // the smallest reasonable catalogs (a few stars + optional name table) so
 // the parser sees realistic input without needing the real ~13 MB
-// catalog.bin on disk.
+// catalog.bin on disk. The orbital-elements section is left empty;
+// `elementsOffset` points just past the name table.
 function buildCatalog(
   records: StarRecord[],
   names: { offset: number; name: string }[] = [],
@@ -59,6 +62,10 @@ function buildCatalog(
     : 0;
   dv.setUint32(HEADER_LAYOUT.nameTableOffset, nameTableOffset, true);
   dv.setUint32(HEADER_LAYOUT.nameTableLength, encodedNames.length > 0 ? nameTableLength : 0, true);
+  const elementsOffset = HEADER_SIZE + records.length * RECORD_SIZE
+    + (encodedNames.length > 0 ? nameTableLength : 0);
+  dv.setUint32(HEADER_LAYOUT.elementsOffset, elementsOffset, true);
+  dv.setUint32(HEADER_LAYOUT.elementsCount, 0, true);
 
   // Records
   records.forEach((r, i) => {
@@ -78,6 +85,7 @@ function buildCatalog(
     dv.setUint8(off + RECORD_LAYOUT.ampUnits, r.amplitudeRaw);
     dv.setUint16(off + RECORD_LAYOUT.period, r.periodRaw, true);
     dv.setUint32(off + RECORD_LAYOUT.hip, r.hip, true);
+    dv.setUint32(off + RECORD_LAYOUT.orbitIdx, r.orbitIdx >>> 0, true);
   });
 
   // Name table (after records)
@@ -129,6 +137,7 @@ const baseStar: StarRecord = {
   amplitudeRaw: 0,
   periodRaw: 0,
   hip: 0,
+  orbitIdx: NO_ORBIT,
 };
 
 describe('catalog-loader / parseBinary', () => {
@@ -200,6 +209,18 @@ describe('catalog-loader / parseBinary', () => {
     it('parses HIP=0 as no-HIP star', () => {
       const cat = parseBinary(buildCatalog([{ ...baseStar, hip: 0 }]), blankConstellations);
       expect(cat.hip[0]).toBe(0);
+    });
+
+    it('decodes NO_ORBIT (0xFFFFFFFF) as -1 and preserves a real orbitIdx', () => {
+      const cat = parseBinary(
+        buildCatalog([
+          { ...baseStar, orbitIdx: NO_ORBIT },
+          { ...baseStar, orbitIdx: 7 },
+        ]),
+        blankConstellations,
+      );
+      expect(cat.orbitIdx[0]).toBe(-1);
+      expect(cat.orbitIdx[1]).toBe(7);
     });
   });
 
@@ -382,6 +403,14 @@ describe('catalog-loader / parseBinary', () => {
       expect(cat.periodDays.length).toBe(7);
       expect(cat.amplitudeMag.length).toBe(7);
       expect(cat.hip.length).toBe(7);
+      expect(cat.orbitIdx.length).toBe(7);
+    });
+  });
+
+  describe('orbital-elements section header', () => {
+    it('exposes elementsCount from the v5 header (0 when empty)', () => {
+      const cat = parseBinary(buildCatalog([{ ...baseStar }]), blankConstellations);
+      expect(cat.elementsCount).toBe(0);
     });
   });
 });
