@@ -281,7 +281,22 @@ bd close <id>         # Complete work
 
 ### Rules
 
-- Use `bd` for ALL task tracking — do NOT use TodoWrite, TaskCreate, or markdown TODO lists
+- **Beads is the canonical tracker for anything that should outlive
+  this session** — new tasks, bugs, refactors, follow-ups, design
+  decisions. Create a bead BEFORE writing code, mark `in_progress`
+  when starting, close when shipped.
+- **TaskCreate / TodoWrite is allowed for in-session step
+  decomposition** — the discrete sub-steps of an in-flight bead
+  that are too granular to file individually and have no value
+  next session (e.g. "update import in file X", "regen catalog",
+  "run vitest", "open PR"). The bead is the unit of persistent
+  work; the task list is a working surface for executing it.
+- **Tie-break: when in doubt, file a bead.** Persistence you don't
+  need beats lost context. If a "sub-step" turns out to be its own
+  piece of follow-up work, promote it to a bead and close the task
+  entry.
+- Never use markdown TODO files (`TODO.md`, `NOTES.md`, etc.) —
+  they decay silently and aren't searchable.
 - Run `bd prime` for detailed command reference and session close protocol
 - Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files
 
