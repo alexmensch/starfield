@@ -3,6 +3,7 @@ import {
   AU_KM,
   AU_PC,
   AU_PER_PC,
+  J2000_JD,
   KM_PC,
   R_SUN_PC,
 } from './astronomy-constants';
@@ -29,5 +30,9 @@ describe('astronomy-constants', () => {
 
   it('R_SUN_PC is one solar radius in parsecs', () => {
     expect(R_SUN_PC).toBe(2.2543e-8);
+  });
+
+  it('J2000_JD is the standard J2000.0 reference epoch', () => {
+    expect(J2000_JD).toBe(2451545.0);
   });
 });

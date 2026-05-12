@@ -17,11 +17,9 @@
 // in the ecliptic and other hosts (stellata-bk5 exoplanets) land in the
 // galactic plane per stellata-3re.8.
 
-import { AU_PC } from './astronomy-constants';
+import { AU_PC, J2000_JD } from './astronomy-constants';
+import { solveKepler } from './kepler-solver';
 import { tToJDE } from './time';
-
-// JD at J2000.0 (2000-01-01T12:00 TT).
-const J2000_JD = 2451545.0;
 
 // Cache granularity for per-`t` recompute. Sub-minute planet motion at the
 // billboarded-disc pixel scale is invisible (Mercury moves ~3e-5 rad as
@@ -176,30 +174,6 @@ export type PlanetPositions = Record<PlanetName, Vec3>;
 let cachedBucket: number | null = null;
 let cachedPositions: PlanetPositions | null = null;
 
-/** Solve Kepler's equation `M = E − e·sin(E)` for the eccentric
- *  anomaly E, in radians. Newton iteration; 5 steps converges to
- *  ~1e-15 for any e in [0, 0.3] (well above any planet eccentricity). */
-function solveKepler(M: number, e: number): number {
-  // Wrap M into [-π, π] so the initial guess and the iteration both
-  // stay in the well-conditioned regime.
-  const Mw = wrapAngle(M);
-  let E = Mw + e * Math.sin(Mw);
-  for (let i = 0; i < 5; i++) {
-    const dE = (E - e * Math.sin(E) - Mw) / (1 - e * Math.cos(E));
-    E -= dE;
-    if (Math.abs(dE) < 1e-12) break;
-  }
-  return E;
-}
-
-/** Reduce an angle in radians into the (-π, π] interval. */
-function wrapAngle(a: number): number {
-  const twoPi = 2 * Math.PI;
-  let r = a - Math.floor(a / twoPi) * twoPi;
-  if (r > Math.PI) r -= twoPi;
-  return r;
-}
-
 /** Heliocentric ecliptic position (AU) of a single planet at centuries-
  *  past-J2000 `T`. Pure helper exposed for tests; the public API is
  *  `getPlanetPositions(t)`. */
@@ -319,4 +293,4 @@ export function _resetCacheForTests(): void {
 }
 
 export type { ElementSet };
-export { ELEMENTS, J2000_JD, CACHE_GRANULARITY_SEC };
+export { ELEMENTS, CACHE_GRANULARITY_SEC };

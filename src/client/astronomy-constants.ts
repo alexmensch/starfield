@@ -19,3 +19,8 @@ export const KM_PC = AU_PC / AU_KM;
 //   1 R_sun = 6.957e8 m, 1 pc = 3.0857e16 m  →  R_sun = 2.2543e-8 pc.
 // Also uploaded to the star vertex shader as the `uRSunPc` uniform.
 export const R_SUN_PC = 2.2543e-8;
+
+// J2000.0 in Julian Date (TT). 2000-01-01T12:00 TT. Used by every
+// Kepler-driven layer (Sol planets via ephemeris.ts, binary orbits via
+// binary-orbit-pure.ts) as the canonical reference epoch.
+export const J2000_JD = 2451545.0;
