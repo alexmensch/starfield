@@ -13,6 +13,10 @@ public/constellations.json
 public/search-index.json
 public/clouds.json
 
+# Multiple-star pipeline outputs (regenerated from WDS + ORB6 + Gaia)
+data/multiples.tsv
+data/wds_upload.csv
+
 # Mirror of data/dust/ — the canonical LFS-tracked copy lives in data/dust/;
 # scripts/build-dust.py copies chunks here so Vite's publicDir serves them.
 public/dust/
@@ -23,6 +27,8 @@ data/dust/.voxels.npy
 
 # Python venv for scripts/build-dust.py
 .venv/
+__pycache__/
+*.pyc
 
 
 # Beads / Dolt files (added by bd init)

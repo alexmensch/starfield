@@ -82,6 +82,84 @@ into them where relevant.
 > (`data/molecular-clouds/`) remain in the repository for the future
 > re-enable.
 
+## Multiple-star pipeline
+
+The base AT-HYG catalogue collapses several famous close pairs to a
+single row (α Cen A and B share a Hipparcos solution; Sirius B isn't in
+the classic-IDs subset at all). `scripts/build-binaries.py` cross-matches
+WDS + ORB6 against AT-HYG and emits one row per resolved component to
+`data/multiples.tsv`. The pipeline computes each secondary's J2000 sky
+offset from the primary under one of three regimes:
+
+1. **Regime 1 — visually resolved.** Apply the WDS *last-epoch* ρ
+   (arcsec) and θ (degrees east of north) directly to A's catalog
+   position via a tangent-plane projection. Used when no orbital
+   solution exists.
+2. **Regime 2 — ORB6 orbit.** Solve Kepler's equation at J2000.0 with
+   the published elements (P, T₀, e, a, i, ω, Ω), then apply the
+   Thiele-Innes transformation to obtain (ρ, θ) — same projection as
+   Regime 1 from there. Multi-fit systems are tie-broken by orbit
+   grade (lowest numeric grade wins; ties go to the most recent
+   reference year).
+3. **Regime 3 — spectroscopic / inclination-less ORB6 entries.** When
+   ORB6 supplies a but no inclination, the published *a* is `a·sin i`
+   and the orbit's orientation on the sky is unconstrained. We use *a*
+   as the separation magnitude with a conventional position angle of
+   0°. Treat the resulting (x, y, z) as schematic — the secondary's
+   on-sky direction is conventional, not measured.
+
+**Optical-pair filter** (rejects line-of-sight chance alignments;
+applied in priority order):
+
+1. *WDS Notes flag chars (cols 108-111).* Codes `S`, `U`, `X`, `Y`
+   denote optical / non-physical pairs (reject); `T`, `V`, `Z` denote
+   physical (keep).
+2. *Gaia DR3 astrometry* (file-optional — see procedure below). When
+   both components have Gaia DR3 measurements, reject if the parallax
+   difference exceeds 3σ (combined error), or if the common-proper-
+   motion difference exceeds 5 mas/yr.
+3. *Sanity fallback.* Reject only on extreme magnitude outliers with
+   no shared spectral hint — a defensive net that fires rarely.
+
+**Gaia DR3 retrieval procedure** (manual, frozen-external pattern; no
+live fetch at build time):
+
+1. `scripts/build-binaries.py` writes `data/wds_upload.csv` on every
+   run — one row per kept component with `wds_id`, `comp`, `ra_deg`,
+   `dec_deg`.
+2. Open the Gaia archive (`https://gea.esac.esa.int/archive/`) and
+   upload `data/wds_upload.csv` as a user table.
+3. Run an ADQL query joining the upload table against
+   `gaiadr3.gaia_source` on a 1″ `CONTAINS(POINT, CIRCLE)` predicate,
+   pulling `parallax`, `parallax_error`, `pmra`, `pmdec` per
+   component.
+4. Download the result and commit it to `data/gaia_dr3_binaries.tsv`
+   (LFS-tracked). Re-run the build — the filter automatically picks
+   it up.
+
+When the file is absent the script continues with only the WDS-Notes
+verdict + sanity fallback; the warning line states which path is
+active. This keeps the build reproducible without Gaia and offers an
+upgrade path the next time Alex refreshes the upload.
+
+**Override layer.** `data/multiples-overrides.tsv` is a small hand-
+curated TSV with the same schema as `multiples.tsv` plus a `notes`
+column. Loaded last; rows matching an existing `(system_id, comp)`
+replace the programmatic row, and rows with a novel key append. Used
+for the few edge cases that the WDS+ORB6+Gaia chain can't resolve
+cleanly. Empty at the time `build-binaries.py` first lands.
+
+**Tangent-plane consistency.** Both the primary HIP cone-match and
+the secondary HIP cone-match use AT-HYG's `(ra, dec)` as the tangent
+basis (not the WDS precise coordinate), because AT-HYG stores xyz at
+only 0.001 pc precision — for nearby stars the round-trip
+`xyz → (ra, dec)` would drift the sky coordinate by tens of arcsec,
+overshooting the cone-match radius. The xyz output uses
+`A_xyz + sky_offset_to_icrs_xyz(...)` where the offset is computed in
+the tangent plane and added directly, so the relative geometry is
+preserved at micro-parsec precision even though A's absolute position
+is coarse.
+
 ## Stellar catalog ingestion
 
 AT-HYG is not a single survey — it's a heterogeneous merge that David

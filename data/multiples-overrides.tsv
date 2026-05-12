@@ -1,0 +1,8 @@
+# data/multiples-overrides.tsv — hand-curated edge cases for the
+# multiple-star pipeline. Loaded last by scripts/build-binaries.py;
+# rows matching (system_id, comp) on a programmatic entry replace it,
+# rows with a novel key append. hip = integer HIP or SYN-NNN sentinel.
+# Lines starting with # are ignored. Edit by hand only — do not
+# regenerate from upstream.
+#
+system_id	comp	hip	x_pc	y_pc	z_pc	absmag	ci	spect	name	source	regime	notes

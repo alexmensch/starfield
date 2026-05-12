@@ -316,6 +316,59 @@ If the CCDM file is absent the build logs and continues — the
 geometric pass still runs and chart mode still works, just with the
 ~14-pair coverage.
 
+## Build-binaries pipeline
+
+`scripts/build-binaries.py` is a stdlib-only Python preprocessor that
+cross-matches WDS + ORB6 against AT-HYG and emits one row per resolved
+multiple-star component to `data/multiples.tsv`. Invoked
+automatically by `npm run build:catalog` (and therefore by
+`npm run build` / `npm run dev`).
+
+**Inputs**
+
+- `data/wds_summ.txt` — WDS summary, fixed-width 130-char records.
+- `data/wds_notes.txt` — WDS notes; scanned for `HIP NNN` prose
+  cross-references that supplement cone-match.
+- `data/orb6_orbits.txt` — Sixth Catalog of Orbits, fixed-width
+  264-char records. Carries explicit HIP for ~2k systems.
+- `data/athyg_33_classic_ids.csv` — AT-HYG canonical positions,
+  HIP-keyed.
+- `data/gaia_dr3_binaries.tsv` — *optional*; engages the
+  parallax + common-PM optical-pair filter when present. See
+  SCIENCE.md → "Multiple-star pipeline" for the manual retrieval
+  procedure.
+- `data/multiples-overrides.tsv` — hand-curated edge cases, loaded
+  last.
+
+**Outputs**
+
+- `data/multiples.tsv` (gitignored) — columns
+  `system_id, comp, hip, x_pc, y_pc, z_pc, absmag, ci, spect,
+  name, source, regime`. `hip` is the integer HIP or a `SYN-NNN`
+  sentinel for synthesised components. `regime` is `1` (visual ρ/θ),
+  `2` (ORB6 orbit), or `3` (spectroscopic / inclination-less ORB6).
+- `data/wds_upload.csv` (gitignored) — `wds_id, comp, ra_deg, dec_deg`
+  per kept component, written every run as input to the manual Gaia
+  ADQL upload.
+
+**Cone-match parameters**
+
+- Primary HIP lookup: 30″ around WDS precise coordinates against AT-HYG.
+  Wider than the catalogue's nominal precision because high-PM stars
+  drift 10-30″ between WDS J2000 and AT-HYG's Tycho-2 / Hipparcos
+  epochs.
+- Secondary HIP lookup: 30″ around AT-HYG A + sky-projected `(ρ, θ)`.
+  Tangent basis is AT-HYG's own `(ra, dec)` — see SCIENCE.md note on
+  why round-tripping through xyz at AT-HYG's 0.001 pc storage
+  precision would catastrophically miss for nearby stars.
+
+**Idempotency**
+
+Skips rebuild if `data/multiples.tsv` is newer than the script *and*
+every input file (including the optional Gaia file when present and
+the overrides file). `--force` to override; `touch scripts/build-
+binaries.py` to invalidate by mtime alone.
+
 ## Preprocessor idempotency
 
 `scripts/build-catalog.ts isUpToDate` skips rebuild if `catalog.bin`,
