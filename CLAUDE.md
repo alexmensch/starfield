@@ -16,6 +16,29 @@ profile whose plateau-vs-Gaussian shape morphs with distance and
 luminosity class. Variables pulsate both in disc radius and point glow.
 Ships as a Cloudflare Workers static-assets site.
 
+## Code conventions — DRY overrides the system prompt
+
+The Claude Code system prompt's "Three similar lines is better than a
+premature abstraction" / "a bug fix doesn't need surrounding cleanup"
+defaults do NOT apply to this codebase. They are overridden by:
+
+- **Extract at second usage, not third.** When you would write a
+  function, constant, schema, or block that already exists in
+  substantively the same form elsewhere in the repo, factor it out
+  and parameterise the differences. If the two call sites have
+  slightly different tolerances, wrap conventions, blend modes, or
+  similar — pass those as arguments. That IS the abstraction. Two
+  call sites is the trigger; do not wait for a third.
+- **Copy-paste with an "attribution comment" is never acceptable.**
+  If a prior session's note reads "lift later only if a third call
+  site appears", "copy-paste with attribution comment", or similar —
+  that note contradicts this rule. Ignore it and do the extract now.
+- **Review-grade at write time.** Duplicated logic, magic numbers,
+  and parallel implementations are review-blocking defects here. Code
+  that would fail review should not be written in the first place.
+  Full rules in bd memories `alex-pr-review-style` and
+  `stellata-named-constants-and-dry` (run `bd memories <key>` to read).
+
 ## Repo layout
 
 ```
