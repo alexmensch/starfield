@@ -106,7 +106,15 @@ offset from the primary under one of three regimes:
    and the orbit's orientation on the sky is unconstrained. We use *a*
    as the separation magnitude with a conventional position angle of
    0°. Treat the resulting (x, y, z) as schematic — the secondary's
-   on-sky direction is conventional, not measured.
+   on-sky direction is conventional, not measured. The orbital
+   elements emitted into the binary catalog further default
+   `i = π/2` (edge-on), `ω = 0`, `Ω = 0` so the runtime Kepler
+   solver has values to integrate; this means multiple Regime 3
+   systems share the same sky-plane orientation. The artefact is
+   only perceptible if many Regime 3 systems are rendered side-by-
+   side, currently moot — at v5 zero entries match this regime —
+   and accepted as the price of having *any* animated orbit for
+   spectroscopic-only pairs.
 
 **Optical-pair filter** (rejects line-of-sight chance alignments;
 applied in priority order):
