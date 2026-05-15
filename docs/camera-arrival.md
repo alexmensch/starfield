@@ -14,10 +14,15 @@ size happens in the **last decade** of distance, and three-quarters in
 the last two decades. The disc stays a pinprick for most of the
 approach, then explodes into the frame in the final ~100 ms.
 
-Every existing arrival site interpolates **camera position** by time
-with the same piecewise-quadratic smoothstep — `f(t) = 2t² for t < 0.5,
-else 1 − 2(1−t)²`. That damps the **time** profile but does nothing
-about the `1/d` term in angular space. Smoothstep at the end of position
+Every existing **park-arrival site** — the three rows in the inventory
+below (focus-park, warp Fly, navigate-mode unfocus) — interpolates
+**camera position** by time with the same piecewise-quadratic
+smoothstep — `f(t) = 2t² for t < 0.5, else 1 − 2(1−t)²`. (Warp Phase 3
+also lerps camera position by time, but is excluded from this list:
+it's already cubic-Hermite, lands at the focal star's local origin
+rather than parkDist, and is an OBSERVE handover rather than an
+arrival — see § Inventory.) That damps the **time** profile but does
+nothing about the `1/d` term in angular space. Smoothstep at the end of position
 still lands with `dd/dt = 0`, but `dθ/dd = −2R/d²` is enormous at small
 d, so the angular rate blows up just before zero velocity arrests it.
 The user perceives a slam.
@@ -41,17 +46,20 @@ arrivals delegate to.
 | Navigate-mode unfocus | `stellata.ts:unfocus` | `OBSERVE_TRANSITION_MS = 1200` ms | `parkDist` (outbound) |
 
 **Excluded: Warp Phase 3 (observe→observe arrivals).** Phase 3's
-position track lerps `pEnd → (0,0,0)` over `OBSERVE_TRANSITION_MS`. The
-endpoint is the destination star's local origin, not parkDist — that's
-the OBSERVE-mode invariant: in OBSERVE the camera occupies the focused
-star's local origin so the user "stands on" the star and only rotates
-the view. The lerp is the observe-mode handover that absorbs the
-parkDist-sized gap between Fly's endpoint and OBSERVE's origin, not an
-angular-slam arrival. Distance changes ~1 decade in 1.2 s — smoothstep
-already feels right, the helper's log-d profile delivers nothing
-perceptual, and forcing `d_end = 0` through it would require an
-exception case for zero gain. Phase 3 stays inline; the helper covers
-park-arrivals only.
+position track lerps `pEnd → (0,0,0)` over `OBSERVE_TRANSITION_MS` and
+is already eased with cubic-Hermite `u²·(3 − 2u)` — the same shape the
+helper adopts in § Profile, applied to the position lerp directly
+rather than to `log d`. The endpoint is the destination star's local
+origin, not parkDist — that's the OBSERVE-mode invariant: in OBSERVE
+the camera occupies the focused star's local origin so the user
+"stands on" the star and only rotates the view. The lerp is the
+observe-mode handover that absorbs the parkDist-sized gap between
+Fly's endpoint and OBSERVE's origin, not an angular-slam arrival.
+Distance changes ~1 decade in 1.2 s and running it through the
+helper's log-d profile would force `d_end = 0` — a degenerate case
+that needs a zero-gain exception for no perceptual benefit. Phase 3
+stays inline because the geometry isn't a park-arrival, not because
+the easing form differs from the helper's.
 
 ## Profile
 
