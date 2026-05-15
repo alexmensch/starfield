@@ -11,6 +11,8 @@ const MAG_STEP = 0.5;
 const MAG_MIN = -2;
 const MAG_MAX = 15;
 const C_DOUBLE_TAP_MS = 200;
+const D_TRIPLE_TAP_MS = 500;
+const D_TRIPLE_TAP_COUNT = 3;
 
 export function bindKeyboardShortcuts(stellata: Stellata) {
   const help = bindHelpModal();
@@ -41,6 +43,11 @@ export function bindKeyboardShortcuts(stellata: Stellata) {
   // Pending single-tap timer for the C shortcut — tracked across keydowns
   // so a second C press inside the double-tap window can cancel it.
   let cTapTimer: number | null = null;
+
+  // Rolling window of recent D-key tap timestamps. Three taps inside
+  // D_TRIPLE_TAP_MS open the debug panel — hidden affordance, intentionally
+  // undocumented.
+  const dTapTimes: number[] = [];
 
   // Capture phase so we observe foreground-modal state BEFORE bubble-phase
   // handlers (brand-modal / info-modal / help-modal) flip `hidden=true` on
@@ -79,6 +86,24 @@ export function bindKeyboardShortcuts(stellata: Stellata) {
 
     // Non-ESC shortcuts — skip when typing or when any modal is open.
     if (targetIsEditable(e.target)) return;
+
+    // Hidden triple-tap-D affordance for the debug panel. Checked BEFORE
+    // the modal gate (the user might want it from inside an info/help
+    // modal). Bail on shift so Shift+D doesn't trigger it.
+    if (e.code === 'KeyD' && !e.shiftKey && !e.repeat) {
+      const now = performance.now();
+      while (dTapTimes.length > 0 && now - dTapTimes[0] > D_TRIPLE_TAP_MS) {
+        dTapTimes.shift();
+      }
+      dTapTimes.push(now);
+      if (dTapTimes.length >= D_TRIPLE_TAP_COUNT) {
+        dTapTimes.length = 0;
+        const dbg = (window as unknown as { debug?: { panel?: () => void } }).debug;
+        dbg?.panel?.();
+      }
+      return;
+    }
+
     if (anyVisibleSelector('.modal') || anyVisibleSelector('.kb-modal')) return;
 
     switch (e.key) {

@@ -108,7 +108,7 @@ src/
     milkyway-tuning.ts    debug section: Milky Way layer tuning
     perf-hud.ts           debug section: FPS / per-section frame timing + always-callable mark/measure/frame
     pin-debug-hud.ts      debug section: focused-star pin diagnostics
-    arrow-fade-debug-hud.ts  debug.arrows() — Sol/GC arrow draw state + fade (still its own floating panel)
+    arrow-fade-debug-hud.ts  debug section: Sol/GC arrow draw state + fade telemetry
     keyboard-shortcuts.ts global keydown dispatch (R/G/C/H/S/O/W/M/+/−/=/?/Esc)
     help-modal.ts         shortcut help overlay (the `?` target)
     chart-mode.ts         observe-only chart-mode orchestrator (theme + isobar + label engine)

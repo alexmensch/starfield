@@ -114,8 +114,8 @@ export class HudOverlay {
   private gcDrawnLen = 0;
 
   // Per-arrow per-frame diagnostic record, populated by updateOne. Read by
-  // the arrow-fade debug HUD (debug.arrows()) so we can see live why an
-  // arrow ended up at the length it did — front-of-camera vs behind, which
+  // the arrow-fade debug-panel section so we can see live why an arrow
+  // ended up at the length it did — front-of-camera vs behind, which
   // direction path was used, whether shrink-to-target shortened it, and
   // the screen-direction magnitude that drove the path choice.
   private solDebug: ArrowDebugRecord = emptyArrowDebug();
@@ -254,7 +254,7 @@ export class HudOverlay {
   }
 
   /** Debug snapshot of the most recent updateOne for each arrow. Read each
-   *  frame by the arrow-fade debug HUD (`debug.arrows()`). */
+   *  frame by the Arrows section of the debug panel. */
   getDebugSnapshot(): { sol: ArrowDebugRecord; gc: ArrowDebugRecord } {
     return { sol: this.solDebug, gc: this.gcDebug };
   }

@@ -133,7 +133,8 @@ snaps to the destination on completion — visible alpha changes during
 the camera glide would render on top of the focal disc and look like
 chrome floating over the star, so we wait for the transition to finish.
 
-Diagnostic HUD: `debug.arrows()` in the dev console shows live drawn
+Diagnostic readout: the **Arrows** section of the unified debug panel
+(`debug.panel()`, or the hidden triple-tap-D affordance) shows live drawn
 shaft lengths, behind-camera flags, direction-derivation paths, disc
 radius, refLen, coverage, and alpha — including a red-border alert when
 the two arrows are in independent draw states (one drawn while the other

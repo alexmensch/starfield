@@ -4,7 +4,7 @@ import { buildMilkywaySection } from './milkyway-tuning';
 import { buildStarSection } from './star-tuning';
 import { buildPerfSection } from './perf-hud';
 import { buildPinSection } from './pin-debug-hud';
-import { toggleArrowFadeHud } from './arrow-fade-debug-hud';
+import { buildArrowSection } from './arrow-fade-debug-hud';
 import {
   type DecodedView,
   type IdMaps,
@@ -15,16 +15,14 @@ import {
 
 // Optional dev tooling exposed via `window.debug`. The unified panel
 // surfaces every collapsible-section side-by-side: star/milkyway tuning
-// sliders plus perf and pin diagnostic readouts. `debug.panel()` is the
-// sole entry point. State (drag position, per-section collapse) lives
-// in sessionStorage and resets on reload.
+// sliders plus perf, pin, and arrow-fade diagnostic readouts.
+// `debug.panel()` is the sole entry point (also revealed by the hidden
+// triple-tap-D keyboard affordance). State (drag position, per-section
+// collapse) lives in sessionStorage and resets on reload.
 //
 // Add a new section: build it in its own *-tuning.ts / *-hud.ts module
 // (returning either a section element or a {element, dispose, setVisible}
-// triple) and wire it into `togglePanel` below alongside the existing
-// four. The arrow-fade HUD is intentionally still its own floating panel
-// — debug.arrows() — because it's narrow-purpose enough that bundling it
-// in adds clutter.
+// triple) and wire it into `togglePanel` below.
 
 export interface DebugTools {
   /** Toggle the unified dev panel. */
@@ -33,16 +31,13 @@ export interface DebugTools {
   decodeView(blob: string): DecodedView;
   /** Encode the current Stellata state into a `?v=` blob string. */
   encodeView(): string;
-  /** Toggle the navigate-mode arrow-fade diagnostic HUD: live drawn shaft
-   *  lengths for Sol/GC, behind-camera flag, direction-derivation path,
-   *  disc radius, refLen, coverage, and the resulting alpha. */
-  arrows(): void;
 }
 
 export function setupDebug(stellata: Stellata, idMaps: IdMaps): DebugTools {
   let panel: HTMLDivElement | null = null;
   let perfDispose: (() => void) | null = null;
   let pinDispose: (() => void) | null = null;
+  let arrowDispose: (() => void) | null = null;
 
   const closePanel = () => {
     if (!panel) return;
@@ -50,6 +45,7 @@ export function setupDebug(stellata: Stellata, idMaps: IdMaps): DebugTools {
     panel = null;
     perfDispose?.(); perfDispose = null;
     pinDispose?.(); pinDispose = null;
+    arrowDispose?.(); arrowDispose = null;
   };
 
   const togglePanel = () => {
@@ -90,6 +86,19 @@ export function setupDebug(stellata: Stellata, idMaps: IdMaps): DebugTools {
     pin.setVisible(!pinSection.isCollapsed());
     built.body.appendChild(pinSection.section);
 
+    // Arrows section — Sol/GC navigate-arrow fade diagnostics. Same
+    // visibility-gated readout shape as the pin section.
+    const arrows = buildArrowSection(stellata);
+    arrowDispose = arrows.dispose;
+    const arrowSection = makeCollapsibleSection({
+      title: 'Arrows',
+      storageKey: 'arrows',
+      onCollapseChange: (collapsed) => arrows.setVisible(!collapsed),
+    });
+    arrowSection.body.appendChild(arrows.element);
+    arrows.setVisible(!arrowSection.isCollapsed());
+    built.body.appendChild(arrowSection.section);
+
     document.body.appendChild(panel);
   };
 
@@ -103,10 +112,9 @@ export function setupDebug(stellata: Stellata, idMaps: IdMaps): DebugTools {
       return view;
     },
     encodeView: () => encodeBlob(currentStateOf(stellata, idMaps)),
-    arrows: () => toggleArrowFadeHud(stellata),
   };
 
   (window as unknown as { debug: DebugTools }).debug = tools;
-  console.info('Debug tools: debug.panel(), debug.decodeView(blob), debug.encodeView(), debug.arrows()');
+  console.info('Debug tools: debug.panel(), debug.decodeView(blob), debug.encodeView()');
   return tools;
 }
