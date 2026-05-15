@@ -1,6 +1,7 @@
 import type { Stellata } from './stellata';
 import { DEFAULT_FOV } from './stellata';
 import { bindHelpModal } from './help-modal';
+import { pushTapAndCheckTriple } from './keyboard-shortcuts-pure';
 
 // Single global keydown listener with a small dispatch table. Every
 // shortcut is a thin wrapper over an existing public API so future
@@ -11,10 +12,17 @@ const MAG_STEP = 0.5;
 const MAG_MIN = -2;
 const MAG_MAX = 15;
 const C_DOUBLE_TAP_MS = 200;
-const D_TRIPLE_TAP_MS = 500;
-const D_TRIPLE_TAP_COUNT = 3;
 
-export function bindKeyboardShortcuts(stellata: Stellata) {
+export interface KeyboardShortcutsDeps {
+  /** Reveal/dismiss the unified debug panel. Bound to the hidden
+   *  triple-tap-D affordance. */
+  toggleDebugPanel: () => void;
+}
+
+export function bindKeyboardShortcuts(
+  stellata: Stellata,
+  deps: KeyboardShortcutsDeps,
+) {
   const help = bindHelpModal();
 
   // The "go" picker reuses the topbar's existing `.search-wrap` widget —
@@ -91,15 +99,8 @@ export function bindKeyboardShortcuts(stellata: Stellata) {
     // the modal gate (the user might want it from inside an info/help
     // modal). Bail on shift so Shift+D doesn't trigger it.
     if (e.code === 'KeyD' && !e.shiftKey && !e.repeat) {
-      const now = performance.now();
-      while (dTapTimes.length > 0 && now - dTapTimes[0] > D_TRIPLE_TAP_MS) {
-        dTapTimes.shift();
-      }
-      dTapTimes.push(now);
-      if (dTapTimes.length >= D_TRIPLE_TAP_COUNT) {
-        dTapTimes.length = 0;
-        const dbg = (window as unknown as { debug?: { panel?: () => void } }).debug;
-        dbg?.panel?.();
+      if (pushTapAndCheckTriple(dTapTimes, performance.now())) {
+        deps.toggleDebugPanel();
       }
       return;
     }

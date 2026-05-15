@@ -100,7 +100,7 @@ async function main() {
       solIndex: catalog.solIndex,
     };
 
-    setupDebug(stellata, idMaps);
+    const debugTools = setupDebug(stellata, idMaps);
 
     // Interstellar dust loads in the background — never blocks first paint.
     // Extinction fades in as each voxel chunk lands on the GPU. If the
@@ -190,7 +190,7 @@ async function main() {
       meta.hidden = false;
       bindPanelLayout();
       bindBrandModals();
-      bindKeyboardShortcuts(stellata);
+      bindKeyboardShortcuts(stellata, { toggleDebugPanel: debugTools.panel });
       maybeShowInfoModal(catalog.count);
     }, 400);
 
