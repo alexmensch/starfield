@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { Heliopause, HELIOPAUSE_APEX_LOCAL_PC } from './heliopause';
+import { Heliopause, HELIOPAUSE_APEX_LOCAL_PC, createHeliopauseLabel } from './heliopause';
 import { AU_PC } from './astronomy-constants';
 
 describe('HELIOPAUSE_APEX_LOCAL_PC', () => {
@@ -71,6 +71,29 @@ describe('Heliopause', () => {
     expect(localZ.y).toBeCloseTo(-apex.y, 12);
     expect(localZ.z).toBeCloseTo(-apex.z, 12);
     h.dispose();
+  });
+
+  it('createHeliopauseLabel writes display:none synchronously on init', () => {
+    // Regression for stellata-8ee: on first-load (camera parked inside
+    // the heliopause shell), the label must not paint at SVG (0,0).
+    // The controller's setVisible(false) at init MUST land — i.e. the
+    // sentinel must disagree with `false`. Element starts at display=''
+    // (default for an <text> with no inline style); after init it must
+    // read 'none' even though no frame ticks have run.
+    const text = { style: { display: '' } };
+    const prevDoc = (globalThis as { document?: unknown }).document;
+    (globalThis as { document?: unknown }).document = {
+      getElementById: (id: string) => (id === 'heliopause-label' ? text : null),
+    };
+    try {
+      const stellata = {
+        onFrame: () => {},
+      } as unknown as Parameters<typeof createHeliopauseLabel>[0];
+      createHeliopauseLabel(stellata);
+      expect(text.style.display).toBe('none');
+    } finally {
+      (globalThis as { document?: unknown }).document = prevDoc;
+    }
   });
 
   it('mesh apex point in world coordinates lands at +122 AU along apex direction', () => {
