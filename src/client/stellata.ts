@@ -43,6 +43,7 @@ import {
   parkDistance,
   tickFocusLerp,
 } from './focus-transition';
+import { type ArrivalState, newArrival, tickArrival } from './camera-motion';
 import { shiftWarpWaypoints } from './warp-pure';
 import { EventBus } from './event-bus';
 
@@ -319,6 +320,13 @@ interface ObserveTransitionState {
   // pushed outward when the lerp begins; this value tightens minDistance to
   // the parking distance once the lerp completes.
   finalMinDistance?: number;
+  // Park-arrival state for 'unfocus' (the outbound zoom from inside parkDist
+  // back to the former focal star's park distance). Set only on the unfocus
+  // path; updateObserveTransition delegates that branch to tickArrival so
+  // 2br.3's log-distance profile can be swapped in by touching the helper
+  // alone. enter/exit aren't park-arrivals (see docs/camera-arrival.md
+  // § Inventory) and keep their inline smoothstep.
+  arrival?: ArrivalState;
 }
 
 interface AimState {
@@ -386,6 +394,14 @@ interface WarpState {
   // those use lookAt(A) per frame, which keeps A perfectly centered as
   // the camera swings around it.
   reorientEndQuaternion?: THREE.Quaternion;
+  // Fly-phase park-arrival. The Fly position lerp delegates to tickArrival
+  // so the same easing covers focus-park, warp Fly, and unfocus. Captured
+  // at warp start with startMs = startTimeMs + reorientMs (Fly begins
+  // after the reorient phase). Quaternion is omitted — the Fly phase calls
+  // lookAt(B) per frame. Phase 3 (returnToObserve only) keeps its own
+  // inline lerp because it's an observe handover, not a park-arrival
+  // (docs/camera-arrival.md § Inventory).
+  flyArrival: ArrivalState;
 }
 
 type Target = { kind: 'star'; idx: number } | { kind: 'cloud'; idx: number };
@@ -1952,13 +1968,21 @@ export class Stellata {
         // every cursor movement would drag the view as if a button were
         // held. queueMicrotask doesn't help — the microtask checkpoint
         // drains between event listeners.
+        const unfocusStartMs = performance.now();
         this.observeTransition = {
-          startTimeMs: performance.now(),
+          startTimeMs: unfocusStartMs,
           durationMs: OBSERVE_TRANSITION_MS,
           fromPos,
           toPos,
           kind: 'unfocus',
           finalMinDistance: minDist,
+          arrival: newArrival({
+            pStart: fromPos,
+            pEnd: toPos,
+            target: { center: this.controls.target, parkDist: minDist },
+            startMs: unfocusStartMs,
+            durationMs: OBSERVE_TRANSITION_MS,
+          }),
         };
         this.bus.emit('state');
         return;
@@ -2439,8 +2463,9 @@ export class Stellata {
       const m = new THREE.Matrix4().lookAt(pStart, A, this.camera.up);
       reorientEndQuaternion = new THREE.Quaternion().setFromRotationMatrix(m);
     }
+    const warpStartMs = performance.now();
     this.warpState = {
-      startTimeMs: performance.now(),
+      startTimeMs: warpStartMs,
       reorientMs: WARP_REORIENT_MS,
       durationMs,
       // Post-arrival slerp only runs when we're returning to OBSERVE.
@@ -2465,6 +2490,13 @@ export class Stellata {
       returnToObserve,
       startQuaternion: this.camera.quaternion.clone(),
       reorientEndQuaternion,
+      flyArrival: newArrival({
+        pStart,
+        pEnd,
+        target: { center: B, parkDist: endOffset },
+        startMs: warpStartMs + WARP_REORIENT_MS,
+        durationMs,
+      }),
     };
     // Planet bodies belong to the global PlanetBodyField — destination
     // hosts already render whenever the camera is within their cull
@@ -3758,11 +3790,13 @@ export class Stellata {
     }
 
     // Fly phase: symmetric accelerate/decelerate along the A→B line.
+    // Position easing rides camera-motion.ts's shared park-arrival profile
+    // (same helper as focus-park and unfocus); the per-frame lookAt(B)
+    // continues to drive camera orientation so the destination stays
+    // centred while the camera approaches.
     const flyElapsed = elapsed - state.reorientMs;
     if (flyElapsed < state.durationMs) {
-      const t = flyElapsed / state.durationMs;
-      const f = t < 0.5 ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t);
-      this.camera.position.lerpVectors(state.pStart, state.pEnd, f);
+      tickArrival(state.flyArrival, performance.now(), this.camera);
       const out = this._tmpAnimateLocal;
       if (this.destLocalPositionInto(state.destKind, state.destIdx, out)) {
         this.camera.lookAt(out);
@@ -3846,9 +3880,21 @@ export class Stellata {
   // Symmetric ease translate from `fromPos` to `toPos`, no quaternion change.
   // Camera look direction is preserved by holding the quaternion fixed; we
   // skip controls.update() during the run so the target doesn't tug it.
+  //
+  // 'unfocus' is the navigate-mode outbound park-arrival (a7d.2.6); it shares
+  // the deceleration shape with focus-park and warp Fly via tickArrival so
+  // 2br.3's log-distance swap lands in one place. 'enter' / 'exit' are
+  // observe-mode handovers — endpoints are AT or near the focal star, not
+  // at parkDist — so they keep the inline time-smoothstep (see
+  // docs/camera-arrival.md § Inventory).
   private updateObserveTransition() {
     const state = this.observeTransition;
     if (!state) return;
+    if (state.kind === 'unfocus' && state.arrival) {
+      const { done } = tickArrival(state.arrival, performance.now(), this.camera);
+      if (done) this.finishObserveTransition();
+      return;
+    }
     const t = Math.min(1, (performance.now() - state.startTimeMs) / state.durationMs);
     const f = t < 0.5 ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t);
     this.camera.position.lerpVectors(state.fromPos, state.toPos, f);
