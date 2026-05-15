@@ -14,18 +14,18 @@ size happens in the **last decade** of distance, and three-quarters in
 the last two decades. The disc stays a pinprick for most of the
 approach, then explodes into the frame in the final ~100 ms.
 
-Every existing **park-arrival site** — the three rows in the inventory
-below (focus-park, warp Fly, navigate-mode unfocus) — interpolates
-**camera position** by time with the same piecewise-quadratic
+Before this PR, every **park-arrival site** — the three rows in the
+inventory below (focus-park, warp Fly, navigate-mode unfocus) —
+interpolated **camera position** by time with a piecewise-quadratic
 smoothstep — `f(t) = 2t² for t < 0.5, else 1 − 2(1−t)²`. (Warp Phase 3
 also lerps camera position by time, but is excluded from this list:
 it's already cubic-Hermite, lands at the focal star's local origin
 rather than parkDist, and is an OBSERVE handover rather than an
-arrival — see § Inventory.) That damps the **time** profile but does
-nothing about the `1/d` term in angular space. Smoothstep at the end of position
-still lands with `dd/dt = 0`, but `dθ/dd = −2R/d²` is enormous at small
-d, so the angular rate blows up just before zero velocity arrests it.
-The user perceives a slam.
+arrival — see § Inventory.) That damped the **time** profile but did
+nothing about the `1/d` term in angular space. Smoothstep at the end
+of position still lands with `dd/dt = 0`, but `dθ/dd = −2R/d²` is
+enormous at small d, so the angular rate blew up just before zero
+velocity arrested it. The user perceived a slam.
 
 The fix is to evolve `log d` smoothly instead of `d`. Equal time per
 decade of distance gives equal time per octave of angular size, which
@@ -35,9 +35,9 @@ last frame.
 
 ## Inventory of arrival sites
 
-Every camera motion that lands at parkDist re-implements its own easing
-inline today. The unification target is one helper that the three real
-arrivals delegate to.
+The three real park-arrivals delegate to `camera-motion.ts`'s
+`tickArrival` helper — the deceleration shape lives in exactly one
+place and the helper owns both the time and the distance profile.
 
 | Path | Location | Duration | Endpoint |
 |---|---|---|---|

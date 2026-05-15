@@ -51,10 +51,11 @@ on whether the warp re-enters OBSERVE on arrival:
      the destination" before the fly phase begins.
 
 2. **Fly** (log-scaled duration, `WARP_T_MIN_MS` to `WARP_T_MAX_MS`).
-   Straight-line lerp from `pStart` (= A + dirBack × sourceOffset) to
-   `pEnd` (= B − forward × endOffset) with a symmetric
-   accelerate/decelerate profile: `f(t) = 2t²` for `t < 0.5`, else
-   `1 − 2(1−t)²`. `camera.lookAt(B)` throughout.
+   Camera position rides the line from `pStart` (= A + dirBack ×
+   sourceOffset) to `pEnd` (= B − forward × endOffset), delegated to
+   `camera-motion.ts`'s `tickArrival` so the Fly phase shares the same
+   cubic-Hermite log-distance profile as focus-park and unfocus. See
+   `docs/camera-arrival.md` § Profile. `camera.lookAt(B)` throughout.
 
 3. **Post-arrival reorient** (only when `returnToObserve`, duration =
    `OBSERVE_TRANSITION_MS` = 1200 ms). Quaternion slerps from the
