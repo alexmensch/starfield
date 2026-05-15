@@ -4,8 +4,7 @@ How the camera decelerates as it lands on a focused object — star,
 cloud, planet, or any future click-focusable host. Companion to
 `docs/camera-controls.md` (steady-state geometry), `docs/camera-warp.md`
 (warp animation phases), and `docs/camera-observe.md` (OBSERVE mode).
-This doc is the design gate for the `camera-motion.ts` helper —
-implementation lands in subsequent beads under the same epic.
+Defines the math the `camera-motion.ts` helper applies.
 
 ## The angular-arrival problem
 
@@ -100,11 +99,10 @@ pos   = target.center + dir · d(u)
 
 ### Why smoothstep on log d, not identity
 
-The bead description lists three `u_eased` candidates: identity,
-smoothstep, and a tanh-edge variant. Identity (`u_eased = u`) is the
-minimal log-distance profile and gives constant octaves-per-second
-throughout — pure log-uniform motion. It works mathematically but
-sacrifices two things:
+Three `u_eased` candidates were considered: identity, smoothstep, and a
+tanh-edge variant. Identity (`u_eased = u`) is the minimal log-distance
+profile and gives constant octaves-per-second throughout — pure
+log-uniform motion. It works mathematically but sacrifices two things:
 
 1. **Non-zero velocity at the endpoints.** The camera leaves `d0` at
    full log-rate and lands at `parkDist` at full log-rate. From rest,
@@ -123,7 +121,7 @@ expensive way to spell smoothstep for this regime.
 
 ## What about a two-region split at `dWindow`?
 
-The bead description floats a two-region design: smoothstep on linear-d
+An obvious alternative is a two-region design: smoothstep on linear-d
 for `d > dWindow`, swap to log-d inside the window, with
 `dWindow ≈ 512 · parkDist` (geometric centre of the user's empirical
 400–1000 range) and `u_eased` chosen so velocity is continuous at the
@@ -233,10 +231,10 @@ The user's empirical threshold `d ≈ 0.01 pc ≈ 295·parkDist` is hit at
 lerp (~820 ms) spans those last ~2.5 decades — matches the user's
 "Betelgeuse: 0.01 pc remaining" empirical kick-in.
 
-## Helper API sketch
+## Helper API
 
 ```ts
-// src/client/camera-motion.ts (new in stellata-2br.2)
+// src/client/camera-motion.ts
 
 export interface ArrivalTarget {
   center: THREE.Vector3;
@@ -271,26 +269,3 @@ present) `camera.quaternion`. Returns `done: true` once
 
 `parkDistance(...)` stays in `focus-transition.ts` — it computes a
 per-object property and isn't a motion concern.
-
-## Implementation plan
-
-The next two beads under stellata-2br carry out the swap; the audit
-bead enumerates coverage.
-
-- **stellata-2br.2** — Create `camera-motion.ts` with the API above
-  but the **legacy smoothstep** behaviour inside `tickArrival`. Route
-  the three park-arrival sites (focus-park, warp Fly, unfocus) through
-  it. Warp Phase 3's position lerp stays inline — it's the
-  observe-mode handover, not a park arrival (see § Inventory). The
-  refactor is provably a no-op via a vitest that pins the legacy curve
-  at `u = {0, 0.25, 0.5, 0.75, 1.0}`.
-- **stellata-2br.3** — Swap the profile inside `tickArrival` to the
-  log-d smoothstep documented here. The pinned-curve test from 2br.2
-  is expected to diverge; either re-pin the new curve or archive the
-  legacy expectations.
-- **stellata-2br.4** — Cross-host coverage audit per
-  `stellata-pattern-coverage-across-peers`: enumerate every focusable
-  host (stars, clouds, any layer added by then) and verify each
-  park-arrival routes through `tickArrival`. Grep for inline smoothstep
-  at park-arrival sites should return zero matches. Warp Phase 3 is
-  explicitly out of scope.
