@@ -1051,8 +1051,8 @@ export class Stellata {
   getFocusedPlanetSystem(): PlanetSystem | null { return this.focusedPlanetSystem; }
   /** True when the orbit-rings layer is currently rendering at least one
    *  ring. Frame-coherent — `updateGalacticLayers()` runs before
-   *  `onFrame` handlers, so overlays driven by the frame loop (focus
-   *  ring, etc.) read current-frame data. */
+   *  `'frame'` event handlers, so overlays driven by the frame loop
+   *  (focus ring, etc.) read current-frame data. */
   anyOrbitRingVisible(): boolean { return this.orbitRingsLayer.anyOrbitRingVisible(); }
   /** Local-frame positions of the focused host's planets (xyz triples,
    *  length 3·N), or null if no system is attached. Reads from the
