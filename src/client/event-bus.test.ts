@@ -85,4 +85,20 @@ describe('EventBus', () => {
     bus.emit('num', 0);
     expect(seen).toEqual(['a']);
   });
+
+  it('runs handlers registered mid-emit in the same round', () => {
+    // JS Set iteration includes items added after iteration starts. We
+    // pin that contract explicitly so a future refactor (e.g. snapshot
+    // the Set into an array before iterating) won't silently flip it.
+    const bus = new EventBus<TestMap>();
+    const seen: string[] = [];
+    bus.on('num', () => {
+      seen.push('a');
+      bus.on('num', () => {
+        seen.push('b');
+      });
+    });
+    bus.emit('num', 0);
+    expect(seen).toEqual(['a', 'b']);
+  });
 });
