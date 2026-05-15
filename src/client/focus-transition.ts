@@ -4,6 +4,11 @@
 
 import * as THREE from 'three';
 import { AU_PC } from './astronomy-constants';
+import {
+  type ArrivalState,
+  newArrival,
+  tickArrival,
+} from './camera-motion';
 
 export interface ParkDistanceInputs {
   /** Effective object radius in parsecs (Reff for stars; major semi-axis
@@ -31,18 +36,10 @@ export function parkDistance(opts: ParkDistanceInputs): number {
   );
 }
 
-export interface FocusLerpState {
-  startTimeMs: number;
-  durationMs: number;
-  /** Camera position at lerp start, in the post-`setFocus` local frame. */
-  fromPos: THREE.Vector3;
-  /** Park position the camera lerps to, in the same local frame. */
-  toPos: THREE.Vector3;
-  /** Camera orientation at lerp start. */
-  fromQuat: THREE.Quaternion;
-  /** Camera orientation at lerp end — at `toPos`, looking at the target. */
-  toQuat: THREE.Quaternion;
-}
+/** The focus-park lerp is one of the three park-arrival sites that share
+ *  `camera-motion`'s `ArrivalState`. The alias preserves the historic name
+ *  so call sites that hold the state slot don't have to track a rename. */
+export type FocusLerpState = ArrivalState;
 
 /**
  * Build a focus lerp from the current camera pose. The destination is the
@@ -78,35 +75,27 @@ export function newFocusLerpFrom(
   endPose.up.copy(cameraUp);
   endPose.lookAt(target);
 
-  return {
-    startTimeMs,
+  return newArrival({
+    pStart: cameraPos,
+    pEnd: toPos,
+    qStart: cameraQuat,
+    qEnd: endPose.quaternion,
+    target: { center: target, parkDist },
+    startMs: startTimeMs,
     durationMs,
-    fromPos: cameraPos.clone(),
-    toPos,
-    fromQuat: cameraQuat.clone(),
-    toQuat: endPose.quaternion.clone(),
-  };
-}
-
-/** Smoothstep easing — matches the observe-transition shape so multiple
- *  in-flight lerps read as the same camera motion family. */
-function easeSmoothstep(t: number): number {
-  return t < 0.5 ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t);
+  });
 }
 
 /**
  * Advance the lerp. Writes the eased position into `camera.position` and
  * the slerped orientation into `camera.quaternion`. Returns true while
- * the lerp is still in flight, false once it has landed at `toPos`.
+ * the lerp is still in flight, false once it has landed at `pEnd`.
  */
 export function tickFocusLerp(
   state: FocusLerpState,
   nowMs: number,
   camera: THREE.PerspectiveCamera,
 ): boolean {
-  const t = Math.min(1, (nowMs - state.startTimeMs) / state.durationMs);
-  const f = easeSmoothstep(t);
-  camera.position.lerpVectors(state.fromPos, state.toPos, f);
-  camera.quaternion.copy(state.fromQuat).slerp(state.toQuat, f);
-  return t < 1;
+  const { done } = tickArrival(state, nowMs, camera);
+  return !done;
 }
