@@ -261,18 +261,16 @@ button that snaps to `DEFAULT_FOV` = 50°. `setCameraFov` updates
 ## Debug panel
 
 `window.debug.panel()` toggles the unified debug panel — a draggable,
-collapsible host with four sections: Star disc (`star-tuning.ts`),
-Milky Way (`milkyway-tuning.ts`), Perf (`perf-hud.ts`), and Pin
-(`pin-debug-hud.ts`). Drag the title bar to move it, click any section
-header to fold/unfold; both the position and per-section collapse state
-persist in `sessionStorage` (resets on reload, since calibration state
-shouldn't survive between sessions). The chrome (drag handle,
-collapsible-section helper, slider/colour helpers) lives in
-`debug-panel.ts`. The arrow-fade diagnostic HUD (`debug.arrows()`) is
-intentionally still its own floating panel — narrow-purpose enough
-that bundling it in adds clutter. Add a new tool by writing either a
-plain section element (collapsible-section + sliders) or a
-`{element, dispose, setVisible}` builder and wiring it inside
+collapsible host with five sections: Star disc (`star-tuning.ts`),
+Milky Way (`milkyway-tuning.ts`), Perf (`perf-hud.ts`), Pin
+(`pin-debug-hud.ts`), and Arrows (`arrow-fade-debug-hud.ts`). Drag the
+title bar to move it, click any section header to fold/unfold; both the
+position and per-section collapse state persist in `sessionStorage`
+(resets on reload, since calibration state shouldn't survive between
+sessions). The chrome (drag handle, collapsible-section helper,
+slider/colour helpers) lives in `debug-panel.ts`. Add a new tool by
+writing either a plain section element (collapsible-section + sliders)
+or a `{element, dispose, setVisible}` builder and wiring it inside
 `togglePanel` in `debug.ts`.
 
 ## Star size exaggeration

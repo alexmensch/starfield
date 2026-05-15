@@ -1,10 +1,10 @@
 import type { Stellata } from './stellata';
+import type { ArrowDebugRecord } from './hud-overlay';
 
-// Live diagnostic HUD for the navigate-mode arrow fade. Toggled via
-// `debug.arrows()` in the dev console.
+// Live diagnostic readouts for the navigate-mode Sol/GC arrow fade.
+// Mounted as a section inside the unified debug panel (see debug.ts).
 //
-// Shows per-frame everything that drives the fade so we can see exactly
-// why an arrow ended up at a given length / opacity:
+// What it shows:
 //   - For each of Sol and GC: which direction-derivation path was used,
 //     whether the target was behind the camera, the drawn shaft length,
 //     whether shrink-to-target shortened it, the fade alpha applied.
@@ -12,9 +12,11 @@ import type { Stellata } from './stellata';
 //     drawn shafts, coverage = (discRadius - shaftStart) / refLen, the
 //     fade alpha both sides agreed on, and any latched extremes.
 //
-// The bottom row of the HUD shows latched min/max for the alpha, the
-// drawn shafts, and the disc radius, so brief snaps / jumps are visible
-// after they happen. Click [click to reset latches] to clear them.
+// The bottom row shows latched min/max for alpha, drawn shafts, and disc
+// radius, so brief snaps / jumps are visible after they happen. Click
+// the reset link to clear them. The section's left border turns red
+// when the two arrows disagree on draw / behind-camera state — fast
+// visual cue that an independent snap is happening.
 
 interface Latch {
   alphaMin: number; alphaMax: number;
@@ -33,40 +35,37 @@ function emptyLatch(): Latch {
   };
 }
 
-let panel: HTMLDivElement | null = null;
-let unsubscribe: (() => void) | null = null;
+export interface ArrowSection {
+  element: HTMLDivElement;
+  dispose: () => void;
+  setVisible: (v: boolean) => void;
+}
 
-export function toggleArrowFadeHud(stellata: Stellata): void {
-  if (panel) {
-    panel.remove();
-    panel = null;
-    if (unsubscribe) { unsubscribe(); unsubscribe = null; }
-    return;
-  }
-
+export function buildArrowSection(stellata: Stellata): ArrowSection {
   const latch = emptyLatch();
+  let visible = true;
 
   const root = document.createElement('div');
   root.style.cssText =
-    'position:fixed;top:8px;right:8px;z-index:9999;' +
     'font:11px/1.3 ui-monospace,monospace;background:rgba(0,0,0,.85);' +
     'color:#0f0;padding:6px 8px;border-radius:4px;' +
-    'white-space:pre;max-width:420px;user-select:text;';
+    'white-space:pre;overflow-x:auto;user-select:text;' +
+    'border-left:3px solid #0f0;';
 
   const body = document.createElement('div');
   body.style.cssText = 'user-select:text;cursor:text;';
   root.appendChild(body);
 
+  // Reset link: only THIS element is clickable (so dragging across the
+  // body to copy values doesn't reset the latches).
   const reset = document.createElement('div');
   reset.textContent = '[click to reset latches]';
   reset.style.cssText = 'margin-top:6px;cursor:pointer;color:#999;user-select:none;';
+  reset.title = 'reset latched extremes';
   reset.addEventListener('click', () => {
     Object.assign(latch, emptyLatch());
   });
   root.appendChild(reset);
-
-  document.body.appendChild(root);
-  panel = root;
 
   const fmt = (n: number) => {
     if (n === 0) return '0';
@@ -76,8 +75,15 @@ export function toggleArrowFadeHud(stellata: Stellata): void {
   };
   const fmtAlpha = (n: number) => n.toFixed(3);
 
-  unsubscribe = stellata.onFrame(() => {
-    if (!panel) return;
+  const arrowLine = (label: string, len: number, d: ArrowDebugRecord) =>
+    `${label}: drawn=${fmt(len)}  ` +
+    `${d.behindCamera ? 'BEHIND' : 'in-front'}  ` +
+    `dir=${d.dirPath}  ` +
+    `shrunk=${d.shrunkToTarget ? 'Y' : 'N'}  ` +
+    `α=${fmtAlpha(d.fadeAlpha)}\n` +
+    `        projAlong=${fmt(d.projAlong)}  hide?${d.hideRequested ? 'Y' : 'N'}`;
+
+  const onFrame = () => {
     const lengths = stellata.hud.getDrawnLengths();
     const dbg = stellata.hud.getDebugSnapshot();
     const shaftStart = stellata.hud.getShaftStartPx();
@@ -87,6 +93,9 @@ export function toggleArrowFadeHud(stellata: Stellata): void {
     const refLen = Math.max(lengths.sol, lengths.gc);
     const coverage = refLen > 0 ? Math.max(0, discRadius - shaftStart) / refLen : 0;
 
+    // Latches keep updating regardless of visibility — the user's
+    // interaction may have spanned a collapse and we still want the
+    // latched extremes to reflect the whole observation window.
     if (alpha < latch.alphaMin) latch.alphaMin = alpha;
     if (alpha > latch.alphaMax) latch.alphaMax = alpha;
     if (lengths.sol > latch.solMax) latch.solMax = lengths.sol;
@@ -96,13 +105,7 @@ export function toggleArrowFadeHud(stellata: Stellata): void {
     if (dbg.sol.behindCamera && lengths.sol > latch.solBehindMaxLen) latch.solBehindMaxLen = lengths.sol;
     if (dbg.gc.behindCamera && lengths.gc > latch.gcBehindMaxLen) latch.gcBehindMaxLen = lengths.gc;
 
-    const arrowLine = (label: string, len: number, d: typeof dbg.sol) =>
-      `${label}: drawn=${fmt(len)}  ` +
-      `${d.behindCamera ? 'BEHIND' : 'in-front'}  ` +
-      `dir=${d.dirPath}  ` +
-      `shrunk=${d.shrunkToTarget ? 'Y' : 'N'}  ` +
-      `α=${fmtAlpha(d.fadeAlpha)}\n` +
-      `        projAlong=${fmt(d.projAlong)}  hide?${d.hideRequested ? 'Y' : 'N'}`;
+    if (!visible) return;
 
     body.textContent =
       `focus: ${focused}  mode: ${stellata.getCameraMode()}\n` +
@@ -123,7 +126,14 @@ export function toggleArrowFadeHud(stellata: Stellata): void {
     const independentState =
       (lengths.sol > 0) !== (lengths.gc > 0) ||
       dbg.sol.behindCamera !== dbg.gc.behindCamera;
-    root.style.borderLeft = independentState ? '3px solid #f33' : '3px solid #0f0';
-    root.style.paddingLeft = '8px';
-  });
+    root.style.borderLeftColor = independentState ? '#f33' : '#0f0';
+  };
+
+  const unsubscribe = stellata.onFrame(onFrame);
+
+  return {
+    element: root,
+    dispose: () => { unsubscribe(); },
+    setVisible: (v: boolean) => { visible = v; },
+  };
 }

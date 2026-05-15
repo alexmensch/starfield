@@ -4,7 +4,7 @@ import { buildMilkywaySection } from './milkyway-tuning';
 import { buildStarSection } from './star-tuning';
 import { buildPerfSection } from './perf-hud';
 import { buildPinSection } from './pin-debug-hud';
-import { toggleArrowFadeHud } from './arrow-fade-debug-hud';
+import { buildArrowSection } from './arrow-fade-debug-hud';
 import {
   type DecodedView,
   type IdMaps,
@@ -15,16 +15,15 @@ import {
 
 // Optional dev tooling exposed via `window.debug`. The unified panel
 // surfaces every collapsible-section side-by-side: star/milkyway tuning
-// sliders plus perf and pin diagnostic readouts. `debug.panel()` is the
-// sole entry point. State (drag position, per-section collapse) lives
-// in sessionStorage and resets on reload.
+// sliders plus perf, pin, and arrow-fade diagnostic readouts.
+// `debug.panel()` is the sole entry point (also revealed by the hidden
+// triple-tap-D keyboard affordance). State (drag position, per-section
+// collapse) lives in sessionStorage and resets on reload.
 //
 // Add a new section: build it in its own *-tuning.ts / *-hud.ts module
-// (returning either a section element or a {element, dispose, setVisible}
-// triple) and wire it into `togglePanel` below alongside the existing
-// four. The arrow-fade HUD is intentionally still its own floating panel
-// — debug.arrows() — because it's narrow-purpose enough that bundling it
-// in adds clutter.
+// (returning either a raw section element or a LiveSection — see
+// mountLiveSection below for the latter shape) and wire it into
+// `togglePanel`.
 
 export interface DebugTools {
   /** Toggle the unified dev panel. */
@@ -33,23 +32,48 @@ export interface DebugTools {
   decodeView(blob: string): DecodedView;
   /** Encode the current Stellata state into a `?v=` blob string. */
   encodeView(): string;
-  /** Toggle the navigate-mode arrow-fade diagnostic HUD: live drawn shaft
-   *  lengths for Sol/GC, behind-camera flag, direction-derivation path,
-   *  disc radius, refLen, coverage, and the resulting alpha. */
-  arrows(): void;
+}
+
+/** Shape every live (per-frame-updating) debug section returns. The
+ *  module owns its own per-frame subscription; the panel host owns
+ *  collapse + visibility-gating + lifecycle. */
+interface LiveSection {
+  element: HTMLElement;
+  dispose: () => void;
+  setVisible: (v: boolean) => void;
+}
+
+/** Wrap a LiveSection in a collapsible-section, mount it on the panel,
+ *  and return its disposer for the closePanel cleanup pass. The
+ *  visibility gate is wired both ways: collapse → setVisible(false),
+ *  initial-from-storage → setVisible(!collapsed). */
+function mountLiveSection(
+  body: HTMLDivElement,
+  title: string,
+  storageKey: string,
+  module: LiveSection,
+): () => void {
+  const section = makeCollapsibleSection({
+    title,
+    storageKey,
+    onCollapseChange: (collapsed) => module.setVisible(!collapsed),
+  });
+  section.body.appendChild(module.element);
+  module.setVisible(!section.isCollapsed());
+  body.appendChild(section.section);
+  return module.dispose;
 }
 
 export function setupDebug(stellata: Stellata, idMaps: IdMaps): DebugTools {
   let panel: HTMLDivElement | null = null;
-  let perfDispose: (() => void) | null = null;
-  let pinDispose: (() => void) | null = null;
+  let liveDisposers: Array<() => void> = [];
 
   const closePanel = () => {
     if (!panel) return;
     panel.remove();
     panel = null;
-    perfDispose?.(); perfDispose = null;
-    pinDispose?.(); pinDispose = null;
+    for (const dispose of liveDisposers) dispose();
+    liveDisposers = [];
   };
 
   const togglePanel = () => {
@@ -61,34 +85,15 @@ export function setupDebug(stellata: Stellata, idMaps: IdMaps): DebugTools {
     built.body.appendChild(buildStarSection(stellata));
     built.body.appendChild(buildMilkywaySection(stellata.milkywayLayer));
 
-    // Perf section — the perf-hud module exposes per-tick mark/measure/
-    // frame that are no-ops until buildPerfSection() runs. The collapse
-    // hook gates the section's per-frame DOM writes so a hidden section
-    // costs only its ring-buffer fills.
-    const perf = buildPerfSection();
-    perfDispose = perf.dispose;
-    const perfSection = makeCollapsibleSection({
-      title: 'Perf',
-      storageKey: 'perf',
-      onCollapseChange: (collapsed) => perf.setVisible(!collapsed),
-    });
-    perfSection.body.appendChild(perf.element);
-    perf.setVisible(!perfSection.isCollapsed());
-    built.body.appendChild(perfSection.section);
-
-    // Pin section — subscribes to stellata.onFrame inside dispose's
-    // cleanup. setVisible gates the body.textContent write; latches keep
-    // updating either way so reopening shows accurate extremes.
-    const pin = buildPinSection(stellata);
-    pinDispose = pin.dispose;
-    const pinSection = makeCollapsibleSection({
-      title: 'Pin',
-      storageKey: 'pin',
-      onCollapseChange: (collapsed) => pin.setVisible(!collapsed),
-    });
-    pinSection.body.appendChild(pin.element);
-    pin.setVisible(!pinSection.isCollapsed());
-    built.body.appendChild(pinSection.section);
+    // Live sections — each owns its per-frame subscription via
+    // stellata.onFrame() and exposes setVisible to gate DOM writes
+    // when collapsed. Latches inside each module keep updating
+    // independent of visibility.
+    liveDisposers.push(
+      mountLiveSection(built.body, 'Perf', 'perf', buildPerfSection()),
+      mountLiveSection(built.body, 'Pin', 'pin', buildPinSection(stellata)),
+      mountLiveSection(built.body, 'Arrows', 'arrows', buildArrowSection(stellata)),
+    );
 
     document.body.appendChild(panel);
   };
@@ -103,10 +108,8 @@ export function setupDebug(stellata: Stellata, idMaps: IdMaps): DebugTools {
       return view;
     },
     encodeView: () => encodeBlob(currentStateOf(stellata, idMaps)),
-    arrows: () => toggleArrowFadeHud(stellata),
   };
 
   (window as unknown as { debug: DebugTools }).debug = tools;
-  console.info('Debug tools: debug.panel(), debug.decodeView(blob), debug.encodeView(), debug.arrows()');
   return tools;
 }
