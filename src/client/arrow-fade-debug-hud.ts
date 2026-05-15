@@ -1,4 +1,5 @@
 import type { Stellata } from './stellata';
+import type { ArrowDebugRecord } from './hud-overlay';
 
 // Live diagnostic readouts for the navigate-mode Sol/GC arrow fade.
 // Mounted as a section inside the unified debug panel (see debug.ts).
@@ -74,7 +75,7 @@ export function buildArrowSection(stellata: Stellata): ArrowSection {
   };
   const fmtAlpha = (n: number) => n.toFixed(3);
 
-  const arrowLine = (label: string, len: number, d: ReturnType<typeof stellata.hud.getDebugSnapshot>['sol']) =>
+  const arrowLine = (label: string, len: number, d: ArrowDebugRecord) =>
     `${label}: drawn=${fmt(len)}  ` +
     `${d.behindCamera ? 'BEHIND' : 'in-front'}  ` +
     `dir=${d.dirPath}  ` +
