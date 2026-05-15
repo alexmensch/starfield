@@ -224,6 +224,13 @@ Claude Code should read on demand when working on the relevant area.
   drag mechanics, momentum, FOV-on-wheel, aim slerps, POI dispatch,
   single/double click handlers, navigate-mode close-zoom unfocus.
   Read when touching observe-mode behaviour.
+- **`docs/camera-arrival.md`** — angular-arrival problem and the
+  log-distance smoothstep profile the `camera-motion.ts` helper applies
+  to focus-park, warp Fly, and unfocus. Worked examples for Sol /
+  Betelgeuse, why the two-region `dWindow` split was rejected, why
+  warp Phase 3 stays inline. Read when touching `camera-motion.ts`,
+  `focus-transition.ts`, or the arrival branches of `updateWarp` /
+  `unfocus`.
 - **`docs/deployment.md`** — Wrangler config, `@cloudflare/workers-types`
   global leak, `compatibility_date`, `custom_domain` DNS auto-registration.
   Read when changing deployment or worker code.
