@@ -226,7 +226,11 @@ export function createHeliopauseLabel(stellata: Stellata): void {
   if (!text) return;
 
   const tmp = new THREE.Vector3();
-  let visible = false;
+  // Poison sentinel — `null` disagrees with both true and false so the
+  // first setVisible() call always writes through. The SVG element has
+  // no `display: none` in markup, so without this the camera-inside-
+  // bubble first-load path leaves the label visible at SVG (0,0).
+  let visible: boolean | null = null;
   // Smoothed screen position, null while hidden so the next show
   // snaps to the current target instead of sliding from the last
   // visible position.
