@@ -2,11 +2,9 @@
 // compiler enforces handler/payload alignment per event. `on()` returns an
 // unsubscribe — Set-backed registration dedupes identical handlers and
 // makes mid-emit unsubscribe well-defined (the removed handler is skipped
-// if not yet visited).
-
-type EmitArgs<M, K extends keyof M> = M[K] extends void
-  ? [name: K]
-  : [name: K, payload: M[K]];
+// if not yet visited). The `Record<string, unknown>` constraint exists
+// to forbid accidental non-object payload maps; entries typed as `void`
+// (no-payload events) satisfy it because `void` is assignable to `unknown`.
 
 export class EventBus<M extends Record<string, unknown>> {
   private handlers = new Map<keyof M, Set<(payload: never) => void>>();
@@ -24,9 +22,14 @@ export class EventBus<M extends Record<string, unknown>> {
     };
   }
 
-  emit<K extends keyof M>(...args: EmitArgs<M, K>): void {
-    const name = args[0];
-    const payload = (args.length > 1 ? args[1] : undefined) as M[K];
+  // Conditional rest tuple omits the payload arg entirely for `void` events,
+  // so `bus.emit('frame')` and `bus.emit('focus', idx)` both type-check
+  // against the same signature.
+  emit<K extends keyof M>(
+    name: K,
+    ...rest: M[K] extends void ? [] : [M[K]]
+  ): void {
+    const payload = rest[0] as M[K];
     const set = this.handlers.get(name);
     if (!set) return;
     for (const h of set) (h as (p: M[K]) => void)(payload);
