@@ -31,4 +31,11 @@ export class EventBus<M extends Record<string, unknown>> {
     if (!set) return;
     for (const h of set) (h as (p: M[K]) => void)(payload);
   }
+
+  // Detach every subscriber across every event. Called from
+  // `Stellata.dispose()` so HMR teardown can release the closures that
+  // would otherwise pin the previous Stellata instance through this bus.
+  clear(): void {
+    this.handlers.clear();
+  }
 }

@@ -54,6 +54,23 @@ describe('EventBus', () => {
     expect(() => bus.emit('num', 1)).not.toThrow();
   });
 
+  it('clear() detaches every subscriber across every event', () => {
+    const bus = new EventBus<TestMap>();
+    const a = vi.fn();
+    const b = vi.fn();
+    const c = vi.fn();
+    bus.on('num', a);
+    bus.on('tick', b);
+    bus.on('obj', c);
+    bus.clear();
+    bus.emit('num', 1);
+    bus.emit('tick');
+    bus.emit('obj', { id: 1 });
+    expect(a).not.toHaveBeenCalled();
+    expect(b).not.toHaveBeenCalled();
+    expect(c).not.toHaveBeenCalled();
+  });
+
   it('skips a handler removed mid-emit', () => {
     const bus = new EventBus<TestMap>();
     const seen: string[] = [];

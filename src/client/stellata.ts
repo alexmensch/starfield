@@ -3972,6 +3972,7 @@ export class Stellata {
     this.dust?.dispose();
     this.dust = null;
     this.renderer.dispose();
+    this.bus.clear();
   }
 }
 
