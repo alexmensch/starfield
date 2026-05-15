@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { formatTimeReadout } from './time-readout';
+import { createTimeReadout, formatTimeReadout } from './time-readout';
+import type { Stellata } from './stellata';
 
 describe('formatTimeReadout', () => {
   it('formats a known Unix-seconds value as plain-English UTC', () => {
@@ -46,5 +47,35 @@ describe('formatTimeReadout', () => {
     // for naive local-timezone formatters in the past.
     const j2000Unix = 946728000;
     expect(formatTimeReadout(j2000Unix)).toBe('1 Jan 2000, 12:00:00 UTC');
+  });
+});
+
+describe('createTimeReadout teardown', () => {
+  function makeMockStellata() {
+    const counts = { planetSystem: 0, filter: 0, warp: 0 };
+    const stellata = {
+      on(name: 'planetSystem' | 'filter' | 'warp') {
+        counts[name]++;
+        return () => {
+          counts[name]--;
+        };
+      },
+      getT: () => 0,
+      getFocusedPlanetSystem: () => null,
+      getFilter: () => ({ chart: false }),
+      getWarpActive: () => false,
+    } as unknown as Stellata;
+    return { stellata, counts };
+  }
+
+  it('unsubscribes its three bus listeners on teardown', () => {
+    // Vitest runs in Node — no DOM. createTimeReadout only touches
+    // `el.textContent` and `el.hidden`, so a plain object satisfies it.
+    const el = { textContent: '', hidden: true } as unknown as HTMLElement;
+    const { stellata, counts } = makeMockStellata();
+    const teardown = createTimeReadout({ el, stellata });
+    expect(counts).toEqual({ planetSystem: 1, filter: 1, warp: 1 });
+    teardown();
+    expect(counts).toEqual({ planetSystem: 0, filter: 0, warp: 0 });
   });
 });

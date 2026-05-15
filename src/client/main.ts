@@ -149,7 +149,7 @@ async function main() {
     // POI labels, etc.) while the focus-park lerp is in flight — same
     // body-class hide pattern the warp uses. CSS selector matches
     // `body.warping` so we don't have to duplicate the rule per source.
-    stellata.onFocusLerpChange((active) => {
+    stellata.on('focusLerp', (active) => {
       document.body.classList.toggle('focus-lerping', active);
     });
 

@@ -58,17 +58,17 @@ export function bindChartMode(stellata: Stellata, ctx: ChartModeContext): void {
     }
   };
 
-  stellata.onCameraModeChange(() => {
+  stellata.on('cameraMode', () => {
     // Leaving observe always deactivates chart — the camera state required
     // to interpret the chart goes away. Clear the user's `chart` flag so
     // the next observe session starts clean unless they re-enable it.
     if (stellata.getCameraMode() !== 'observe' && stellata.getFilter().chart) {
       stellata.setFilter({ chart: false });
-      return; // setFilter triggers sync via onFilterChange
+      return; // setFilter triggers sync via the 'filter' event
     }
     sync();
   });
-  stellata.onFilterChange(sync);
+  stellata.on('filter', sync);
 
   // Initial reconciliation in case URL state restored chart=on before the
   // orchestrator was bound.

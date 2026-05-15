@@ -3,7 +3,7 @@
 Paper-aesthetic alternate render path inspired by Sky Atlas 2000.0
 (chart 22 reference). Activated by `M` keyboard or
 `setFilter({ chart: true })`. **Observe-only** — the `chart-mode.ts`
-orchestrator listens to `onCameraModeChange` and auto-clears the flag
+orchestrator listens to the `'cameraMode'` event and auto-clears the flag
 on observe→navigate. URL state persists `chart=1` only when both flags
 are set (FLAG_CHART = 1 << 6 in the flags byte; see
 `docs/url-state.md`).

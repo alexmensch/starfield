@@ -52,7 +52,7 @@ bit order, so mode isn't known until the field loop completes).
   snaps the camera to the park pose — URL restore must not surface as a
   2 s glide on page load. If camera params are also present, it uses
   `setOrbitTarget` so the explicit camera wins.
-- Camera changes are tracked via `onFrame` with a stringified-coord hash
+- Camera changes are tracked via the `'frame'` event with a stringified-coord hash
   and a 300 ms debounced writer. The hash covers position, target,
   **and** `camera.up` — so two-finger roll (which only mutates `up`)
   still triggers a URL update.

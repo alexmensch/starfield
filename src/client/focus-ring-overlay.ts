@@ -15,10 +15,10 @@ export function createFocusRingOverlay(stellata: Stellata) {
     if (stellata.getFocusedStar() === null) hide();
     else show();
   };
-  stellata.onFocusChange(syncVisibility);
+  stellata.on('focus', syncVisibility);
   syncVisibility();
 
-  stellata.onFrame(() => {
+  stellata.on('frame', () => {
     const idx = stellata.getFocusedStar();
     if (idx === null) return;
 

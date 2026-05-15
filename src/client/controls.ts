@@ -260,8 +260,8 @@ export function bindControls(stellata: Stellata) {
     if (exag.value !== kStr) exag.value = kStr;
   };
 
-  stellata.onFilterChange(syncFromFilter);
-  stellata.onCameraModeChange(syncFromFilter);
+  stellata.on('filter', syncFromFilter);
+  stellata.on('cameraMode', syncFromFilter);
   onUnitChange(() => {
     if (distUnitLabel) distUnitLabel.textContent = getUnit();
     syncFromFilter();

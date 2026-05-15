@@ -141,7 +141,7 @@ export function buildPinSection(stellata: Stellata): PinSection {
     root.style.color = pinNow ? '#0f0' : '#f33';
   };
 
-  const unsubscribe = stellata.onFrame(onFrame);
+  const unsubscribe = stellata.on('frame', onFrame);
 
   return {
     element: root,

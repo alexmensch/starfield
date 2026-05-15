@@ -92,7 +92,7 @@ export function createScaleBar(
 
   let lastSig = '';
 
-  stellata.onFrame(() => {
+  stellata.on('frame', () => {
     const camera = stellata.camera;
     const mode = stellata.getCameraMode();
     const w = window.innerWidth;

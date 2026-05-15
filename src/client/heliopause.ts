@@ -247,7 +247,7 @@ export function createHeliopauseLabel(stellata: Stellata): void {
   };
   setVisible(false);
 
-  stellata.onFrame(() => {
+  stellata.on('frame', () => {
     const ps = stellata.getFocusedPlanetSystem();
     if (!ps || stellata.getMonochrome()) {
       setVisible(false);

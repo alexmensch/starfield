@@ -137,7 +137,7 @@ animation phase 3.
 
 **X button (clear focus from observe):** `unfocus()` detects observe +
 focused-star and immediately clears focus *before* starting the
-zoom-out animation. The search box empties via `onFocusChange` on the
+zoom-out animation. The search box empties via the `'focus'` event on the
 click, then the camera pulls back to `parkDistForStar(formerFocal)`
 along its current view direction over `OBSERVE_TRANSITION_MS`.
 
@@ -211,7 +211,7 @@ when the timer elapses.
   background alike.
 
 POIs clear automatically on every observe → navigate transition (the
-clear is wired via `onCameraModeChange` inside the constructor, so
+clear is wired via the `'cameraMode'` event inside the constructor, so
 all three exit paths — mode toggle, focus change, search-X clear —
 get the same cleanup). They round-trip through the `?v=` blob *only*
 in observe mode (see §URL state), encoded HIP-only at bit 19.

@@ -70,9 +70,9 @@ export function createConstellationOverlay(stellata: Stellata) {
     figure.setAttribute('d', segments.join(''));
   };
 
-  stellata.onFilterChange(update);
-  stellata.onCameraModeChange(update);
-  stellata.onFrame(tick);
+  stellata.on('filter', update);
+  stellata.on('cameraMode', update);
+  stellata.on('frame', tick);
   update();
 
   return { overlay };

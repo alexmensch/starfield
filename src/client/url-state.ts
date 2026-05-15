@@ -1250,10 +1250,10 @@ export function startUrlSync(stellata: Stellata, idMaps: IdMaps): void {
     timer = window.setTimeout(() => writeUrl(stellata, idMaps), DEBOUNCE_MS);
   };
 
-  stellata.onStateChange(schedule);
+  stellata.on('state', schedule);
   onUnitChange(schedule);
 
-  stellata.onFrame(() => {
+  stellata.on('frame', () => {
     // Skip URL writes while any camera-position lerp is in flight (warp,
     // observe enter/exit, or navigate-mode unfocus zoom-out a7d.2.6) —
     // the camera mutates every frame and we don't want intermediate poses

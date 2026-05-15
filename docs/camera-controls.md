@@ -122,7 +122,7 @@ naturally.
 constellation lines, POI labels, etc.) is hidden for the lerp's
 duration via a `body.focus-lerping` class — same mechanism the warp
 uses (`body.warping`), CSS rule shares the selector. Stellata fires
-`onFocusLerpChange(active)` on start / end edges; `main.ts` toggles
+the `'focusLerp'` event on start / end edges; `main.ts` toggles
 the body class.
 
 `CAMERA_LERP_MS = 2000` is the canonical 2 s constant — `WARP_REORIENT_MS`,

@@ -101,10 +101,10 @@ interface PooledLine {
 }
 
 // Single per-page state — chart mode is a single-instance feature.
-// `active` is the runtime gate read by the per-frame tick; the onFrame
+// `active` is the runtime gate read by the per-frame tick; the 'frame'
 // handler is registered exactly once (the first time chart engages) and
 // short-circuits whenever active is false. Toggling chart on/off therefore
-// doesn't churn handlers on the stellata's onFrame list.
+// doesn't churn handlers on the stellata's 'frame' listener list.
 let active = false;
 let registered = false;
 let layer: SVGGElement | null = null;
@@ -174,7 +174,7 @@ export function startChartLabels(
 
   if (!registered) {
     registered = true;
-    stellata.onFrame(() => {
+    stellata.on('frame', () => {
       if (!active || !layer || !glyphLayer || !conStars || !activeCtx) return;
       tick(stellata, activeCtx, conStars);
     });
@@ -182,7 +182,7 @@ export function startChartLabels(
     // variable/binary eligibility lists. spectMask/distance/maxAppMag
     // don't all feed the centroid math, but bumping on any change is
     // cheap and avoids stale-cache bugs.
-    stellata.onFilterChange(() => {
+    stellata.on('filter', () => {
       centroidsVersion++;
       eligibleDirty = true;
     });
