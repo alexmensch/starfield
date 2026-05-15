@@ -125,9 +125,6 @@ async function main() {
         });
       }
       await dust.startLoading();
-      console.info(
-        `dust loaded: ${manifest.totalChunks} chunks, synthetic=${manifest.synthetic}`,
-      );
     })();
 
     bindUnitToggle();
