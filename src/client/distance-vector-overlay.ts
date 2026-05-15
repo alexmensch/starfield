@@ -46,12 +46,14 @@ export function createDistanceVectorOverlay(
     visible = false;
   };
 
-  stellata.on('vector', () => {
+  // Vector and vectorCloud are mutually exclusive destinations; either
+  // event firing might leave both slots null (the canonical "no vector"
+  // state). Same handler on both edges keeps the hide() trigger DRY.
+  const onVectorDestChange = () => {
     if (stellata.getVectorTo() === null && stellata.getVectorToCloud() === null) hide();
-  });
-  stellata.on('vectorCloud', () => {
-    if (stellata.getVectorTo() === null && stellata.getVectorToCloud() === null) hide();
-  });
+  };
+  stellata.on('vector', onVectorDestChange);
+  stellata.on('vectorCloud', onVectorDestChange);
 
   stellata.on('frame', () => {
     // Source: whichever is focused. Star wins when both are set (which
