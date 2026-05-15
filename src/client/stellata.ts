@@ -1263,7 +1263,8 @@ export class Stellata {
     const existing = this.pois.indexOf(idx);
     if (existing >= 0) {
       this.pois.splice(existing, 1);
-      this.firePoisChange();
+      this.bus.emit('pois', this.pois);
+      this.bus.emit('state');
       return;
     }
     if (this.pois.length >= Stellata.POI_HARD_CAP) {
@@ -1271,7 +1272,8 @@ export class Stellata {
       return;
     }
     this.pois.push(idx);
-    this.firePoisChange();
+    this.bus.emit('pois', this.pois);
+    this.bus.emit('state');
   }
 
   /**
@@ -1293,16 +1295,13 @@ export class Stellata {
       next.every((v, i) => v === this.pois[i])
     ) return;
     this.pois = next;
-    this.firePoisChange();
+    this.bus.emit('pois', this.pois);
+    this.bus.emit('state');
   }
 
   clearPois() {
     if (this.pois.length === 0) return;
     this.pois = [];
-    this.firePoisChange();
-  }
-
-  private firePoisChange() {
     this.bus.emit('pois', this.pois);
     this.bus.emit('state');
   }
