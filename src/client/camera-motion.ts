@@ -18,9 +18,12 @@ export interface ArrivalTarget {
   effectiveRadius?: number;
 }
 
-/** Frozen arrival snapshot. `d0` / `dEnd` are cached at construction so
- *  the per-tick math never re-resolves `target.center`; in 2br.3 they
- *  become the inputs to the log-distance profile. */
+/** Frozen arrival snapshot. `d0` / `dEnd` / `dir` are cached at construction
+ *  so the per-tick math never re-resolves `target.center` or normalises
+ *  a vector. `dir` is the unit ray from `target.center` toward `pStart`;
+ *  the three helper sites (focus-park, warp Fly, unfocus) all place
+ *  `pStart` and `pEnd` on this ray, so the log-distance profile evolves
+ *  camera position along it. */
 export interface ArrivalState {
   pStart: THREE.Vector3;
   pEnd: THREE.Vector3;
@@ -31,6 +34,7 @@ export interface ArrivalState {
   durationMs: number;
   d0: number;
   dEnd: number;
+  dir: THREE.Vector3;
 }
 
 export interface NewArrivalOpts {
@@ -58,6 +62,14 @@ export function newArrival(opts: NewArrivalOpts): ArrivalState {
   };
   const pStart = opts.pStart.clone();
   const pEnd = opts.pEnd.clone();
+  const d0 = pStart.distanceTo(target.center);
+  const dEnd = pEnd.distanceTo(target.center);
+  // Unit ray from target.center toward pStart. Falls back to zero when
+  // pStart coincides with target.center — a pathological case for the
+  // three helper sites (camera at target origin), in which the lerp
+  // settles at the centre.
+  const dir = new THREE.Vector3().subVectors(pStart, target.center);
+  if (d0 > 0) dir.divideScalar(d0);
   return {
     pStart,
     pEnd,
@@ -66,33 +78,54 @@ export function newArrival(opts: NewArrivalOpts): ArrivalState {
     target,
     startMs: opts.startMs,
     durationMs: opts.durationMs,
-    d0: pStart.distanceTo(target.center),
-    dEnd: pEnd.distanceTo(target.center),
+    d0,
+    dEnd,
+    dir,
   };
 }
 
-// Piecewise-quadratic smoothstep — the legacy easing every park-arrival
-// site used inline. Kept as the helper's curve through stellata-2br.2 so
-// the refactor is provably a no-op (see camera-motion.test.ts curve pin).
-// stellata-2br.3 swaps the body to the cubic-Hermite log-distance profile
-// from docs/camera-arrival.md.
+// Cubic-Hermite smoothstep — `3u² − 2u³`, identical to GLSL's smoothstep.
+// `f(0) = 0`, `f(1) = 1`, `f'(0) = f'(1) = 0`. See
+// `docs/camera-arrival.md` § Profile for why this replaced the legacy
+// piecewise quadratic (one polynomial, C¹-continuous, smooth jerk at 0.5).
 function easeArrival(u: number): number {
-  return u < 0.5 ? 2 * u * u : 1 - 2 * (1 - u) * (1 - u);
+  return u * u * (3 - 2 * u);
 }
 
 /** Advance one frame. Writes `camera.position` (and, when both
  *  `qStart`/`qEnd` are present, `camera.quaternion`). Returns
- *  `{ done: true }` once `nowMs ≥ startMs + durationMs`. */
+ *  `{ done: true }` once `nowMs ≥ startMs + durationMs`.
+ *
+ *  Position evolves as a smoothstep over `log d` — equal time per decade
+ *  of distance, giving uniform octaves-per-second of angular size. See
+ *  `docs/camera-arrival.md` § Profile. The endpoints are written
+ *  bit-exact (`pStart` at `u ≤ 0`, `pEnd` at `u ≥ 1`) so callers that
+ *  compare `camera.position.equals(pEnd)` after landing still match. */
 export function tickArrival(
   state: ArrivalState,
   nowMs: number,
   camera: THREE.PerspectiveCamera,
 ): { done: boolean } {
-  const u = Math.min(1, (nowMs - state.startMs) / state.durationMs);
+  const u = Math.min(1, Math.max(0, (nowMs - state.startMs) / state.durationMs));
+  if (u <= 0) {
+    camera.position.copy(state.pStart);
+    if (state.qStart && state.qEnd) camera.quaternion.copy(state.qStart);
+    return { done: false };
+  }
+  if (u >= 1) {
+    camera.position.copy(state.pEnd);
+    if (state.qStart && state.qEnd) camera.quaternion.copy(state.qEnd);
+    return { done: true };
+  }
   const f = easeArrival(u);
-  camera.position.lerpVectors(state.pStart, state.pEnd, f);
+  // d(u) = d0 · (dEnd/d0)^f. Outbound (d0 < dEnd) and inbound (d0 > dEnd)
+  // share the same formula — the sign of log(dEnd/d0) carries the camera
+  // the correct direction. When d0 == dEnd the ratio is 1, d stays
+  // constant, and the camera doesn't move (graceful no-op).
+  const d = state.d0 * Math.pow(state.dEnd / state.d0, f);
+  camera.position.copy(state.target.center).addScaledVector(state.dir, d);
   if (state.qStart && state.qEnd) {
     camera.quaternion.copy(state.qStart).slerp(state.qEnd, f);
   }
-  return { done: u >= 1 };
+  return { done: false };
 }

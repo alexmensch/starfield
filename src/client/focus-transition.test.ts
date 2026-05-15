@@ -141,9 +141,11 @@ describe('tickFocusLerp', () => {
     cam.position.copy(state.pStart);
     const active = tickFocusLerp(state, 2000, cam);
     expect(active).toBe(true);
-    // At t = 0.5 the smoothstep eases to f = 0.5 — camera is exactly
-    // halfway between pStart and pEnd.
-    const midZ = (state.pStart.z + state.pEnd.z) / 2;
+    // At t = 0.5 the cubic-Hermite log-distance profile eases to f = 0.5
+    // — distance from target is the geometric mean √(d0·dEnd) (not the
+    // arithmetic mean). pStart at z = 5·AU_PC, pEnd at z = AU_PC, both
+    // on +Z, target at origin → cam.z = √(5)·AU_PC.
+    const midZ = Math.sqrt(5) * AU_PC;
     expect(cam.position.z).toBeCloseTo(midZ, 14);
   });
 
