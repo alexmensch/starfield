@@ -3638,9 +3638,9 @@ export class Stellata {
     perfMark('gpu.render');
     this.renderer.render(this.scene, this.camera);
     perfMeasure('gpu.render');
-    perfMark('onFrame.total');
+    perfMark('frame.handlers');
     this.bus.emit('frame');
-    perfMeasure('onFrame.total');
+    perfMeasure('frame.handlers');
     perfMeasure('frame.total');
     perfFrame();
     requestAnimationFrame(this.animate);
@@ -3701,7 +3701,7 @@ export class Stellata {
       this.focusedStar !== null && this.focusedStar === this.catalog.solIndex;
     // Compute the navigate-mode arrow fade alpha before the HUD render so
     // both consumers (HUD Sol/GC arrows here, distance-vector overlay in the
-    // onFrame phase) read the same value within a frame.
+    // 'frame' event phase) read the same value within a frame.
     this.updateNavArrowFadeAlpha();
     this.hudOverlay.update({
       enabled: this.filter.showHud,

@@ -43,7 +43,7 @@ after exiting chart mode (otherwise the average would lag forever).
 | `pre-render`            | `stellata.ts` `animate()`       | Per-frame uniform writes + galactic + Milky Way reposition. |
 | `coreMask`              | `stellata.ts` `animate()`       | The binary-search `shouldEnableCoreMask()` (see below). |
 | `gpu.render`            | `stellata.ts` `animate()`       | The `renderer.render()` call — three-pass star draw + overlays. |
-| `onFrame.total`         | `stellata.ts` `animate()`       | The full `'frame'` emit loop (overlays, chart labels). |
+| `frame.handlers`        | `stellata.ts` `animate()`       | The full `'frame'` emit loop (overlays, chart labels). |
 | `chart.names`           | `chart-labels.ts` `tick()`       | Proper-name label projection + culling. |
 | `chart.bayer`           | `chart-labels.ts` `tick()`       | Bayer-letter Greek-glyph pass. |
 | `chart.constellations`  | `chart-labels.ts` `tick()`       | Constellation centroid recompute + label placement. |
@@ -58,7 +58,7 @@ wrap the block. Both functions are unconditional — when
 `buildPerfSection` has not yet been called they're a single indirect
 call to a no-op, V8 inlines them fine. Don't subscribe the HUD itself
 to the `'frame'` event; the `frame()` flush runs once per render after
-`onFrame.total` has finalised, so its DOM update doesn't leak into
+`frame.handlers` has finalised, so its DOM update doesn't leak into
 the measured numbers.
 
 ## What got optimised
@@ -212,7 +212,7 @@ re-prosecuted.
 3. If `gpu.render` dominates, the bottleneck is in shaders /
    overdraw — see `docs/rendering.md` and the milky-way / dust
    docs.
-4. If `onFrame.total` dominates and it's not chart mode, suspect a
+4. If `frame.handlers` dominates and it's not chart mode, suspect a
    per-frame overlay; check the self-gating fast-paths haven't
    regressed.
 5. If `chart.*` dominates, the eligibility lists or centroid cache
