@@ -39,7 +39,7 @@ import {
   WARP_T_MAX_MS,
   WARP_T_K_MS,
   OBSERVE_TRANSITION_MS,
-} from './stellata';
+} from './warp-constants';
 
 /** Linear |camera−B| / |A−B| threshold at which the mid-Fly recentre
  *  fires (0.5 = midpoint, matching the shipped `0.25` squared-form in

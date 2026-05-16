@@ -47,6 +47,27 @@ import { type ArrivalState, newArrival, shiftArrivalWaypoints, tickArrival } fro
 import { shiftWarpWaypoints } from './warp-pure';
 import type { FocusTarget } from './focus-target';
 import { chartPlateauDistancePc } from './chart-disc-pure';
+// Locally used subset — stellata.ts still reads these in its body.
+// The other warp-timing constants are re-exported below for any
+// external import path that points at './stellata' instead of
+// './warp-constants', without bringing unused names into local scope.
+import {
+  AIM_T_MAX_MS,
+  AIM_T_MIN_MS,
+  FOCUS_LERP_MS,
+  OBSERVE_TRANSITION_MS,
+} from './warp-constants';
+export {
+  AIM_T_MAX_MS,
+  AIM_T_MIN_MS,
+  CAMERA_LERP_MS,
+  FOCUS_LERP_MS,
+  OBSERVE_TRANSITION_MS,
+  WARP_REORIENT_MS,
+  WARP_T_K_MS,
+  WARP_T_MAX_MS,
+  WARP_T_MIN_MS,
+} from './warp-constants';
 import {
   recordLastWarp,
   warpArrivalEaseFn,
@@ -274,37 +295,17 @@ const BINARY_MIN_DIST_FACTOR = 1 / Math.tan(BINARY_VIEWPORT_HALF_ANGLE_RAD);
 //   2. Fly — straight-line flight from pStart to pEnd with a symmetric
 //      accelerate/decelerate profile. Duration scales log-linearly with
 //      distance and caps at MAX.
-// End offset matches the destination star's effective minDistance so the
-// warp parks exactly where the user can then orbit.
-export const WARP_T_MIN_MS = 5000;
-export const WARP_T_MAX_MS = 20000;
-export const WARP_T_K_MS = 2000;
-
-// Canonical 2 s duration used everywhere the camera lerps under
-// non-warp dispatch — focus-park glide, warp reorient phase, aim
-// animation upper bound. One literal so the three motions read as
-// the same family. (WARP_T_K_MS above is a log-scale flight
-// coefficient with different semantics — it stays separate.)
-export const CAMERA_LERP_MS = 2000;
-export const WARP_REORIENT_MS = CAMERA_LERP_MS;
-export const FOCUS_LERP_MS = CAMERA_LERP_MS;
+// End offset matches the destination star's effective minDistance so
+// the warp parks exactly where the user can then orbit. Warp + camera-
+// lerp duration constants live in `./warp-constants` to break the
+// import cycle with `./warp-tuning` (which needs them as initial knob
+// defaults). Re-exported here so any existing import paths keep working.
 
 // Arbitrary reference axis for the reorient slerp. Any fixed unit vector
 // works — the two setFromUnitVectors calls each produce a quaternion rotating
 // this vector to one of the two endpoints, and slerp between them gives the
 // shortest-arc interpolation on the sphere.
 const WARP_BASE_DIR = new THREE.Vector3(0, 0, 1);
-
-// Aim animation: rotate the camera around `controls.target` so a chosen
-// world point lands at the centre of the view. Capped at 2 s so even a
-// 180° swing stays snappy; floored at 250 ms so trivial nudges still ease.
-export const AIM_T_MAX_MS = CAMERA_LERP_MS;
-export const AIM_T_MIN_MS = 250;
-
-// OBSERVE-mode entry/exit translate animation. Travel distance is always
-// parkDistForStar (sub-parsec) so a fixed duration reads as a brief glide
-// rather than a warp.
-export const OBSERVE_TRANSITION_MS = 1200;
 
 export type CameraMode = 'navigate' | 'observe';
 
