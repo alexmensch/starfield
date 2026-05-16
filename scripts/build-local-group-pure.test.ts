@@ -323,20 +323,20 @@ describe('mergeRowAndOverride — override-vs-LVDB precedence', () => {
   });
 });
 
-describe('displayName overrides', () => {
+describe('displayName overrides + default type suffix', () => {
   it('expands the Magellanic acronyms (full names; we have the room)', () => {
     expect(displayName('LMC')).toBe('Large Magellanic Cloud');
     expect(displayName('SMC')).toBe('Small Magellanic Cloud');
   });
-  it('passes any other LVDB name through unchanged', () => {
-    expect(displayName('Sagittarius')).toBe('Sagittarius');
-    expect(displayName('Bootes II')).toBe('Bootes II');
-    expect(displayName('NGC 6822')).toBe('NGC 6822');
+  it('appends "Dwarf Spheroidal" by default — astronomers disambiguate from the constellation name', () => {
+    expect(displayName('Sagittarius')).toBe('Sagittarius Dwarf Spheroidal');
+    expect(displayName('Sculptor')).toBe('Sculptor Dwarf Spheroidal');
+    expect(displayName('Bootes II')).toBe('Bootes II Dwarf Spheroidal');
   });
   it('exports the override map for callers that need to enumerate it', () => {
     expect(Object.keys(DISPLAY_NAME_OVERRIDES).sort()).toEqual(['LMC', 'SMC']);
   });
-  it('mergeRowAndOverride emits the display name on the LgObject', () => {
+  it('mergeRowAndOverride emits the display name on the LgObject (override path)', () => {
     const row: LvdbRow = {
       key: 'lmc',
       name: 'LMC',
@@ -354,6 +354,18 @@ describe('displayName overrides', () => {
     };
     const out = mergeRowAndOverride(row, override)!;
     expect(out.name).toBe('Large Magellanic Cloud');
+  });
+  it('mergeRowAndOverride emits the suffixed display name on the LgObject (LVDB-default path)', () => {
+    const row: LvdbRow = {
+      key: 'sculptor_1',
+      name: 'Sculptor',
+      ra: 15, dec: -33, distanceKpc: 84,
+      confirmedReal: 1, confirmedGalaxy: 1,
+      rhalfPhysicalPc: 270, ellipticity: 0.3, positionAngle: 99,
+      mVAbs: -11,
+    };
+    const out = mergeRowAndOverride(row, undefined)!;
+    expect(out.name).toBe('Sculptor Dwarf Spheroidal');
   });
 });
 

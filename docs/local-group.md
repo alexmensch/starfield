@@ -118,16 +118,21 @@ label helper from heliopause` commit). Each label binds to:
 
 ### Threshold policy
 
-| Family                                        | Threshold              |
-| --------------------------------------------- | ---------------------- |
-| MW label                                      | `MW_LABEL_THRESHOLD_PC` = 10 kpc from GC |
-| Override-supplied (LMC, SMC at 30 kpc; Sgr at 10 kpc) | `overrides.tsv` `label_threshold_pc` column |
-| Classical dSph (M_V ≤ −7.5, no override)      | `DEFAULT_LABEL_THRESHOLD_PC` = 20 kpc |
-| Ultra-faint (M_V > −7.5, no override)         | `SIZE_RELATIVE_LABEL_FACTOR × max(axes)` (N = 10) — so a 50 pc Bootes II surfaces inside ~500 pc, a 270 pc Sculptor-class inside ~2.7 kpc. Surfaces small dwarfs at close approach without cluttering wide-field views. |
+The MW and LG labels use **opposite** predicate directions because
+Sol's relation to each is different:
+
+| Family                                        | Predicate | Threshold |
+| --------------------------------------------- | --------- | --------- |
+| MW label                                      | `camera-to-GC ≥ T` (fires when **outside** the disc; Sol sits inside it) | `MW_LABEL_THRESHOLD_PC` = 10 kpc |
+| Override-supplied (Large MC, Small MC at 30 kpc; Sgr at 10 kpc) | `camera-to-object ≤ T` (fires when **close enough** to identify) | `overrides.tsv` `label_threshold_pc` column |
+| Classical dSph (M_V ≤ −7.5, no override)      | same close-approach | `DEFAULT_LABEL_THRESHOLD_PC` = 20 kpc |
+| Ultra-faint (M_V > −7.5, no override)         | same close-approach | `SIZE_RELATIVE_LABEL_FACTOR × max(axes)` (N = 10) — so a 50 pc Bootes II surfaces inside ~500 pc, a 270 pc Sculptor-class inside ~2.7 kpc |
 
 The fallback policy lives in `effectiveLabelThresholdPc(obj)`, exported
 from `local-group.ts` for testability (the DOM-binding wrapper around
-`createDistanceGatedLabel` isn't directly unit-testable).
+`createDistanceGatedLabel` isn't directly unit-testable). From the
+canonical first-load park at Sol every LG object is tens of kpc away
+— **all hidden by design**; labels reveal as the camera flies in.
 
 SVG slots live in `index.html` next to the heliopause label:
 

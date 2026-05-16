@@ -310,15 +310,27 @@ export function filterForRendering(rows: LvdbRow[]): LvdbRow[] {
 /** Display-name overrides applied at output. LVDB's `name` column drives
  *  override-merge (overrides.tsv → LVDB row) and per-row identity, but
  *  the on-disk + on-screen display string is rewritten through this
- *  map so the labels read as the names users actually recognise rather
- *  than the LVDB shortform. Mirrors the cloud-build pattern. */
+ *  map for objects whose canonical name diverges from the LVDB
+ *  shortform OR whose type-suffix differs from the default. */
 export const DISPLAY_NAME_OVERRIDES: Record<string, string> = {
   LMC: 'Large Magellanic Cloud',
   SMC: 'Small Magellanic Cloud',
 };
 
+/** Default type suffix appended to LVDB names that aren't in the
+ *  override map. Every dwarf galaxy at ≤ 250 kpc that we currently
+ *  render (52 objects: LMC, SMC, Sagittarius, and ~49 classical /
+ *  ultra-faint satellites) is a dSph, with LMC and SMC the only two
+ *  exceptions handled via DISPLAY_NAME_OVERRIDES. Without the suffix,
+ *  bare names like "Sculptor", "Draco", "Hercules" collide with the
+ *  constellation names; "Sagittarius" alone is ambiguous with the
+ *  Sagittarius Dwarf Irregular at 1.2 Mpc. Astronomers disambiguate
+ *  the same way in papers — we follow the convention. */
+export const DEFAULT_TYPE_SUFFIX = 'Dwarf Spheroidal';
+
 export function displayName(lvdbName: string): string {
-  return DISPLAY_NAME_OVERRIDES[lvdbName] ?? lvdbName;
+  if (lvdbName in DISPLAY_NAME_OVERRIDES) return DISPLAY_NAME_OVERRIDES[lvdbName];
+  return `${lvdbName} ${DEFAULT_TYPE_SUFFIX}`;
 }
 
 /** Default sky-plane oblate ellipsoid for an LVDB row with no override

@@ -353,6 +353,14 @@ export function createLocalGroupLabels(
     const obj = layer.objects[i];
     const threshold = effectiveLabelThresholdPc(obj);
     const elementId = `lg-${obj.id}-label`;
+    // Per-object close-approach predicate: label fires when the camera
+    // sits *inside* the object's threshold, not outside. Asymmetric
+    // with the MW label (which fires when camera leaves the disc
+    // because Sol sits inside the MW): for LG objects Sol is always
+    // outside, so the label policy is "show when close enough to
+    // identify the object". From the canonical first-load park at Sol,
+    // every LG object is tens of kpc away — all hidden by design;
+    // labels reveal as the camera approaches each object.
     // Mint the SVG <text> element. innerHTML escape is unnecessary
     // since both id and name come from our own build-time output
     // (object names are real catalogue entries, no user input).
@@ -382,7 +390,7 @@ export function createLocalGroupLabels(
           c.y + w.y - obj.centerAbs.y,
           c.z + w.z - obj.centerAbs.z,
         );
-        return tmpCam.length() >= threshold;
+        return tmpCam.length() <= threshold;
       },
       labelDir: LABEL_DIR,
       offsetPx: LABEL_OFFSET_PX,
