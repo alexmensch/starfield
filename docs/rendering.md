@@ -175,7 +175,7 @@ the depth buffer that transparent passes test against.
 | `-4`        | planet core depth mask                           | `planet-body-field.ts` |
 | `-3`        | Milky Way (volumetric disc + bulge)              | `milkyway.ts` |
 | `-2`        | molecular clouds                                 | `molecular-clouds.ts` |
-| `-1`        | galactic disc + galactic grid                    | `galactic-disc.ts`, `galactic-grid.ts` |
+| `-1`        | galactic disc + galactic grid + Local Group      | `galactic-disc.ts`, `galactic-grid.ts`, `local-group.ts` |
 | `0`         | star discs                                       | `stellata.ts` |
 | `1`         | star glow                                        | `stellata.ts` |
 | `1`         | heliopause shell                                 | `heliopause.ts` |

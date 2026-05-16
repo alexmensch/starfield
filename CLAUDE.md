@@ -45,6 +45,9 @@ defaults do NOT apply to this codebase. They are overridden by:
 scripts/
   build-catalog.ts        CSV → binary preprocessor (run at build time)
   build-clouds.py         Zucker 2020/2021 → clouds.json (Python; tiny output)
+  build-local-group.ts    LVDB + overrides.tsv → local-group.json (stellata-38m)
+  build-local-group-pure.ts  pure helpers (RA/Dec→ICRS, orient → quaternion, override merge)
+  build-local-group-pure.test.ts  vitest tests for build-local-group-pure
   build-dust.py           Edenhofer dust resampler + particle sampler (Python; LFS outputs)
   sync-dust.ts            mirror data/dust → public/dust on every dev/build
   verify-catalog.ts       sanity-check tool for the generated binary
@@ -61,6 +64,9 @@ data/                                All large catalogs tracked via Git LFS.
     zucker2021-table1.dat            Zucker 2021 3D bounding boxes (~1 KB)
     zucker2021-table2.dat            Zucker 2021 radial profile fits (kept for future)
     zucker2021-table3.dat            Zucker 2021 cloud masses (kept for future)
+  local-group/
+    lvdb-snapshot.csv                Pace 2024 LVDB dwarf_all (~430 KB, regular git — under the LFS threshold)
+    overrides.tsv                    hand-curated LMC / SMC / Sgr structural detail
   dust/
     chunk_X_Y_Z.bin                  64 voxel chunks, 2 MiB each, LFS
     particles.bin                    50K importance-sampled dust points (LFS)
@@ -70,6 +76,7 @@ public/
   constellations.json     generated (gitignored)
   search-index.json       generated (gitignored, ~13 MB raw, ~2 MB gzipped)
   clouds.json             generated (gitignored, ~30 KB)
+  local-group.json        generated (gitignored, ~20 KB)
   dust/                   gitignored mirror of data/dust/
 src/
   worker.ts               Cloudflare Worker entry (passthrough to ASSETS)
@@ -87,6 +94,10 @@ src/
     poi-overlay.ts        observe-mode pinned-star labels + arrows + rings
     cloud-loader.ts       fetch + parse public/clouds.json
     molecular-clouds.ts   3D ellipsoid render layer + raycast pick + fly-to
+    local-group-loader.ts fetch + parse public/local-group.json (stellata-38m)
+    local-group.ts        Local Group wireframe layer + MW label + per-object dwarf labels
+    galactic-fade.ts      shared FADE_INNER_PC / FADE_OUTER_PC + smoothstep (galactic-disc + local-group)
+    distance-gated-label.ts  silhouette-anchored SVG label engine (heliopause + MW + LG)
     scale-bar.ts          bottom-left SVG widget: scene-scale bar + perspective z-axis indicator pointing at the focused star/cloud
     unit-toggle.ts        pc/ly toggle in the panel
     theme-toggle.ts       programmatic theme API (no live UI; default dark)
@@ -179,6 +190,13 @@ Claude Code should read on demand when working on the relevant area.
 - **`docs/galactic-overlay.md`** — galactic disc outline, coordinate
   sphere (b/l grid), Sol/GC SVG arrows, HUD ring, navigate↔observe
   shaft-start lerp. Read when touching any of those layers.
+- **`docs/local-group.md`** — Local Group wireframe layer (LMC, SMC,
+  Sagittarius dSph, classical dSphs, LVDB ultra-faints within 250 kpc),
+  MW label, per-object dwarf labels via the shared distance-gated
+  label engine. Data pipeline + override schema + orient specs +
+  quaternion construction. Read when touching `local-group.{ts,
+  test.ts}`, `local-group-loader.ts`, `scripts/build-local-group*.ts`,
+  or `data/local-group/`.
 - **`docs/molecular-clouds.md`** — cloud ellipsoids: data, shader,
   the unified cloud-as-focus / cloud-as-vector-tip click and warp UX.
   Read when touching `molecular-clouds.ts` or cloud picking.
