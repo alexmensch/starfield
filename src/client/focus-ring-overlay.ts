@@ -1,15 +1,31 @@
 import * as THREE from 'three';
 import type { Stellata } from './stellata';
 import { projectToScreen } from './overlay-project';
+import { setNumAttr, setStyle } from './dirty-attr';
 
-const RADIUS_PX = 24;
+// Canonical screen-pixel radius for the dashed focus ring. Exported so the
+// HUD ring (which morphs out of it during navigate↔observe transitions) and
+// the POI ring (same visual indicator at a different anchor) can pin to the
+// same value instead of carrying duplicate magic numbers.
+export const FOCUS_RING_RADIUS_PX = 24;
 
 export function createFocusRingOverlay(stellata: Stellata) {
   const ring = document.getElementById('focus-ring') as unknown as SVGCircleElement;
   const v = new THREE.Vector3();
 
-  const hide = () => { ring.style.display = 'none'; };
-  const show = () => { ring.style.display = ''; };
+  // Sentinel-init: NaN for numeric attrs (any real write differs by > 0.05)
+  // and a poison string for display (any 'none' / '' write differs from the
+  // poison). Without poison, the first show() after init would skip the
+  // write because the steady-state display is '' and the DOM default is '',
+  // but a parent stylesheet could resolve `pointer-events` / `visibility`
+  // differently — keep the first-frame write explicit.
+  let lastCx = NaN;
+  let lastCy = NaN;
+  let lastR = NaN;
+  let lastDisplay = '\0';
+
+  const hide = () => { lastDisplay = setStyle(ring, 'display', 'none', lastDisplay); };
+  const show = () => { lastDisplay = setStyle(ring, 'display', '', lastDisplay); };
 
   const syncVisibility = () => {
     if (stellata.getFocusedStar() === null) hide();
@@ -23,7 +39,7 @@ export function createFocusRingOverlay(stellata: Stellata) {
     if (idx === null) return;
 
     // During the navigate↔observe transition the ring smoothly shrinks to
-    // 0 (enter) or grows back to RADIUS_PX (exit) so it visually morphs
+    // 0 (enter) or grows back to FOCUS_RING_RADIUS_PX (exit) so it visually morphs
     // into the HUD ring instead of popping out. In steady-state observe
     // the ring stays hidden — the HUD ring takes over the "you are here"
     // role.
@@ -34,11 +50,11 @@ export function createFocusRingOverlay(stellata: Stellata) {
     }
 
     const camera = stellata.camera;
-    let r = RADIUS_PX;
+    let r = FOCUS_RING_RADIUS_PX;
     if (transition) {
       r = transition.kind === 'enter'
-        ? RADIUS_PX * (1 - transition.f)
-        : RADIUS_PX * transition.f;
+        ? FOCUS_RING_RADIUS_PX * (1 - transition.f)
+        : FOCUS_RING_RADIUS_PX * transition.f;
       if (r <= 0.5) {
         hide();
         return;
@@ -48,7 +64,7 @@ export function createFocusRingOverlay(stellata: Stellata) {
       // disc exceeds the ring diameter — the ring becomes redundant chrome
       // on top of the star. Skipped during transitions because the disc is
       // about to be hidden / has just appeared anyway.
-      if (stellata.renderedSizePx(idx) > RADIUS_PX * 2) {
+      if (stellata.renderedSizePx(idx) > FOCUS_RING_RADIUS_PX * 2) {
         hide();
         return;
       }
@@ -84,9 +100,9 @@ export function createFocusRingOverlay(stellata: Stellata) {
       sy = projected[1];
     }
 
-    if (ring.style.display === 'none') show();
-    ring.setAttribute('cx', sx.toFixed(1));
-    ring.setAttribute('cy', sy.toFixed(1));
-    ring.setAttribute('r', r.toFixed(1));
+    show();
+    lastCx = setNumAttr(ring, 'cx', sx, lastCx);
+    lastCy = setNumAttr(ring, 'cy', sy, lastCy);
+    lastR = setNumAttr(ring, 'r', r, lastR);
   });
 }

@@ -7,6 +7,7 @@ import {
   ARROW_LABEL_OFFSET_PX,
   ARROW_LABEL_PADDING_PX,
 } from './arrow-path';
+import { applyFade, emptyFadeState, setNumAttr, setStrAttr, setStyle, setText } from './dirty-attr';
 
 // Source-end offset — shaft starts past the focus ring (radius 24 px) so it
 // doesn't crowd the focused star's disc. Matches the Sol/GC arrow start
@@ -15,6 +16,12 @@ const SOURCE_OFFSET_PX = 28;
 // Cap how far past the viewport the clipped "off-screen" endpoint can extend,
 // so the generated SVG path doesn't contain absurd coordinates.
 const MAX_OFFSCREEN_FACTOR = 1.5;
+// Module-level scratches for projectWithNearClip — the function is called
+// at most once per frame from this module's onFrame handler, so a shared
+// scratch costs nothing and avoids three Vector3 allocations per frame.
+const projVa = /*@__PURE__*/ new THREE.Vector3();
+const projVb = /*@__PURE__*/ new THREE.Vector3();
+const projEnd = /*@__PURE__*/ new THREE.Vector3();
 
 export function createDistanceVectorOverlay(
   stellata: Stellata,
@@ -35,14 +42,43 @@ export function createDistanceVectorOverlay(
   // hide() through several bail paths, so an unguarded hide ran 60×/sec
   // any time no vector was set.
   let visible = false;
+  // Dirty-tracked attribute state — the per-frame handler recomputes every
+  // value, but on a stationary camera the values are identical to the
+  // previous frame. Skipping setAttribute / textContent / style writes
+  // avoids SVG re-parse and inline-style invalidation cost. NaN / '\0'
+  // sentinels guarantee the first write always lands through the gate.
+  let lastLineD = '\0';
+  let lastLineBgD = '\0';
+  let lastLabelText = '\0';
+  let lastLabelX = NaN;
+  let lastLabelY = NaN;
+  let lastWarpX = NaN;
+  let lastWarpY = NaN;
+  // Fade state (opacity + pointer-events) shared with hud-overlay's
+  // Sol/GC arrows so the three reference arrows fade in unison under the
+  // same dirty-track / pointer-policy contract. See applyFade in dirty-attr.ts.
+  const fadeState = emptyFadeState();
+  let lastDistUiDisplay = '\0';
+  // Cache getComputedTextLength keyed on the rendered string. SVG's
+  // getComputedTextLength forces a layout flush; it's stable for a given
+  // string + font, so once measured we don't need to re-measure on a
+  // stationary camera. The cache is invalidated once when document.fonts.ready
+  // fires so a fallback-font measurement doesn't get pinned past the
+  // webfont swap — see attachFontsReadyInvalidation.
+  const labelWidthCache = makeLabelWidthCache();
+  attachFontsReadyInvalidation(
+    labelWidthCache,
+    (document as Document & { fonts?: { ready?: Promise<unknown> } }).fonts,
+  );
+
   const hide = () => {
     if (!visible) return;
-    line.setAttribute('d', '');
-    lineBg.setAttribute('d', '');
+    lastLineD = setStrAttr(line, 'd', '', lastLineD);
+    lastLineBgD = setStrAttr(lineBg, 'd', '', lastLineBgD);
     // Hide the whole UI group so both label and warp suffix disappear at
     // once. Using display rather than clearing textContent keeps the static
     // warp element in the DOM so its :hover styling keeps working on show.
-    distUi.style.display = 'none';
+    lastDistUiDisplay = setStyle(distUi, 'display', 'none', lastDistUiDisplay);
     visible = false;
   };
 
@@ -114,8 +150,8 @@ export function createDistanceVectorOverlay(
 
     const d = buildArrowSvgPath(shaftStartX, shaftStartY, tipX, tipY);
     if (!d) { hide(); return; }
-    line.setAttribute('d', d);
-    lineBg.setAttribute('d', d);
+    lastLineD = setStrAttr(line, 'd', d, lastLineD);
+    lastLineBgD = setStrAttr(lineBg, 'd', d, lastLineBgD);
 
     // True 3D distance, always shown regardless of clipping.
     const dx = tmpB.x - tmpA.x;
@@ -132,39 +168,42 @@ export function createDistanceVectorOverlay(
     const anchorX = exit ? exit[0] : tipX;
     const anchorY = exit ? exit[1] : tipY;
     if (!visible) {
-      distUi.style.display = '';
+      lastDistUiDisplay = setStyle(distUi, 'display', '', lastDistUiDisplay);
       visible = true;
     }
-    label.textContent = `${destLabel} · ${fmtDist(distPc)}`;
+    const labelText = `${destLabel} · ${fmtDist(distPc)}`;
+    lastLabelText = setText(label, labelText, lastLabelText);
     // The label is anchor-start so `x` is its left edge; subtract its width
     // from the right-side clamp so the visible text stays inside the
-    // viewport when the line exits near the right edge.
-    const labelWidth = label.getComputedTextLength();
+    // viewport when the line exits near the right edge. Caching by text
+    // content avoids the per-frame layout flush forced by getComputedTextLength.
+    let labelWidth = labelWidthCache.px;
+    if (labelText !== labelWidthCache.text) {
+      labelWidth = label.getComputedTextLength();
+      labelWidthCache.text = labelText;
+      labelWidthCache.px = labelWidth;
+    }
     const labelAnchorX = anchorX + ARROW_LABEL_OFFSET_PX + ARROW_HEAD_DEPTH_PX;
     const labelAnchorY = anchorY - ARROW_LABEL_OFFSET_PX;
     const mxMax = Math.max(ARROW_LABEL_PADDING_PX, w - ARROW_LABEL_PADDING_PX - labelWidth);
     const mx = Math.max(ARROW_LABEL_PADDING_PX, Math.min(mxMax, labelAnchorX));
     const my = Math.max(ARROW_LABEL_PADDING_PX, Math.min(h - ARROW_LABEL_PADDING_PX, labelAnchorY));
-    label.setAttribute('x', mx.toFixed(1));
-    label.setAttribute('y', my.toFixed(1));
+    lastLabelX = setNumAttr(label, 'x', mx, lastLabelX);
+    lastLabelY = setNumAttr(label, 'y', my, lastLabelY);
 
     // Position the warp affordance to the right of the distance label.
-    warpText.setAttribute('x', (mx + labelWidth + WARP_GAP_PX).toFixed(1));
-    warpText.setAttribute('y', my.toFixed(1));
+    const warpX = mx + labelWidth + WARP_GAP_PX;
+    lastWarpX = setNumAttr(warpText, 'x', warpX, lastWarpX);
+    lastWarpY = setNumAttr(warpText, 'y', my, lastWarpY);
 
     // Navigate-mode disc-coverage fade — drops opacity to 0 as the focused
     // star's disc grows past the standard Sol/GC chevron length. Same alpha
-    // is applied to the HUD Sol/GC arrows so all three reference arrows
-    // fade in unison; computation lives in Stellata so consumers stay
-    // synchronised within a frame. Pointer-events suppressed below half so
-    // the (barely visible) label + warp affordance don't accept stray
-    // clicks during fade-out.
-    const alpha = stellata.getNavigateArrowFadeAlpha();
-    const a = alpha.toFixed(3);
-    line.style.opacity = a;
-    lineBg.style.opacity = a;
-    distUi.style.opacity = a;
-    distUi.style.pointerEvents = alpha >= 0.5 ? '' : 'none';
+    // is applied to the HUD Sol/GC arrows via the shared applyFade so all
+    // three reference arrows fade in unison; computation lives in Stellata
+    // so consumers stay synchronised within a frame. Pointer-events on the
+    // ui group go through the same helper (suppressed below half-alpha so
+    // the barely-visible label + warp affordance don't accept stray clicks).
+    applyFade([line, lineBg, distUi], distUi, stellata.getNavigateArrowFadeAlpha(), fadeState);
   });
 }
 
@@ -175,27 +214,30 @@ export function projectWithNearClip(
   w: number,
   h: number,
 ): { pA: [number, number]; pB: [number, number] } | null {
-  const vA = worldA.clone().applyMatrix4(camera.matrixWorldInverse);
-  const vB = worldB.clone().applyMatrix4(camera.matrixWorldInverse);
+  // Module-scope scratches replace the per-call .clone() — caller invokes
+  // this at most once per frame so a shared scratch is safe and avoids the
+  // three Vector3 allocations.
+  projVa.copy(worldA).applyMatrix4(camera.matrixWorldInverse);
+  projVb.copy(worldB).applyMatrix4(camera.matrixWorldInverse);
   const threshold = -camera.near;
 
   // If the focus star itself is behind the camera, we can't draw a
   // meaningful origin — bail out.
-  if (vA.z >= threshold) return null;
+  if (projVa.z >= threshold) return null;
 
-  let endView = vB;
-  if (vB.z >= threshold) {
+  let endView = projVb;
+  if (projVb.z >= threshold) {
     // Destination is behind the camera; clip the segment at the near plane
     // so the chevrons still extend toward where it would be.
-    const denom = vB.z - vA.z;
+    const denom = projVb.z - projVa.z;
     if (Math.abs(denom) < 1e-9) return null;
-    const t = (threshold - vA.z) / denom;
+    const t = (threshold - projVa.z) / denom;
     if (!(t > 0 && t <= 1)) return null;
-    endView = vA.clone().lerp(vB, t);
+    endView = projEnd.copy(projVa).lerp(projVb, t);
     endView.z = threshold - 1e-4;
   }
 
-  const ndcA = vA.applyMatrix4(camera.projectionMatrix);
+  const ndcA = projVa.applyMatrix4(camera.projectionMatrix);
   const ndcB = endView.applyMatrix4(camera.projectionMatrix);
 
   const pA: [number, number] = [
@@ -220,6 +262,45 @@ export function projectWithNearClip(
   }
 
   return { pA, pB };
+}
+
+/**
+ * Cache for SVG getComputedTextLength results. The key is the rendered
+ * text alone; on a webfont load (FOUT/FOIT) the *same* text reflows to a
+ * different pixel width, so the cache must be invalidated when the
+ * webfonts settle — see attachFontsReadyInvalidation. Without that, the
+ * right-edge clamp + warp affordance stay pinned to the fallback-font
+ * measurement for the lifetime of the page (the 9mm.149 bug).
+ */
+export interface LabelWidthCache {
+  text: string;
+  px: number;
+}
+
+export function makeLabelWidthCache(): LabelWidthCache {
+  return { text: '', px: 0 };
+}
+
+/**
+ * Attach a one-shot listener to document.fonts.ready that zeros the cache
+ * so the next per-frame call re-measures with the loaded webfont. Settles
+ * within a few hundred ms of page load (or fires immediately if all fonts
+ * were already in cache). The try/catch + optional-chaining guard older
+ * browsers where the Fonts API isn't present — the cache simply stays
+ * text-keyed, which is the pre-fix behaviour.
+ */
+export function attachFontsReadyInvalidation(
+  cache: LabelWidthCache,
+  fonts: { ready?: Promise<unknown> } | undefined,
+): void {
+  try {
+    fonts?.ready?.then(() => {
+      cache.text = '';
+      cache.px = 0;
+    }).catch(() => { /* ignored: cache stays text-keyed */ });
+  } catch {
+    /* ignored: fonts API not available */
+  }
 }
 
 // Liang-Barsky exit point: where does segment (ax,ay)→(bx,by) leave the
