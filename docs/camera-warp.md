@@ -22,7 +22,7 @@ lerp).
 Two- or three-phase animation in `stellata.ts updateWarp`, depending
 on whether the warp re-enters OBSERVE on arrival:
 
-1. **Reorient** (`WARP_REORIENT_MS` = 2000). Camera position
+1. **Reorient** (`WARP_REORIENT_MS` = 1800). Camera position
    spherically slerps around A from wherever the user was to `A +
    dirBack × sourceOffset` (on the travel line, offset behind A from
    B's perspective). Simultaneously the orbit distance eases linearly
@@ -51,13 +51,84 @@ on whether the warp re-enters OBSERVE on arrival:
      the destination" before the fly phase begins.
 
 2. **Fly** (log-scaled duration, `WARP_T_MIN_MS` to `WARP_T_MAX_MS`).
-   Straight-line lerp from `pStart` (= A + dirBack × sourceOffset) to
-   `pEnd` (= B − forward × endOffset) with a symmetric
-   accelerate/decelerate profile: `f(t) = 2t²` for `t < 0.5`, else
-   `1 − 2(1−t)²`. `camera.lookAt(B)` throughout.
+   Camera position rides the line from `pStart` (= A + dirBack ×
+   sourceOffset) to `pEnd` (= B − forward × endOffset), delegated to
+   `camera-motion.ts`'s `tickArrival` so the Fly phase shares the
+   shipped arrival profile with focus-park and unfocus. The profile is
+   the **hybrid two-regime curve** — linear-d piecewise-quad outer
+   (rocket-impulse, parallax-driven) → quintic smootherstep on
+   angular-size inner (smooth perceptual landing on disc growth), with
+   a single tunable seam-distance multiplier. See
+   `docs/camera-arrival.md` § Profile for the geometry and the
+   panel-knob wiring. `camera.lookAt(B)` throughout.
+
+   **Mid-Fly floating-origin recentre.** The moment the camera passes
+   the trajectory midpoint (`|camera − B|² < ¼·|B − A|²` — the
+   "source star is behind the camera" cue), `updateWarp` calls
+   `tryMidFlyRecentre`, which shifts the floating origin onto the
+   destination's absolute anchor and migrates the in-flight
+   `WarpState` waypoints + `ArrivalState` cached vectors into the
+   new frame via `shiftWarpWaypoints` + `shiftArrivalWaypoints`.
+   After the shift, `dest.localPositionInto` returns ≈(0,0,0), so
+   the per-frame `lookAt(B)` becomes `lookAt(local origin)` —
+   geometrically equivalent, numerically clean.
+
+   Why this exists: any log-d Fly profile (cubic-Hermite fallback for
+   clouds + outbound, and the hybrid curve's inner regime on θ for
+   stars) parks the camera inside `|B − camera| < ULP(|B|)` for some
+   non-trivial window of long-range arrivals (e.g. Betelgeuse → Sol).
+   In that zone `B − camera.position` loses all Float32 precision and
+   the `lookAt` quaternion jitters across representable values, so
+   the destination renders off-screen for several frames before
+   `finishWarp` recentres and snaps it to NDC origin. Recentring
+   mid-Fly eliminates the chaos zone entirely (stellata-2br.5). The
+   issue was first surfaced under the cubic-Hermite log-d profile,
+   which sat inside that zone for the last ~19 % of Fly; the hybrid
+   curve's angular-size inner regime is geometrically cleaner but
+   still terminates close enough to the destination that the same
+   recentre is the right answer.
+
+   Kind-agnostic via the `FocusTarget` contract — works for any
+   focusable kind that implements `anchorInto` and `applyFocus`.
+   `dest.applyFocus()` mutates focus state in place; the deferred
+   event family is fired from `finishWarp` via
+   `dest.emitFocusEvents()` so the search-row label and friends
+   settle in lock-step with the camera landing rather than ~half a
+   warp duration early.
+
+   **Chart-mode plateau-trigger.** Chart mode renders stars as
+   magnitude-driven discs (`pxSize = mix(maxPx, minPx, chartT)` with
+   `chartT = clamp((appMag − magBright)/(maxAppMag − magBright), 0, 1)`
+   — see `docs/chart-mode.md` §Star disc sizing). Once the camera is
+   close enough that `appMag ≤ uChartMagBright`, `chartT` floors to 0
+   and the disc plateaus at `uChartDiscMaxPx`. Under both the hybrid
+   inner regime and the cubic-Hermite fallback, the camera spends much
+   longer in the close-approach window than under the legacy piecewise
+   profile — so the user can sit for hundreds of milliseconds inside
+   the plateau zone watching a disc that doesn't grow, with no
+   perceptual progress signal. Pivot to phase 3 early instead: when
+   chart mode is active (observe-only) at warp start, cache the
+   plateau distance via
+   `dest.chartPlateauDistance(uChartMagBright)` (`chart-disc-pure.ts`
+   solves the distance-modulus identity for the threshold magnitude:
+   `d = 10^((magBright − absMag + 5)/5)` pc — Sol's default plateau
+   sits at ~0.43 pc, Betelgeuse's at ~58.9 pc). During Fly, once the
+   camera is inside that radius AND mid-Fly recentre has fired, pin
+   `state.pEnd` to the current camera position and shrink
+   `state.durationMs` to the elapsed Fly time so the next frame falls
+   into phase 3 with `flyEndQuaternion` captured from the live
+   lookAt(dest) orientation. Phase 3's parallax slerp then carries
+   the perceptual progress signal across the plateau zone (a flatlined
+   disc + a rotating camera reads as motion). Gated on
+   `recenteredToDest` so the dest-local position check is well-conditioned
+   (target at (0,0,0), no ULP residual) and so the transition can't fire
+   before the floating-origin shift cleans up the projection chain.
+   Clouds return `null` from `chartPlateauDistance` — chart mode
+   renders them as isobar contours rather than discs, no plateau to
+   detect.
 
 3. **Post-arrival reorient** (only when `returnToObserve`, duration =
-   `OBSERVE_TRANSITION_MS` = 1200 ms). Quaternion slerps from the
+   `OBSERVE_TRANSITION_MS` = 1800 ms). Quaternion slerps from the
    fly-end "looking at B" orientation back to the `startQuaternion`
    snapshot taken at warp start. The user sees the same celestial
    direction they were facing when they picked the destination, now

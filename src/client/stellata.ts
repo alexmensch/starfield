@@ -46,7 +46,46 @@ import {
   parkDistance,
   tickFocusLerp,
 } from './focus-transition';
+import { type ArrivalState, newArrival, shiftArrivalWaypoints, tickArrival } from './camera-motion';
 import { shiftWarpWaypoints } from './warp-pure';
+import type { FocusTarget } from './focus-target';
+import { chartPlateauDistancePc } from './chart-disc-pure';
+// Locally used subset — stellata.ts still reads these in its body.
+// The other warp-timing constants are re-exported below for any
+// external import path that points at './stellata' instead of
+// './warp-constants', without bringing unused names into local scope.
+import {
+  AIM_T_MAX_MS,
+  AIM_T_MIN_MS,
+  FOCUS_LERP_MS,
+  OBSERVE_TRANSITION_MS,
+} from './warp-constants';
+export {
+  AIM_T_MAX_MS,
+  AIM_T_MIN_MS,
+  CAMERA_LERP_MS,
+  FOCUS_LERP_MS,
+  OBSERVE_TRANSITION_MS,
+  WARP_REORIENT_MS,
+  WARP_T_K_MS,
+  WARP_T_MAX_MS,
+  WARP_T_MIN_MS,
+} from './warp-constants';
+import {
+  recordLastWarp,
+  warpArrivalEaseFn,
+  warpArrivalHybridSeamK,
+  warpChartPhase3Alpha,
+  warpChartPhase3ScalingEnabled,
+  warpChartPlateauMargin,
+  warpFlyTKMs,
+  warpFlyTMaxMs,
+  warpFlyTMinMs,
+  warpMidFlyRecentreFrac,
+  warpObserveTransitionMs,
+  warpReorientMs,
+} from './warp-tuning';
+import { hybridUSeam } from './arrival-curves';
 import { EventBus } from './event-bus';
 
 export type MagPresetName = 'naked-eye' | 'binoculars' | 'all';
@@ -235,6 +274,17 @@ const VAR_TROUGH_FLOOR_FRACTION = 0.2;
 // just keeps Math.log10 / division well-defined at the singular point.
 const DCAM_LOG_FLOOR_PC = 1e-30;
 
+// Floor on a catalog `physicalRadius[idx]` (in solar radii) before
+// converting to parsecs (`* R_SUN_PC`). Keeps R > 0 in geometric
+// formulas — angular-arrival θ = R/d, perceptual-disc kernels, the
+// hybrid arrival curve's inner regime. 1e-9 R_sun ≈ 0.7 km, six
+// orders of magnitude below any catalog entry, so the clamp never
+// fires on real data; it just defines a numerically-safe limit. Six
+// pre-existing sites in this file floor the same quantity at 1e-9 or
+// 1e-6 inconsistently (stellata-9mm.195) — migrate them off the
+// literals as part of that bead, not here.
+const MIN_PHYSICAL_RADIUS_R_SUN = 1e-9;
+
 // Squared-length threshold below which `controls.target` is treated as
 // coincident with the local origin (= focal-star position). Engages the
 // uPinFocusToCenter shader pin so the focused star renders at NDC (0,0)
@@ -261,37 +311,17 @@ const BINARY_MIN_DIST_FACTOR = 1 / Math.tan(BINARY_VIEWPORT_HALF_ANGLE_RAD);
 //   2. Fly — straight-line flight from pStart to pEnd with a symmetric
 //      accelerate/decelerate profile. Duration scales log-linearly with
 //      distance and caps at MAX.
-// End offset matches the destination star's effective minDistance so the
-// warp parks exactly where the user can then orbit.
-export const WARP_T_MIN_MS = 5000;
-export const WARP_T_MAX_MS = 20000;
-export const WARP_T_K_MS = 2000;
-
-// Canonical 2 s duration used everywhere the camera lerps under
-// non-warp dispatch — focus-park glide, warp reorient phase, aim
-// animation upper bound. One literal so the three motions read as
-// the same family. (WARP_T_K_MS above is a log-scale flight
-// coefficient with different semantics — it stays separate.)
-export const CAMERA_LERP_MS = 2000;
-export const WARP_REORIENT_MS = CAMERA_LERP_MS;
-export const FOCUS_LERP_MS = CAMERA_LERP_MS;
+// End offset matches the destination star's effective minDistance so
+// the warp parks exactly where the user can then orbit. Warp + camera-
+// lerp duration constants live in `./warp-constants` to break the
+// import cycle with `./warp-tuning` (which needs them as initial knob
+// defaults). Re-exported here so any existing import paths keep working.
 
 // Arbitrary reference axis for the reorient slerp. Any fixed unit vector
 // works — the two setFromUnitVectors calls each produce a quaternion rotating
 // this vector to one of the two endpoints, and slerp between them gives the
 // shortest-arc interpolation on the sphere.
 const WARP_BASE_DIR = new THREE.Vector3(0, 0, 1);
-
-// Aim animation: rotate the camera around `controls.target` so a chosen
-// world point lands at the centre of the view. Capped at 2 s so even a
-// 180° swing stays snappy; floored at 250 ms so trivial nudges still ease.
-export const AIM_T_MAX_MS = CAMERA_LERP_MS;
-export const AIM_T_MIN_MS = 250;
-
-// OBSERVE-mode entry/exit translate animation. Travel distance is always
-// parkDistForStar (sub-parsec) so a fixed duration reads as a brief glide
-// rather than a warp.
-export const OBSERVE_TRANSITION_MS = 1200;
 
 export type CameraMode = 'navigate' | 'observe';
 
@@ -322,6 +352,13 @@ interface ObserveTransitionState {
   // pushed outward when the lerp begins; this value tightens minDistance to
   // the parking distance once the lerp completes.
   finalMinDistance?: number;
+  // Park-arrival state for 'unfocus' (the outbound zoom from inside parkDist
+  // back to the former focal star's park distance). Set only on the unfocus
+  // path; updateObserveTransition delegates that branch to tickArrival so
+  // 2br.3's log-distance profile can be swapped in by touching the helper
+  // alone. enter/exit aren't park-arrivals (see docs/camera-arrival.md
+  // § Inventory) and keep their inline smoothstep.
+  arrival?: ArrivalState;
 }
 
 interface AimState {
@@ -355,14 +392,48 @@ interface WarpState {
   pStart: THREE.Vector3;   // fly start = A + dirBack * sourceOffset
   pEnd: THREE.Vector3;     // fly end = B - forward * endOffset
   endOffset: number;       // arrival viewing distance for the destination
-  // Source-side reorient distance — parkDistForStar(source) when warping
-  // from a focused star, cloudViewingDistancePc(source) when warping
-  // from a focused cloud. Decoupled from endOffset so warps from a
-  // giant source (e.g. Betelgeuse) to a small destination (Sol) don't
-  // place pStart inside the source's rendered disc.
+  // Source-side reorient distance — `source.parkRadius()` snapshotted at
+  // warp start. Decoupled from `endOffset` so warps from a giant source
+  // (e.g. Betelgeuse) to a small destination (Sol) don't place `pStart`
+  // inside the source's rendered disc.
   sourceOffset: number;
-  destKind: 'star' | 'cloud';
-  destIdx: number;
+  // Per-object handlers for the warp's two endpoints. `source` carries
+  // the kind / idx / geometry of whatever was focused when the warp
+  // launched; `dest` carries the same for the destination. The warp
+  // animation code reads geometry via `localPositionInto` /
+  // `anchorInto` / `parkRadius` and mutates focus state via
+  // `applyFocus` / `emitFocusEvents` — never via destKind switches.
+  // Adding a new focusable kind (planet, probe, …) is a matter of
+  // implementing `FocusTarget` and plumbing pick / click handling;
+  // this file does not need to change. See `docs/architecture.md`
+  // § FocusTarget contract.
+  //
+  // `source` is non-null because `warpTo` / `warpToCloud` both bail
+  // when nothing is focused. Carrying the source as a FocusTarget
+  // (rather than just sourceOffset) keeps the door open for the
+  // dispatcher to be lifted into a shared helper later.
+  source: FocusTarget;
+  dest: FocusTarget;
+  // True after a mid-flight recentre has moved the floating origin
+  // onto the destination. Once set:
+  //   - `dest.localPositionInto(out)` returns ≈(0,0,0) — `lookAt(out)`
+  //      escapes the Float32 ULP fight in `B − camera.position` that
+  //      otherwise jitters lookAt's quaternion through the last decade
+  //      of distance (the close-approach chaos zone the log-distance
+  //      profile started visiting heavily — stellata-2br.5).
+  //   - `dest.applyFocus` has already mutated focus state; the
+  //      deferred event family is fired from `finishWarp` via
+  //      `dest.emitFocusEvents`.
+  //   - The pin guard relaxes (`isPinEngaged` lets the shader pin
+  //      engage during the post-recentre Fly window — the focal
+  //      object is at local (0,0,0) and the camera is doing
+  //      `lookAt(local origin)` per frame, so pin-to-NDC matches the
+  //      geometry the camera is already producing).
+  // Set in updateWarp's mid-Fly recentre branch (navigate arrivals)
+  // and in updateWarp's phase-3 recentre branch (observe→observe
+  // arrivals — the same fix, originally landed for stellata-fqw, that
+  // the navigate-mode path now also adopts).
+  recenteredToDest: boolean;
   // Warp originated from OBSERVE mode. finishWarp re-enters observe at the
   // destination star; uHideFocusIdx stays pinned to the source star for the
   // entire warp so the camera doesn't briefly render "from inside the star"
@@ -389,6 +460,49 @@ interface WarpState {
   // those use lookAt(A) per frame, which keeps A perfectly centered as
   // the camera swings around it.
   reorientEndQuaternion?: THREE.Quaternion;
+  // Fly-phase park-arrival. The Fly position lerp delegates to tickArrival
+  // so the same easing covers focus-park, warp Fly, and unfocus. Captured
+  // at warp start with startMs = startTimeMs + reorientMs (Fly begins
+  // after the reorient phase). Quaternion is omitted — the Fly phase calls
+  // lookAt(B) per frame. Phase 3 (returnToObserve only) keeps its own
+  // inline lerp because it's an observe handover, not a park-arrival
+  // (docs/camera-arrival.md § Inventory).
+  flyArrival: ArrivalState;
+  // Hybrid arrival profile's outer→inner seam u-value, captured at
+  // warp-Fly construction via `hybridUSeam(d0, dEnd, R, seam_k)`.
+  // Sentinel values: `-1` → fallback (cubic-Hermite log-d, no regime
+  // split — fires for clouds / outbound / null-R); `1` → pure outer
+  // (seam_k ≤ 1, no meaningful inner regime); `0` → pure inner
+  // (d_seam ≥ d0, no meaningful outer). Otherwise in the clamp window
+  // `[0.3, 0.85]`. Used by `getWarpPhase` for the live regime
+  // indicator in the debug-panel warp readout.
+  flyArrivalUSeam: number;
+  // Chart-mode close-approach plateau distance. Set only when the warp
+  // launches into a chart-mode observe-mode arrival (`returnToObserve`
+  // + `filter.chart` + dest implements `chartPlateauDistance`). The
+  // Fly phase pivots to phase 3 the moment the camera enters this
+  // radius around the destination, because in chart mode the rendered
+  // disc plateaus at `uChartDiscMaxPx` once `appMag ≤ uChartMagBright`
+  // — further approach produces no visible growth, leaving the user
+  // with no perceptual progress signal across the close-approach
+  // window. Phase 3's parallax slerp then carries the progress cue.
+  // `null` (or undefined) disables the plateau-trigger and Fly runs
+  // to its full `durationMs` — the legacy navigate / non-chart-mode
+  // observe behaviour.
+  chartPlateauDist: number | null;
+  // Set the frame the chart-mode plateau-trigger fires (Fly → phase 3
+  // pivot). Used by the warp-tuning debug readout and surfaced in
+  // `recordLastWarp` at finishWarp time. Independent of
+  // `chartPlateauDist` being non-null — a warp that's in chart mode but
+  // never reaches plateau (e.g. the user skips it before entering the
+  // plateau zone) leaves this false.
+  chartPlateauTriggered: boolean;
+  // True when the plateau-trigger fired AND the debug panel's
+  // "chart phase-3 duration scaling" knob was enabled at that moment,
+  // so `state.postArrivalMs` was scaled by `1 + α·log10(d_trigger /
+  // endOffset)` instead of staying at the shipped `OBSERVE_TRANSITION_MS`
+  // default. Readout-only flag for the debug summary.
+  chartPhase3Scaled: boolean;
 }
 
 type Target = { kind: 'star'; idx: number } | { kind: 'cloud'; idx: number };
@@ -1118,6 +1232,65 @@ export class Stellata {
   getMonochrome(): boolean { return this.monochrome; }
   getWarpActive(): boolean { return this.warpState !== null; }
 
+  /** Read-only snapshot of in-flight warp state for the debug-panel
+   *  warp tuning readout. Returns null when no warp is active. Re-derives
+   *  `u` from elapsed-in-phase so callers don't need access to the
+   *  ArrivalState internals.
+   *
+   *  `flyRegime` is meaningful only when `kind === 'fly'`:
+   *    `'outer'` — linear-d piecewise-quad regime (u < u_seam).
+   *    `'inner'` — quintic-on-θ regime (u ≥ u_seam).
+   *    `'fallback'` — cubic-Hermite log-d (clouds, outbound, null R).
+   *  `'done'` is surfaced via `kind === 'post-arrival'`. */
+  getWarpPhase(): {
+    kind: 'reorient' | 'fly' | 'post-arrival' | 'idle';
+    elapsedMs: number;
+    totalMs: number;
+    u: number;
+    recenteredToDest: boolean;
+    chartPlateauDist: number | null;
+    chartPlateauTriggered: boolean;
+    flyRegime?: 'outer' | 'inner' | 'fallback';
+    flyArrivalUSeam?: number;
+  } | null {
+    const w = this.warpState;
+    if (!w) return null;
+    const elapsed = performance.now() - w.startTimeMs;
+    if (elapsed < w.reorientMs) {
+      const u = elapsed / w.reorientMs;
+      return {
+        kind: 'reorient', elapsedMs: elapsed, totalMs: w.reorientMs, u,
+        recenteredToDest: w.recenteredToDest,
+        chartPlateauDist: w.chartPlateauDist,
+        chartPlateauTriggered: w.chartPlateauTriggered,
+      };
+    }
+    const flyElapsed = elapsed - w.reorientMs;
+    if (flyElapsed < w.durationMs) {
+      const u = w.durationMs > 0 ? flyElapsed / w.durationMs : 1;
+      const uSeam = w.flyArrivalUSeam;
+      const flyRegime: 'outer' | 'inner' | 'fallback' =
+        uSeam < 0 ? 'fallback' : u < uSeam ? 'outer' : 'inner';
+      return {
+        kind: 'fly', elapsedMs: flyElapsed, totalMs: w.durationMs, u,
+        recenteredToDest: w.recenteredToDest,
+        chartPlateauDist: w.chartPlateauDist,
+        chartPlateauTriggered: w.chartPlateauTriggered,
+        flyRegime,
+        flyArrivalUSeam: uSeam,
+      };
+    }
+    const postElapsed = flyElapsed - w.durationMs;
+    const u = w.postArrivalMs > 0 ? Math.min(1, postElapsed / w.postArrivalMs) : 1;
+    return {
+      kind: 'post-arrival', elapsedMs: postElapsed,
+      totalMs: w.postArrivalMs, u,
+      recenteredToDest: w.recenteredToDest,
+      chartPlateauDist: w.chartPlateauDist,
+      chartPlateauTriggered: w.chartPlateauTriggered,
+    };
+  }
+
   // Warp endpoints + destination identity for read-only consumers (e.g.
   // the scale-bar focus indicator) that need to react to the in-flight
   // warp without subscribing to per-frame state. Returns null when no
@@ -1135,8 +1308,8 @@ export class Stellata {
     const w = this.warpState;
     if (!w) return null;
     const out = this._tmpWarpInfoB;
-    if (!this.destLocalPositionInto(w.destKind, w.destIdx, out)) return null;
-    return { A: w.A, B: out, destKind: w.destKind, destIdx: w.destIdx };
+    if (!w.dest.localPositionInto(out)) return null;
+    return { A: w.A, B: out, destKind: w.dest.kind, destIdx: w.dest.idx };
   }
 
   getCameraMode(): CameraMode { return this.cameraMode; }
@@ -1215,12 +1388,24 @@ export class Stellata {
   /** Whether the focused-star pin (uPinFocusToCenter) would engage right
    *  now, mirroring the per-frame guard in animate(). Read by the pin
    *  section of the unified debug panel (`debug.panel()`) to display
-   *  live state. */
+   *  live state.
+   *
+   *  The warp guard releases when `warpState.recenteredToDest` is true:
+   *  after the mid-Fly recentre (stellata-2br.5) the destination is at
+   *  local (0,0,0) and the camera is doing `lookAt(local origin)` per
+   *  frame, so pin-to-NDC matches the geometry `lookAt` is already
+   *  computing. The shader pin then bypasses any residual Float32
+   *  noise in the projection chain for the rest of Fly + into
+   *  finishWarp. focus-park lerp (`focusLerpState`) stays guarded —
+   *  that path slerps the camera quaternion through a non-lookAt arc
+   *  where pin-to-centre would snap-jump the focal star to NDC origin
+   *  before the slerp finishes turning into it. */
   isPinEngaged(): boolean {
     return (
       this.focusedStar !== null &&
       this.cameraMode === 'navigate' &&
-      !this.warpState && !this.aimState && !this.focusLerpState &&
+      (!this.warpState || this.warpState.recenteredToDest) &&
+      !this.aimState && !this.focusLerpState &&
       this.controls.target.lengthSq() < PIN_ENGAGE_THRESHOLD_SQ_PC
     );
   }
@@ -1740,6 +1925,10 @@ export class Stellata {
     const eyeDist = this.camera.position.distanceTo(target);
 
     if (animate && eyeDist > parkDist) {
+      // Cloud destination — `targetRadius: null` triggers the hybrid
+      // curve's fallback to cubic-Hermite. Clouds have no single
+      // geometric R (ellipsoid axes), so angular-size driving doesn't
+      // apply.
       this.startFocusLerp(newFocusLerpFrom(
         this.camera.position,
         startQuat,
@@ -1748,6 +1937,11 @@ export class Stellata {
         parkDist,
         FOCUS_LERP_MS,
         performance.now(),
+        warpArrivalEaseFn({
+          d0: eyeDist,
+          dEnd: parkDist,
+          targetRadius: null,
+        }),
       ));
       // controls.enabled stays true — see focusStar's comment.
     } else if (eyeDist > parkDist) {
@@ -1982,13 +2176,31 @@ export class Stellata {
         // every cursor movement would drag the view as if a button were
         // held. queueMicrotask doesn't help — the microtask checkpoint
         // drains between event listeners.
+        const unfocusStartMs = performance.now();
         this.observeTransition = {
-          startTimeMs: performance.now(),
+          startTimeMs: unfocusStartMs,
           durationMs: OBSERVE_TRANSITION_MS,
           fromPos,
           toPos,
           kind: 'unfocus',
           finalMinDistance: minDist,
+          arrival: newArrival({
+            pStart: fromPos,
+            pEnd: toPos,
+            target: { center: this.controls.target, parkDist: minDist },
+            startMs: unfocusStartMs,
+            durationMs: OBSERVE_TRANSITION_MS,
+            // Outbound — d0 < dEnd (camera was inside parkDist,
+            // moving outward to minDist). The hybrid curve detects
+            // outbound and falls back to cubic-Hermite; passing
+            // `targetRadius: null` enforces the same path even if
+            // a future curve cared about direction.
+            easeUFn: warpArrivalEaseFn({
+              d0: eye,
+              dEnd: minDist,
+              targetRadius: null,
+            }),
+          }),
         };
         this.bus.emit('state');
         return;
@@ -2287,6 +2499,12 @@ export class Stellata {
         parkDist,
         FOCUS_LERP_MS,
         performance.now(),
+        warpArrivalEaseFn({
+          d0: eyeDist,
+          dEnd: parkDist,
+          targetRadius:
+            Math.max(this.catalog.physicalRadius[starIndex], MIN_PHYSICAL_RADIUS_R_SUN) * R_SUN_PC,
+        }),
       ));
       // Deliberately do NOT toggle controls.enabled. The animate-loop
       // dispatcher routes through updateFocusLerp before
@@ -2335,6 +2553,115 @@ export class Stellata {
     this.controls.update();
   }
 
+  // Per-kind FocusTarget factories. The warp / camera-transition code
+  // consumes these objects rather than switching on a `destKind`
+  // literal; adding a new focusable kind = adding a factory + plumbing
+  // pick / click handling to it, then everything below
+  // (warp animation, mid-Fly recentre, pin guard, finishWarp event
+  // family) just works without touching the warp internals. See
+  // `docs/architecture.md` § FocusTarget contract.
+  //
+  // Both factories close over `this` so the returned object can read
+  // catalog / cloud data, mutate the per-kind focus field, and emit
+  // through the shared event bus without exposing Stellata's
+  // privates to focus-target.ts.
+
+  /** Build a FocusTarget for the star at catalog index `idx`. */
+  private makeStarFocusTarget(idx: number): FocusTarget {
+    // Captures whether a sibling-kind focus existed at the moment of
+    // applyFocus, so emitFocusEvents knows whether to emit a clearing
+    // 'cloudFocus' event for the displaced cloud focus. Snapshotted at
+    // applyFocus time because the focus fields may be mutated by other
+    // code between applyFocus and emitFocusEvents.
+    let cloudWasCleared = false;
+    return {
+      kind: 'star',
+      idx,
+      anchorInto: (out) => {
+        const p = this.catalog.positions;
+        out.set(p[idx * 3], p[idx * 3 + 1], p[idx * 3 + 2]);
+        return true;
+      },
+      localPositionInto: (out) => {
+        this.starLocalPositionInto(idx, out);
+        return true;
+      },
+      parkRadius: () => this.parkDistForStar(idx),
+      applyFocus: () => {
+        cloudWasCleared = this.focusedCloud !== null;
+        if (cloudWasCleared) this.focusedCloud = null;
+        this.focusedStar = idx;
+        this.controls.minDistance = this.minOrbitDistForStar(idx);
+        this.refreshPlanetSystem(idx);
+      },
+      emitFocusEvents: () => {
+        if (cloudWasCleared) this.bus.emit('cloudFocus', null);
+        this.bus.emit('focus', idx);
+        this.bus.emit('state');
+      },
+      physicalRadius: () =>
+        Math.max(this.catalog.physicalRadius[idx], MIN_PHYSICAL_RADIUS_R_SUN) * R_SUN_PC,
+      chartPlateauDistance: (magBright) =>
+        chartPlateauDistancePc(this.catalog.absmag[idx], magBright),
+    };
+  }
+
+  /** Build a FocusTarget for the cloud at index `idx`. Returns null
+   *  when the cloud layer hasn't loaded or the index is out of range —
+   *  callers should bail in that case rather than constructing a
+   *  half-valid warp. */
+  private makeCloudFocusTarget(idx: number): FocusTarget | null {
+    if (!this.clouds) return null;
+    const cloud = this.clouds.clouds[idx];
+    if (!cloud) return null;
+    let starWasCleared = false;
+    return {
+      kind: 'cloud',
+      idx,
+      anchorInto: (out) => {
+        out.copy(cloud.centerAbs);
+        return true;
+      },
+      localPositionInto: (out) => this.cloudLocalPositionInto(idx, out),
+      parkRadius: () => cloudViewingDistancePc(cloud),
+      applyFocus: () => {
+        starWasCleared = this.focusedStar !== null;
+        if (starWasCleared) {
+          this.focusedStar = null;
+          this.refreshPlanetSystem(null);
+          // Per-cloud minDistance floor isn't tracked today; mirror
+          // setFocus(null)'s clamp so the controls don't trap the
+          // camera further out than the cloud's parked pose.
+          const eye = this.camera.position.distanceTo(this.controls.target);
+          this.controls.minDistance = Math.min(GLOBAL_MIN_DIST_PC, eye);
+        }
+        this.focusedCloud = idx;
+      },
+      emitFocusEvents: () => {
+        if (starWasCleared) this.bus.emit('focus', null);
+        this.bus.emit('cloudFocus', idx);
+        this.bus.emit('state');
+      },
+      // Clouds have no single geometric radius — the ellipsoid axes
+      // vary by 2-3× per cloud. Angular-size-based arrival curves
+      // (e.g. `'hybrid'`) fall back to log-d when this returns null.
+      physicalRadius: () => null,
+      // Clouds render as isobar contours in chart mode (not as
+      // magnitude-driven discs), so there's no disc plateau to detect.
+      chartPlateauDistance: () => null,
+    };
+  }
+
+  /** Build a FocusTarget describing whichever object is currently
+   *  focused (star or cloud), or null if nothing is focused. Used as
+   *  the `source` side of a warp; the dispatch table sits in exactly
+   *  one place. */
+  private currentFocusTarget(): FocusTarget | null {
+    if (this.focusedStar !== null) return this.makeStarFocusTarget(this.focusedStar);
+    if (this.focusedCloud !== null) return this.makeCloudFocusTarget(this.focusedCloud);
+    return null;
+  }
+
   // Start an animated journey from the currently focused thing (star or
   // cloud) to a star at `destIdx`. Camera flies in a straight line with a
   // symmetric accelerate/decelerate profile. Orbit controls are disabled
@@ -2343,45 +2670,36 @@ export class Stellata {
   // No-ops if there's no focus, the destination equals the source, or the
   // two are coincident.
   warpTo(destIdx: number) {
-    const A = this.currentFocusLocalPos();
-    if (!A) return;
     if (destIdx === this.focusedStar) return;
+    const source = this.currentFocusTarget();
+    if (!source) return;
+    const A = new THREE.Vector3();
+    if (!source.localPositionInto(A)) return;
     const B = this.starLocalPosition(destIdx);
-    this.startWarp(A, B, 'star', destIdx, this.parkDistForStar(destIdx));
+    this.startWarp(A, B, source, this.makeStarFocusTarget(destIdx));
   }
 
   /** Cloud-destination warp — flies from the currently focused thing
    *  (star or cloud) to a cloud's centroid. Arrival distance is the
    *  cloud's recommended viewing distance (2.4 × max axis). */
   warpToCloud(destIdx: number) {
-    if (!this.clouds) return;
-    const cloud = this.clouds.clouds[destIdx];
-    if (!cloud) return;
     if (destIdx === this.focusedCloud) return;
-    const A = this.currentFocusLocalPos();
-    if (!A) return;
-    const B = this.tmpVec3b.copy(cloud.centerAbs).sub(this.worldOffset).clone();
-    this.startWarp(A, B, 'cloud', destIdx, cloudViewingDistancePc(cloud));
-  }
-
-  /** Local-frame position of whatever is currently focused (star or
-   *  cloud), or null if nothing is focused. Both warp paths read from
-   *  this so the source point follows the unified focus state. */
-  private currentFocusLocalPos(): THREE.Vector3 | null {
-    if (this.focusedStar !== null) return this.starLocalPosition(this.focusedStar);
-    if (this.focusedCloud !== null && this.clouds) {
-      const c = this.clouds.clouds[this.focusedCloud];
-      if (c) return c.centerAbs.clone().sub(this.worldOffset);
-    }
-    return null;
+    const dest = this.makeCloudFocusTarget(destIdx);
+    if (!dest) return;
+    const source = this.currentFocusTarget();
+    if (!source) return;
+    const A = new THREE.Vector3();
+    if (!source.localPositionInto(A)) return;
+    const out = this.tmpVec3b;
+    if (!dest.localPositionInto(out)) return;
+    this.startWarp(A, out.clone(), source, dest);
   }
 
   private startWarp(
     A: THREE.Vector3,
     B: THREE.Vector3,
-    destKind: 'star' | 'cloud',
-    destIdx: number,
-    endOffset: number,
+    source: FocusTarget,
+    dest: FocusTarget,
   ) {
     if (this.warpState) return;
     this.cancelUnfocusLerp();
@@ -2395,15 +2713,22 @@ export class Stellata {
     // pinned to the source star — the reorient begins with the camera at
     // A, and unhiding it would briefly render the source disc from the
     // camera's interior.
+    //
+    // returnToObserve gates the post-arrival parallax slerp + observe
+    // re-entry. Restricted to star destinations because observe-mode
+    // parks the camera AT the focal object's local origin and that
+    // invariant is only set up for stars today (clouds don't have
+    // observe semantics).
     let returnToObserve = false;
     if (this.cameraMode === 'observe') {
       this.observeAimState = null;
       this.observeControls.disable();
-      returnToObserve = destKind === 'star';
+      returnToObserve = dest.kind === 'star';
     }
     // An in-flight aim animation is superseded by warp — drop the state so
     // updateAim doesn't run after warp completes against now-stale pivot.
     this.aimState = null;
+    const endOffset = dest.parkRadius();
     const AB = new THREE.Vector3().subVectors(B, A);
     const distPc = AB.length();
     if (distPc < 1e-6) {
@@ -2412,12 +2737,14 @@ export class Stellata {
       // x0/y0/z0 because the ~17.6 AU separation is below catalog
       // precision. The camera has nowhere to fly, but switching focus
       // still gives the user feedback (search row, focus ring, scale
-      // bar, distance vector all retarget). setFocus(destIdx) bails
-      // observe → navigate when called from observe; that's the right
-      // outcome here since the destination anchor is the same point
-      // and there's no warp completion to come back through.
-      if (destKind === 'star') this.setFocus(destIdx);
-      else this.setFocusedCloud(destIdx);
+      // bar, distance vector all retarget). Apply the destination's
+      // focus + emit immediately — equivalent to a degenerate warp
+      // that lands at u=0. setFocus / setFocusedCloud would also
+      // route through their own observe-cleanup branches, which the
+      // FocusTarget contract doesn't model; route through them in
+      // that one case.
+      if (dest.kind === 'star') this.setFocus(dest.idx);
+      else this.setFocusedCloud(dest.idx);
       return;
     }
     const forward = AB.clone().divideScalar(distPc);
@@ -2429,13 +2756,7 @@ export class Stellata {
     // Source-side park keyed to the SOURCE's size, not the destination's,
     // so the reorient point isn't embedded inside a giant source star or
     // cloud when warping toward something tiny.
-    let sourceOffset = endOffset;
-    if (this.focusedStar !== null) {
-      sourceOffset = this.parkDistForStar(this.focusedStar);
-    } else if (this.focusedCloud !== null && this.clouds) {
-      const c = this.clouds.clouds[this.focusedCloud];
-      if (c) sourceOffset = cloudViewingDistancePc(c);
-    }
+    const sourceOffset = source.parkRadius();
     const pStart = A.clone().addScaledVector(dirBack, sourceOffset);
     const pEnd = B.clone().addScaledVector(forward, -endOffset);
 
@@ -2447,9 +2768,39 @@ export class Stellata {
     // runs instead of NaN-ing out.
     const dir0 = mag0 > 1e-9 ? radial.divideScalar(mag0) : dirBack.clone();
 
+    // Warp duration / phase-3 / reorient durations + arrival curve are
+    // read from the warp-tuning module so the debug panel can override
+    // them live (next warp picks up the change). When the panel is closed
+    // or its sliders untouched the getters return the shipped defaults
+    // (`WARP_T_*`, `WARP_REORIENT_MS`, `OBSERVE_TRANSITION_MS`,
+    // cubic-Hermite), so behaviour is identical to a build without the
+    // panel.
+    const reorientMs = warpReorientMs();
     const durationMs = Math.min(
-      WARP_T_MAX_MS,
-      WARP_T_MIN_MS + WARP_T_K_MS * Math.log10(1 + distPc),
+      warpFlyTMaxMs(),
+      warpFlyTMinMs() + warpFlyTKMs() * Math.log10(1 + distPc),
+    );
+    const postArrivalMs = returnToObserve ? warpObserveTransitionMs() : 0;
+    // Resolve the arrival curve with per-warp context. The hybrid curve
+    // consumes `{ d0, dEnd, targetRadius }`; missing R or outbound
+    // trajectory triggers the cubic-Hermite log-d fallback inside the
+    // closure (clouds, future kinds without a geometric radius).
+    const flyD0 = pStart.distanceTo(B);
+    const flyDestR = dest.physicalRadius();
+    const arrivalEaseFn = warpArrivalEaseFn({
+      d0: flyD0,
+      dEnd: endOffset,
+      targetRadius: flyDestR,
+    });
+    // Cache the outer→inner seam u-value for the live regime indicator
+    // in the debug-panel warp readout. `getWarpPhase` reads this; the
+    // hybrid curve itself recomputes the same value internally, so the
+    // two stay in sync as long as the formula matches.
+    const flyArrivalUSeam = hybridUSeam(
+      flyD0,
+      endOffset,
+      flyDestR,
+      warpArrivalHybridSeamK(),
     );
 
     this.controls.enabled = false;
@@ -2470,9 +2821,25 @@ export class Stellata {
       const m = new THREE.Matrix4().lookAt(pStart, A, this.camera.up);
       reorientEndQuaternion = new THREE.Quaternion().setFromRotationMatrix(m);
     }
+    // Chart-mode plateau-trigger gate. Chart is observe-only
+    // (chart-mode.ts auto-clears on observe→navigate), and the plateau
+    // only matters when the destination disc is magnitude-driven —
+    // both conditions captured here so the Fly phase doesn't have to
+    // re-derive them per frame. `warpChartPlateauMargin()` lets the
+    // debug panel scale the trigger distance — >1 fires earlier
+    // (farther out), <1 fires later (deeper into the plateau).
+    const rawPlateauDist =
+      returnToObserve && this.filter.chart
+        ? dest.chartPlateauDistance(
+            this.material.uniforms.uChartMagBright.value as number,
+          )
+        : null;
+    const chartPlateauDist =
+      rawPlateauDist !== null ? rawPlateauDist * warpChartPlateauMargin() : null;
+    const warpStartMs = performance.now();
     this.warpState = {
-      startTimeMs: performance.now(),
-      reorientMs: WARP_REORIENT_MS,
+      startTimeMs: warpStartMs,
+      reorientMs,
       durationMs,
       // Post-arrival slerp only runs when we're returning to OBSERVE.
       // Navigate-mode arrival re-engages TrackballControls, whose update()
@@ -2482,7 +2849,7 @@ export class Stellata {
       // jarring snap-back. Skipping the slerp on navigate keeps the
       // landing visually consistent with how navigate-mode focuses
       // already work.
-      postArrivalMs: returnToObserve ? OBSERVE_TRANSITION_MS : 0,
+      postArrivalMs,
       A,
       dir0,
       mag0,
@@ -2491,11 +2858,24 @@ export class Stellata {
       pEnd,
       endOffset,
       sourceOffset,
-      destKind,
-      destIdx,
+      source,
+      dest,
+      recenteredToDest: false,
       returnToObserve,
       startQuaternion: this.camera.quaternion.clone(),
       reorientEndQuaternion,
+      flyArrival: newArrival({
+        pStart,
+        pEnd,
+        target: { center: B, parkDist: endOffset },
+        startMs: warpStartMs + reorientMs,
+        durationMs,
+        easeUFn: arrivalEaseFn,
+      }),
+      flyArrivalUSeam,
+      chartPlateauDist,
+      chartPlateauTriggered: false,
+      chartPhase3Scaled: false,
     };
     // Planet bodies belong to the global PlanetBodyField — destination
     // hosts already render whenever the camera is within their cull
@@ -2516,9 +2896,22 @@ export class Stellata {
   private finishWarp() {
     const state = this.warpState;
     if (!state) return;
-    const B = state.destKind === 'star'
-      ? this.starLocalPosition(state.destIdx)
-      : this.cloudLocalPosition(state.destIdx);
+    // Record warp summary for the debug-panel readout BEFORE clearing
+    // state. Cheap (one object write to a module-level slot). Source
+    // identity comes from the FocusTarget snapshotted at startWarp time;
+    // total ms is wall-clock since warp start.
+    recordLastWarp({
+      sourceKind: state.source.kind,
+      sourceIdx: state.source.idx,
+      destKind: state.dest.kind,
+      destIdx: state.dest.idx,
+      totalMs: performance.now() - state.startTimeMs,
+      plateauFired: state.chartPlateauTriggered,
+      plateauScaledPhase3: state.chartPhase3Scaled,
+      plateauDistPc: state.chartPlateauDist,
+    });
+    const Bout = this._tmpAnimateLocal;
+    const B = state.dest.localPositionInto(Bout) ? Bout.clone() : null;
     if (!B) {
       // Cloud was detached mid-warp (shouldn't happen in practice); bail
       // gracefully to a clean state rather than NaN-ing the camera.
@@ -2555,7 +2948,7 @@ export class Stellata {
     // the measurement line should retire either way.
     this.setVectorTo(null);
     this.setVectorToCloud(null);
-    if (state.destKind === 'star' && state.returnToObserve) {
+    if (state.dest.kind === 'star' && state.returnToObserve) {
       // observe→observe arrival. swapObserveAnchor finalises the anchor
       // swap — sets uHideFocusIdx to the destination, snaps the camera
       // to local origin, and (if it hasn't already been done at phase-3
@@ -2563,15 +2956,36 @@ export class Stellata {
       // updates focused-star state. No cameraMode flip through navigate
       // (which is what setFocus would do, triggering an
       // 'cameraMode' event flicker).
-      this.swapObserveAnchor(state.destIdx);
+      this.swapObserveAnchor(state.dest.idx);
       this.observeControls.enable();
       // controls.enabled stays false — observe owns the camera now.
     } else {
       // navigate-mode arrival. Source-star hide expires with the warp; the
       // destination star (if any) renders normally.
       this.material.uniforms.uHideFocusIdx.value = -1;
-      if (state.destKind === 'star') {
-        this.setFocus(state.destIdx);
+      if (state.recenteredToDest) {
+        // Mid-Fly recentre already mutated focus state via
+        // `dest.applyFocus`. Fire the deferred event family here so the
+        // search-row label, planet system, distance vector etc. settle in
+        // lock-step with the camera landing rather than ~half a warp
+        // duration early. Calling setFocus / setFocusedCloud directly
+        // would short-circuit (focusedStar / focusedCloud already
+        // matches dest.idx) and silently drop the 'focus' / 'cloudFocus'
+        // emit; emitting via the FocusTarget keeps the contract clean.
+        state.dest.emitFocusEvents();
+        if (state.dest.kind === 'star') {
+          // Mid-Fly recentre put the destination at local (0,0,0) and
+          // shifted camera + target by the same delta — controls.target
+          // is already clean. Reassert the parked pose so subsequent
+          // TrackballControls.update() lands at the canonical orbit
+          // distance.
+          const forward = new THREE.Vector3().subVectors(B, state.pStart).normalize();
+          this.controls.target.set(0, 0, 0);
+          this.camera.position.copy(forward).multiplyScalar(-state.endOffset);
+          this.camera.lookAt(this.controls.target);
+        }
+      } else if (state.dest.kind === 'star') {
+        this.setFocus(state.dest.idx);
         // Re-anchor camera and target in the clean dest-local frame after
         // setFocus's recenterOrigin runs. The earlier writes used B from
         // _localPositions (Float32) while recenterOrigin's dx is computed
@@ -2584,7 +2998,7 @@ export class Stellata {
         this.camera.position.copy(forward).multiplyScalar(-state.endOffset);
         this.camera.lookAt(this.controls.target);
       } else {
-        this.setFocusedCloud(state.destIdx);
+        this.setFocusedCloud(state.dest.idx);
       }
       this.controls.enabled = true;
       this.controls.update();
@@ -2664,22 +3078,6 @@ export class Stellata {
     if (!c) return false;
     out.copy(c.centerAbs).sub(this.worldOffset);
     return true;
-  }
-
-  // Unified destination resolver — writes the local-frame position of a
-  // warp destination (star or cloud) into `out`. Returns false only on
-  // a cloud index miss; star indices are always in range here because
-  // the warp state's destIdx came from a valid focus / search hit.
-  private destLocalPositionInto(
-    destKind: 'star' | 'cloud',
-    destIdx: number,
-    out: THREE.Vector3,
-  ): boolean {
-    if (destKind === 'star') {
-      this.starLocalPositionInto(destIdx, out);
-      return true;
-    }
-    return this.cloudLocalPositionInto(destIdx, out);
   }
 
   // Swing the camera to face the selected constellation while keeping the
@@ -3690,6 +4088,86 @@ export class Stellata {
     this.clouds?.update(this.worldOffset, false);
   }
 
+  // Mid-flight floating-origin recentre onto the warp destination. Fires
+  // at most once per warp, gated on the camera having passed the
+  // trajectory midpoint (geometrically: |camera − B|² < ¼·|B − A|², i.e.
+  // the camera is closer to the destination than to the source; Alex's
+  // "source star is behind the camera" cue). Under the cubic-Hermite
+  // log-d Fly profile this fires comfortably before the Float32 chaos
+  // zone — for a 200 pc → 1 AU Sol arrival, midpoint is at u ≈ 0.34, the
+  // chaos zone starts at u ≈ 0.66.
+  //
+  // What it does: rebind the floating origin to the destination's
+  // absolute anchor, so `dest.localPositionInto` returns ≈(0,0,0) for
+  // the rest of the warp and `lookAt(local origin)` escapes the
+  // `B − camera.position` ULP fight. Mutates focus state in place via
+  // `dest.applyFocus` (no events — those fire from `finishWarp` via
+  // `dest.emitFocusEvents` so the search-row label and friends settle
+  // in lock-step with the camera landing).
+  //
+  // Kind-agnostic via the FocusTarget contract — works for stars,
+  // clouds, and any future focusable kind that implements the
+  // interface. Used by both the navigate-mode Fly branch (stellata-2br.5)
+  // and the observe→observe phase-3 branch (originally stellata-fqw,
+  // now sharing this dispatch).
+  private tryMidFlyRecentre(state: WarpState): void {
+    if (state.recenteredToDest) return;
+    const tmp = this.tmpRecenter;
+    if (!state.dest.localPositionInto(tmp)) return;
+    const cb = this.camera.position;
+    const dx = tmp.x - cb.x, dy = tmp.y - cb.y, dz = tmp.z - cb.z;
+    const cbDist2 = dx * dx + dy * dy + dz * dz;
+    const ax = tmp.x - state.A.x, ay = tmp.y - state.A.y, az = tmp.z - state.A.z;
+    const abDist2 = ax * ax + ay * ay + az * az;
+    // Past trajectory midpoint? Fall through to the recentre; else bail.
+    // The fraction (0.25 = midpoint by default) is tunable via the warp
+    // debug panel — lower fires the recentre later (less of Fly under
+    // the dest-local frame), higher fires it earlier.
+    const frac = warpMidFlyRecentreFrac();
+    if (cbDist2 >= frac * frac * abDist2) return;
+    // `anchorInto` overwrites `tmp` from local-frame to absolute-frame.
+    if (!state.dest.anchorInto(tmp)) return;
+    const delta = this.recenterOrigin(tmp);
+    if (!delta) return;
+    shiftWarpWaypoints(state, delta.x, delta.y, delta.z);
+    shiftArrivalWaypoints(state.flyArrival, delta.x, delta.y, delta.z);
+    // Float32 residual snap (same shape as setFocus lines ~1531). The
+    // earlier `controls.target.copy(B)` at startWarp set target from a
+    // Vector3 derived via `_localPositions` (Float32) — the value has
+    // ~|B|·1e-7 ULP relative to true B. `recenterOrigin` then shifts
+    // target by a delta computed fresh in float64 from raw catalog
+    // reads, leaving target at `(true_B − rounded_B)` which is the
+    // ULP residual. lengthSq = ~|B|²·1e-14 fails the 1e-12 pin guard
+    // on any non-trivial warp (Sol→Rigel: ~|265pc|²·1e-14 ≈ 7e-10,
+    // ~700× over threshold). Snap target to clean (0,0,0) and shift
+    // camera by the same residual to preserve the cam-to-target
+    // offset — the user-visible pose doesn't change, but the pin
+    // guard now engages for the post-recentre Fly window as designed.
+    const t = this.controls.target;
+    this.camera.position.x -= t.x;
+    this.camera.position.y -= t.y;
+    this.camera.position.z -= t.z;
+    t.set(0, 0, 0);
+    // Same float32-residual class lives in the cached waypoints. After the
+    // shifts above, `state.pEnd` and `state.flyArrival.target.center` and
+    // `state.flyArrival.pEnd` carry `(true_B − rounded_B)`-scale residuals
+    // (per-axis up to ~|B|·2^-23 — for a 950 pc warp, ~23 AU max). Those
+    // residuals propagate into the per-frame `target.center + dir · d(u)`
+    // and the bit-exact `u ≥ 1` snap to `pEnd`, leaving the camera landing
+    // 1-3 AU off the destination axis. Reconstruct the canonical
+    // dest-local geometry from `dirBack` (a unit vector — ULP ~|1|·2^-23,
+    // multiplied by `endOffset` of ~5e-6 pc yields ~5e-13 pc residual,
+    // well below any visual threshold). `state.flyArrival.dir` was cached
+    // from the `pStart − target.center` difference at newArrival time —
+    // that difference is translation-invariant under the shift, so `dir`
+    // is still correct without re-derivation.
+    state.flyArrival.target.center.set(0, 0, 0);
+    state.flyArrival.pEnd.copy(state.dirBack).multiplyScalar(state.endOffset);
+    state.pEnd.copy(state.dirBack).multiplyScalar(state.endOffset);
+    state.dest.applyFocus();
+    state.recenteredToDest = true;
+  }
+
   private updateWarp() {
     const state = this.warpState;
     if (!state) return;
@@ -3726,14 +4204,82 @@ export class Stellata {
     }
 
     // Fly phase: symmetric accelerate/decelerate along the A→B line.
+    // Position easing rides camera-motion.ts's shared park-arrival profile
+    // (same helper as focus-park and unfocus); the per-frame lookAt(B)
+    // continues to drive camera orientation so the destination stays
+    // centred while the camera approaches.
     const flyElapsed = elapsed - state.reorientMs;
     if (flyElapsed < state.durationMs) {
-      const t = flyElapsed / state.durationMs;
-      const f = t < 0.5 ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t);
-      this.camera.position.lerpVectors(state.pStart, state.pEnd, f);
+      tickArrival(state.flyArrival, performance.now(), this.camera);
+      // Mid-Fly recentre — pull the floating-origin shift forward from
+      // finishWarp the moment the camera passes the trajectory midpoint
+      // (≈ Alex's "source star is behind the camera" cue). Without this,
+      // the last ~19 % of Fly under the cubic-Hermite log-d profile sits
+      // inside `|B − camera| < ULP(|B|)`, where lookAt(B) jitters across
+      // Float32 representations of B and the destination renders
+      // off-screen for several frames before finishWarp's recentre
+      // snaps it to NDC origin. After this recentre `dest.localPositionInto`
+      // returns ≈(0,0,0), so lookAt below becomes lookAt(local origin)
+      // — geometrically equivalent, numerically clean. Kind-agnostic
+      // via the FocusTarget contract: any object that defines
+      // `anchorInto` + `applyFocus` plugs into this path. Mirrors the
+      // existing observe→observe phase-3 fix (stellata-fqw).
+      if (!state.recenteredToDest) {
+        this.tryMidFlyRecentre(state);
+      }
       const out = this._tmpAnimateLocal;
-      if (this.destLocalPositionInto(state.destKind, state.destIdx, out)) {
+      const haveDest = state.dest.localPositionInto(out);
+      if (haveDest) {
         this.camera.lookAt(out);
+      }
+      // Chart-mode close-approach plateau-trigger. The chart-style
+      // disc plateaus at `uChartDiscMaxPx` once `appMag ≤ magBright`,
+      // so further Fly produces no visible disc growth — under the
+      // cubic-Hermite log-d profile that "no progress signal" window
+      // can span hundreds of milliseconds. Pivot Fly → phase 3 early
+      // and let the parallax slerp carry the perceptual cue across
+      // the plateau zone. Gated on `recenteredToDest` so the trigger
+      // only fires once the destination is at local (0,0,0) — keeps
+      // the position transition geometrically clean (and means the
+      // distance check below is just `|camera.position|` modulo the
+      // dest-local sub-AU residual, which is well below any plateau
+      // distance of interest).
+      if (
+        state.chartPlateauDist !== null &&
+        !state.chartPlateauTriggered &&
+        state.recenteredToDest &&
+        haveDest &&
+        this.camera.position.distanceToSquared(out) <=
+          state.chartPlateauDist * state.chartPlateauDist
+      ) {
+        // End Fly NOW: set `pEnd` to the current camera position so
+        // phase 3's first frame snaps to where we already are (and
+        // captures `flyEndQuaternion` from the lookAt(dest) we just
+        // applied), then lerps `pEnd → B` over `postArrivalMs`.
+        // Updating `durationMs` to the current `flyElapsed` falls the
+        // next frame straight into the post-arrival branch without an
+        // extra Fly tick. `state.flyArrival` is no longer ticked, so
+        // its cached `pEnd` doesn't need updating.
+        state.pEnd.copy(this.camera.position);
+        state.durationMs = flyElapsed;
+        state.chartPlateauTriggered = true;
+        // Optional chart phase-3 duration scaling (debug-panel knob).
+        // For long warps where the plateau distance is large compared
+        // to `endOffset`, the default fixed-duration phase 3 sweeps a
+        // lot of distance in 1200 ms which can feel too fast. Scale by
+        // `1 + α·log10(d_trigger / endOffset)` so longer plateau-to-park
+        // hauls get proportionally more time. Default-off; the knob
+        // reads from warp-tuning at the trigger moment so the user can
+        // dial it in across smoke warps.
+        if (warpChartPhase3ScalingEnabled()) {
+          const dTrigger = this.camera.position.distanceTo(out);
+          if (dTrigger > state.endOffset && state.endOffset > 0) {
+            const alpha = warpChartPhase3Alpha();
+            const scale = 1 + alpha * Math.log10(dTrigger / state.endOffset);
+            state.postArrivalMs *= Math.max(1, scale);
+            state.chartPhase3Scaled = true;
+          }
+        }
       }
       return;
     }
@@ -3750,7 +4296,7 @@ export class Stellata {
     const postElapsed = flyElapsed - state.durationMs;
     if (postElapsed < state.postArrivalMs) {
       const out = this._tmpAnimateLocal;
-      let B = this.destLocalPositionInto(state.destKind, state.destIdx, out) ? out : null;
+      let B = state.dest.localPositionInto(out) ? out : null;
       if (!state.flyEndQuaternion) {
         // Pin the camera to the canonical fly-end pose before snapshot
         // so the slerp doesn't inherit a half-stepped frame.
@@ -3770,22 +4316,17 @@ export class Stellata {
         // the duration so the destination remains visible during the
         // parallax slerp; swapObserveAnchor at finishWarp re-points it
         // to the destination on landing.
-        if (state.returnToObserve && state.destKind === 'star' && B) {
-          const delta = this.recenterFocusToStar(state.destIdx);
-          if (delta) {
-            // recenterOrigin shifted camera.position and controls.target
-            // by -delta in place; mirror that onto every positional
-            // field of WarpState so the lerp pEnd → B continues to read
-            // the same physical waypoint after the frame change, and
-            // A / pStart stay frame-coherent for any subsequent read
-            // (skipWarp's finishWarp navigate-fallback uses pStart, and
-            // future readers shouldn't have to remember which fields
-            // are valid in which frame — see stellata-9mm.164).
-            shiftWarpWaypoints(state, delta.x, delta.y, delta.z);
-          }
+        //
+        // After 2br.5 this is just `tryMidFlyRecentre` invoked at a
+        // different time — the navigate-mode mid-Fly path uses the same
+        // dispatch. Skipped when the mid-Fly path already fired (a
+        // pathological case where Fly handed off straight to phase 3
+        // with state.recenteredToDest already set).
+        if (state.returnToObserve && !state.recenteredToDest) {
+          this.tryMidFlyRecentre(state);
           // _localPositions has been rewritten — re-bind B in the new
           // frame for the lerp below to land on (0,0,0).
-          B = this.destLocalPositionInto(state.destKind, state.destIdx, out) ? out : null;
+          B = state.dest.localPositionInto(out) ? out : null;
         }
       }
       // Destination star stays visible across post-arrival so the user sees
@@ -3814,9 +4355,21 @@ export class Stellata {
   // Symmetric ease translate from `fromPos` to `toPos`, no quaternion change.
   // Camera look direction is preserved by holding the quaternion fixed; we
   // skip controls.update() during the run so the target doesn't tug it.
+  //
+  // 'unfocus' is the navigate-mode outbound park-arrival (a7d.2.6); it shares
+  // the deceleration shape with focus-park and warp Fly via tickArrival so
+  // 2br.3's log-distance swap lands in one place. 'enter' / 'exit' are
+  // observe-mode handovers — endpoints are AT or near the focal star, not
+  // at parkDist — so they keep the inline time-smoothstep (see
+  // docs/camera-arrival.md § Inventory).
   private updateObserveTransition() {
     const state = this.observeTransition;
     if (!state) return;
+    if (state.kind === 'unfocus' && state.arrival) {
+      const { done } = tickArrival(state.arrival, performance.now(), this.camera);
+      if (done) this.finishObserveTransition();
+      return;
+    }
     const t = Math.min(1, (performance.now() - state.startTimeMs) / state.durationMs);
     const f = t < 0.5 ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t);
     this.camera.position.lerpVectors(state.fromPos, state.toPos, f);

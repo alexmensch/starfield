@@ -134,6 +134,7 @@ src/
     ephemeris.ts          JPL Standish 1992 planet positions for Sol (3re.3: ±arcmin over ±3000 yr)
     astronomy-constants.ts  canonical AU_PC / AU_PER_PC / AU_KM / KM_PC / R_SUN_PC
     focus-transition.ts   parkDistance + focus-park lerp primitives (r9q.2; generic across focusables)
+    focus-target.ts       FocusTarget contract — per-object dispatch consumed by warp/lerp (2br.5)
     time-readout.ts       plain-English UTC `t` readout under the bottom-right star count (3re.11; planet-host + warp gated)
     heliopause.ts         Sol's heliopause translucent shell + apex label (3re.5; ~122 AU upwind)
     shaders/
@@ -245,6 +246,13 @@ Claude Code should read on demand when working on the relevant area.
   drag mechanics, momentum, FOV-on-wheel, aim slerps, POI dispatch,
   single/double click handlers, navigate-mode close-zoom unfocus.
   Read when touching observe-mode behaviour.
+- **`docs/camera-arrival.md`** — angular-arrival problem and the
+  log-distance smoothstep profile the `camera-motion.ts` helper applies
+  to focus-park, warp Fly, and unfocus. Worked examples for Sol /
+  Betelgeuse, why the two-region `dWindow` split was rejected, why
+  warp Phase 3 stays inline. Read when touching `camera-motion.ts`,
+  `focus-transition.ts`, or the arrival branches of `updateWarp` /
+  `unfocus`.
 - **`docs/deployment.md`** — Wrangler config, `@cloudflare/workers-types`
   global leak, `compatibility_date`, `custom_domain` DNS auto-registration.
   Read when changing deployment or worker code.
