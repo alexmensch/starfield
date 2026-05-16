@@ -7,7 +7,7 @@
 // `HoverProvider` (Sol planets, Local Group wireframes, heliopause
 // apex, …) wires in without touching the engine.
 
-import { escapeHtml } from '../dom-util';
+import { escapeHtml } from '../ui/dom-util';
 import {
   disambiguateHits,
   type HoverProviderHit,

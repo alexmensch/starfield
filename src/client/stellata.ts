@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls.js';
-import type { Catalog } from './catalog-loader';
-import type { DustField, DustParticleData } from './dust-loader';
+import type { Catalog } from './loaders/catalog-loader';
+import type { DustField, DustParticleData } from './loaders/dust-loader';
 import vertexShader from './shaders/star.vert.glsl?raw';
 import fragmentShader from './shaders/star.frag.glsl?raw';
 import perceptualDiscChunk from './shaders/perceptual-disc.glsl?raw';
@@ -14,18 +14,18 @@ import dustParticleFrag from './shaders/dust-particle.frag.glsl?raw';
 // module load — runs once before any material compiles.
 (THREE.ShaderChunk as Record<string, string>)['stellata_perceptual_disc'] =
   perceptualDiscChunk;
-import { GalacticDisc } from './galactic-disc';
-import { LocalGroupLayer } from './local-group';
-import type { LgCatalog } from './local-group-loader';
+import { GalacticDisc } from './galactic/galactic-disc';
+import { LocalGroupLayer } from './local-group/local-group';
+import type { LgCatalog } from './local-group/local-group-loader';
 import { MAX_DISTANCE_PC, CAMERA_FAR_PC } from '../../scripts/build-local-group-pure';
-import { GalacticGrid } from './galactic-grid';
-import { HudOverlay } from './hud-overlay';
-import { GALACTIC_CENTRE_PC } from './galactic-coords';
-import { MolecularClouds, cloudViewingDistancePc, renderedCloudSizePx } from './molecular-clouds';
-import type { CloudCatalog } from './cloud-loader';
-import { MilkyWay } from './milkyway';
-import { ObserveControls } from './observe-controls';
-import { mark as perfMark, measure as perfMeasure, frame as perfFrame } from './perf-hud';
+import { GalacticGrid } from './galactic/galactic-grid';
+import { HudOverlay } from './overlays/hud-overlay';
+import { GALACTIC_CENTRE_PC } from './galactic/galactic-coords';
+import { MolecularClouds, cloudViewingDistancePc, renderedCloudSizePx } from './molecular-clouds/molecular-clouds';
+import type { CloudCatalog } from './molecular-clouds/cloud-loader';
+import { MilkyWay } from './milkyway/milkyway';
+import { ObserveControls } from './camera/observe-controls';
+import { mark as perfMark, measure as perfMeasure, frame as perfFrame } from './debug/perf-hud';
 import {
   angularToPx as angularToPxPure,
   MIN_DISC_HIT_RADIUS_PX,
@@ -37,37 +37,39 @@ import {
   varEffectiveAmplitude,
   distAtFillFraction,
   peakAmplitudeFactor,
-} from './star-geometry';
-import { getPlanetSystem, hasPlanets, type PlanetSystem } from './planet-system';
-import { OrbitRingsLayer } from './orbit-rings-layer';
-import { PlanetBodyField } from './planet-body-field';
+} from './camera/star-geometry';
+import { getPlanetSystem, hasPlanets, type PlanetSystem } from './solar-system/planet-system';
+import { OrbitRingsLayer } from './solar-system/orbit-rings-layer';
+import { PlanetBodyField } from './solar-system/planet-body-field';
 import {
   Heliopause,
   HELIOPAUSE_APEX_LOCAL_PC,
   HELIOPAUSE_LABEL_ELEMENT_ID,
   HELIOPAUSE_SAMPLE_POINTS_LOCAL,
-} from './heliopause';
-import { R_SUN_PC } from './astronomy-constants';
+} from './solar-system/heliopause';
+import { R_SUN_PC } from './solar-system/astronomy-constants';
 import {
   type FocusLerpState,
   newFocusLerpFrom,
   parkDistance,
   tickFocusLerp,
-} from './focus-transition';
-import { type ArrivalState, newArrival, shiftArrivalWaypoints, tickArrival } from './camera-motion';
-import { shiftWarpWaypoints } from './warp-pure';
-import type { FocusTarget } from './focus-target';
-import { chartPlateauDistancePc } from './chart-disc-pure';
+} from './camera/focus-transition';
+import { type ArrivalState, newArrival, shiftArrivalWaypoints, tickArrival } from './camera/camera-motion';
+import { shiftWarpWaypoints } from './camera/warp-pure';
+import type { FocusTarget } from './camera/focus-target';
+import { chartPlateauDistancePc } from './chart-mode/chart-disc-pure';
 // Locally used subset — stellata.ts still reads these in its body.
 // The other warp-timing constants are re-exported below for any
 // external import path that points at './stellata' instead of
-// './warp-constants', without bringing unused names into local scope.
+// './camera/timing', without bringing unused names into local scope.
 import {
   AIM_T_MAX_MS,
   AIM_T_MIN_MS,
+  DCAM_LOG_FLOOR_PC,
   FOCUS_LERP_MS,
   OBSERVE_TRANSITION_MS,
-} from './warp-constants';
+  WARP_BASE_DIR,
+} from './camera/timing';
 export {
   AIM_T_MAX_MS,
   AIM_T_MIN_MS,
@@ -78,7 +80,7 @@ export {
   WARP_T_K_MS,
   WARP_T_MAX_MS,
   WARP_T_MIN_MS,
-} from './warp-constants';
+} from './camera/timing';
 import {
   recordLastWarp,
   warpArrivalEaseFn,
@@ -92,9 +94,9 @@ import {
   warpMidFlyRecentreFrac,
   warpObserveTransitionMs,
   warpReorientMs,
-} from './warp-tuning';
-import { hybridUSeam } from './arrival-curves';
-import { EventBus } from './event-bus';
+} from './camera/warp-tuning';
+import { hybridUSeam } from './camera/arrival-curves';
+import { EventBus } from './util/event-bus';
 import type { HoverHit } from './hover/hover-types';
 
 export type MagPresetName = 'naked-eye' | 'binoculars' | 'all';
@@ -277,11 +279,9 @@ const ZOOM_FLOOR_FRACTION = 0.9;
 // as `uVarTroughFrac`.
 const VAR_TROUGH_FLOOR_FRACTION = 0.2;
 
-// Camera-distance floor used by sites that need a finite log10(dCam)
-// or atan(R/dCam) at close approach. 1e-30 pc is well below any orbit
-// the camera can actually reach, so it never affects rendering — it
-// just keeps Math.log10 / division well-defined at the singular point.
-const DCAM_LOG_FLOOR_PC = 1e-30;
+// DCAM_LOG_FLOOR_PC moved to camera/timing.ts — shared between this
+// file and any future camera-controller extracts that need a finite
+// log10(dCam) at close approach. Re-imported at the top of this file.
 
 // Floor on a catalog `physicalRadius[idx]` (in solar radii) before
 // converting to parsecs (`* R_SUN_PC`). Keeps R > 0 in geometric
@@ -325,16 +325,11 @@ const BINARY_MIN_DIST_FACTOR = 1 / Math.tan(BINARY_VIEWPORT_HALF_ANGLE_RAD);
 //      accelerate/decelerate profile. Duration scales log-linearly with
 //      distance and caps at MAX.
 // End offset matches the destination star's effective minDistance so
-// the warp parks exactly where the user can then orbit. Warp + camera-
-// lerp duration constants live in `./warp-constants` to break the
-// import cycle with `./warp-tuning` (which needs them as initial knob
-// defaults). Re-exported here so any existing import paths keep working.
-
-// Arbitrary reference axis for the reorient slerp. Any fixed unit vector
-// works — the two setFromUnitVectors calls each produce a quaternion rotating
-// this vector to one of the two endpoints, and slerp between them gives the
-// shortest-arc interpolation on the sphere.
-const WARP_BASE_DIR = new THREE.Vector3(0, 0, 1);
+// the warp parks exactly where the user can then orbit. Camera-wide
+// timing + reorient constants live in `./camera/timing` to break the
+// import cycle with `./camera/warp-tuning` (which needs them as initial
+// knob defaults). Re-exported here so any existing import paths keep
+// working.
 
 export type CameraMode = 'navigate' | 'observe';
 

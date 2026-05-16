@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { Cloud } from '../../cloud-loader';
-import { setUnit } from '../../distance-util';
+import type { Cloud } from '../../molecular-clouds/cloud-loader';
+import { setUnit } from '../../ui/distance-util';
 import {
   formatCloudHover,
   type CloudHoverFormatContext,

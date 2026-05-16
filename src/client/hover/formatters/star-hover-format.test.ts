@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { setUnit } from '../../distance-util';
+import { setUnit } from '../../ui/distance-util';
 import { formatStarHover, type StarHoverFormatContext } from './star-hover-format';
 
 // Tiny fixture builder. Three stars by default — idx 0 is the named

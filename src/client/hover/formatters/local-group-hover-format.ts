@@ -22,12 +22,12 @@
 // read the module-level pc/ly unit toggle from distance-util, so tests
 // pin the unit explicitly via setUnit('pc') for stable golden strings.
 
-import { fmtDistAuto } from '../../distance-util';
+import { fmtDistAuto } from '../../ui/distance-util';
 import {
   maxSemiAxisPc,
   minSemiAxisPc,
   type LgObject,
-} from '../../local-group-loader';
+} from '../../local-group/local-group-loader';
 import type { HoverPayload } from '../hover-types';
 import { formatAxisPair } from './format-util';
 

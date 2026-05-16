@@ -6,7 +6,7 @@
 // (nebulae, Radcliffe Wave segments, large DSOs) reach for this rather
 // than re-implementing the suffix elision.
 
-import { fmtDist } from '../../distance-util';
+import { fmtDist } from '../../ui/distance-util';
 
 /**
  * Render a major × minor axis pair as "<major> × <minor> <unit>". Both

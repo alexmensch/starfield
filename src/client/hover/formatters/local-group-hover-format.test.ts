@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { setUnit } from '../../distance-util';
-import type { LgObject } from '../../local-group-loader';
+import { setUnit } from '../../ui/distance-util';
+import type { LgObject } from '../../local-group/local-group-loader';
 import {
   formatLocalGroupHover,
   type LocalGroupHoverFormatContext,

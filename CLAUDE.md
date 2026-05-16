@@ -115,68 +115,59 @@ src/
   worker.ts               Cloudflare Worker entry (passthrough to ASSETS)
   client/
     main.ts               bootstrap
-    stellata.ts          Three.js scene + state machine + event bus
-    catalog-loader.ts     binary parse into typed arrays
-    dust-loader.ts        progressive 3D-texture chunk loader + particle binary loader
-    controls.ts           right-side panel widgets (with reverse-sync)
-    search.ts             dual-input focus + destination search
-    constellation-overlay.ts   SVG stick-figure overlay
-    disc-mask.ts          SVG mask tracking the focused star + companion discs
-    distance-vector-overlay.ts chevron-based measurement line
-    focus-ring-overlay.ts      dashed circle around focused star
-    poi-overlay.ts        observe-mode pinned-star labels + arrows + rings
-    cloud-loader.ts       fetch + parse public/clouds.json
-    molecular-clouds.ts   3D ellipsoid render layer + raycast pick + fly-to
-    local-group-loader.ts fetch + parse public/local-group.json (stellata-38m)
-    local-group.ts        Local Group wireframe layer + MW label + per-object dwarf labels
-    galactic-fade.ts      shared FADE_INNER_PC / FADE_OUTER_PC + smoothstep (galactic-disc + local-group)
-    distance-gated-label.ts  silhouette-anchored SVG label engine (heliopause + MW + LG)
-    scale-bar.ts          bottom-left SVG widget: scene-scale bar + perspective z-axis indicator pointing at the focused star/cloud
-    unit-toggle.ts        pc/ly toggle in the panel
-    theme-toggle.ts       programmatic theme API (no live UI; default dark)
-    distance-util.ts      fmtDist + fmtDistAuto (pc/ly above 0.01 pc, AU below), unit state + broadcast, niceRound
-    url-state.ts          URL ↔ state sync (debounced)
-    info-modal.ts         first-visit welcome modal (localStorage opt-out)
-    brand-modal.ts        about / credits modals + share-link copy-URL affordance, top-left brand box
-    constellation-typeahead.ts  filter-by-name+code picker for #con-input
-    typeahead.ts          generic Typeahead<T> + TypeaheadGroup (used by search.ts and constellation-typeahead.ts)
-    typeahead-util.ts     shared helpers for the two typeaheads (cap, hover-class swap)
-    dom-util.ts           shared escapeHtml for innerHTML splicing
-    panel-layout.ts       top-level + per-group collapse for the settings panel
-    warp-button.ts        warp trigger (on distance label) + skip pill
-    mode-toggle.ts        navigate / observe pill in the top-right card
-    observe-controls.ts   look-around controller (drag yaw+pitch, wheel FOV)
-    debug.ts              window.debug.* registration; hosts the unified panel
-    debug-panel.ts        chrome (drag-to-move, collapsible sections, slider/colour helpers)
-    star-tuning.ts        debug section: star-disc profile knobs
-    milkyway-tuning.ts    debug section: Milky Way layer tuning
-    local-group-tuning.ts debug section: 'Deep field' — live-tunable LG label knobs
-    perf-hud.ts           debug section: FPS / per-section frame timing + always-callable mark/measure/frame
-    pin-debug-hud.ts      debug section: focused-star pin diagnostics
-    arrow-fade-debug-hud.ts  debug section: Sol/GC arrow draw state + fade telemetry
-    keyboard-shortcuts.ts global keydown dispatch (R/G/C/H/S/O/W/M/+/−/=/?/Esc)
-    help-modal.ts         shortcut help overlay (the `?` target)
-    chart-mode.ts         observe-only chart-mode orchestrator (theme + isobar + label engine)
-    chart-labels.ts       per-frame chart label engine + SVG glyphs (variable rings, binary wings)
-    planet-system.ts      per-star PlanetSystem data model + Sol planet table (3re.6 + albedos for 3re.16)
-    orbit-rings-layer.ts  per-host orbit rings (focus-only, representational; 3re.7, 3re.13)
-    planet-body-field.ts  global instanced planet-body field (focus-independent physical bodies; 3re.15-17)
-    perceptual-magnitude.ts  TS mirror of the perceptual-disc shader chunk (vitest-covered)
-    planet-labels.ts      per-planet body-anchored labels for the focused host (3re.4 / 3re.9 contract)
-    time.ts               wall-clock `t` helpers for the solar-system layer (3re.1: tToJDE, isLive)
-    ephemeris.ts          JPL Standish 1992 planet positions for Sol (3re.3: ±arcmin over ±3000 yr)
-    astronomy-constants.ts  canonical AU_PC / AU_PER_PC / AU_KM / KM_PC / R_SUN_PC
-    focus-transition.ts   parkDistance + focus-park lerp primitives (r9q.2; generic across focusables)
-    focus-target.ts       FocusTarget contract — per-object dispatch consumed by warp/lerp (2br.5)
-    time-readout.ts       plain-English UTC `t` readout under the bottom-right star count (3re.11; planet-host + warp gated)
-    heliopause.ts         Sol's heliopause translucent shell + apex label (3re.5; ~122 AU upwind)
+    stellata.ts           Three.js scene + state machine + event bus
+    index.html, styles.css, globals.d.ts
+    stellata-events.test.ts integration-shell event-emission test
+    disc-blend.test.ts    star-disc/glow blend-equation parity test
     shaders/
       star.vert.glsl, star.frag.glsl              GLSL3/WebGL2
       planet.vert.glsl, planet.frag.glsl          three-pass instanced planet bodies (3re.16-17)
       perceptual-disc.glsl                        shared point-of-light disc/glow chunk (stars + planets)
       dust-particle.vert.glsl, dust-particle.frag.glsl   shelved dust splats
       cloud.vert.glsl, cloud.frag.glsl                   molecular cloud ellipsoids
-    index.html, styles.css
+    # ─── per-subsystem folders (rule 1) ─────────────────────────────
+    solar-system/         planet-system, orbit-rings-layer, planet-body-field,
+                          perceptual-magnitude, planet-labels, time, time-readout,
+                          ephemeris, astronomy-constants, heliopause, first-load,
+                          phase-function (+ tests for each)
+    local-group/          local-group, local-group-loader, local-group-tuning
+                          (+ tests). Local Group wireframes + MW + dwarf labels
+    milkyway/             milkyway, milkyway-tuning. Volumetric disc + bulge
+    galactic/             galactic-disc, galactic-fade, galactic-grid,
+                          galactic-coords (+ tests). Disc outline / b-l grid /
+                          GALACTIC_CENTRE_PC / shared fade smoothstep
+    molecular-clouds/     molecular-clouds, cloud-loader (+ tests). Shelved for v1
+    chart-mode/           chart-mode, chart-labels, chart-disc-pure (+ tests).
+                          Observe-only paper aesthetic
+    hover/                hover-engine, hover-types, hover-pick-disambiguator,
+                          per-layer hover providers, formatters/ (5 + tests)
+    # ─── cross-cutting type folders (rule 2) ────────────────────────
+    overlays/             constellation-overlay, disc-mask (+ pure),
+                          distance-vector-overlay, focus-ring-overlay,
+                          hud-overlay, poi-overlay, dirty-attr, overlay-project,
+                          arrow-fade, arrow-path (+ tests)
+    camera/               controls, observe-controls, focus-transition,
+                          focus-target, arrival-curves, camera-motion, warp-pure,
+                          warp-button, warp-tuning, mode-toggle, star-geometry,
+                          camera-up-align (+ tests).
+                          timing.ts — CAMERA_LERP_MS / WARP_*_MS /
+                          AIM_*_MS / OBSERVE_TRANSITION_MS / DCAM_LOG_FLOOR_PC /
+                          WARP_BASE_DIR (canonical camera-wide constants;
+                          renamed from warp-constants in 9mm.194.1)
+    loaders/              catalog-loader, dust-loader (+ tests). cloud-loader
+                          lives under molecular-clouds/; local-group-loader
+                          under local-group/
+    ui/                   panel-layout, scale-bar, theme-toggle, unit-toggle,
+                          distance-util, distance-gated-label, keyboard-shortcuts
+                          (+ pure), dom-util (+ tests)
+    util/                 event-bus, url-state (+ tests). Project-agnostic plumbing
+    typeahead/            typeahead, typeahead-util, constellation-typeahead,
+                          search (+ tests). Picker UI surface
+    modals/               info-modal, brand-modal, help-modal, modal-dismiss.
+                          Welcome / about / help overlays
+    debug/                debug, debug-panel, perf-hud, pin-debug-hud,
+                          arrow-fade-debug-hud, star-tuning (+ tests).
+                          Debug-panel chrome + per-area tuning sections
 ```
 
 ## Local commands

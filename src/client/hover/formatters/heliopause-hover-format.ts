@@ -24,7 +24,7 @@
 // shell never deforms on human timescales. Pure — no camera, no
 // Stellata, no THREE — so the test is a plain golden-string assertion.
 
-import { HELIOPAUSE_UPWIND_APEX_AU } from '../../heliopause';
+import { HELIOPAUSE_UPWIND_APEX_AU } from '../../solar-system/heliopause';
 import type { HoverPayload } from '../hover-types';
 
 // Lateral and downwind extents alongside the upwind constant. Kept
