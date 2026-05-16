@@ -43,7 +43,8 @@ import { PlanetBodyField } from './planet-body-field';
 import {
   Heliopause,
   HELIOPAUSE_APEX_LOCAL_PC,
-  isHeliopauseApexVisible,
+  HELIOPAUSE_LABEL_ELEMENT_ID,
+  HELIOPAUSE_SAMPLE_POINTS_LOCAL,
 } from './heliopause';
 import { R_SUN_PC } from './astronomy-constants';
 import {
@@ -3472,28 +3473,87 @@ export class Stellata {
     );
   }
 
-  // Hover-engine entry point for the heliopause apex (stellata-lo5.6).
-  // Fallback-only tier — the apex is a labelled point with no rendered
-  // disc. Gated on the same visibility predicate the SVG apex label
-  // uses (`isHeliopauseApexVisible`), so hover and label switch on/off
-  // together as the user changes focus, opens chart mode, or zooms past
-  // the orbit-ring fade. v1's heliopause label predicate already implies
-  // Sol focus (it requires a focused planet system, and Sol is the only
-  // attached host), so HELIOPAUSE_APEX_LOCAL_PC is the apex's world
-  // position whenever the predicate passes — no worldOffset adjust here.
-  pickHeliopauseHit(clientX: number, clientY: number, pixelThreshold = 14): HoverHit | null {
-    if (!isHeliopauseApexVisible(this)) return null;
+  // Hover-engine entry point for the heliopause (stellata-lo5.6).
+  // Fallback-only tier — the heliopause is an extended translucent
+  // shell, not a rendered disc. The disambiguator's prime>fallback rule
+  // means any star or planet visually atop the shell still wins its own
+  // hover (the heliopause never blocks "see-through" picks).
+  //
+  // Hit surface, per Alex's lo5.6 smoke feedback: anywhere on the
+  // projected shell silhouette OR anywhere on the apex SVG label, not
+  // just a 14 px radius around the apex centroid. Two regimes:
+  //
+  //  - Outside the shell (camera past the ellipsoid surface): all 62
+  //    sample points project in front of the near plane, the silhouette
+  //    bbox is well-defined, and the cursor anywhere inside it
+  //    registers a fallback hit. AABB is loose vs the true projected
+  //    ellipse (overshoots the diagonals ~6-8%) — fallback tier makes
+  //    the overshoot harmless because stars/planets at those diagonal
+  //    corners win their own prime hover anyway.
+  //
+  //  - Inside the shell (camera within the ellipsoid): at least one
+  //    sample point sits behind the near plane, the shell back-face-
+  //    culls and doesn't paint, and the silhouette test bails. The
+  //    apex label may still be visible (it gates separately on the
+  //    orbit-ring-visible predicate plus its own near-plane guard),
+  //    so the cursor inside the label's bounding rect still registers.
+  //
+  // Base gate: shell mesh visibility (`heliopause.isVisible()`), the
+  // actual rendered state — gives any future user-toggleable
+  // representational-layer switch one place to AND into. The label
+  // test relies on the label engine's own setVisible(display: none)
+  // wire to gate itself; getBoundingClientRect() returns zero bounds
+  // when the element is `display: none`, so the inside-bbox check
+  // harmlessly fails.
+  pickHeliopauseHit(clientX: number, clientY: number, _pixelThreshold = 14): HoverHit | null {
+    if (!this.heliopause.isVisible()) return null;
     const rect = this.renderer.domElement.getBoundingClientRect();
     const cursorX = clientX - rect.left;
     const cursorY = clientY - rect.top;
-    const apex = HELIOPAUSE_APEX_LOCAL_PC;
-    const v = new THREE.Vector3(apex.x, apex.y, apex.z).project(this.camera);
-    if (v.z < -1 || v.z > 1) return null;
-    const screenX = (v.x + 1) * 0.5 * rect.width;
-    const screenY = (1 - v.y) * 0.5 * rect.height;
-    const pxDist = Math.hypot(cursorX - screenX, cursorY - screenY);
-    if (pxDist > pixelThreshold) return null;
+
+    // Silhouette bbox: project all sample points to screen-space.
+    // Bail (allInFront=false) if any sample is behind the near plane —
+    // matches the label engine's exact predicate so the silhouette is
+    // hoverable iff it's also drawn.
+    let allInFront = true;
+    let minX = Infinity, minY = Infinity;
+    let maxX = -Infinity, maxY = -Infinity;
+    const tmp = new THREE.Vector3();
+    const nearNeg = -this.camera.near;
+    for (const sample of HELIOPAUSE_SAMPLE_POINTS_LOCAL) {
+      tmp.copy(sample);
+      tmp.applyMatrix4(this.camera.matrixWorldInverse);
+      if (tmp.z >= nearNeg) { allInFront = false; break; }
+      tmp.applyMatrix4(this.camera.projectionMatrix);
+      const sx = (tmp.x + 1) * 0.5 * rect.width;
+      const sy = (1 - tmp.y) * 0.5 * rect.height;
+      if (sx < minX) minX = sx;
+      if (sx > maxX) maxX = sx;
+      if (sy < minY) minY = sy;
+      if (sy > maxY) maxY = sy;
+    }
+    const insideSilhouette = allInFront
+      && cursorX >= minX && cursorX <= maxX
+      && cursorY >= minY && cursorY <= maxY;
+
+    // Label bbox: getBoundingClientRect returns all-zero bounds for a
+    // `display: none` element, so this test harmlessly fails whenever
+    // the label engine has hidden the label (orbit-ring fade, chart
+    // mode, near-plane guard).
+    let insideLabel = false;
+    const labelEl = document.getElementById(HELIOPAUSE_LABEL_ELEMENT_ID);
+    if (labelEl) {
+      const lr = labelEl.getBoundingClientRect();
+      if (lr.width > 0 && lr.height > 0) {
+        insideLabel = clientX >= lr.left && clientX <= lr.right
+          && clientY >= lr.top && clientY <= lr.bottom;
+      }
+    }
+
+    if (!insideSilhouette && !insideLabel) return null;
+
     const cam = this.camera.position;
+    const apex = HELIOPAUSE_APEX_LOCAL_PC;
     const dx = apex.x - cam.x;
     const dy = apex.y - cam.y;
     const dz = apex.z - cam.z;
