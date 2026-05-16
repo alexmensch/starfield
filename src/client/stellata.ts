@@ -663,7 +663,7 @@ export class Stellata {
       DEFAULT_FOV,
       window.innerWidth / window.innerHeight,
       1e-10,
-      200_000,
+      500_000,
     );
     this.camera.position.set(0, 0, 30);
 
@@ -678,7 +678,7 @@ export class Stellata {
     this.controls.staticMoving = false;
     this.controls.dynamicDampingFactor = 0.15;
     this.controls.minDistance = GLOBAL_MIN_DIST_PC;
-    this.controls.maxDistance = 100_000;
+    this.controls.maxDistance = 250_000;
     this.controls.target.set(0, 0, 0);
 
     // OBSERVE-mode look-around controller. Starts disabled; enable() runs
