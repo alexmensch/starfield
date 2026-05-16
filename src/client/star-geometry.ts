@@ -108,32 +108,45 @@ export function pickScore(pxDist: number, appMag: number): number {
 // already accepted it. `hitRadius` is the prime-tier disc radius
 // (`max(pxSize/2, MIN_DISC_HIT_RADIUS_PX)`) — caller-computed because
 // it depends on rendered disc size. Pure-data shape so the reducer
-// below stays unit-testable without a Three.js scene.
+// below stays unit-testable without a Three.js scene. Non-star
+// providers (planets, Local Group, heliopause apex) extend this with
+// no extra fields and pass the default `pxDist` scorer.
 export type PickCandidate = {
   idx: number;
   pxDist: number;
   hitRadius: number;
-  appMag: number;
 };
 
+// Star-specific candidate. Carries `appMag` so the sub-pixel
+// brightness bias in `pickScore` can tiebreak coincident catalog
+// rows (Alula Australis A/B in AT-HYG sharing x/y/z). Other layers
+// don't have a magnitude axis worth biasing on.
+export type StarPickCandidate = PickCandidate & { appMag: number };
+
 // Reduce a candidate list to the winning idx (or -1) under the two-tier
-// pickStar contract:
-//   prime  — `pxDist <= hitRadius` (cursor inside the rendered disc)
+// pick contract:
+//   prime  — `pxDist <= hitRadius` (cursor inside the rendered disc /
+//            wireframe envelope)
 //   fallback — `pxDist <= pixelThreshold` (cursor near the centre, no
 //              disc hit). Only consulted when no prime hit exists.
-// Within each tier, lowest `pickScore` wins. Prime hits ALWAYS beat
+// Within each tier, lowest `scoreFn(c)` wins. Prime hits ALWAYS beat
 // fallback hits — a prime candidate just inside its hit radius beats
 // a fallback candidate one pixel from the cursor, regardless of score.
-export function pickFromCandidates(
-  candidates: Iterable<PickCandidate>,
+//
+// `scoreFn` defaults to "closest to cursor wins" (`c.pxDist`) — the
+// natural choice for layers without a brightness bias. The star caller
+// passes `pickScore` to retain the sub-pixel mag tiebreaker.
+export function pickFromCandidates<T extends PickCandidate>(
+  candidates: Iterable<T>,
   pixelThreshold: number,
+  scoreFn: (c: T) => number = (c) => c.pxDist,
 ): number {
   let primeIdx = -1;
   let primeBest = Infinity;
   let fbIdx = -1;
   let fbBest = Infinity;
   for (const c of candidates) {
-    const score = pickScore(c.pxDist, c.appMag);
+    const score = scoreFn(c);
     if (c.pxDist <= c.hitRadius) {
       if (score < primeBest) {
         primeBest = score;

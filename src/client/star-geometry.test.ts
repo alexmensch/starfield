@@ -4,7 +4,7 @@ import {
   physSizePx,
   pickScore,
   pickFromCandidates,
-  type PickCandidate,
+  type StarPickCandidate,
   varEffectiveAmplitude,
   distAtFillFraction,
   peakAmplitudeFactor,
@@ -202,10 +202,14 @@ describe('star-geometry / pickFromCandidates', () => {
     pxDist: number,
     hitRadius: number,
     appMag: number,
-  ): PickCandidate => ({ idx, pxDist, hitRadius, appMag });
+  ): StarPickCandidate => ({ idx, pxDist, hitRadius, appMag });
+
+  // Star scorer is passed explicitly now that pickFromCandidates is
+  // generic; non-star providers default to closest-to-cursor.
+  const starScore = (cand: StarPickCandidate) => pickScore(cand.pxDist, cand.appMag);
 
   it('returns -1 when no candidates exist', () => {
-    expect(pickFromCandidates([], 16)).toBe(-1);
+    expect(pickFromCandidates([], 16, starScore)).toBe(-1);
   });
 
   it('prime-only: lowest pickScore wins among hits inside hitRadius', () => {
@@ -216,7 +220,7 @@ describe('star-geometry / pickFromCandidates', () => {
       c(11, 1, 5, 4.5), // score = 1 + 0.225 = 1.225 ← winner
       c(12, 4, 5, 3.0), // score = 4 + 0.15 = 4.15
     ];
-    expect(pickFromCandidates(cands, 16)).toBe(11);
+    expect(pickFromCandidates(cands, 16, starScore)).toBe(11);
   });
 
   it('fallback-only: nearest-to-cursor wins when no prime hits exist', () => {
@@ -227,7 +231,7 @@ describe('star-geometry / pickFromCandidates', () => {
       c(21, 6, 2, 5.5), // fallback; score = 6.275 ← winner
       c(22, 14, 2, 4.0), // fallback; score = 14.20
     ];
-    expect(pickFromCandidates(cands, 16)).toBe(21);
+    expect(pickFromCandidates(cands, 16, starScore)).toBe(21);
   });
 
   it('mixed prime + fallback: any prime hit beats the best fallback', () => {
@@ -238,7 +242,7 @@ describe('star-geometry / pickFromCandidates', () => {
       c(30, 4.5, 5, 4.0), // prime; score ≈ 4.7
       c(31, 1.0, 0.5, 3.0), // fallback (pxDist > hitRadius); score ≈ 1.15
     ];
-    expect(pickFromCandidates(cands, 16)).toBe(30);
+    expect(pickFromCandidates(cands, 16, starScore)).toBe(30);
   });
 
   it('prime tier with tied score (Alula Australis): brighter component wins', () => {
@@ -248,7 +252,7 @@ describe('star-geometry / pickFromCandidates', () => {
       c(40, 0, 5, 4.33), // Alula A
       c(41, 0, 5, 4.80), // Alula B
     ];
-    expect(pickFromCandidates(cands, 16)).toBe(40);
+    expect(pickFromCandidates(cands, 16, starScore)).toBe(40);
   });
 
   it('prime hit inside hitRadius beats fallback hit just under pixelThreshold', () => {
@@ -259,7 +263,7 @@ describe('star-geometry / pickFromCandidates', () => {
       c(50, 4.99, 5, 6.0), // prime (just inside); score ≈ 5.29
       c(51, 15.99, 0.5, 0.0), // fallback (just inside); score ≈ 15.99
     ];
-    expect(pickFromCandidates(cands, 16)).toBe(50);
+    expect(pickFromCandidates(cands, 16, starScore)).toBe(50);
   });
 
   it('candidates outside both tiers (pxDist > pixelThreshold and > hitRadius) are ignored', () => {
@@ -269,6 +273,18 @@ describe('star-geometry / pickFromCandidates', () => {
       c(60, 100, 5, 0.0), // way out; ignored
       c(61, 50, 5, 1.0), // also out
     ];
-    expect(pickFromCandidates(cands, 16)).toBe(-1);
+    expect(pickFromCandidates(cands, 16, starScore)).toBe(-1);
+  });
+
+  it('default scorer (pxDist) — closest-to-cursor wins when no scorer is passed', () => {
+    // Non-star providers (planets, Local Group, heliopause apex) rely on
+    // the default scoreFn = c.pxDist. No magnitude axis, no sub-pixel
+    // bias — purely closest centroid wins.
+    const cands: StarPickCandidate[] = [
+      { idx: 70, pxDist: 8, hitRadius: 2, appMag: 0 },
+      { idx: 71, pxDist: 4, hitRadius: 2, appMag: 0 }, // winner
+      { idx: 72, pxDist: 6, hitRadius: 2, appMag: 0 },
+    ];
+    expect(pickFromCandidates(cands, 16)).toBe(71);
   });
 });
