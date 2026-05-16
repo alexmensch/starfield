@@ -29,8 +29,8 @@ import { applyFirstLoadView } from './first-load';
 import { fmtDist } from './distance-util';
 import { setupDebug } from './debug';
 import { escapeHtml } from './dom-util';
-
-const HOVER_DELAY_MS = 280;
+import { createHoverEngine } from './hover/hover-engine';
+import type { HoverProvider } from './hover/hover-types';
 
 async function main() {
   const canvas = document.getElementById('scene') as HTMLCanvasElement;
@@ -196,7 +196,20 @@ async function main() {
       stellata,
     });
 
-    bindHoverTooltip(canvas, tooltip, stellata, describeStarDetailed);
+    // Hover-label engine (stellata-lo5). Star provider registers here;
+    // lo5.3+ add the Sol-planet / Local Group / heliopause providers.
+    // The engine reproduces the prior bindHoverTooltip behaviour byte
+    // for byte when only the star provider is registered.
+    const starHoverProvider: HoverProvider<'star'> = {
+      kind: 'star',
+      pick: (x, y, pxThreshold) => stellata.pickStarHit(x, y, pxThreshold),
+      format: describeStarDetailed,
+    };
+    createHoverEngine({
+      canvas,
+      tooltip,
+      initialProviders: [starHoverProvider],
+    });
 
     await new Promise((r) => requestAnimationFrame(r));
     loading.style.transition = 'opacity 0.4s ease';
@@ -214,9 +227,10 @@ async function main() {
     }, 400);
 
     // (describeCloud removed alongside the cloud-shelving cleanup. When
-    // re-enabling the cloud layer, restore it from git history and pass it
-    // back into bindHoverTooltip so cloud hovers surface a name+axes
-    // tooltip the same way star hovers do.)
+    // re-enabling the cloud layer, build a CloudHoverProvider per the
+    // lo5 engine contract — the cloud formatter exists already as part
+    // of lo5.7 but its provider is unregistered while the layer is
+    // shelved.)
 
     // Detailed, multi-line form for the hover tooltip. Line 1 is the star
     // name; subsequent lines progressively disclose: constellation +
@@ -249,55 +263,6 @@ async function main() {
     console.error(err);
     loadingStatus.textContent = `Error: ${(err as Error).message}`;
   }
-}
-
-function bindHoverTooltip(
-  canvas: HTMLCanvasElement,
-  tooltip: HTMLElement,
-  stellata: Stellata,
-  detailedStar: (i: number) => { name: string; lines: string[] },
-) {
-  let timer: number | undefined;
-  let dragging = false;
-  let lastX = 0;
-  let lastY = 0;
-
-  const hide = () => {
-    tooltip.hidden = true;
-    if (timer !== undefined) {
-      clearTimeout(timer);
-      timer = undefined;
-    }
-  };
-
-  canvas.addEventListener('pointerdown', () => { dragging = true; hide(); });
-  canvas.addEventListener('pointerup', () => { dragging = false; });
-  canvas.addEventListener('pointerleave', hide);
-
-  canvas.addEventListener('pointermove', (e) => {
-    if (dragging) return;
-    lastX = e.clientX;
-    lastY = e.clientY;
-    hide();
-    timer = window.setTimeout(() => {
-      // Stars are the only hover-tooltip target while the molecular cloud
-      // layer is shelved (CLAUDE.md). When clouds re-enable, fall back to
-      // pickCloud here for the cloud-name tooltip.
-      const starIdx = stellata.pickStar(lastX, lastY, 14);
-      const payload = starIdx >= 0 ? detailedStar(starIdx) : null;
-      if (!payload) return;
-      const { name, lines } = payload;
-      const subLines = lines
-        .map((l) => `<div class="tt-sub">${escapeHtml(l)}</div>`)
-        .join('');
-      tooltip.innerHTML = `<div class="tt-name">${escapeHtml(name)}</div>${subLines}`;
-      const maxLeft = window.innerWidth - 300;
-      const maxTop = window.innerHeight - 96;
-      tooltip.style.left = Math.min(lastX + 14, maxLeft) + 'px';
-      tooltip.style.top = Math.min(lastY + 14, maxTop) + 'px';
-      tooltip.hidden = false;
-    }, HOVER_DELAY_MS);
-  });
 }
 
 main();

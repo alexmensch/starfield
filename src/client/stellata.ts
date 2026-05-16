@@ -30,7 +30,8 @@ import {
   angularToPx as angularToPxPure,
   physSizePx,
   pickFromCandidates,
-  type PickCandidate,
+  pickScore,
+  type StarPickCandidate,
   varEffectiveAmplitude,
   distAtFillFraction,
   peakAmplitudeFactor,
@@ -87,6 +88,7 @@ import {
 } from './warp-tuning';
 import { hybridUSeam } from './arrival-curves';
 import { EventBus } from './event-bus';
+import type { HoverHit } from './hover/hover-types';
 
 export type MagPresetName = 'naked-eye' | 'binoculars' | 'all';
 
@@ -284,6 +286,16 @@ const DCAM_LOG_FLOOR_PC = 1e-30;
 // 1e-6 inconsistently (stellata-9mm.195) — migrate them off the
 // literals as part of that bead, not here.
 const MIN_PHYSICAL_RADIUS_R_SUN = 1e-9;
+
+// Floor on the prime-disc hit radius. Tiny chart-mode discs (down to
+// 1–2 px) leave a sub-pixel target that the cursor can easily miss
+// even when visually right on top of the star. Hover then falls
+// through to the proximity fallback only if no other disc has won —
+// which on a crowded chart it often has, so the small star never
+// surfaces. Floor the disc-test radius to a value the cursor can
+// realistically land within. Shared by `pickStar` (winner selection)
+// and `pickStarHit` (tier classification for the hover engine).
+const MIN_DISC_HIT_RADIUS_PX = 4;
 
 // Squared-length threshold below which `controls.target` is treated as
 // coincident with the local origin (= focal-star position). Engages the
@@ -3326,14 +3338,6 @@ export class Stellata {
     const { absmag, spectClass, amplitudeMag, periodDays } = this.catalog;
     const f = this.filter;
     const v = new THREE.Vector3();
-    // Floor on the prime-disc hit radius. Tiny chart-mode discs (down to
-    // 1–2 px) leave a sub-pixel target that the cursor can easily miss
-    // even when visually right on top of the star. Hover then falls
-    // through to the proximity fallback only if no other disc has won —
-    // which on a crowded chart it often has, so the small star never
-    // surfaces. Floor the disc-test radius to a value the cursor can
-    // realistically land within.
-    const MIN_DISC_HIT_RADIUS_PX = 4;
 
     // Window the scan to the slice of sortedDistFromSol that lies inside
     // the user's [minDistSol, maxDistSol] band. Skips out-of-band stars
@@ -3357,7 +3361,7 @@ export class Stellata {
     //      foreground disc that contains the cursor. See pickScore.
     //   2. Otherwise proximity within pixelThreshold, same scoring.
     //      Prime hits always beat fallback hits.
-    const candidates: PickCandidate[] = [];
+    const candidates: StarPickCandidate[] = [];
     for (let k = start; k < end; k++) {
       const i = sortedIdx[k];
       const bit = 1 << (spectClass[i] | 0);
@@ -3391,7 +3395,44 @@ export class Stellata {
       if (pxDist > hitRadius && pxDist > pixelThreshold) continue;
       candidates.push({ idx: i, pxDist, hitRadius, appMag });
     }
-    return pickFromCandidates(candidates, pixelThreshold);
+    return pickFromCandidates(
+      candidates,
+      pixelThreshold,
+      (c) => pickScore(c.pxDist, c.appMag),
+    );
+  }
+
+  // Hover-engine entry point for the star layer (stellata-lo5).
+  // Wraps `pickStar` and converts the winning idx into a HoverHit by
+  // re-projecting the one winning star — one extra projection, well
+  // below any perf threshold a 280 ms-delayed hover tick cares about.
+  // Tier is `prime` when the cursor sits inside the rendered disc,
+  // `fallback` otherwise (matches the tier the reducer already chose).
+  pickStarHit(clientX: number, clientY: number, pixelThreshold = 14): HoverHit | null {
+    const idx = this.pickStar(clientX, clientY, pixelThreshold);
+    if (idx < 0) return null;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const cursorX = clientX - rect.left;
+    const cursorY = clientY - rect.top;
+    const locPos = this._localPositions;
+    const cam = this.camera.position;
+    const x = locPos[idx * 3 + 0];
+    const y = locPos[idx * 3 + 1];
+    const z = locPos[idx * 3 + 2];
+    const dx = x - cam.x;
+    const dy = y - cam.y;
+    const dz = z - cam.z;
+    const cameraDistancePc = Math.max(
+      Math.sqrt(dx * dx + dy * dy + dz * dz),
+      DCAM_LOG_FLOOR_PC,
+    );
+    const v = new THREE.Vector3(x, y, z).project(this.camera);
+    const screenX = (v.x + 1) * 0.5 * rect.width;
+    const screenY = (1 - v.y) * 0.5 * rect.height;
+    const pxDist = Math.hypot(cursorX - screenX, cursorY - screenY);
+    const hitRadius = Math.max(this.renderedSizePx(idx) * 0.5, MIN_DISC_HIT_RADIUS_PX);
+    const tier: 'prime' | 'fallback' = pxDist <= hitRadius ? 'prime' : 'fallback';
+    return { idx, cameraDistancePc, tier };
   }
 
   private pointerDownAt: { x: number; y: number; t: number } | null = null;
