@@ -71,15 +71,15 @@ export function parseLvdb(csv: string): LvdbRow[] {
     rhalfPhysicalPc: num(r.rhalf_physical),
     ellipticity: num(r.ellipticity),
     positionAngle: num(r.position_angle),
-    mVAbs: num(r.M_V),
   }));
 }
 
 /** Parse overrides.tsv (header line + tab-separated rows; lines starting
  *  with # are comments).
  *
- *  Schema: name<TAB>a_pc<TAB>b_pc<TAB>c_pc<TAB>orient<TAB>label_threshold_pc<TAB>ref_doi
- *  Empty label_threshold_pc → null (no label). */
+ *  Schema: name<TAB>a_pc<TAB>b_pc<TAB>c_pc<TAB>orient<TAB>ref_doi
+ *  Label visibility is governed at runtime (apparent-size ranking)
+ *  rather than per-row, so no threshold column. */
 export function parseOverrides(tsv: string): OverrideRow[] {
   const out: OverrideRow[] = [];
   const lines = tsv.split(/\r?\n/);
@@ -90,21 +90,19 @@ export function parseOverrides(tsv: string): OverrideRow[] {
     if (!headerSeen) {
       // First non-comment line is the header. Sanity-check the shape so a
       // schema drift surfaces loudly at build time.
-      const expected = ['name', 'a_pc', 'b_pc', 'c_pc', 'orient', 'label_threshold_pc', 'ref_doi'];
+      const expected = ['name', 'a_pc', 'b_pc', 'c_pc', 'orient', 'ref_doi'];
       if (fields.length < expected.length || fields[0] !== 'name') {
         throw new Error(`overrides.tsv: malformed header (got ${fields.length} fields, expected ${expected.length})`);
       }
       headerSeen = true;
       continue;
     }
-    if (fields.length < 7) continue;
-    const labelThresholdStr = fields[5].trim();
+    if (fields.length < 6) continue;
     out.push({
       name: fields[0].trim(),
       axes: [parseFloat(fields[1]), parseFloat(fields[2]), parseFloat(fields[3])],
       orient: fields[4].trim(),
-      labelThresholdPc: labelThresholdStr === '' ? null : parseFloat(labelThresholdStr),
-      refDoi: fields[6].trim(),
+      refDoi: fields[5].trim(),
     });
   }
   return out;
@@ -120,7 +118,6 @@ function toJsonObject(o: LgObject) {
     kind: o.kind,
     axes: o.axes.map((v) => roundN(v, 2)),
     quat: o.quat.map((v) => roundN(v, 6)),
-    labelThresholdPc: o.labelThresholdPc,
     source: o.source,
     distance: roundN(o.distance, 1),
   };

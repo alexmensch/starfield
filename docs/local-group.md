@@ -57,7 +57,6 @@ summary is too coarse for meaningful 3D rendering:
 | `name`              | Matches LVDB's `name` column for merge. |
 | `a_pc / b_pc / c_pc`| Local-frame semi-axes in parsecs. |
 | `orient`            | Orientation spec — see below. |
-| `label_threshold_pc`| Camera-to-object distance for label fade-in; empty = no label. |
 | `ref_doi`           | Primary structural reference. |
 
 Override **replaces** the structural detail an LVDB row would otherwise
@@ -104,8 +103,8 @@ write hits one slot.
 label code earlier in this layer's PR — see the `Extract distance-gated
 label helper from heliopause` commit). Each label binds to:
 
-- A per-frame visibility predicate (camera-to-object-centre distance
-  past the threshold; chart mode hides).
+- A per-frame visibility predicate (`visibleLabelIds.has(id)` — a
+  shared Set written by the global ranking pass, see below).
 - A silhouette-sample generator. The MW label samples **32 points
   around the 15 kpc disc rim** (galactic-disc.ts's
   `MIDPLANE_RADIUS_PC`) — anchoring at the GC bulge center sat the
@@ -116,31 +115,39 @@ label helper from heliopause` commit). Each label binds to:
 - The same screen-space anchor convention as the heliopause: bottom-
   right at a constant 10 px gap.
 
-### Threshold policy
+### Ranking policy — `computeVisibleLabels`
 
-The MW and LG labels use **opposite** predicate directions because
-Sol's relation to each is different:
+One universal rule: each frame, rank every candidate (MW + every LG
+object) by apparent pixel size on screen and reveal the top N (default
+5), with a sub-pixel floor (default 6 px) so we don't label objects
+the user can't see. The only exception is the **inside-MW guard**:
+when the camera sits inside the disc (`||cam − GC|| <
+mwInsideDiscPc`), every label is suppressed (you can't usefully label
+extragalactic context while you're inside the galaxy yourself).
 
-| Family                                        | Predicate | Threshold |
-| --------------------------------------------- | --------- | --------- |
-| MW label                                      | `camera-to-GC ≥ T` (fires when **outside** the disc; Sol sits inside it) | `MW_LABEL_THRESHOLD_PC` = 10 kpc |
-| Override-supplied (Large MC, Small MC at 30 kpc; Sgr at 10 kpc) | `camera-to-object ≤ T` (fires when **close enough** to identify) | `overrides.tsv` `label_threshold_pc` column |
-| Classical dSph (M_V ≤ −7.5, no override)      | same close-approach | `DEFAULT_LABEL_THRESHOLD_PC` = 20 kpc |
-| Ultra-faint (M_V > −7.5, no override)         | same close-approach | `SIZE_RELATIVE_LABEL_FACTOR × max(axes)` (N = 10) — so a 50 pc Bootes II surfaces inside ~500 pc, a 270 pc Sculptor-class inside ~2.7 kpc |
+The ranking lives in the pure `computeVisibleLabels(candidates, params)`
+helper (testable in isolation). A per-frame handler — registered the
+first time `createMilkyWayLabel` or `createLocalGroupLabels` is called
+— runs `computeVisibleLabels` and writes the result into the shared
+`visibleLabelIds` Set; per-label predicates query it.
 
-The fallback policy lives in `effectiveLabelThresholdPc(obj)`, exported
-from `local-group.ts` for testability (the DOM-binding wrapper around
-`createDistanceGatedLabel` isn't directly unit-testable). From the
-canonical first-load park at Sol every LG object is tens of kpc away
-— **all hidden by design**; labels reveal as the camera flies in.
+All three knobs are live-tunable through the **Deep field** debug-panel
+section (`src/client/local-group-tuning.ts`):
 
-The size-relative factor `N` (default 10) is mutable at runtime
-through the **Deep field** debug-panel section
-(`src/client/local-group-tuning.ts`). The predicate re-reads the live
-factor each frame, so slider tweaks apply without re-mounting the
-labels. `DEFAULT_SIZE_RELATIVE_LABEL_FACTOR` is the build-time
-constant tests pin against; `getSizeRelativeLabelFactor()` /
-`setSizeRelativeLabelFactor()` are the runtime accessors.
+| Knob              | Default     | What it does |
+| ----------------- | ----------- | ------------ |
+| `topN`            | 5           | Max labels visible at once. |
+| `minPixelSize`    | 6 px        | Apparent-size floor; sub-pixel candidates can't earn a label. |
+| `mwInsideDiscPc`  | 10 kpc      | Camera-to-GC distance below which **every** label is suppressed. 0 disables the guard entirely (label-from-anywhere). |
+
+From the canonical first-load park at Sol (`||cam − GC|| ≈ 8 kpc`), the
+inside-MW guard fires → no labels. Zoom out past 10 kpc-from-GC, the
+ranking starts; from any extragalactic vantage the MW + the largest
+nearby satellites earn labels.
+
+No `label_threshold_pc` column in `overrides.tsv`, no
+`DEFAULT_LABEL_THRESHOLD_PC`, no per-class cutoff on M_V — the
+apparent-size ranking subsumes all of them.
 
 SVG slots live in `index.html` next to the heliopause label:
 

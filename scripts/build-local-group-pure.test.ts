@@ -3,7 +3,6 @@ import {
   basisToQuaternion,
   buildLvdbDefault,
   buildOrientationQuat,
-  defaultLabelThresholdPc,
   displayName,
   filterForRendering,
   mergeRowAndOverride,
@@ -11,9 +10,7 @@ import {
   raDecDistanceToIcrs,
   skyBasis,
   slugify,
-  DEFAULT_LABEL_THRESHOLD_PC,
   DISPLAY_NAME_OVERRIDES,
-  LABEL_M_V_CUTOFF,
   MAX_DISTANCE_PC,
   type LvdbRow,
   type OverrideRow,
@@ -55,7 +52,6 @@ function makeRow(o: Partial<LvdbRow>): LvdbRow {
     rhalfPhysicalPc: o.rhalfPhysicalPc ?? null,
     ellipticity: o.ellipticity ?? null,
     positionAngle: o.positionAngle ?? null,
-    mVAbs: o.mVAbs ?? null,
   };
 }
 
@@ -232,20 +228,6 @@ describe('filterForRendering', () => {
   });
 });
 
-describe('defaultLabelThresholdPc — classical vs ultra-faint cutoff', () => {
-  it('classical dSph (M_V ≤ -7.5) labelled at the default threshold', () => {
-    expect(defaultLabelThresholdPc(-10)).toBe(DEFAULT_LABEL_THRESHOLD_PC);
-    expect(defaultLabelThresholdPc(LABEL_M_V_CUTOFF)).toBe(DEFAULT_LABEL_THRESHOLD_PC);
-  });
-  it('ultra-faint (M_V > -7.5) unlabelled', () => {
-    expect(defaultLabelThresholdPc(-7)).toBeNull();
-    expect(defaultLabelThresholdPc(-2)).toBeNull();
-  });
-  it('missing M_V → unlabelled', () => {
-    expect(defaultLabelThresholdPc(null)).toBeNull();
-  });
-});
-
 describe('buildLvdbDefault', () => {
   it('returns null when rhalf_physical is missing — nothing to render', () => {
     expect(buildLvdbDefault(makeRow({ rhalfPhysicalPc: null }))).toBeNull();
@@ -276,34 +258,30 @@ describe('mergeRowAndOverride — override-vs-LVDB precedence', () => {
     name: 'Test',
     axes: [100, 200, 300],
     orient: 'los',
-    labelThresholdPc: 5000,
     refDoi: '10.1234/test',
   };
-  it('override replaces axes + orient + label threshold; LVDB position survives', () => {
+  it('override replaces axes + orient; LVDB position survives', () => {
     const row = makeRow({
       name: 'Test',
       ra: 78.76, dec: -69.19, distanceKpc: 50,
       rhalfPhysicalPc: 999, ellipticity: 0.5, positionAngle: 60, // would be picked if no override
-      mVAbs: -3, // ultra-faint → would default to no label
     });
     const out = mergeRowAndOverride(row, override)!;
     expect(out.source).toBe('OVERRIDE');
     expect(out.kind).toBe('ellipsoid');         // los → ellipsoid
     expect(out.axes).toEqual([100, 200, 300]);
-    expect(out.labelThresholdPc).toBe(5000);    // override beats M_V-based default
     expect(out.distance).toBe(50_000);          // 50 kpc → 50_000 pc
     // Position derived from RA/Dec/d:
     expect(Math.hypot(...out.center)).toBeCloseTo(50_000, 4);
   });
   it('no override + valid LVDB rhalf → LVDB-default rendering', () => {
     const row = makeRow({
-      rhalfPhysicalPc: 500, ellipticity: 0.2, positionAngle: 30, mVAbs: -10,
+      rhalfPhysicalPc: 500, ellipticity: 0.2, positionAngle: 30,
     });
     const out = mergeRowAndOverride(row, undefined)!;
     expect(out.source).toBe('LVDB');
     expect(out.kind).toBe('ellipsoid');
     expect(out.axes[0]).toBe(500);
-    expect(out.labelThresholdPc).toBe(DEFAULT_LABEL_THRESHOLD_PC); // classical dSph
   });
   it('no override + no LVDB rhalf → null (nothing to render)', () => {
     const row = makeRow({ rhalfPhysicalPc: null });
@@ -315,7 +293,6 @@ describe('mergeRowAndOverride — override-vs-LVDB precedence', () => {
       name: 'LMC',
       axes: [4500, 4500, 1000],
       orient: 'disc:i=32,pa=135',
-      labelThresholdPc: 30_000,
       refDoi: '10.1088/0004-637X/781/2/121',
     };
     const out = mergeRowAndOverride(row, lmcOverride)!;
@@ -343,13 +320,11 @@ describe('displayName overrides + default type suffix', () => {
       ra: 78.76, dec: -69.19, distanceKpc: 49.59,
       confirmedReal: 1, confirmedGalaxy: 1,
       rhalfPhysicalPc: null, ellipticity: null, positionAngle: null,
-      mVAbs: null,
     };
     const override: OverrideRow = {
       name: 'LMC',
       axes: [4500, 4500, 1000],
       orient: 'disc:i=32,pa=135',
-      labelThresholdPc: 30_000,
       refDoi: '10.1088/0004-637X/781/2/121',
     };
     const out = mergeRowAndOverride(row, override)!;
@@ -362,7 +337,6 @@ describe('displayName overrides + default type suffix', () => {
       ra: 15, dec: -33, distanceKpc: 84,
       confirmedReal: 1, confirmedGalaxy: 1,
       rhalfPhysicalPc: 270, ellipticity: 0.3, positionAngle: 99,
-      mVAbs: -11,
     };
     const out = mergeRowAndOverride(row, undefined)!;
     expect(out.name).toBe('Sculptor Dwarf Spheroidal');

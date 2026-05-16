@@ -13,9 +13,6 @@ export interface LgObject {
   axes: [number, number, number];
   /** Rotation from local frame to ICRS. */
   quat: THREE.Quaternion;
-  /** Camera-to-object distance (parsecs) at which the SVG label fades in.
-   *  null = unlabelled. */
-  labelThresholdPc: number | null;
   source: LgSource;
   /** Heliocentric distance to the centroid in parsecs. */
   distanceFromSol: number;
@@ -33,7 +30,6 @@ interface RawObject {
   kind: LgKind;
   axes: [number, number, number];
   quat: [number, number, number, number];
-  labelThresholdPc: number | null;
   source: LgSource;
   distance: number;
 }
@@ -71,7 +67,6 @@ export async function loadLocalGroup(url: string): Promise<LgCatalog | null> {
     kind: o.kind,
     axes: [o.axes[0], o.axes[1], o.axes[2]],
     quat: new THREE.Quaternion(o.quat[0], o.quat[1], o.quat[2], o.quat[3]),
-    labelThresholdPc: o.labelThresholdPc,
     source: o.source,
     distanceFromSol: o.distance,
   }));

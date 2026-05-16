@@ -11,7 +11,6 @@ interface Raw {
     kind: 'disc' | 'ellipsoid';
     axes: [number, number, number];
     quat: [number, number, number, number];
-    labelThresholdPc: number | null;
     source: 'LVDB' | 'OVERRIDE';
     distance: number;
   }>;
@@ -71,7 +70,6 @@ describe('loadLocalGroup', () => {
         axes: [4500, 4500, 1000],
         // pre-normalised unit quaternion
         quat: [0.1, 0.2, 0.3, Math.sqrt(1 - 0.01 - 0.04 - 0.09)],
-        labelThresholdPc: 30000,
         source: 'OVERRIDE',
         distance: 49590,
       }],
@@ -87,28 +85,6 @@ describe('loadLocalGroup', () => {
     expect(o.centerAbs.y).toBe(5000);
     expect(o.centerAbs.z).toBe(-42000);
     expect(o.quat.length()).toBeCloseTo(1, 6);
-    expect(o.labelThresholdPc).toBe(30000);
     expect(o.distanceFromSol).toBe(49590);
-  });
-
-  it('preserves labelThresholdPc=null for unlabelled (ultra-faint) entries', async () => {
-    const raw: Raw = {
-      version: 1,
-      count: 1,
-      objects: [{
-        name: 'Bootes_II',
-        id: 'bootes-ii',
-        center: [0, 0, 0],
-        kind: 'ellipsoid',
-        axes: [50, 30, 30],
-        quat: [0, 0, 0, 1],
-        labelThresholdPc: null,
-        source: 'LVDB',
-        distance: 41690,
-      }],
-    };
-    mockFetch(() => ({ ok: true, json: () => raw }));
-    const out = await loadLocalGroup('/local-group.json');
-    expect(out!.objects[0].labelThresholdPc).toBeNull();
   });
 });

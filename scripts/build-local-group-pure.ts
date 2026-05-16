@@ -7,18 +7,6 @@
  *  envelope set in stellata-5gq: 250 kpc maxDistance. */
 export const MAX_DISTANCE_PC = 250_000;
 
-/** Classical-vs-ultra-faint dwarf cutoff (LVDB M_V column). Classical
- *  dSphs sit at M_V ≲ −7.5; ultra-faints are fainter. Stellata labels
- *  classical dSphs by default and leaves ultra-faints unlabelled at
- *  this scale — geometry stays so they're not invisible at close zoom
- *  to a focused satellite, but labelling 200+ ultra-faints would
- *  drown the wide-out view. */
-export const LABEL_M_V_CUTOFF = -7.5;
-
-/** Default label visibility distance (parsecs) for classical-dSph
- *  geometry that doesn't carry a per-object override row. */
-export const DEFAULT_LABEL_THRESHOLD_PC = 20_000;
-
 export type LgKind = 'disc' | 'ellipsoid';
 
 export interface OverrideRow {
@@ -28,7 +16,6 @@ export interface OverrideRow {
    *  "pa:102"). Parsed by `buildOrientation` against the object's
    *  sky direction. */
   orient: string;
-  labelThresholdPc: number | null;
   refDoi: string;
 }
 
@@ -54,8 +41,6 @@ export interface LvdbRow {
   /** Position angle of the projected major axis, degrees east of north
    *  on the sky plane, or null. */
   positionAngle: number | null;
-  /** Absolute V magnitude (M_V), or null. */
-  mVAbs: number | null;
 }
 
 export interface LgObject {
@@ -68,9 +53,6 @@ export interface LgObject {
   axes: [number, number, number];
   /** Rotation from local frame to ICRS as a unit quaternion [x, y, z, w]. */
   quat: [number, number, number, number];
-  /** Camera-to-object distance (parsecs) at which the SVG label fades in.
-   *  null = unlabelled. */
-  labelThresholdPc: number | null;
   source: 'LVDB' | 'OVERRIDE';
   /** Heliocentric distance to the centroid in parsecs — precomputed for
    *  ready-to-display readouts on the runtime side. */
@@ -275,15 +257,6 @@ export function buildOrientationQuat(
   return basisToQuaternion(xWorld, yWorld, zWorld);
 }
 
-/** Default label visibility threshold for an LVDB-only object (no
- *  override row). Classical dSphs (M_V ≤ −7.5) get
- *  DEFAULT_LABEL_THRESHOLD_PC; ultra-faints get null (unlabelled). */
-export function defaultLabelThresholdPc(mVAbs: number | null): number | null {
-  if (mVAbs === null) return null;
-  if (mVAbs <= LABEL_M_V_CUTOFF) return DEFAULT_LABEL_THRESHOLD_PC;
-  return null;
-}
-
 /** Build a slug from a display name (lower-case, kebab-case, ASCII only). */
 export function slugify(name: string): string {
   return (
@@ -357,10 +330,10 @@ export function buildLvdbDefault(row: LvdbRow): {
 }
 
 /** Merge an LVDB row with an optional override into a fully-shaped
- *  LgObject. Override (when present) replaces axes + orient +
- *  labelThresholdPc; LVDB always provides the position. Returns null
- *  when the row has no override AND no LVDB structural data — i.e.
- *  there's nothing to render. */
+ *  LgObject. Override (when present) replaces axes + orient; LVDB
+ *  always provides the position. Returns null when the row has no
+ *  override AND no LVDB structural data — i.e. there's nothing to
+ *  render. */
 export function mergeRowAndOverride(
   row: LvdbRow,
   override: OverrideRow | undefined,
@@ -368,15 +341,13 @@ export function mergeRowAndOverride(
   let kind: LgKind;
   let axes: [number, number, number];
   let orient: Orientation;
-  let labelThresholdPc: number | null;
   let source: 'LVDB' | 'OVERRIDE';
   if (override) {
-    // Override wins on structure + label policy. Kind is inferred from
-    // orient shape: 'disc' orient → disc; anything else → ellipsoid.
+    // Override wins on structure. Kind is inferred from orient shape:
+    // 'disc' orient → disc; anything else → ellipsoid.
     orient = parseOrient(override.orient);
     kind = orient.kind === 'disc' ? 'disc' : 'ellipsoid';
     axes = override.axes;
-    labelThresholdPc = override.labelThresholdPc;
     source = 'OVERRIDE';
   } else {
     const lvdb = buildLvdbDefault(row);
@@ -384,7 +355,6 @@ export function mergeRowAndOverride(
     kind = lvdb.kind;
     axes = lvdb.axes;
     orient = lvdb.orient;
-    labelThresholdPc = defaultLabelThresholdPc(row.mVAbs);
     source = 'LVDB';
   }
   const distancePc = row.distanceKpc * 1000;
@@ -397,7 +367,6 @@ export function mergeRowAndOverride(
     kind,
     axes,
     quat,
-    labelThresholdPc,
     source,
     distance: distancePc,
   };

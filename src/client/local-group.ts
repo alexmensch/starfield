@@ -229,22 +229,19 @@ function buildSilhouetteSamples(obj: LgObject): THREE.Vector3[] {
   return samples;
 }
 
-// Label distance threshold for the Milky Way label — camera-to-galactic-
-// centre distance past which the SVG "Milky Way" tag fades in. The MW
-// disc itself starts revealing at FADE_INNER_PC (500 pc from Sol); the
-// label lights up only once the camera is outside the disc plane far
-// enough to read the disc as a whole structure. Coupled to the bead's
-// ~10 kpc spec.
-const MW_LABEL_THRESHOLD_PC = 10_000;
+// ============================================================
+// Label policy — apparent-size ranking
+//
+// Single uniform rule for every label (MW + every LG object): each
+// frame, rank candidates by apparent pixel size and reveal the top N
+// (with a sub-pixel floor). One global exception: when the camera sits
+// inside the MW disc (||cam - GC|| < mwInsideDiscPc), suppress *every*
+// label — extra-MW objects you can see from inside the disc would be
+// labelling things the user isn't really looking at yet.
+// ============================================================
 
-// Disc-rim silhouette samples for the MW label. 32 points around the
-// 15 kpc midplane ring (galactic-disc.ts's MIDPLANE_RADIUS_PC) — the
-// label engine's support-point picker projects each and anchors the
-// label at the rim point furthest along LABEL_DIR. Anchoring at the
-// galactic centre instead (one sample) made the label hug the bulge
-// core, which sits ~12× smaller than the disc edge and reads as
-// "labelling a dot in the middle" rather than "labelling the galaxy"
-// — hence sampling the rim.
+/** Disc-rim silhouette samples for the MW label: 32 points around the
+ *  15 kpc midplane ring (galactic-disc.ts's MIDPLANE_RADIUS_PC). */
 const MW_RIM_SEGMENTS = 32;
 
 // Bottom-right SVG anchor direction (1, 1)/√2 in CSS y-down coords.
@@ -259,64 +256,142 @@ const LABEL_OFFSET_PX = 10;
 // Settles in ~4-5 frames at 60 fps (~70 ms).
 const LABEL_LERP = 0.25;
 
-// Size-relative-distance fallback for Local Group objects with a null
-// labelThresholdPc (ultra-faints + anything else that doesn't carry an
-// explicit hard-coded threshold). The label fades in once the camera
-// sits inside `factor × max(axes)` of the object's centre — so at the
-// default N = 10 a 50 pc Bootes II gets labelled within ~500 pc, a
-// 270 pc Sculptor-class within ~2.7 kpc, etc. Mutable at runtime via
-// the "Deep field" debug-panel section so visual iteration doesn't
-// require rebuilds; tests pin against DEFAULT_SIZE_RELATIVE_LABEL_FACTOR.
-export const DEFAULT_SIZE_RELATIVE_LABEL_FACTOR = 10;
-let sizeRelativeLabelFactor = DEFAULT_SIZE_RELATIVE_LABEL_FACTOR;
-
-export function getSizeRelativeLabelFactor(): number {
-  return sizeRelativeLabelFactor;
+/** One candidate in the per-frame ranking. */
+export interface LabelCandidate {
+  /** Stable string id — `'mw'` for the Milky Way, `obj.id` for each LG object. */
+  id: string;
+  /** Absolute ICRS centroid in parsecs. */
+  centerAbs: THREE.Vector3;
+  /** Longest semi-axis in parsecs — drives the angular-size estimate. */
+  maxAxis: number;
 }
 
-export function setSizeRelativeLabelFactor(n: number): void {
-  sizeRelativeLabelFactor = n;
+/** Inputs to the pure ranking helper. */
+export interface RankingParams {
+  /** Absolute camera position (camera.position + worldOffset), ICRS pc. */
+  cameraAbs: THREE.Vector3;
+  /** Galactic centre in absolute ICRS pc — pivot of the inside-MW guard. */
+  galacticCentreAbs: THREE.Vector3;
+  /** Camera vertical FOV in degrees. */
+  fovDeg: number;
+  /** Viewport height in pixels. */
+  viewportHeightPx: number;
+  /** Max number of labels visible at once. */
+  topN: number;
+  /** Apparent-size floor (pixels). Anything smaller is suppressed. */
+  minPixelSize: number;
+  /** Camera-to-GC distance (pc) below which every label is suppressed. */
+  mwInsideDiscPc: number;
 }
 
-/** Effective camera-to-object-centre label threshold for one LG object.
- *  Hard-coded threshold (override file or classical-dSph default) wins;
- *  null threshold falls back to size-relative so ultra-faints surface
- *  when the camera flies close. Reads the live size-relative factor so
- *  the debug-panel slider's writes apply per-frame without re-mounting
- *  the label callbacks. */
-export function effectiveLabelThresholdPc(obj: LgObject): number {
-  if (obj.labelThresholdPc !== null) return obj.labelThresholdPc;
-  return sizeRelativeLabelFactor * Math.max(obj.axes[0], obj.axes[1], obj.axes[2]);
+// Tunable runtime state. The default values match the v1 visual; the
+// Deep-field debug panel exposes setters that mutate these and the
+// per-frame ranking handler re-reads them each frame.
+export const DEFAULT_TOP_N = 5;
+export const DEFAULT_MIN_PIXEL_SIZE_PX = 6;
+export const DEFAULT_MW_INSIDE_DISC_PC = 10_000;
+
+let topN = DEFAULT_TOP_N;
+let minPixelSize = DEFAULT_MIN_PIXEL_SIZE_PX;
+let mwInsideDiscPc = DEFAULT_MW_INSIDE_DISC_PC;
+
+export const getTopN = (): number => topN;
+export const setTopN = (n: number): void => { topN = n; };
+export const getMinPixelSize = (): number => minPixelSize;
+export const setMinPixelSize = (px: number): void => { minPixelSize = px; };
+export const getMwInsideDiscPc = (): number => mwInsideDiscPc;
+export const setMwInsideDiscPc = (pc: number): void => { mwInsideDiscPc = pc; };
+
+/** Pure: given candidates + viewing params, return the set of IDs whose
+ *  labels should be visible this frame.
+ *
+ *  Inside-MW guard fires first — when the camera sits inside the disc,
+ *  every label is suppressed (you can't usefully label extragalactic
+ *  context while you're inside the galaxy yourself). Otherwise, each
+ *  candidate's apparent pixel diameter is computed via
+ *  2·atan(maxAxis / cam-to-centre) × (h_px / fov_rad); anything below
+ *  `minPixelSize` is dropped; the survivors are sorted descending and
+ *  the top `topN` win. */
+export function computeVisibleLabels(
+  candidates: readonly LabelCandidate[],
+  params: RankingParams,
+): Set<string> {
+  const result = new Set<string>();
+  const dxGc = params.cameraAbs.x - params.galacticCentreAbs.x;
+  const dyGc = params.cameraAbs.y - params.galacticCentreAbs.y;
+  const dzGc = params.cameraAbs.z - params.galacticCentreAbs.z;
+  const camToGc = Math.sqrt(dxGc * dxGc + dyGc * dyGc + dzGc * dzGc);
+  if (camToGc < params.mwInsideDiscPc) return result;
+
+  const pxPerRad = params.viewportHeightPx / ((params.fovDeg * Math.PI) / 180);
+  const ranked: { id: string; px: number }[] = [];
+  for (const cand of candidates) {
+    const dx = params.cameraAbs.x - cand.centerAbs.x;
+    const dy = params.cameraAbs.y - cand.centerAbs.y;
+    const dz = params.cameraAbs.z - cand.centerAbs.z;
+    const camToObj = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    const angSizeRad = 2 * Math.atan(cand.maxAxis / Math.max(camToObj, 1));
+    const pxSize = angSizeRad * pxPerRad;
+    if (pxSize < params.minPixelSize) continue;
+    ranked.push({ id: cand.id, px: pxSize });
+  }
+  ranked.sort((a, b) => b.px - a.px);
+  const cap = Math.min(params.topN, ranked.length);
+  for (let i = 0; i < cap; i++) result.add(ranked[i].id);
+  return result;
+}
+
+// Runtime state for the per-frame ranking. The ranking handler runs
+// before any label engine's predicate (because we register it on the
+// first createMilkyWayLabel / createLocalGroupLabels call, ahead of
+// the per-label handlers), and each label's predicate just queries
+// `visibleLabelIds.has(...)`.
+const candidates: LabelCandidate[] = [];
+let visibleLabelIds = new Set<string>();
+const tmpCamAbs = new THREE.Vector3();
+let rankingHandlerRegistered = false;
+
+function ensureRankingHandlerRegistered(stellata: Stellata): void {
+  if (rankingHandlerRegistered) return;
+  rankingHandlerRegistered = true;
+  stellata.on('frame', () => {
+    if (stellata.getMonochrome()) {
+      visibleLabelIds = new Set();
+      return;
+    }
+    const c = stellata.camera.position;
+    const w = stellata.getWorldOffset();
+    tmpCamAbs.set(c.x + w.x, c.y + w.y, c.z + w.z);
+    visibleLabelIds = computeVisibleLabels(candidates, {
+      cameraAbs: tmpCamAbs,
+      galacticCentreAbs: GALACTIC_CENTRE_PC,
+      fovDeg: stellata.camera.fov,
+      viewportHeightPx: window.innerHeight,
+      topN,
+      minPixelSize,
+      mwInsideDiscPc,
+    });
+  });
 }
 
 /** Mount the SVG "Milky Way" label and bind per-frame projection.
- *  Anchored to 32 sample points around the 15 kpc disc rim (the
- *  outer reference ring of GalacticDisc), so the support-point picker
- *  lands the label at the disc edge rather than the GC core. Fades
- *  in once the camera sits past MW_LABEL_THRESHOLD_PC from the
- *  galactic centre. Hidden in chart (monochrome) mode — chart-mode
- *  has its own paper-aesthetic treatment for galactic structure when
- *  stellata-m40 covers it. */
+ *  Anchored to 32 sample points around the 15 kpc disc rim. Visibility
+ *  is governed by the global apparent-size ranking — MW competes with
+ *  every LG object for the top-N slots, with the one exception that
+ *  when the camera is inside the disc the ranking returns empty. */
 export function createMilkyWayLabel(stellata: Stellata): void {
+  ensureRankingHandlerRegistered(stellata);
+  candidates.push({
+    id: 'mw',
+    centerAbs: GALACTIC_CENTRE_PC.clone(),
+    maxAxis: MIDPLANE_RADIUS_PC,
+  });
   const rimSamplesAbs = buildMwRimSamples();
-  const tmpCam = new THREE.Vector3();
   createDistanceGatedLabel(stellata, {
     elementId: 'mw-label',
     sampleCount: rimSamplesAbs.length,
     getWorldSample: (i, out) => out.copy(rimSamplesAbs[i]).sub(stellata.getWorldOffset()),
-    visible: () => {
-      if (stellata.getMonochrome()) return false;
-      // camera-to-GC distance in absolute pc = ||camera.position +
-      // worldOffset - GALACTIC_CENTRE_PC||.
-      const w = stellata.getWorldOffset();
-      const c = stellata.camera.position;
-      tmpCam.set(
-        c.x + w.x - GALACTIC_CENTRE_PC.x,
-        c.y + w.y - GALACTIC_CENTRE_PC.y,
-        c.z + w.z - GALACTIC_CENTRE_PC.z,
-      );
-      return tmpCam.length() >= MW_LABEL_THRESHOLD_PC;
-    },
+    visible: () => visibleLabelIds.has('mw'),
     labelDir: LABEL_DIR,
     offsetPx: LABEL_OFFSET_PX,
     lerp: LABEL_LERP,
@@ -326,10 +401,7 @@ export function createMilkyWayLabel(stellata: Stellata): void {
 /** Precompute the 32-point MW disc rim sample ring in absolute ICRS pc.
  *  Mirrors galactic-disc.ts's midplane LineLoop construction —
  *  galactic-frame circle of radius MIDPLANE_RADIUS_PC rotated to ICRS
- *  via GAL_TO_ICRS and translated by GALACTIC_CENTRE_PC. Called once
- *  at module-init from createMilkyWayLabel; per-frame cost is then
- *  32 vec3 subtractions (worldOffset rebase + matrix apply) plus the
- *  shared label-engine's projection loop. */
+ *  via GAL_TO_ICRS and translated by GALACTIC_CENTRE_PC. */
 function buildMwRimSamples(): THREE.Vector3[] {
   const out: THREE.Vector3[] = [];
   for (let i = 0; i < MW_RIM_SEGMENTS; i++) {
@@ -345,34 +417,24 @@ function buildMwRimSamples(): THREE.Vector3[] {
   return out;
 }
 
-/** Mount per-object SVG labels for the labelled Local Group members
- *  (those with non-null labelThresholdPc). Mints one `<text>` under
- *  the `#lg-labels` group per labelled object and binds it to the
- *  distance-gated label engine with the object's silhouette samples
- *  as the projection input + camera-to-object-centre distance as the
- *  visibility predicate. */
+/** Mount per-object SVG labels for every LG member. Each label
+ *  becomes a candidate in the global apparent-size ranking; the
+ *  per-label predicate is just `visibleLabelIds.has(obj.id)`. */
 export function createLocalGroupLabels(
   stellata: Stellata,
   layer: LocalGroupLayer,
 ): void {
+  ensureRankingHandlerRegistered(stellata);
   const group = document.getElementById('lg-labels') as unknown as SVGGElement | null;
   if (!group) return;
-  // Camera scratch for the per-object visibility predicate.
-  const tmpCam = new THREE.Vector3();
   for (let i = 0; i < layer.objects.length; i++) {
     const obj = layer.objects[i];
+    candidates.push({
+      id: obj.id,
+      centerAbs: obj.centerAbs.clone(),
+      maxAxis: Math.max(obj.axes[0], obj.axes[1], obj.axes[2]),
+    });
     const elementId = `lg-${obj.id}-label`;
-    // Per-object close-approach predicate: label fires when the camera
-    // sits *inside* the object's threshold, not outside. Asymmetric
-    // with the MW label (which fires when camera leaves the disc
-    // because Sol sits inside the MW): for LG objects Sol is always
-    // outside, so the label policy is "show when close enough to
-    // identify the object". From the canonical first-load park at Sol,
-    // every LG object is tens of kpc away — all hidden by design;
-    // labels reveal as the camera approaches each object.
-    // Threshold is re-evaluated each frame so the Deep-field debug
-    // panel's slider tweaks apply to live predicates without
-    // re-mounting the labels.
     // Mint the SVG <text> element. innerHTML escape is unnecessary
     // since both id and name come from our own build-time output
     // (object names are real catalogue entries, no user input).
@@ -385,6 +447,7 @@ export function createLocalGroupLabels(
     group.appendChild(text);
 
     const idx = i;
+    const id = obj.id;
     createDistanceGatedLabel(stellata, {
       elementId,
       sampleCount: layer.sampleCount(idx),
@@ -392,18 +455,7 @@ export function createLocalGroupLabels(
         layer.getAbsSample(idx, j, out);
         out.sub(stellata.getWorldOffset());
       },
-      visible: () => {
-        if (stellata.getMonochrome()) return false;
-        const w = stellata.getWorldOffset();
-        const c = stellata.camera.position;
-        // camera-to-object-centre in absolute pc.
-        tmpCam.set(
-          c.x + w.x - obj.centerAbs.x,
-          c.y + w.y - obj.centerAbs.y,
-          c.z + w.z - obj.centerAbs.z,
-        );
-        return tmpCam.length() <= effectiveLabelThresholdPc(obj);
-      },
+      visible: () => visibleLabelIds.has(id),
       labelDir: LABEL_DIR,
       offsetPx: LABEL_OFFSET_PX,
       lerp: LABEL_LERP,

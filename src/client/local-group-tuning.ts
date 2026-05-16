@@ -1,41 +1,42 @@
 import { makeCollapsibleSection, makeSlider } from './debug-panel';
 import {
-  DEFAULT_SIZE_RELATIVE_LABEL_FACTOR,
-  getSizeRelativeLabelFactor,
-  setSizeRelativeLabelFactor,
+  DEFAULT_TOP_N,
+  DEFAULT_MIN_PIXEL_SIZE_PX,
+  DEFAULT_MW_INSIDE_DISC_PC,
+  getTopN, setTopN,
+  getMinPixelSize, setMinPixelSize,
+  getMwInsideDiscPc, setMwInsideDiscPc,
 } from './local-group';
 
 // Dev-only tuning section for the Local Group wireframe layer
-// (stellata-38m). Currently exposes a single live-tunable knob — the
-// size-relative-distance fallback factor that gates ultra-faint dwarf
-// labels — but the section is the natural home for future LG visual
-// knobs (ring opacity, sample density, per-kind colour palettes).
+// (stellata-38m). Three knobs drive the apparent-size ranking that
+// governs both the MW label and every LG dwarf label:
+//
+//   • top N        — max labels visible at once (default 5).
+//   • minPxSize    — apparent-size floor; sub-pixel objects can't earn
+//                    a label even if they'd otherwise rank.
+//   • mwInsideDisc — camera-to-GC distance below which every label is
+//                    suppressed. This is the *only* per-object policy
+//                    exception (Sol sits inside the MW disc; labelling
+//                    extragalactic objects from inside is clutter).
 //
 // Section title "Deep field" is intentionally broader than "Local
-// Group" so the same chrome can host the eventual 1.5-2 Mpc envelope
-// (stellata-1ui) and any chart-mode glyph experiments without a
-// rename.
-//
-// No reverse sync — see `SliderOpts.initial` in debug-panel.ts.
+// Group" so future LG-layer knobs (ring opacity, sample density, the
+// eventual 1.5-2 Mpc envelope) can share the chrome without rename.
 
-// Range chosen so the user can sweep from "labels fire only at the
-// surface of the object" (1×) up to "labels fire from anywhere in the
-// 250 kpc envelope" (~2000×). The closest unlabelled ultra-faint
-// (Draco II at 21.6 kpc, max-axis 19 pc) needs factor ≈ 1140 for its
-// label to fire when viewed from Sol; the typical ~100 pc dwarf needs
-// ≈ 200-500 at typical satellite distances. Default 10× keeps labels
-// suppressed until the camera is genuinely close to the object —
-// useful for "discover as you fly past" UX, not for "always on" wide-
-// field context labelling.
-const FACTOR_MIN = 1;
-const FACTOR_MAX = 2000;
-const FACTOR_STEP = 1;
+const TOP_N_MIN = 0;
+const TOP_N_MAX = 20;
+const TOP_N_STEP = 1;
 
-// Reference dwarf size for the slider readout. Numbers vary widely:
-// Draco II has max-axis 19 pc, Antlia II 105 pc, Ursa Major II 139 pc.
-// 100 pc is the rough middle and makes the slider's value easy to map
-// to "threshold in kpc".
-const REFERENCE_AXIS_PC = 100;
+const MIN_PX_MIN = 0;
+const MIN_PX_MAX = 50;
+const MIN_PX_STEP = 0.5;
+
+// 0 disables the inside-MW guard entirely (label-from-anywhere mode);
+// 20 kpc is comfortably outside the disc on any line of sight.
+const MW_INSIDE_MIN = 0;
+const MW_INSIDE_MAX = 20_000;
+const MW_INSIDE_STEP = 250;
 
 export function buildDeepFieldSection(): HTMLDivElement {
   const { section, body } = makeCollapsibleSection({
@@ -44,21 +45,42 @@ export function buildDeepFieldSection(): HTMLDivElement {
   });
 
   body.appendChild(makeSlider({
-    label: 'ultra-faint label factor',
-    min: FACTOR_MIN,
-    max: FACTOR_MAX,
-    step: FACTOR_STEP,
-    initial: getSizeRelativeLabelFactor(),
-    // Readout shows both the raw factor and what it means in kpc for a
-    // reference-sized 100 pc dwarf, so the slider's value isn't an
-    // abstract number — e.g. "10× → 1 kpc / 100×: 10 kpc / 1000×:
-    // 100 kpc". (Default factor labelled to anchor expectations.)
+    label: 'top N labels',
+    min: TOP_N_MIN,
+    max: TOP_N_MAX,
+    step: TOP_N_STEP,
+    initial: getTopN(),
     format: (x) => {
-      const kpc = (x * REFERENCE_AXIS_PC) / 1000;
-      const defaultTag = x === DEFAULT_SIZE_RELATIVE_LABEL_FACTOR ? ' (default)' : '';
-      return `${x.toFixed(0)}× — 100 pc dwarf reveals within ${kpc.toFixed(1)} kpc${defaultTag}`;
+      const tag = x === DEFAULT_TOP_N ? ' (default)' : '';
+      return `${x.toFixed(0)}${tag}`;
     },
-    onChange: (x) => setSizeRelativeLabelFactor(x),
+    onChange: (x) => setTopN(x),
+  }));
+
+  body.appendChild(makeSlider({
+    label: 'min apparent size (px)',
+    min: MIN_PX_MIN,
+    max: MIN_PX_MAX,
+    step: MIN_PX_STEP,
+    initial: getMinPixelSize(),
+    format: (x) => {
+      const tag = x === DEFAULT_MIN_PIXEL_SIZE_PX ? ' (default)' : '';
+      return `${x.toFixed(1)} px${tag}`;
+    },
+    onChange: (x) => setMinPixelSize(x),
+  }));
+
+  body.appendChild(makeSlider({
+    label: 'inside-MW guard (pc)',
+    min: MW_INSIDE_MIN,
+    max: MW_INSIDE_MAX,
+    step: MW_INSIDE_STEP,
+    initial: getMwInsideDiscPc(),
+    format: (x) => {
+      const tag = x === DEFAULT_MW_INSIDE_DISC_PC ? ' (default)' : '';
+      return `${(x / 1000).toFixed(1)} kpc${tag}`;
+    },
+    onChange: (x) => setMwInsideDiscPc(x),
   }));
 
   return section;
