@@ -3,7 +3,9 @@
 // Reads two committed source files under data/local-group/:
 //   - lvdb-snapshot.csv  (Pace et al. 2024 LVDB dwarf_all table — CC0)
 //   - overrides.tsv      (hand-curated structural detail for LMC, SMC,
-//                         Sagittarius dSph)
+//                         Sagittarius dSph, M 32, NGC 205; plus
+//                         standalone-position rows for M31 and M33
+//                         which LVDB's dwarf_all table excludes)
 //
 // Emits public/local-group.json with one entry per renderable object
 // within MAX_DISTANCE_PC of Sol. Output schema is documented at the
