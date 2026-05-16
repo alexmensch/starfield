@@ -42,8 +42,9 @@ describe('formatPlanetHover', () => {
     }));
     expect(out.name).toBe('Mercury');
     expect(out.lines).toEqual([
-      '0.310 AU · App Magnitude -2.5',
-      'Radius 2,440 km · Period 0.24 yr',
+      '0.310 AU · Vmag -2.5',
+      'Period 0.24 yr',
+      'Radius 2,440 km',
     ]);
   });
 
@@ -59,8 +60,9 @@ describe('formatPlanetHover', () => {
     }));
     expect(out.name).toBe('Earth');
     expect(out.lines).toEqual([
-      '1.0 AU · App Magnitude -4.0',
-      'Radius 6,371 km · Period 1.00 yr',
+      '1.0 AU · Vmag -4.0',
+      'Period 1.00 yr',
+      'Radius 6,371 km',
     ]);
   });
 
@@ -73,8 +75,9 @@ describe('formatPlanetHover', () => {
     expect(out.name).toBe('Jupiter');
     // Kepler 3rd law: 5.203^1.5 ≈ 11.86 → rounds to 12 (>= 10 tier).
     expect(out.lines).toEqual([
-      '5.2 AU · App Magnitude -2.7',
-      'Radius 69,911 km · Period 12 yr',
+      '5.2 AU · Vmag -2.7',
+      'Period 12 yr',
+      'Radius 69,911 km',
     ]);
   });
 
@@ -83,19 +86,22 @@ describe('formatPlanetHover', () => {
       Pluto: { distancePc: 39 / 206264.80624709636, appMag: 14.3 },
     }));
     expect(out.name).toBe('Pluto');
-    expect(out.lines[0]).toBe('39.0 AU · App Magnitude +14.3');
+    expect(out.lines[0]).toBe('39.0 AU · Vmag +14.3');
   });
 
   it('falls back gracefully when live values are null', () => {
     // The provider should never hand the formatter a null pair (the
     // pick path returns null whenever the planet isn't visible) but
     // guard the formatter against the degenerate state. Empty head
-    // line should not appear — only the period/radius line survives.
+    // line should not appear — only Period + Radius survive.
     const out = formatPlanetHover(2, buildCtx({
       Earth: { distancePc: null, appMag: null },
     }));
     expect(out.name).toBe('Earth');
-    expect(out.lines).toEqual(['Radius 6,371 km · Period 1.00 yr']);
+    expect(out.lines).toEqual([
+      'Period 1.00 yr',
+      'Radius 6,371 km',
+    ]);
   });
 
   it('returns empty payload for out-of-range index', () => {

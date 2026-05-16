@@ -2,16 +2,16 @@
 // for the Sol planet layer (and, once stellata-bk5 lands, any future
 // exoplanet host).
 //
-// Line 1 is the planet name. Sub-lines progressively disclose:
-//   • current host→planet distance (live ephemeris radius, AU-tier)
-//     followed by apparent V mag at the viewer's current position;
-//   • physical equatorial radius and orbital period derived from
-//     Kepler's third law against `semiMajorAxisAu`.
+// Layout (4 lines max):
+//   Line 1 — planet name
+//   Line 2 — current host→planet distance · apparent V-band magnitude
+//   Line 3 — Period <years>
+//   Line 4 — Radius <kilometres>
 //
-// Quantity labels are spelled out in full ("Radius", "Period",
-// "App Magnitude") per stellata-lo5-hover-conventions Rule 1 — single
-// letters are too compressed for the user to parse at a 280 ms hover
-// delay.
+// "Vmag" is the spelled-out shorthand for apparent V-band magnitude;
+// "Radius" / "Period" are the spelled-out quantity labels (Rule 1 of
+// stellata-lo5-hover-conventions — single-letter prefixes are too
+// compressed for the user to parse at a 280 ms hover delay).
 //
 // Pure: takes only its inputs as a context bundle. The host→planet
 // distance and the apparent magnitude come in as functions so the
@@ -47,18 +47,20 @@ export function formatPlanetHover(
   const dist = ctx.distanceFromHostPc(planetIdx);
   const appMag = ctx.appMagFor(planetIdx);
   const distStr = dist !== null ? fmtDistAuto(dist) : '';
-  const magStr = appMag !== null ? `App Magnitude ${formatAppMag(appMag)}` : '';
+  const magStr = appMag !== null ? `Vmag ${formatAppMag(appMag)}` : '';
   const headLine = [distStr, magStr].filter(Boolean).join(' · ');
   if (headLine) lines.push(headLine);
 
-  const radiusStr = `Radius ${formatKm(planet.radiusKm)} km`;
-  // Kepler's third law in the Sun-mass system: T(years) = a(AU)^1.5.
-  // For exoplanets (bk5) the host-mass term reappears as T = a^1.5/√M;
-  // until then every attached host is Sol-mass so the simple form is
-  // exact.
+  // Period above Radius — orbital period is the user's first "is this
+  // a fast inner planet or a slow outer one?" tell, and the AU
+  // distance on line 2 pairs naturally with the period rather than
+  // with the body's physical size. Kepler's third law in the Sun-mass
+  // system: T(years) = a(AU)^1.5. For exoplanets (bk5) the host-mass
+  // term reappears as T = a^1.5/√M; until then every attached host
+  // is Sol-mass so the simple form is exact.
   const yearsPeriod = Math.pow(planet.semiMajorAxisAu, 1.5);
-  const periodStr = `Period ${formatPeriodYears(yearsPeriod)} yr`;
-  lines.push(`${radiusStr} · ${periodStr}`);
+  lines.push(`Period ${formatPeriodYears(yearsPeriod)} yr`);
+  lines.push(`Radius ${formatKm(planet.radiusKm)} km`);
 
   return { name: planet.name, lines };
 }
