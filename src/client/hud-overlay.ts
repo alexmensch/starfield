@@ -7,22 +7,13 @@ import {
   ARROW_HEAD_DEPTH_PX,
   ARROW_LABEL_OFFSET_PX,
   ARROW_LABEL_PADDING_PX,
+  ARROW_PIXEL_LENGTH,
+  RING_HALO_GAP_PX,
 } from './arrow-path';
 import { projectToScreen } from './overlay-project';
 import { applyFade, setNumAttr, setStyle, setText } from './dirty-attr';
 import { FOCUS_RING_RADIUS_PX } from './focus-ring-overlay';
 import { focusedArrowFadeAlpha } from './arrow-fade';
-
-// Nominal apparent length of each arrow on screen, in CSS pixels. The shaft
-// is built directly in screen space so this length is exact regardless of
-// how the arrow's 3D direction projects. The actual length is capped per
-// frame so the tip never crowds the projected target — see `updateOne`.
-const ARROW_PIXEL_LENGTH = 110;
-// Halo gap between the active ring rim and the arrow shaft start. Same gap
-// used in both navigate (around the focus ring) and observe (around the
-// HUD ring), so the arrows visually detach from the ring identically in
-// both modes.
-const RING_HALO_GAP_PX = 4;
 // (Removed MIN_SHAFT_PIXEL_LENGTH cutoff — used to be 8 px; we now render at
 // any positive length so the drawn shaft is a continuous function of the
 // arrow's projection geometry. This is what makes the navigate-mode disc-

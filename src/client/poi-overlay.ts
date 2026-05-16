@@ -8,6 +8,8 @@ import {
   ARROW_HEAD_DEPTH_PX,
   ARROW_LABEL_OFFSET_PX,
   ARROW_LABEL_PADDING_PX,
+  ARROW_PIXEL_LENGTH,
+  RING_HALO_GAP_PX,
 } from './arrow-path';
 import { projectToScreen } from './overlay-project';
 import { ringRadiusPx } from './hud-overlay';
@@ -32,8 +34,6 @@ import { FOCUS_RING_RADIUS_PX } from './focus-ring-overlay';
 // observe, when the HUD checkbox is off, during warp (CSS rule), and
 // during the navigate↔observe transition.
 
-const ARROW_PIXEL_LENGTH = 110;
-const RING_HALO_GAP_PX = 4;
 const MIN_SHAFT_PIXEL_LENGTH = 8;
 // Detection margin: a star within ~40 px of the viewport edge still counts
 // as on-screen so its label survives small look-around drifts without
