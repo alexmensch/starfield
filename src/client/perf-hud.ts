@@ -1,10 +1,13 @@
 // Lightweight always-callable instrumentation API. `mark`/`measure`/`frame`
 // are no-ops until `buildPerfSection()` runs once, so call sites can stay
-// unconditional. Once the section has been built (the unified debug panel
-// opened with the Perf section present), the real implementations stay
-// active for the rest of the page session even after the panel closes —
-// the ring buffers keep filling so reopening the panel resumes with
-// recent history rather than a cold start.
+// unconditional. Install and teardown are symmetric: `buildPerfSection()`
+// rewires the exported functions to their real implementations; the
+// returned `dispose()` restores them to no-ops and clears all session
+// state (ring buffers, starts map, frame counter). Re-opening the panel
+// is a cold start — the previous session's history is gone. The cost
+// of perf instrumentation outside of an active tuning session needs to
+// be zero, and an always-on histogram-history mode is not worth the
+// per-tick Map ops + section-GC walk it incurs in `realFrame`.
 //
 // The visible HUD is opt-in via `debug.panel()` from the dev console —
 // deliberately not on a URL param or keyboard shortcut so
@@ -243,13 +246,24 @@ export function buildPerfSection(): PerfSection {
   return {
     element: div,
     dispose: () => {
+      // Re-arm the always-callable no-op contract: every perfMark /
+      // perfMeasure / perfFrame call site (stellata.ts animate() loop,
+      // chart-labels.ts) keeps calling through the module-level
+      // _mark/_measure/_frame, so the cheapest way to make those calls
+      // free again is to point those bindings back at no-op stubs.
+      _mark = () => {};
+      _measure = () => {};
+      _frame = () => {};
+      installed = false;
+      sections.clear();
+      starts.clear();
+      frameCounter = 0;
+      lastDomUpdateMs = 0;
       visible = false;
       panelEl = null;
       headlineEl = null;
       captionEl = null;
       lastCaptionN = -1;
-      // realMark/realMeasure/realFrame stay installed — ring buffers keep
-      // filling between toggles so the histogram has data on re-open.
     },
     setVisible: (v: boolean) => {
       visible = v && panelEl !== null;
