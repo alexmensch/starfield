@@ -92,6 +92,32 @@ function easeArrival(u: number): number {
   return u * u * (3 - 2 * u);
 }
 
+/** Migrate an in-flight `ArrivalState` into a new floating-origin frame
+ *  by subtracting the recentre delta from every cached point. `delta` is
+ *  the value `recenterOrigin` returns (`newOrigin − previous worldOffset`);
+ *  every position captured in the old frame must shift by `−delta` to
+ *  point at the same physical location in the new frame.
+ *
+ *  d0, dEnd, and dir are translation-invariant — they're derived from
+ *  the differences `pStart − target.center` and `pEnd − target.center`,
+ *  both of which shift by the same amount. No recompute needed.
+ *
+ *  Sibling of `shiftWarpWaypoints` in `warp-pure.ts`: that helper owns
+ *  the WarpState waypoint shift, this one owns the cached ArrivalState
+ *  shift. Both are called together at any mid-flight recentre. */
+export function shiftArrivalWaypoints(
+  state: ArrivalState,
+  dx: number,
+  dy: number,
+  dz: number,
+): void {
+  state.pStart.x -= dx; state.pStart.y -= dy; state.pStart.z -= dz;
+  state.pEnd.x -= dx; state.pEnd.y -= dy; state.pEnd.z -= dz;
+  state.target.center.x -= dx;
+  state.target.center.y -= dy;
+  state.target.center.z -= dz;
+}
+
 /** Advance one frame. Writes `camera.position` (and, when both
  *  `qStart`/`qEnd` are present, `camera.quaternion`). Returns
  *  `{ done: true }` once `nowMs ≥ startMs + durationMs`.

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { type ArrivalState, newArrival, tickArrival } from './camera-motion';
+import { type ArrivalState, newArrival, shiftArrivalWaypoints, tickArrival } from './camera-motion';
 import { AU_PC } from './astronomy-constants';
 
 // Co-linear arrival builder. pStart at d0 along +X, pEnd at dEnd along +X,
@@ -319,5 +319,57 @@ describe('camera-motion tickArrival — quaternion track', () => {
     expect(cam.quaternion.y).toBe(before.y);
     expect(cam.quaternion.z).toBe(before.z);
     expect(cam.quaternion.w).toBe(before.w);
+  });
+});
+
+describe('camera-motion shiftArrivalWaypoints', () => {
+  // Floating-origin frame change mid-arrival: all cached positions
+  // shift by the same delta. d0/dEnd/dir are translation-invariant
+  // (derived from differences), so the tick math is unchanged after
+  // the shift.
+  it('translates pStart, pEnd, and target.center in place', () => {
+    const s = makeCoLinear(200, 5e-6);
+    shiftArrivalWaypoints(s, 1, 2, 3);
+    expect(s.pStart.x).toBe(199);
+    expect(s.pStart.y).toBe(-2);
+    expect(s.pStart.z).toBe(-3);
+    expect(s.pEnd.x).toBe(5e-6 - 1);
+    expect(s.pEnd.y).toBe(-2);
+    expect(s.pEnd.z).toBe(-3);
+    expect(s.target.center.x).toBe(-1);
+    expect(s.target.center.y).toBe(-2);
+    expect(s.target.center.z).toBe(-3);
+  });
+
+  it('leaves d0, dEnd, and dir untouched (translation-invariant)', () => {
+    const s = makeCoLinear(200, 5e-6);
+    const d0Before = s.d0;
+    const dEndBefore = s.dEnd;
+    const dirBefore = s.dir.clone();
+    shiftArrivalWaypoints(s, 1e9, -1e9, 42);
+    expect(s.d0).toBe(d0Before);
+    expect(s.dEnd).toBe(dEndBefore);
+    expect(s.dir.x).toBe(dirBefore.x);
+    expect(s.dir.y).toBe(dirBefore.y);
+    expect(s.dir.z).toBe(dirBefore.z);
+  });
+
+  it('preserves the per-tick camera trajectory across a frame change', () => {
+    // Tick once in the original frame, record camera position; reset,
+    // shift the state, re-tick at the same nowMs in the shifted frame,
+    // and confirm the camera position has shifted by exactly the same
+    // delta. The post-recentre Fly continues on the same physical path.
+    const s = makeCoLinear(200, 5e-6);
+    const cam = makeCamera();
+    tickArrival(s, 500, cam);
+    const before = cam.position.clone();
+
+    const sShifted = makeCoLinear(200, 5e-6);
+    shiftArrivalWaypoints(sShifted, 1, 2, 3);
+    const camShifted = makeCamera();
+    tickArrival(sShifted, 500, camShifted);
+    expect(camShifted.position.x).toBe(before.x - 1);
+    expect(camShifted.position.y).toBe(before.y - 2);
+    expect(camShifted.position.z).toBe(before.z - 3);
   });
 });
