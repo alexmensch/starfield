@@ -51,6 +51,14 @@ export const DEFAULT_CHART_PLATEAU_MARGIN = 1.0;
 export const DEFAULT_CHART_PHASE3_SCALING_ENABLED = false;
 export const DEFAULT_CHART_PHASE3_ALPHA = 0.5;
 export const DEFAULT_ARRIVAL_POWER_P = 2;
+// Trapezoidal curve defaults. The accel ramp sets the gentle-launch
+// feel (the "rocket impulse" easing in); the decel ramp sets the
+// "we're parking" easing out. Sum of the two leaves 75 % of warp time
+// in the constant-slope cruise — long enough that angular size of the
+// target grows visibly through the close-approach rather than tapering
+// to a perceptual standstill before arrival.
+export const DEFAULT_ARRIVAL_TRAPEZOID_T_ACCEL = 0.15;
+export const DEFAULT_ARRIVAL_TRAPEZOID_T_DECEL = 0.10;
 
 interface Knobs {
   reorientMs: number;
@@ -60,6 +68,8 @@ interface Knobs {
   observeTransitionMs: number;
   arrivalCurve: ArrivalCurveId;
   arrivalPowerP: number;
+  arrivalTrapezoidTAccel: number;
+  arrivalTrapezoidTDecel: number;
   midFlyRecentreFrac: number;
   chartPlateauMargin: number;
   chartPhase3ScalingEnabled: boolean;
@@ -74,6 +84,8 @@ const knobs: Knobs = {
   observeTransitionMs: OBSERVE_TRANSITION_MS,
   arrivalCurve: 'cubic-hermite',
   arrivalPowerP: DEFAULT_ARRIVAL_POWER_P,
+  arrivalTrapezoidTAccel: DEFAULT_ARRIVAL_TRAPEZOID_T_ACCEL,
+  arrivalTrapezoidTDecel: DEFAULT_ARRIVAL_TRAPEZOID_T_DECEL,
   midFlyRecentreFrac: DEFAULT_MID_FLY_RECENTRE_FRAC,
   chartPlateauMargin: DEFAULT_CHART_PLATEAU_MARGIN,
   chartPhase3ScalingEnabled: DEFAULT_CHART_PHASE3_SCALING_ENABLED,
@@ -92,7 +104,18 @@ export function warpFlyTMaxMs(): number { return knobs.flyTMaxMs; }
 export function warpFlyTKMs(): number { return knobs.flyTKMs; }
 export function warpObserveTransitionMs(): number { return knobs.observeTransitionMs; }
 export function warpArrivalEaseFn(): (u: number) => number {
-  return resolveArrivalCurve(knobs.arrivalCurve, knobs.arrivalPowerP);
+  return resolveArrivalCurve(
+    knobs.arrivalCurve,
+    knobs.arrivalPowerP,
+    knobs.arrivalTrapezoidTAccel,
+    knobs.arrivalTrapezoidTDecel,
+  );
+}
+export function warpArrivalTrapezoidTAccel(): number {
+  return knobs.arrivalTrapezoidTAccel;
+}
+export function warpArrivalTrapezoidTDecel(): number {
+  return knobs.arrivalTrapezoidTDecel;
 }
 export function warpMidFlyRecentreFrac(): number { return knobs.midFlyRecentreFrac; }
 export function warpChartPlateauMargin(): number { return knobs.chartPlateauMargin; }
@@ -225,7 +248,7 @@ export function buildWarpSection(stellata: Stellata): WarpTuningSection {
     label.textContent = 'curve';
     const sel = document.createElement('select');
     sel.style.cssText = 'flex:1;background:#222;color:#fff;border:1px solid #444;';
-    for (const id of ['cubic-hermite', 'quintic-hermite', 'power'] as const) {
+    for (const id of ['cubic-hermite', 'quintic-hermite', 'power', 'trapezoid'] as const) {
       const opt = document.createElement('option');
       opt.value = id;
       opt.textContent = id;
@@ -245,6 +268,28 @@ export function buildWarpSection(stellata: Stellata): WarpTuningSection {
     min: 0.25, max: 4, step: 0.05,
     initial: knobs.arrivalPowerP,
     onChange: (v) => { knobs.arrivalPowerP = v; },
+    fmt: fmtFrac,
+  });
+
+  // Trapezoid ramp widths. Inactive unless `curve` is set to
+  // `'trapezoid'`. Matches the `power p` UX — slider stays visible so
+  // the user can dial it before flipping to that curve. Range floor
+  // matches `TRAPEZOID_MIN_RAMP` in arrival-curves.ts; the function
+  // clamps anyway but the slider min keeps the UI honest. Max 0.5 lets
+  // the user reach the symmetric `(0.5, 0.5)` legacy-piecewise-quad
+  // edge case exactly.
+  addSlider({
+    label: 'tz accel',
+    min: 0.01, max: 0.5, step: 0.01,
+    initial: knobs.arrivalTrapezoidTAccel,
+    onChange: (v) => { knobs.arrivalTrapezoidTAccel = v; },
+    fmt: fmtFrac,
+  });
+  addSlider({
+    label: 'tz decel',
+    min: 0.01, max: 0.5, step: 0.01,
+    initial: knobs.arrivalTrapezoidTDecel,
+    onChange: (v) => { knobs.arrivalTrapezoidTDecel = v; },
     fmt: fmtFrac,
   });
 
@@ -324,7 +369,12 @@ export function buildWarpSection(stellata: Stellata): WarpTuningSection {
       `WARP_T_K_MS = ${knobs.flyTKMs}\n` +
       `OBSERVE_TRANSITION_MS = ${knobs.observeTransitionMs}\n` +
       `arrivalCurve = '${knobs.arrivalCurve}'${
-        knobs.arrivalCurve === 'power' ? ` (p=${knobs.arrivalPowerP.toFixed(2)})` : ''
+        knobs.arrivalCurve === 'power'
+          ? ` (p=${knobs.arrivalPowerP.toFixed(2)})`
+          : knobs.arrivalCurve === 'trapezoid'
+            ? ` (a=${knobs.arrivalTrapezoidTAccel.toFixed(2)},`
+              + ` d=${knobs.arrivalTrapezoidTDecel.toFixed(2)})`
+            : ''
       }\n` +
       `midFlyRecentreFrac = ${knobs.midFlyRecentreFrac.toFixed(2)}\n` +
       `chartPlateauMargin = ${knobs.chartPlateauMargin.toFixed(2)}\n` +
