@@ -438,6 +438,13 @@ export class HudOverlay {
     Object.assign(this.gcDebug, emptyArrowDebug());
   }
 
+  // Hide an arrow. The visible d / display writes go through the dirty-
+  // track gate; the remaining numeric + text sentinels are reset to poison
+  // so the next show-from-hide cycle's first write always lands — without
+  // this reset, a re-show whose new label coords fell within ATTR_DIRTY_PX
+  // of the prior session's values would silently skip the setAttribute and
+  // inherit the stale x/y. Same shape as the heliopause first-load fix
+  // (PR #64) and the consistency-at-the-seam §3 rule.
   private hideArrow(
     path: SVGPathElement,
     bg: SVGPathElement,
@@ -452,6 +459,12 @@ export class HudOverlay {
       state.lastD = '';
     }
     state.lastLabelDisplay = setStyle(label, 'display', 'none', state.lastLabelDisplay);
+    // Wipe the per-attribute caches so the next visible frame writes through.
+    state.lastLabelText = '\0';
+    state.lastLabelX = NaN;
+    state.lastLabelY = NaN;
+    state.lastOpacity = NaN;
+    state.lastPointerEvents = '\0';
   }
 }
 

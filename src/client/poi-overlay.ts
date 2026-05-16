@@ -164,11 +164,26 @@ export function createPoiOverlay(
     }
   }
 
+  // Hide an entry. The visible d / display writes go through the dirty-
+  // track gate; the remaining numeric + text sentinels are reset to poison
+  // so the next show-from-hide cycle's first write always lands — without
+  // this reset, re-pinning at slightly different geometry could skip the
+  // setAttribute and inherit stale cx/cy/lx/ly from the prior session
+  // (mirrors the heliopause fix in PR #64 and consistency-at-the-seam §3).
   function hideEntry(e: Entry) {
     e.lastArrowD = setStrAttr(e.arrowPath, 'd', '', e.lastArrowD);
     e.lastArrowLabelDisplay = setStyle(e.arrowLabel, 'display', 'none', e.lastArrowLabelDisplay);
     e.lastRingDisplay = setStyle(e.ring, 'display', 'none', e.lastRingDisplay);
     e.lastOnScreenLabelDisplay = setStyle(e.onScreenLabel, 'display', 'none', e.lastOnScreenLabelDisplay);
+    // Wipe per-attribute caches so the next visible frame writes through.
+    e.lastArrowLabelText = '\0';
+    e.lastArrowLabelX = NaN;
+    e.lastArrowLabelY = NaN;
+    e.lastRingCx = NaN;
+    e.lastRingCy = NaN;
+    e.lastOnScreenLabelText = '\0';
+    e.lastOnScreenLabelX = NaN;
+    e.lastOnScreenLabelY = NaN;
   }
 
   // Idempotent show/hide: track visibility so the per-frame handler
