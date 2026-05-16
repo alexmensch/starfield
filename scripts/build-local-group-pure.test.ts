@@ -4,6 +4,7 @@ import {
   buildLvdbDefault,
   buildOrientationQuat,
   defaultLabelThresholdPc,
+  displayName,
   filterForRendering,
   mergeRowAndOverride,
   parseOrient,
@@ -11,6 +12,7 @@ import {
   skyBasis,
   slugify,
   DEFAULT_LABEL_THRESHOLD_PC,
+  DISPLAY_NAME_OVERRIDES,
   LABEL_M_V_CUTOFF,
   MAX_DISTANCE_PC,
   type LvdbRow,
@@ -318,6 +320,40 @@ describe('mergeRowAndOverride — override-vs-LVDB precedence', () => {
     };
     const out = mergeRowAndOverride(row, lmcOverride)!;
     expect(out.kind).toBe('disc');
+  });
+});
+
+describe('displayName overrides', () => {
+  it('expands the Magellanic acronyms (full names; we have the room)', () => {
+    expect(displayName('LMC')).toBe('Large Magellanic Cloud');
+    expect(displayName('SMC')).toBe('Small Magellanic Cloud');
+  });
+  it('passes any other LVDB name through unchanged', () => {
+    expect(displayName('Sagittarius')).toBe('Sagittarius');
+    expect(displayName('Bootes II')).toBe('Bootes II');
+    expect(displayName('NGC 6822')).toBe('NGC 6822');
+  });
+  it('exports the override map for callers that need to enumerate it', () => {
+    expect(Object.keys(DISPLAY_NAME_OVERRIDES).sort()).toEqual(['LMC', 'SMC']);
+  });
+  it('mergeRowAndOverride emits the display name on the LgObject', () => {
+    const row: LvdbRow = {
+      key: 'lmc',
+      name: 'LMC',
+      ra: 78.76, dec: -69.19, distanceKpc: 49.59,
+      confirmedReal: 1, confirmedGalaxy: 1,
+      rhalfPhysicalPc: null, ellipticity: null, positionAngle: null,
+      mVAbs: null,
+    };
+    const override: OverrideRow = {
+      name: 'LMC',
+      axes: [4500, 4500, 1000],
+      orient: 'disc:i=32,pa=135',
+      labelThresholdPc: 30_000,
+      refDoi: '10.1088/0004-637X/781/2/121',
+    };
+    const out = mergeRowAndOverride(row, override)!;
+    expect(out.name).toBe('Large Magellanic Cloud');
   });
 });
 

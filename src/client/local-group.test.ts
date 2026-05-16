@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { LocalGroupLayer } from './local-group';
+import {
+  LocalGroupLayer,
+  effectiveLabelThresholdPc,
+  SIZE_RELATIVE_LABEL_FACTOR,
+} from './local-group';
 import type { LgCatalog, LgObject } from './local-group-loader';
 import { FADE_INNER_PC, FADE_OUTER_PC } from './galactic-fade';
 
@@ -104,6 +108,25 @@ describe('LocalGroupLayer', () => {
       expect(r).toBeLessThanOrEqual(maxAxis + 1e-6);
     }
     layer.dispose();
+  });
+
+  it('effectiveLabelThresholdPc: hard-coded threshold wins when present', () => {
+    const obj = makeObject({ labelThresholdPc: 30_000, axes: [4500, 4500, 1000] });
+    expect(effectiveLabelThresholdPc(obj)).toBe(30_000);
+  });
+
+  it('effectiveLabelThresholdPc: null falls back to N × max(axes)', () => {
+    const obj = makeObject({ labelThresholdPc: null, axes: [50, 30, 30] });
+    expect(effectiveLabelThresholdPc(obj)).toBe(SIZE_RELATIVE_LABEL_FACTOR * 50);
+  });
+
+  it('effectiveLabelThresholdPc: ultra-faint (50 pc) fallback ≈ 500 pc; classical-class (270 pc) fallback ≈ 2.7 kpc', () => {
+    expect(effectiveLabelThresholdPc(makeObject({
+      labelThresholdPc: null, axes: [50, 30, 30],
+    }))).toBe(500);
+    expect(effectiveLabelThresholdPc(makeObject({
+      labelThresholdPc: null, axes: [270, 180, 180],
+    }))).toBe(2700);
   });
 
   it('shares a single material across all rings (per-frame opacity write hits one slot)', () => {

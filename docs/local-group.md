@@ -106,11 +106,28 @@ label helper from heliopause` commit). Each label binds to:
 
 - A per-frame visibility predicate (camera-to-object-centre distance
   past the threshold; chart mode hides).
-- A silhouette-sample generator (1 sample for the MW label at the
-  galactic centre; 62 samples per LG object, matching the heliopause's
-  grid density).
+- A silhouette-sample generator. The MW label samples **32 points
+  around the 15 kpc disc rim** (galactic-disc.ts's
+  `MIDPLANE_RADIUS_PC`) — anchoring at the GC bulge center sat the
+  label on the small ~3 kpc core instead of the disc edge, so the
+  rim ring is the right silhouette curve for the label-engine's
+  support-point picker. Per-object dwarf labels use the same
+  12 × 5 + 2 = 62 sample grid as the heliopause.
 - The same screen-space anchor convention as the heliopause: bottom-
   right at a constant 10 px gap.
+
+### Threshold policy
+
+| Family                                        | Threshold              |
+| --------------------------------------------- | ---------------------- |
+| MW label                                      | `MW_LABEL_THRESHOLD_PC` = 10 kpc from GC |
+| Override-supplied (LMC, SMC at 30 kpc; Sgr at 10 kpc) | `overrides.tsv` `label_threshold_pc` column |
+| Classical dSph (M_V ≤ −7.5, no override)      | `DEFAULT_LABEL_THRESHOLD_PC` = 20 kpc |
+| Ultra-faint (M_V > −7.5, no override)         | `SIZE_RELATIVE_LABEL_FACTOR × max(axes)` (N = 10) — so a 50 pc Bootes II surfaces inside ~500 pc, a 270 pc Sculptor-class inside ~2.7 kpc. Surfaces small dwarfs at close approach without cluttering wide-field views. |
+
+The fallback policy lives in `effectiveLabelThresholdPc(obj)`, exported
+from `local-group.ts` for testability (the DOM-binding wrapper around
+`createDistanceGatedLabel` isn't directly unit-testable).
 
 SVG slots live in `index.html` next to the heliopause label:
 
@@ -120,7 +137,10 @@ SVG slots live in `index.html` next to the heliopause label:
 ```
 
 Per-object `<text id="lg-<slug>-label">` children are minted at runtime
-by `createLocalGroupLabels` from the loaded catalog.
+by `createLocalGroupLabels` from the loaded catalog. Display names are
+rewritten through `DISPLAY_NAME_OVERRIDES` at build time so LVDB's
+`LMC` / `SMC` shortform expands to `Large Magellanic Cloud` /
+`Small Magellanic Cloud` in the catalog JSON.
 
 ## What's deliberately out of scope
 

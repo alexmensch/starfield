@@ -32,7 +32,8 @@ import type { LgCatalog, LgObject } from './local-group-loader';
 import { FADE_INNER_PC, FADE_OUTER_PC, smoothstep } from './galactic-fade';
 import type { Stellata } from './stellata';
 import { createDistanceGatedLabel } from './distance-gated-label';
-import { GALACTIC_CENTRE_PC } from './galactic-coords';
+import { GAL_TO_ICRS, GALACTIC_CENTRE_PC } from './galactic-coords';
+import { MIDPLANE_RADIUS_PC } from './galactic-disc';
 
 const RING_SEGMENTS = 64;
 
@@ -236,6 +237,16 @@ function buildSilhouetteSamples(obj: LgObject): THREE.Vector3[] {
 // ~10 kpc spec.
 const MW_LABEL_THRESHOLD_PC = 10_000;
 
+// Disc-rim silhouette samples for the MW label. 32 points around the
+// 15 kpc midplane ring (galactic-disc.ts's MIDPLANE_RADIUS_PC) — the
+// label engine's support-point picker projects each and anchors the
+// label at the rim point furthest along LABEL_DIR. Anchoring at the
+// galactic centre instead (one sample) made the label hug the bulge
+// core, which sits ~12× smaller than the disc edge and reads as
+// "labelling a dot in the middle" rather than "labelling the galaxy"
+// — hence sampling the rim.
+const MW_RIM_SEGMENTS = 32;
+
 // Bottom-right SVG anchor direction (1, 1)/√2 in CSS y-down coords.
 // Matches heliopause's choice so the label-anchor family reads
 // consistently across context overlays.
@@ -248,32 +259,80 @@ const LABEL_OFFSET_PX = 10;
 // Settles in ~4-5 frames at 60 fps (~70 ms).
 const LABEL_LERP = 0.25;
 
+// Size-relative-distance fallback for Local Group objects with a null
+// labelThresholdPc (ultra-faints + anything else that doesn't carry an
+// explicit hard-coded threshold). The label fades in once the camera
+// sits inside `SIZE_RELATIVE_LABEL_FACTOR × max(axes)` of the object's
+// centre — so a 50 pc Bootes II gets labelled within ~500 pc, a 270 pc
+// Sculptor-class within ~2.7 kpc, etc. N=10 picked at the middle of the
+// 8-12 range that gives both useful range (you discover small dwarfs
+// as you fly past) and avoids labelling sub-pixel objects too far away.
+export const SIZE_RELATIVE_LABEL_FACTOR = 10;
+
+/** Effective camera-to-object-centre label threshold for one LG object.
+ *  Hard-coded threshold (override file or classical-dSph default) wins;
+ *  null threshold falls back to size-relative so ultra-faints surface
+ *  when the camera flies close. Extracted as a pure helper so the
+ *  threshold policy is testable without the DOM-binding wrapper. */
+export function effectiveLabelThresholdPc(obj: LgObject): number {
+  if (obj.labelThresholdPc !== null) return obj.labelThresholdPc;
+  return SIZE_RELATIVE_LABEL_FACTOR * Math.max(obj.axes[0], obj.axes[1], obj.axes[2]);
+}
+
 /** Mount the SVG "Milky Way" label and bind per-frame projection.
- *  Anchored to GALACTIC_CENTRE_PC (a single sample point); fades in
- *  once the camera sits past MW_LABEL_THRESHOLD_PC from the galactic
- *  centre. Hidden in chart (monochrome) mode — chart-mode has its own
- *  paper-aesthetic treatment for galactic structure when stellata-m40
- *  covers it. */
+ *  Anchored to 32 sample points around the 15 kpc disc rim (the
+ *  outer reference ring of GalacticDisc), so the support-point picker
+ *  lands the label at the disc edge rather than the GC core. Fades
+ *  in once the camera sits past MW_LABEL_THRESHOLD_PC from the
+ *  galactic centre. Hidden in chart (monochrome) mode — chart-mode
+ *  has its own paper-aesthetic treatment for galactic structure when
+ *  stellata-m40 covers it. */
 export function createMilkyWayLabel(stellata: Stellata): void {
-  const sampleAbs = GALACTIC_CENTRE_PC; // absolute ICRS pc
+  const rimSamplesAbs = buildMwRimSamples();
   const tmpCam = new THREE.Vector3();
   createDistanceGatedLabel(stellata, {
     elementId: 'mw-label',
-    sampleCount: 1,
-    getWorldSample: (_, out) => out.copy(sampleAbs).sub(stellata.getWorldOffset()),
+    sampleCount: rimSamplesAbs.length,
+    getWorldSample: (i, out) => out.copy(rimSamplesAbs[i]).sub(stellata.getWorldOffset()),
     visible: () => {
       if (stellata.getMonochrome()) return false;
       // camera-to-GC distance in absolute pc = ||camera.position +
       // worldOffset - GALACTIC_CENTRE_PC||.
       const w = stellata.getWorldOffset();
       const c = stellata.camera.position;
-      tmpCam.set(c.x + w.x - sampleAbs.x, c.y + w.y - sampleAbs.y, c.z + w.z - sampleAbs.z);
+      tmpCam.set(
+        c.x + w.x - GALACTIC_CENTRE_PC.x,
+        c.y + w.y - GALACTIC_CENTRE_PC.y,
+        c.z + w.z - GALACTIC_CENTRE_PC.z,
+      );
       return tmpCam.length() >= MW_LABEL_THRESHOLD_PC;
     },
     labelDir: LABEL_DIR,
     offsetPx: LABEL_OFFSET_PX,
     lerp: LABEL_LERP,
   });
+}
+
+/** Precompute the 32-point MW disc rim sample ring in absolute ICRS pc.
+ *  Mirrors galactic-disc.ts's midplane LineLoop construction —
+ *  galactic-frame circle of radius MIDPLANE_RADIUS_PC rotated to ICRS
+ *  via GAL_TO_ICRS and translated by GALACTIC_CENTRE_PC. Called once
+ *  at module-init from createMilkyWayLabel; per-frame cost is then
+ *  32 vec3 subtractions (worldOffset rebase + matrix apply) plus the
+ *  shared label-engine's projection loop. */
+function buildMwRimSamples(): THREE.Vector3[] {
+  const out: THREE.Vector3[] = [];
+  for (let i = 0; i < MW_RIM_SEGMENTS; i++) {
+    const t = (i / MW_RIM_SEGMENTS) * Math.PI * 2;
+    const v = new THREE.Vector3(
+      MIDPLANE_RADIUS_PC * Math.cos(t),
+      MIDPLANE_RADIUS_PC * Math.sin(t),
+      0,
+    );
+    v.applyMatrix4(GAL_TO_ICRS).add(GALACTIC_CENTRE_PC);
+    out.push(v);
+  }
+  return out;
 }
 
 /** Mount per-object SVG labels for the labelled Local Group members
@@ -292,8 +351,7 @@ export function createLocalGroupLabels(
   const tmpCam = new THREE.Vector3();
   for (let i = 0; i < layer.objects.length; i++) {
     const obj = layer.objects[i];
-    const threshold = obj.labelThresholdPc;
-    if (threshold === null) continue;
+    const threshold = effectiveLabelThresholdPc(obj);
     const elementId = `lg-${obj.id}-label`;
     // Mint the SVG <text> element. innerHTML escape is unnecessary
     // since both id and name come from our own build-time output

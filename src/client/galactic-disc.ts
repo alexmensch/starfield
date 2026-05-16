@@ -2,7 +2,12 @@ import * as THREE from 'three';
 import { GAL_TO_ICRS, GALACTIC_CENTRE_PC } from './galactic-coords';
 import { FADE_INNER_PC, FADE_OUTER_PC, smoothstep } from './galactic-fade';
 
-const MIDPLANE_RADIUS_PC = 15_000;
+// 15 kpc midplane radius — outer reference rim of the MW disc wireframe.
+// Exported so the MW SVG label (`createMilkyWayLabel` in local-group.ts)
+// can anchor to the rim's projected silhouette rather than the bulge
+// projection (which sits ~12× smaller than the disc and made the label
+// hug the GC core instead of the disc edge).
+export const MIDPLANE_RADIUS_PC = 15_000;
 const THICKNESS_HALF_PC = 400;
 const MIDPLANE_SEGMENTS = 128;
 const BULGE_RADIUS_PC = 3000;

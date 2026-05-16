@@ -307,6 +307,20 @@ export function filterForRendering(rows: LvdbRow[]): LvdbRow[] {
   });
 }
 
+/** Display-name overrides applied at output. LVDB's `name` column drives
+ *  override-merge (overrides.tsv → LVDB row) and per-row identity, but
+ *  the on-disk + on-screen display string is rewritten through this
+ *  map so the labels read as the names users actually recognise rather
+ *  than the LVDB shortform. Mirrors the cloud-build pattern. */
+export const DISPLAY_NAME_OVERRIDES: Record<string, string> = {
+  LMC: 'Large Magellanic Cloud',
+  SMC: 'Small Magellanic Cloud',
+};
+
+export function displayName(lvdbName: string): string {
+  return DISPLAY_NAME_OVERRIDES[lvdbName] ?? lvdbName;
+}
+
 /** Default sky-plane oblate ellipsoid for an LVDB row with no override
  *  — uses rhalf_physical as the semi-major axis, ellipticity to derive
  *  the in-plane minor axis, and matches the minor axis along line of
@@ -365,7 +379,7 @@ export function mergeRowAndOverride(
   const center = raDecDistanceToIcrs(row.ra, row.dec, distancePc);
   const quat = buildOrientationQuat(row.ra, row.dec, orient);
   return {
-    name: row.name,
+    name: displayName(row.name),
     id: slugify(row.key),
     center,
     kind,
