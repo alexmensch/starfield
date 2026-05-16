@@ -87,9 +87,13 @@ export function buildArrowSection(stellata: Stellata): ArrowSection {
     const lengths = stellata.hud.getDrawnLengths();
     const dbg = stellata.hud.getDebugSnapshot();
     const shaftStart = stellata.hud.getShaftStartPx();
-    const alpha = stellata.getNavigateArrowFadeAlpha();
+    // Sol/GC pair share one alpha sourced from this-frame's geometry
+    // inside hud-overlay (ml8 fix). The distance-vector's own alpha is
+    // computed independently in distance-vector-overlay and not surfaced
+    // here — open `debug.distVec()` if a future section is needed.
+    const alpha = stellata.hud.getCurrentFadeAlpha();
     const focused = stellata.getFocusedStar();
-    const discRadius = focused !== null ? stellata.renderedDiscPxAtPeakDebug(focused) / 2 : 0;
+    const discRadius = stellata.getFocusedStarPeakDiscPx() * 0.5;
     const refLen = Math.max(lengths.sol, lengths.gc);
     const coverage = refLen > 0 ? Math.max(0, discRadius - shaftStart) / refLen : 0;
 

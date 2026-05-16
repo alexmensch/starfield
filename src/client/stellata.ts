@@ -3163,83 +3163,18 @@ export class Stellata {
   private _tmpRenderLocal = new THREE.Vector3();
   private _tmpWarpInfoB = new THREE.Vector3();
 
-  // Navigate-mode opacity for the focused-star reference arrows (Sol, GC,
-  // distance-vector). Returns 1 outside navigate or when no star is focused.
-  // On close approach the focal disc grows past the standard chevron length
-  // — fading the arrows out frees screen real estate for the near-field
-  // story. Fade trigger uses max(currentSolLen, currentGcLen) so the trigger
-  // is dynamic when one of the two reference arrows is shortened by its
-  // target projecting close to the focal star.
-  getNavigateArrowFadeAlpha(): number {
-    return this._navArrowFadeAlpha;
-  }
-
   /** Public access to the HUD overlay — for the arrow-fade debug HUD only. */
   get hud(): HudOverlay { return this.hudOverlay; }
 
-  /** Peak-amplitude rendered disc diameter in pixels — exposed for the
-   *  arrow-fade debug HUD so it can show the same disc value the fade keys
-   *  on. Diameter, not radius. */
-  renderedDiscPxAtPeakDebug(idx: number): number {
-    return this.renderedDiscPxAtPeak(idx);
-  }
-
-  private _navArrowFadeAlpha = 1;
-
-  private updateNavArrowFadeAlpha() {
-    this._navArrowFadeAlpha = this.computeNavArrowFadeAlpha();
-  }
-
-  private computeNavArrowFadeAlpha(): number {
-    // During an in-flight observe transition the focal star's disc is on
-    // screen and growing (enter) or shrinking (exit), so any visible alpha
-    // change rides on top of the disc — looks like fading-in chrome over
-    // the star. Hold the source-mode alpha throughout the transition and
-    // let it snap to the destination once the transition completes; the
-    // pop is acceptable because at that moment the disc is also disappearing
-    // (enter: uHideFocusIdx engages on landing) or has shrunk to its parked
-    // size (exit). cameraMode flips to the destination at the *start* of the
-    // transition, so we can't rely on it to identify the source — use kind.
-    const transition = this.getObserveTransitionProgress();
-    if (transition) {
-      return transition.kind === 'enter' ? this.computeDiscCoverageAlpha() : 1;
-    }
-
-    if (this.cameraMode !== 'navigate') return 1;
-    return this.computeDiscCoverageAlpha();
-  }
-
-  private computeDiscCoverageAlpha(): number {
-    const idx = this.focusedStar;
-    if (idx === null) return 1;
-
-    // Read the actual rendered shaft lengths from the HUD's last frame.
-    // One frame of lag (alpha computed before HudOverlay.update this frame
-    // uses lengths from the previous frame's render); imperceptible at 60 fps
-    // and avoids a circular dependency between the alpha calc and the
-    // rendering that depends on the alpha. Using actually-drawn lengths —
-    // rather than re-deriving them geometrically here — means the fade
-    // automatically tracks every gate HudOverlay applies (hideSolArrow,
-    // dirOk failure, shrink-to-target collapsing the shaft to zero).
-    const lengths = this.hudOverlay.getDrawnLengths();
-    const refLen = Math.max(lengths.sol, lengths.gc);
-    if (refLen <= 0) return 1;
-
-    // Source the shaft-start radius from the HUD (focus-ring rim + halo
-    // gap in nav, HUD ring + halo gap in observe), so a future change to
-    // either ring radius or the halo gap doesn't drift this calc.
-    const shaftStart = this.hudOverlay.getShaftStartPx();
-    // Use the peak-amplitude disc size, not the current phase-modulated
-    // size — otherwise a high-amplitude variable's pulsation would oscillate
-    // the alpha across its variability cycle.
-    const discRadius = this.renderedDiscPxAtPeak(idx) / 2;
-    const coverage = Math.max(0, discRadius - shaftStart) / refLen;
-
-    // Smoothstep ease over [0.5, 0.75]: alpha 1 → 0. Cubic Hermite (3t²-2t³)
-    // gives zero slope at both ends so the fade engages and ends gently.
-    const t = Math.max(0, Math.min(1, (coverage - 0.5) / 0.25));
-    const eased = t * t * (3 - 2 * t);
-    return 1 - eased;
+  /** Peak-amplitude rendered disc diameter in CSS pixels for the focused
+   *  star, or 0 when no star is focused. Diameter, not radius. Used by
+   *  HudOverlay (Sol/GC fade) and DistanceVectorOverlay (per-arrow fade)
+   *  so both reference-arrow fades key on the same phase-stable disc
+   *  envelope — a high-amplitude variable's pulsation doesn't oscillate
+   *  the alpha across its variability cycle. Also surfaced for the
+   *  arrow-fade debug HUD. */
+  getFocusedStarPeakDiscPx(): number {
+    return this.focusedStar !== null ? this.renderedDiscPxAtPeak(this.focusedStar) : 0;
   }
 
   // Smaller of the camera's vertical and horizontal FOV in radians. The
@@ -3731,10 +3666,11 @@ export class Stellata {
         : null;
     const isSolFocus =
       this.focusedStar !== null && this.focusedStar === this.catalog.solIndex;
-    // Compute the navigate-mode arrow fade alpha before the HUD render so
-    // both consumers (HUD Sol/GC arrows here, distance-vector overlay in the
-    // 'frame' event phase) read the same value within a frame.
-    this.updateNavArrowFadeAlpha();
+    // HudOverlay computes its own fade alpha from THIS frame's shaft
+    // geometry — no more one-frame-lag flash when the HUD toggles on
+    // (ml8 symptom 1). The distance-vector overlay does the same in its
+    // 'frame' handler against its own arrow length (ml8 symptom 2 / per-
+    // arrow coverage from the bead's option B).
     this.hudOverlay.update({
       enabled: this.filter.showHud,
       camera: this.camera,
@@ -3745,7 +3681,7 @@ export class Stellata {
       sizeMaxPx: this.filter.sizeMax,
       cameraMode: this.cameraMode,
       transition: this.getObserveTransitionProgress(),
-      navArrowFadeAlpha: this._navArrowFadeAlpha,
+      focusedDiscPx: this.getFocusedStarPeakDiscPx(),
       w: window.innerWidth,
       h: window.innerHeight,
     });
