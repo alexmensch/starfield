@@ -61,8 +61,26 @@ export function createDistanceVectorOverlay(
   // getComputedTextLength forces a layout flush; it's stable for a given
   // string + font, so once measured we don't need to re-measure on a
   // stationary camera.
+  //
+  // The cache key is the rendered text alone, so a webfont load (FOUT/FOIT)
+  // *after* the first measurement would leave the cached width pinned to
+  // the fallback-font measurement and mis-anchor the right-edge clamp +
+  // warp affordance for the lifetime of the page. Invalidate once when
+  // document.fonts.ready fires (settles within a few hundred ms of page
+  // load, fires immediately if all fonts were already loaded). The
+  // catch-clauses guard older browsers where the Fonts API isn't present
+  // — the cache simply stays text-keyed, which is the pre-fix behaviour.
   let labelWidthCacheText = '';
   let labelWidthCachePx = 0;
+  try {
+    const fonts = (document as Document & { fonts?: { ready?: Promise<unknown> } }).fonts;
+    fonts?.ready?.then(() => {
+      labelWidthCacheText = '';
+      labelWidthCachePx = 0;
+    }).catch(() => { /* ignored: cache stays text-keyed */ });
+  } catch {
+    /* ignored: fonts API not available */
+  }
 
   const hide = () => {
     if (!visible) return;
