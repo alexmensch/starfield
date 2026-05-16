@@ -190,6 +190,101 @@ The shipped default remains `'cubic-hermite'` until manual smokes
 confirm the trapezoidal feel across the test scenarios; the
 trapezoidal curve is a tunable opt-in via the panel.
 
+## Hybrid linear-d + angular-size profile
+
+Smoke testing the trapezoidal alternative revealed that *no* single-
+regime profile on log-d space can deliver the perceptual rhythm the
+viewer expects, because camera linear velocity is
+`d · f' · |log_ratio| / T_warp` and `d` shrinks geometrically across
+the warp. Linear velocity therefore peaks very early — around
+`u ≈ √(t_accel / (v · |log_ratio|)) ≈ 0.16` for a Sol-from-10-pc
+warp under any of the log-d curves — and decreases monotonically
+afterward regardless of the curve's `f'(u)` shape. Background-star
+parallax flow tracks linear velocity, so the camera reads as
+"decelerating" after the early peak no matter what `f` looks like.
+
+The hybrid splits the warp into two regimes, each with its own
+geometry:
+
+- **Outer (`u ∈ [0, u_seam]`)** — piecewise-quadratic on LINEAR
+  distance from `d_0` to `d_seam`:
+  ```
+  τ           = u / u_seam
+  f_outer(τ)  = 2·τ²              if τ < 0.5
+                1 − 2·(1 − τ)²   if τ ≥ 0.5
+  d_target(u) = d_0 − f_outer(τ) · (d_0 − d_seam)
+  ```
+  Matches the pre-2br.3 main-branch "rocket impulse" feel
+  (constant linear acceleration to τ = 0.5, constant linear
+  deceleration after) on the truncated range `[d_0, d_seam]`.
+  Linear velocity is high through the cruise, so background-star
+  parallax stays salient.
+
+- **Inner (`u ∈ [u_seam, 1]`)** — quintic smootherstep on angular
+  size `θ = R / d` from `θ_seam = R/d_seam` to `θ_end = R/d_end`:
+  ```
+  σ            = (u − u_seam) / (1 − u_seam)
+  S(σ)         = 10·σ³ − 15·σ⁴ + 6·σ⁵
+  θ(σ)         = θ_seam + S(σ) · (θ_end − θ_seam)
+  d_target(u)  = R / θ(σ)
+  ```
+  `S'(σ) = S''(σ) = 0` at both endpoints, so the regime arrives
+  with zero velocity AND zero acceleration — the cleanest possible
+  perceptual standstill. The visual cue is destination disc
+  growth, which is exactly what the user tracks once parallax has
+  collapsed at short range.
+
+**Seam.** `d_seam = seam_k · parkDist`, with `seam_k = 500` by
+default — the geometric midpoint of the empirical 100 – 1000 × parkDist
+range. The seam itself happens at zero velocity from both sides
+(outer's piecewise-quad ends at v = 0; inner's quintic starts at
+v = 0), so the "two-region split" rejection in the next section does
+NOT apply here: that rejection assumes a velocity-matching constraint
+at non-zero v, which the hybrid sidesteps by handing off at v = 0.
+
+**Time split.** `u_seam` is auto-computed from log-distance share with
+a clamp so each regime always gets meaningful time:
+```
+u_seam = clamp(log(d_0 / d_seam) / log(d_0 / d_end), 0.3, 0.85)
+```
+Not exposed as a panel slider — letting `u_seam` and `seam_k` drift
+independently would confuse the perceptual model.
+
+### Log-d equivalent
+
+The hybrid is exposed via `arrival-curves.ts` as
+`easeHybrid(u, d_0, d_end, R, seam_k)` and the `'hybrid'` arm of
+`resolveArrivalCurve`. The function builds `d_target(u)` in real
+distance space (linear-d outer + angular-size inner) but RETURNS the
+log-d-equivalent eased-u value:
+```
+f(u) = log(d_target(u) / d_0) / log(d_end / d_0)
+```
+That keeps the existing `tickArrival` formula
+`d(u) = d_0 · (d_end/d_0)^f(u)` unchanged — the hybrid geometry lives
+entirely inside the curve closure, the consumer is none the wiser.
+
+### Fallbacks
+
+The hybrid silently falls back to cubic-Hermite when:
+
+- `targetRadius` is null (clouds — ellipsoid axes don't reduce to a
+  single geometric R; future opaque ensembles).
+- The trajectory is outbound (`d_end > d_0`, e.g. the unfocus path).
+  The seam concept only applies when approaching a destination.
+- The per-warp `ArrivalCurveContext` is missing at resolution time
+  (callers that haven't been retrofitted to pass it).
+
+### Wire-up
+
+The four call sites that resolve the arrival curve (warp Fly,
+focus-park lerp for star and cloud, navigate-mode unfocus) each pass
+an `ArrivalCurveContext` carrying `{ d_0, d_end, targetRadius }`.
+`FocusTarget.physicalRadius(): number | null` provides R for the
+hybrid; stars return `catalog.physicalRadius[idx] · R_SUN_PC`, clouds
+return `null`. The shipped default remains `'cubic-hermite'`; the
+hybrid is opt-in via the panel until manual smokes promote it.
+
 ## What about a two-region split at `dWindow`?
 
 An obvious alternative is a two-region design: smoothstep on linear-d
