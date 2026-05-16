@@ -22,13 +22,14 @@
 // read the module-level pc/ly unit toggle from distance-util, so tests
 // pin the unit explicitly via setUnit('pc') for stable golden strings.
 
-import { fmtDist, fmtDistAuto } from '../../distance-util';
+import { fmtDistAuto } from '../../distance-util';
 import {
   maxSemiAxisPc,
   minSemiAxisPc,
   type LgObject,
 } from '../../local-group-loader';
 import type { HoverPayload } from '../hover-types';
+import { formatAxisPair } from './format-util';
 
 export interface LocalGroupHoverFormatContext {
   objects: readonly LgObject[];
@@ -48,14 +49,3 @@ export function formatLocalGroupHover(
   return { name: obj.name, lines };
 }
 
-// Render the major × minor pair as "<major> × <minor> <unit>" — both
-// values formatted through fmtDist, the major's trailing " pc" / " ly"
-// stripped so the unit suffix appears only once. LG semi-axes span ~50
-// pc (faint LVDB dwarfs) to ~30 kpc (M31's stellar disc); both values
-// land in the same fmtDist decade tier in practice, so the suffix
-// match-up is consistent.
-function formatAxisPair(majorPc: number, minorPc: number): string {
-  const minor = fmtDist(minorPc);
-  const major = fmtDist(majorPc).replace(/\s+(pc|ly)$/, '');
-  return `${major} × ${minor}`;
-}

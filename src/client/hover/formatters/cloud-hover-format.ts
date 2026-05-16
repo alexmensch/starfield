@@ -23,8 +23,9 @@
 // shape as a disc or an ellipsoid.
 
 import type { Cloud } from '../../cloud-loader';
-import { fmtDist, fmtDistAuto } from '../../distance-util';
+import { fmtDistAuto } from '../../distance-util';
 import type { HoverPayload } from '../hover-types';
+import { formatAxisPair } from './format-util';
 
 export interface CloudHoverFormatContext {
   clouds: readonly Cloud[];
@@ -46,14 +47,3 @@ export function formatCloudHover(
   return { name: cloud.name, lines };
 }
 
-// Render the major × minor pair as "<major> × <minor> <unit>" — both
-// values formatted through fmtDist, the major's trailing " pc" / " ly"
-// stripped so the unit suffix appears only once. Cloud semi-axes span
-// ~5 pc (compact Bok globules) to ~90 pc (Aquila Rift / Cam); both
-// values land in the same fmtDist decade tier in practice, so the
-// suffix match-up is consistent.
-function formatAxisPair(majorPc: number, minorPc: number): string {
-  const minor = fmtDist(minorPc);
-  const major = fmtDist(majorPc).replace(/\s+(pc|ly)$/, '');
-  return `${major} × ${minor}`;
-}
