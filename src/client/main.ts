@@ -26,11 +26,10 @@ import { bindBrandModals } from './brand-modal';
 import { bindKeyboardShortcuts } from './keyboard-shortcuts';
 import { applyFromUrl, startUrlSync, type IdMaps } from './url-state';
 import { applyFirstLoadView } from './first-load';
-import { fmtDist } from './distance-util';
 import { setupDebug } from './debug';
 import { escapeHtml } from './dom-util';
 import { createHoverEngine } from './hover/hover-engine';
-import type { HoverProvider } from './hover/hover-types';
+import { createStarHoverProvider } from './hover/star-hover-provider';
 
 async function main() {
   const canvas = document.getElementById('scene') as HTMLCanvasElement;
@@ -197,14 +196,21 @@ async function main() {
     });
 
     // Hover-label engine (stellata-lo5). Star provider registers here;
-    // lo5.3+ add the Sol-planet / Local Group / heliopause providers.
+    // lo5.4+ add the Sol-planet / Local Group / heliopause providers.
     // The engine reproduces the prior bindHoverTooltip behaviour byte
     // for byte when only the star provider is registered.
-    const starHoverProvider: HoverProvider<'star'> = {
-      kind: 'star',
-      pick: (x, y, pxThreshold) => stellata.pickStarHit(x, y, pxThreshold),
-      format: describeStarDetailed,
-    };
+    const starHoverProvider = createStarHoverProvider({
+      stellata,
+      context: {
+        starLabels,
+        spectralMap,
+        positions: catalog.positions,
+        constellation: catalog.constellation,
+        constellations: catalog.constellations,
+        periodDays: catalog.periodDays,
+        amplitudeMag: catalog.amplitudeMag,
+      },
+    });
     createHoverEngine({
       canvas,
       tooltip,
@@ -231,34 +237,6 @@ async function main() {
     // lo5 engine contract — the cloud formatter exists already as part
     // of lo5.7 but its provider is unregistered while the layer is
     // shelved.)
-
-    // Detailed, multi-line form for the hover tooltip. Line 1 is the star
-    // name; subsequent lines progressively disclose: constellation +
-    // distance, full spectral classification (from the catalog, preserving
-    // composite/peculiar markers), and variability info if any.
-    function describeStarDetailed(idx: number): { name: string; lines: string[] } {
-      const name = starLabels.get(idx) ?? `Unnamed #${idx}`;
-      const conIdx = catalog.constellation[idx];
-      const con = conIdx !== 255 ? catalog.constellations[conIdx].name : '';
-      const p = catalog.positions;
-      const dist = Math.sqrt(
-        p[idx * 3] ** 2 + p[idx * 3 + 1] ** 2 + p[idx * 3 + 2] ** 2,
-      );
-      const lines: string[] = [];
-      const ctx = [con, fmtDist(dist)].filter(Boolean).join(' · ');
-      if (ctx) lines.push(ctx);
-      const spect = spectralMap.get(idx);
-      if (spect) lines.push(spect);
-      const period = catalog.periodDays[idx];
-      const amp = catalog.amplitudeMag[idx];
-      if (period > 0 && amp > 0) {
-        const periodStr = period >= 10
-          ? `${period.toFixed(0)}d`
-          : `${period.toFixed(2)}d`;
-        lines.push(`Variable · P=${periodStr}, Δ=${amp.toFixed(1)}mag`);
-      }
-      return { name, lines };
-    }
   } catch (err) {
     console.error(err);
     loadingStatus.textContent = `Error: ${(err as Error).message}`;
