@@ -25,6 +25,7 @@ import { fileURLToPath } from 'node:url';
 import { parse } from 'csv-parse/sync';
 import {
   buildOrientationQuat,
+  buildStandaloneOverride,
   filterForRendering,
   mergeRowAndOverride,
   roundN,
@@ -77,7 +78,17 @@ export function parseLvdb(csv: string): LvdbRow[] {
 /** Parse overrides.tsv (header line + tab-separated rows; lines starting
  *  with # are comments).
  *
- *  Schema: name<TAB>a_pc<TAB>b_pc<TAB>c_pc<TAB>orient<TAB>ref_doi
+ *  Schema (6 required columns; 3 optional standalone-position columns):
+ *
+ *    name<TAB>a_pc<TAB>b_pc<TAB>c_pc<TAB>orient<TAB>ref_doi
+ *      [<TAB>ra_deg<TAB>dec_deg<TAB>distance_kpc]
+ *
+ *  The optional trailing columns are populated only for objects that
+ *  aren't in LVDB at all (M31, M33). When present, the row is fully
+ *  self-contained — buildStandaloneOverride synthesises an LgObject
+ *  without an LVDB merge. When absent, the row supplements an LVDB row
+ *  whose position drives the merge.
+ *
  *  Label visibility is governed at runtime (apparent-size ranking)
  *  rather than per-row, so no threshold column. */
 export function parseOverrides(tsv: string): OverrideRow[] {
@@ -88,22 +99,51 @@ export function parseOverrides(tsv: string): OverrideRow[] {
     if (!raw || raw.startsWith('#')) continue;
     const fields = raw.split('\t');
     if (!headerSeen) {
-      // First non-comment line is the header. Sanity-check the shape so a
-      // schema drift surfaces loudly at build time.
-      const expected = ['name', 'a_pc', 'b_pc', 'c_pc', 'orient', 'ref_doi'];
-      if (fields.length < expected.length || fields[0] !== 'name') {
-        throw new Error(`overrides.tsv: malformed header (got ${fields.length} fields, expected ${expected.length})`);
+      // First non-comment line is the header. Sanity-check that the
+      // required leading columns are present in the expected order so a
+      // schema drift surfaces loudly at build time. Optional columns
+      // (ra_deg, dec_deg, distance_kpc) may follow without a check —
+      // the per-row parsing decides whether to read them.
+      const required = ['name', 'a_pc', 'b_pc', 'c_pc', 'orient', 'ref_doi'];
+      if (fields.length < required.length) {
+        throw new Error(`overrides.tsv: malformed header (got ${fields.length} fields, expected ≥ ${required.length})`);
+      }
+      for (let i = 0; i < required.length; i++) {
+        if (fields[i].trim() !== required[i]) {
+          throw new Error(`overrides.tsv: header column ${i} is '${fields[i]}', expected '${required[i]}'`);
+        }
       }
       headerSeen = true;
       continue;
     }
     if (fields.length < 6) continue;
-    out.push({
+    const row: OverrideRow = {
       name: fields[0].trim(),
       axes: [parseFloat(fields[1]), parseFloat(fields[2]), parseFloat(fields[3])],
       orient: fields[4].trim(),
       refDoi: fields[5].trim(),
-    });
+    };
+    // Optional standalone position columns. All three must be present
+    // and non-empty for the row to stand alone — partial population is
+    // a config error worth surfacing.
+    if (fields.length >= 9) {
+      const raStr = fields[6].trim();
+      const decStr = fields[7].trim();
+      const distStr = fields[8].trim();
+      const anyPresent = raStr || decStr || distStr;
+      const allPresent = raStr && decStr && distStr;
+      if (anyPresent && !allPresent) {
+        throw new Error(
+          `overrides.tsv: '${row.name}' partially populates standalone position (ra/dec/distance) — all three must be set together or all empty`,
+        );
+      }
+      if (allPresent) {
+        row.raDeg = parseFloat(raStr);
+        row.decDeg = parseFloat(decStr);
+        row.distanceKpc = parseFloat(distStr);
+      }
+    }
+    out.push(row);
   }
   return out;
 }
@@ -155,6 +195,7 @@ async function main(): Promise<void> {
 
   const renderable = filterForRendering(lvdb);
   const objects: LgObject[] = [];
+  const overrideMatched = new Set<string>();
   let overrideHits = 0;
   let lvdbDefaultHits = 0;
   let skippedNoStructure = 0;
@@ -164,9 +205,30 @@ async function main(): Promise<void> {
       skippedNoStructure += 1;
       continue;
     }
-    if (merged.source === 'OVERRIDE') overrideHits += 1;
-    else lvdbDefaultHits += 1;
+    if (merged.source === 'OVERRIDE') {
+      overrideHits += 1;
+      overrideMatched.add(row.name);
+    } else {
+      lvdbDefaultHits += 1;
+    }
     objects.push(merged);
+  }
+
+  // Standalone overrides — rows that name objects not present in LVDB
+  // (M31, M33). The TSV parse already enforced that ra/dec/distance are
+  // populated for any unmatched row; buildStandaloneOverride throws if
+  // not, so a config error surfaces loudly here.
+  let standaloneHits = 0;
+  let skippedOutOfRange = 0;
+  for (const ov of overrides) {
+    if (overrideMatched.has(ov.name)) continue;
+    const built = buildStandaloneOverride(ov);
+    if (!built) {
+      skippedOutOfRange += 1;
+      continue;
+    }
+    standaloneHits += 1;
+    objects.push(built);
   }
 
   // Stable order — by name, case-insensitive — so repeat builds emit
@@ -183,9 +245,10 @@ async function main(): Promise<void> {
 
   console.log(
     `wrote ${OUT.replace(ROOT + '/', '')} ` +
-    `(${objects.length} objects: ${overrideHits} from overrides, ` +
-    `${lvdbDefaultHits} from LVDB; ${skippedNoStructure} LVDB rows skipped — ` +
-    `no structural data)`,
+    `(${objects.length} objects: ${overrideHits} LVDB+override, ` +
+    `${lvdbDefaultHits} LVDB-only, ${standaloneHits} standalone override; ` +
+    `${skippedNoStructure} LVDB rows skipped — no structural data; ` +
+    `${skippedOutOfRange} standalone overrides skipped — past MAX_DISTANCE_PC)`,
   );
   // Reference the unused symbol so the import survives tree-shaking
   // analysis in the test path that imports this file for the parsers.
