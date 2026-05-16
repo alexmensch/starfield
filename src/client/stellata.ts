@@ -3449,6 +3449,25 @@ export class Stellata {
     );
   }
 
+  // Hover-engine entry point for the Local Group layer (stellata-lo5.5).
+  // Delegates to LocalGroupLayer.pick — that method gates on
+  // `group.visible`, which `update()` flips per frame to mirror the
+  // renderer's chart-mode + distance-fade visibility predicate. Returns
+  // null when the layer isn't attached (fresh checkout without the
+  // build artifact).
+  pickLocalGroupHit(clientX: number, clientY: number, pixelThreshold = 14): HoverHit | null {
+    if (!this.localGroupLayer) return null;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    return this.localGroupLayer.pick(
+      this.camera,
+      this.worldOffset,
+      rect,
+      clientX,
+      clientY,
+      pixelThreshold,
+    );
+  }
+
   /** Cached PlanetSystem for an attached host, or null if the host
    *  isn't attached. Used by the planet hover formatter to resolve
    *  `(hostStarIdx, planetIdx)` from a pick back to a Planet record

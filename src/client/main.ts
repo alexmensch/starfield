@@ -31,6 +31,8 @@ import { escapeHtml } from './dom-util';
 import { createHoverEngine } from './hover/hover-engine';
 import { createStarHoverProvider } from './hover/star-hover-provider';
 import { createPlanetHoverProvider } from './hover/planet-hover-provider';
+import { createLocalGroupHoverProvider } from './hover/local-group-hover-provider';
+import type { HoverProvider } from './hover/hover-types';
 
 async function main() {
   const canvas = document.getElementById('scene') as HTMLCanvasElement;
@@ -196,10 +198,11 @@ async function main() {
       stellata,
     });
 
-    // Hover-label engine (stellata-lo5). Star + planet providers register
-    // here; lo5.5+ add Local Group and heliopause. The planet provider
-    // self-gates on Stellata.getFocusedPlanetSystem(), so it's a no-op
-    // until the user focuses a host with attached planets (Sol in v1).
+    // Hover-label engine (stellata-lo5). Star, planet, and (when the
+    // catalog is present) Local Group providers register here; lo5.6+
+    // add heliopause. Every provider mirrors the renderer's "is this
+    // drawn?" predicate as its visibility gate — visibility ⇒ hoverable
+    // per stellata-lo5-hover-conventions Rule 2; no focus / mode gates.
     // Provider order is irrelevant — the disambiguator picks the winner
     // across all providers per the prime>fallback / closest-camera-wins
     // rule.
@@ -216,10 +219,20 @@ async function main() {
       },
     });
     const planetHoverProvider = createPlanetHoverProvider({ stellata });
+    const hoverProviders: HoverProvider[] = [starHoverProvider, planetHoverProvider];
+    // LG provider only registers when the build artifact loaded — fresh
+    // checkouts without `npm run build:local-group` leave stellata.localGroup
+    // null and the wireframes don't render; no provider in that case.
+    if (lgCatalog) {
+      hoverProviders.push(createLocalGroupHoverProvider({
+        stellata,
+        context: { objects: lgCatalog.objects },
+      }));
+    }
     createHoverEngine({
       canvas,
       tooltip,
-      initialProviders: [starHoverProvider, planetHoverProvider],
+      initialProviders: hoverProviders,
     });
 
     await new Promise((r) => requestAnimationFrame(r));
