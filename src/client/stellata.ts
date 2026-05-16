@@ -2659,10 +2659,11 @@ export class Stellata {
   // No-ops if there's no focus, the destination equals the source, or the
   // two are coincident.
   warpTo(destIdx: number) {
-    const A = this.currentFocusLocalPos();
-    const source = this.currentFocusTarget();
-    if (!A || !source) return;
     if (destIdx === this.focusedStar) return;
+    const source = this.currentFocusTarget();
+    if (!source) return;
+    const A = new THREE.Vector3();
+    if (!source.localPositionInto(A)) return;
     const B = this.starLocalPosition(destIdx);
     this.startWarp(A, B, source, this.makeStarFocusTarget(destIdx));
   }
@@ -2671,27 +2672,16 @@ export class Stellata {
    *  (star or cloud) to a cloud's centroid. Arrival distance is the
    *  cloud's recommended viewing distance (2.4 × max axis). */
   warpToCloud(destIdx: number) {
+    if (destIdx === this.focusedCloud) return;
     const dest = this.makeCloudFocusTarget(destIdx);
     if (!dest) return;
-    if (destIdx === this.focusedCloud) return;
-    const A = this.currentFocusLocalPos();
     const source = this.currentFocusTarget();
-    if (!A || !source) return;
+    if (!source) return;
+    const A = new THREE.Vector3();
+    if (!source.localPositionInto(A)) return;
     const out = this.tmpVec3b;
     if (!dest.localPositionInto(out)) return;
     this.startWarp(A, out.clone(), source, dest);
-  }
-
-  /** Local-frame position of whatever is currently focused (star or
-   *  cloud), or null if nothing is focused. Both warp paths read from
-   *  this so the source point follows the unified focus state. */
-  private currentFocusLocalPos(): THREE.Vector3 | null {
-    if (this.focusedStar !== null) return this.starLocalPosition(this.focusedStar);
-    if (this.focusedCloud !== null && this.clouds) {
-      const c = this.clouds.clouds[this.focusedCloud];
-      if (c) return c.centerAbs.clone().sub(this.worldOffset);
-    }
-    return null;
   }
 
   private startWarp(
