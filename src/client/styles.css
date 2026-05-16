@@ -963,23 +963,6 @@ body.monochrome .poi-label {
 .tooltip .tt-name { color: var(--fg); }
 .tooltip .tt-sub { color: var(--fg-dim); font-size: 11px; }
 
-/* Chart-mode tooltip restyling (stellata-lo5.8). Engages only when
-   chart mode is active (body.chart added by chart-mode.ts on the
-   observe+filter.chart predicate); independent of body.monochrome,
-   which the user might set via the programmatic theme API without
-   chart mode. body.monochrome already supplies the paper background
-   + dark ink via the .tooltip rule below; this block layers the
-   chart-label glyph typography on top so the hover card reads as
-   the same paper-chart annotation typeface (sans-serif, subtle
-   letter-spacing) as the engraved star / cloud / constellation
-   labels rendered each frame by chart-labels.ts. backdrop-filter
-   blur is dropped — paper isn't glassy. Payload is unchanged. */
-body.chart .tooltip {
-  font-family: var(--font-ui, system-ui, sans-serif);
-  letter-spacing: 0.02em;
-  backdrop-filter: none;
-}
-
 /* ---- Monochrome (chart) theme ---- */
 body.monochrome {
   --bg: #f5f2ea;
