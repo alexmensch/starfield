@@ -47,7 +47,7 @@ const RING_SIZE_FACTOR = 5;
 // sentinels guarantee the first write always lands through the gate —
 // including for `lastPointerEvents` (steady-state '' would silently match
 // a naive '' sentinel and skip the first restore-to-clickable write).
-interface ArrowState {
+export interface ArrowState {
   lastD: string;
   lastLabelDisplay: string;
   lastLabelText: string;
@@ -56,14 +56,21 @@ interface ArrowState {
   lastOpacity: number;
   lastPointerEvents: string;
 }
-function emptyArrowState(): ArrowState {
+export function emptyArrowState(): ArrowState {
   return {
     lastD: '\0',
     lastLabelDisplay: '\0',
     lastLabelText: '\0',
     lastLabelX: NaN,
     lastLabelY: NaN,
-    lastOpacity: NaN,
+    // -Infinity (not NaN) because the inline opacity gate in applyFade
+    // uses the early-write `>= threshold` form, which NaN poisons in the
+    // wrong direction: `Math.abs(α − NaN) = NaN; NaN >= 0.0005 = false`
+    // → first-frame write skipped, arrow never fades. -Infinity makes the
+    // delta Infinity, which trips both gate directions. (Position sentinels
+    // above stay NaN because they route through setNumAttr's early-return
+    // `< threshold` form where NaN works correctly.)
+    lastOpacity: -Infinity,
     lastPointerEvents: '\0',
   };
 }
@@ -460,10 +467,13 @@ export class HudOverlay {
     }
     state.lastLabelDisplay = setStyle(label, 'display', 'none', state.lastLabelDisplay);
     // Wipe the per-attribute caches so the next visible frame writes through.
+    // lastOpacity uses -Infinity (not NaN) for the same reason
+    // emptyArrowState does — applyFade's gate is the early-write `>=`
+    // form which NaN poisons in the wrong direction.
     state.lastLabelText = '\0';
     state.lastLabelX = NaN;
     state.lastLabelY = NaN;
-    state.lastOpacity = NaN;
+    state.lastOpacity = -Infinity;
     state.lastPointerEvents = '\0';
   }
 }
@@ -546,7 +556,7 @@ export function emptyArrowDebug(): ArrowDebugRecord {
 // Dirty-tracked through ArrowState so a stable alpha (the steady-state
 // outside the fade window) doesn't write three inline-style strings every
 // frame. The 0.0005 threshold mirrors the .toFixed(3) precision floor.
-function applyFade(
+export function applyFade(
   path: SVGPathElement,
   bg: SVGPathElement,
   label: SVGTextElement,
