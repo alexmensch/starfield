@@ -1,0 +1,42 @@
+# Hand-curated structural overrides for Local Group objects whose LVDB
+# summary row is too coarse for meaningful 3D rendering. Each row
+# *replaces* the structural detail (axes + orientation) derived from
+# LVDB for the named object; position (RA/Dec/distance) still flows
+# from LVDB. Other objects render from LVDB's rhalf_physical /
+# ellipticity / position_angle as a sky-plane oblate ellipsoid.
+#
+# Columns:
+#   name              — display name (must match LVDB's `name` column for merge)
+#   a_pc, b_pc, c_pc  — local-frame semi-axes in parsecs
+#   orient            — orientation of the local frame in ICRS:
+#                         disc:i=X,pa=Y   disc plane normal at inclination i
+#                                         (degrees, 0=face-on), with line of
+#                                         nodes at PA Y east of north. a, b
+#                                         lie in the disc plane; c along the
+#                                         disc normal.
+#                         pa:X            long axis (a) in sky plane at PA X
+#                                         east of north; b in sky plane
+#                                         perpendicular; c along line of
+#                                         sight to/from Sol.
+#                         los             c-axis along line of sight from
+#                                         Sol; a, b perpendicular (in the
+#                                         transverse plane, galactic-aligned
+#                                         choice for the basis seed).
+#   ref_doi            — primary structural reference (DOI without resolver
+#                        prefix).
+#
+# Per stellata-data-fidelity-principle: hand-curated overrides are
+# acceptable only for truly singular edge cases where no canonical source
+# resolves them. LVDB's projected (rhalf, ellipticity, PA) captures the
+# typical dSph adequately; the three objects below have well-studied
+# departures (LMC's inclined disc; SMC's line-of-sight elongation; Sgr's
+# 3D extent through tidal disruption) that warrant per-object detail.
+#
+# Label visibility is governed at runtime by apparent-size ranking
+# (local-group.ts → computeVisibleLabels) — no per-object threshold
+# column. The MW-inside guard is the only exception, and it applies
+# globally rather than per-object.
+name	a_pc	b_pc	c_pc	orient	ref_doi
+LMC	4500	4500	1000	disc:i=32,pa=135	10.1088/0004-637X/781/2/121
+SMC	3730	4960	6000	los	10.1088/0004-637X/744/2/128
+Sagittarius	2616	942	1000	pa:102	10.1086/192237

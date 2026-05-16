@@ -2,6 +2,7 @@ import type { Stellata } from './stellata';
 import { makeCollapsibleSection, makeDebugPanel } from './debug-panel';
 import { buildMilkywaySection } from './milkyway-tuning';
 import { buildStarSection } from './star-tuning';
+import { buildDeepFieldSection } from './local-group-tuning';
 import { buildPerfSection } from './perf-hud';
 import { buildPinSection } from './pin-debug-hud';
 import { buildArrowSection } from './arrow-fade-debug-hud';
@@ -84,6 +85,7 @@ export function setupDebug(stellata: Stellata, idMaps: IdMaps): DebugTools {
 
     built.body.appendChild(buildStarSection(stellata));
     built.body.appendChild(buildMilkywaySection(stellata.milkywayLayer));
+    built.body.appendChild(buildDeepFieldSection());
 
     // Live sections — each owns its per-frame subscription via
     // stellata.on('frame', ...) and exposes setVisible to gate DOM writes

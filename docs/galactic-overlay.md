@@ -1,10 +1,13 @@
 # Galactic reference system
 
-Three layers anchor the local star clump against the Milky Way's geometry:
-the galactic disc outline (always-on midplane ring + bulge wireframe), the
-toggleable galactic coordinate sphere, and the HUD layer (Sol/GC arrows
-plus the OBSERVE-mode ring). Together they give the user "which way is
-out, and how far am I from the centre" without obscuring the local stars.
+Four layers anchor the local star clump against the Milky Way's geometry:
+the galactic disc outline (always-on midplane ring + bulge wireframe),
+the Local Group wireframe layer (Magellanic Clouds + dwarf satellites
+within 250 kpc — `docs/local-group.md`), the toggleable galactic
+coordinate sphere, and the HUD layer (Sol/GC arrows plus the OBSERVE-mode
+ring). Together they give the user "which way is out, how far am I from
+the centre, and what else is nearby at galactic scales" without
+obscuring the local stars.
 
 **Shared module** `galactic-coords.ts` exports `GAL_TO_ICRS` (Matrix4)
 and `GALACTIC_CENTRE_PC` (Vector3 at R₀ = 8.122 kpc), built from the
@@ -22,11 +25,25 @@ sits ~8 kpc *inside* the disc, not at its middle. Each ring is a basic
 `GAL_TO_ICRS` plus the GC offset; per frame `discGroup.position` is
 rebased to `-worldOffset` (via `.copy(worldOffset).negate()` on the
 group's own position vector so the shared `worldOffset` is never
-mutated). Opacity smoothsteps from 0 to 0.55 between **500 pc and 5 kpc**
-distance-from-Sol so the disc stays out of the way for local browsing
-and reveals as the user zooms out. In chart mode the layer is hidden
-entirely — a 15 kpc reference ring reads as visual noise on a paper-chart
-aesthetic, and the arrows + sphere already provide orientation.
+mutated). Opacity smoothsteps from 0 to 0.55 between
+`FADE_INNER_PC = 500` pc and `FADE_OUTER_PC = 5000` pc distance-from-Sol
+(constants hoisted to `galactic-fade.ts`, shared with the Local Group
+wireframe layer so both reveal in lockstep). In chart mode the layer is
+hidden entirely — a 15 kpc reference ring reads as visual noise on a
+paper-chart aesthetic, and the arrows + sphere already provide
+orientation.
+
+**Local Group wireframes** (`local-group.ts` + `local-group-loader.ts`,
+build pipeline `scripts/build-local-group.ts`) — LineLoop outlines for
+~52 confirmed-galaxy LVDB objects within 250 kpc of Sol: LMC (inclined
+disc), SMC (line-of-sight elongated triaxial), Sagittarius dSph,
+classical dSphs (Sculptor / Draco / Fornax / Carina / Sextans / Leo I/II
+/ Ursa Minor), and the ultra-faint dwarfs LVDB lists at this scale.
+Same fade curve as the disc — invisible during local browsing, present
+once the camera sits more than ~5 kpc from Sol. Labels (MW at the
+galactic centre, per-object for the labelled members) bind through the
+shared `distance-gated-label.ts` engine and gate on camera-to-object-
+centre distance. Full detail in `docs/local-group.md`.
 
 **Galactic coordinate sphere** (`galactic-grid.ts`, toggleable) —
 equator + 16 latitude rings every 10° (range −80° to +80°) + 36

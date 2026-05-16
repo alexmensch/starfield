@@ -1,6 +1,6 @@
 {
   "name": "stellata",
-  "version": "1.8.5",
+  "version": "1.9.0",
   "private": true,
   "type": "module",
   "license": "AGPL-3.0-only",
@@ -8,10 +8,11 @@
   "scripts": {
     "build:catalog": "tsx scripts/build-catalog.ts",
     "build:clouds": "python3 scripts/build-clouds.py",
+    "build:local-group": "tsx scripts/build-local-group.ts",
     "build:dust-sync": "tsx scripts/sync-dust.ts",
     "build:client": "vite build",
-    "build": "npm run build:catalog && npm run build:clouds && npm run build:dust-sync && npm run build:client",
-    "dev": "npm run build:catalog && npm run build:clouds && npm run build:dust-sync && vite",
+    "build": "npm run build:catalog && npm run build:clouds && npm run build:local-group && npm run build:dust-sync && npm run build:client",
+    "dev": "npm run build:catalog && npm run build:clouds && npm run build:local-group && npm run build:dust-sync && vite",
     "deploy": "npm run build && wrangler deploy",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

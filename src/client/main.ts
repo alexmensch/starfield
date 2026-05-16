@@ -1,6 +1,8 @@
 import { loadCatalog } from './catalog-loader';
 import { DustField, loadDustManifest, loadDustParticles } from './dust-loader';
 import { loadClouds } from './cloud-loader';
+import { loadLocalGroup } from './local-group-loader';
+import { createLocalGroupLabels, createMilkyWayLabel } from './local-group';
 import { Stellata } from './stellata';
 import { bindControls } from './controls';
 import { bindSearch, buildStarLabels, buildSpectralMap, buildBayerMap, type SearchEntry } from './search';
@@ -42,7 +44,7 @@ async function main() {
   const tooltip = document.getElementById('tooltip')!;
 
   try {
-    const [catalog, searchIndex, cloudCatalog] = await Promise.all([
+    const [catalog, searchIndex, cloudCatalog, lgCatalog] = await Promise.all([
       loadCatalog(
         `${import.meta.env.BASE_URL}catalog.bin`,
         `${import.meta.env.BASE_URL}constellations.json`,
@@ -63,6 +65,11 @@ async function main() {
       // a few hundred KB; null if the artifact is missing (fresh checkout
       // without `npm run build:clouds`).
       loadClouds(`${import.meta.env.BASE_URL}clouds.json`),
+      // Local Group wireframes (stellata-38m). ~20 KB JSON; null if
+      // the artifact is missing (fresh checkout without
+      // `npm run build:local-group`). No-op layer in that case —
+      // outlines simply don't render.
+      loadLocalGroup(`${import.meta.env.BASE_URL}local-group.json`),
     ]);
 
     loadingStatus.textContent = `Parsed ${catalog.count.toLocaleString()} stars`;
@@ -83,6 +90,10 @@ async function main() {
     // below.
     // if (cloudCatalog) stellata.attachClouds(cloudCatalog);
     void cloudCatalog;
+
+    // Local Group wireframes. Always-on when the artifact is present —
+    // same model as the MW disc, no toggle / URL flag.
+    if (lgCatalog) stellata.attachLocalGroup(lgCatalog);
 
     // HIP → row-index lookup, used by url-state to encode/decode shared
     // links with stable star IDs that survive a future catalog reorder.
@@ -142,6 +153,14 @@ async function main() {
     createPoiOverlay(stellata, starLabels);
     createPlanetLabels(stellata);
     createHeliopauseLabel(stellata);
+    // Milky Way label fades in once the camera sits past ~10 kpc from the
+    // galactic centre. Independent of attachLocalGroup — the MW label
+    // anchors at GALACTIC_CENTRE_PC, not at a Local Group catalog entry.
+    createMilkyWayLabel(stellata);
+    // Per-object Local Group labels. Mints SVG <text> children under
+    // #lg-labels for each catalog object that carries a labelThresholdPc;
+    // no-op when the layer didn't attach (missing artifact).
+    if (stellata.localGroup) createLocalGroupLabels(stellata, stellata.localGroup);
     createScaleBar(stellata, starLabels);
     bindWarpButton(stellata);
     bindModeToggle(stellata);
