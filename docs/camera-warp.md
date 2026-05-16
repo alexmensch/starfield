@@ -85,6 +85,36 @@ on whether the warp re-enters OBSERVE on arrival:
    settle in lock-step with the camera landing rather than ~half a
    warp duration early.
 
+   **Chart-mode plateau-trigger.** Chart mode renders stars as
+   magnitude-driven discs (`pxSize = mix(maxPx, minPx, chartT)` with
+   `chartT = clamp((appMag − magBright)/(maxAppMag − magBright), 0, 1)`
+   — see `docs/chart-mode.md` §Star disc sizing). Once the camera is
+   close enough that `appMag ≤ uChartMagBright`, `chartT` floors to 0
+   and the disc plateaus at `uChartDiscMaxPx`. Under the cubic-Hermite
+   log-d Fly profile, the camera spends much longer in the close-
+   approach window than under the legacy piecewise profile — so the
+   user can sit for hundreds of milliseconds inside the plateau zone
+   watching a disc that doesn't grow, with no perceptual progress
+   signal. Pivot to phase 3 early instead: when chart mode is active
+   (observe-only) at warp start, cache the plateau distance via
+   `dest.chartPlateauDistance(uChartMagBright)` (`chart-disc-pure.ts`
+   solves the distance-modulus identity for the threshold magnitude:
+   `d = 10^((magBright − absMag + 5)/5)` pc — Sol's default plateau
+   sits at ~0.43 pc, Betelgeuse's at ~58.9 pc). During Fly, once the
+   camera is inside that radius AND mid-Fly recentre has fired, pin
+   `state.pEnd` to the current camera position and shrink
+   `state.durationMs` to the elapsed Fly time so the next frame falls
+   into phase 3 with `flyEndQuaternion` captured from the live
+   lookAt(dest) orientation. Phase 3's parallax slerp then carries
+   the perceptual progress signal across the plateau zone (a flatlined
+   disc + a rotating camera reads as motion). Gated on
+   `recenteredToDest` so the dest-local position check is well-conditioned
+   (target at (0,0,0), no ULP residual) and so the transition can't fire
+   before the floating-origin shift cleans up the projection chain.
+   Clouds return `null` from `chartPlateauDistance` — chart mode
+   renders them as isobar contours rather than discs, no plateau to
+   detect.
+
 3. **Post-arrival reorient** (only when `returnToObserve`, duration =
    `OBSERVE_TRANSITION_MS` = 1200 ms). Quaternion slerps from the
    fly-end "looking at B" orientation back to the `startQuaternion`

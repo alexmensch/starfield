@@ -72,4 +72,24 @@ export interface FocusTarget {
    *  followed by `'state'` so the URL writer serialises the new pose.
    *  Called from `finishWarp` after the camera has fully landed. */
   emitFocusEvents(): void;
+
+  /** Camera-to-anchor distance at which the chart-mode rendered disc
+   *  reaches its `uChartDiscMaxPx` plateau, given the current
+   *  `uChartMagBright` setting (the magnitude that maps to max disc
+   *  size). Returns `null` when chart-mode plateau doesn't apply —
+   *  e.g. clouds, whose chart-mode treatment is an isobar contour
+   *  rather than a magnitude-driven disc.
+   *
+   *  Used by `updateWarp` to pivot Fly → phase 3 early when chart mode
+   *  is active and the destination's disc would stop growing
+   *  perceptibly under the cubic-Hermite log-d profile (the camera
+   *  spends much more time in close-approach than under the legacy
+   *  piecewise profile, and a flatlined chart disc leaves the user
+   *  with no perceptual progress signal). Phase 3's parallax slerp
+   *  then carries the progress cue across the plateau zone.
+   *
+   *  Derivation: chart disc plateaus when `appMag ≤ magBright`. With
+   *  `appMag = absMag + 5·log10(d) − 5` (pc convention), solving for
+   *  `d` gives `d_plateau = 10^((magBright − absMag + 5) / 5)` pc. */
+  chartPlateauDistance(magBright: number): number | null;
 }

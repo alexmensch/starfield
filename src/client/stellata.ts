@@ -46,6 +46,7 @@ import {
 import { type ArrivalState, newArrival, shiftArrivalWaypoints, tickArrival } from './camera-motion';
 import { shiftWarpWaypoints } from './warp-pure';
 import type { FocusTarget } from './focus-target';
+import { chartPlateauDistancePc } from './chart-disc-pure';
 import { EventBus } from './event-bus';
 
 export type MagPresetName = 'naked-eye' | 'binoculars' | 'all';
@@ -437,6 +438,19 @@ interface WarpState {
   // inline lerp because it's an observe handover, not a park-arrival
   // (docs/camera-arrival.md § Inventory).
   flyArrival: ArrivalState;
+  // Chart-mode close-approach plateau distance. Set only when the warp
+  // launches into a chart-mode observe-mode arrival (`returnToObserve`
+  // + `filter.chart` + dest implements `chartPlateauDistance`). The
+  // Fly phase pivots to phase 3 the moment the camera enters this
+  // radius around the destination, because in chart mode the rendered
+  // disc plateaus at `uChartDiscMaxPx` once `appMag ≤ uChartMagBright`
+  // — further approach produces no visible growth, leaving the user
+  // with no perceptual progress signal across the close-approach
+  // window. Phase 3's parallax slerp then carries the progress cue.
+  // `null` (or undefined) disables the plateau-trigger and Fly runs
+  // to its full `durationMs` — the legacy navigate / non-chart-mode
+  // observe behaviour.
+  chartPlateauDist: number | null;
 }
 
 type Target = { kind: 'star'; idx: number } | { kind: 'cloud'; idx: number };
@@ -2421,6 +2435,8 @@ export class Stellata {
         this.bus.emit('focus', idx);
         this.bus.emit('state');
       },
+      chartPlateauDistance: (magBright) =>
+        chartPlateauDistancePc(this.catalog.absmag[idx], magBright),
     };
   }
 
@@ -2460,6 +2476,9 @@ export class Stellata {
         this.bus.emit('cloudFocus', idx);
         this.bus.emit('state');
       },
+      // Clouds render as isobar contours in chart mode (not as
+      // magnitude-driven discs), so there's no disc plateau to detect.
+      chartPlateauDistance: () => null,
     };
   }
 
@@ -2612,6 +2631,17 @@ export class Stellata {
       const m = new THREE.Matrix4().lookAt(pStart, A, this.camera.up);
       reorientEndQuaternion = new THREE.Quaternion().setFromRotationMatrix(m);
     }
+    // Chart-mode plateau-trigger gate. Chart is observe-only
+    // (chart-mode.ts auto-clears on observe→navigate), and the plateau
+    // only matters when the destination disc is magnitude-driven —
+    // both conditions captured here so the Fly phase doesn't have to
+    // re-derive them per frame.
+    const chartPlateauDist =
+      returnToObserve && this.filter.chart
+        ? dest.chartPlateauDistance(
+            this.material.uniforms.uChartMagBright.value as number,
+          )
+        : null;
     const warpStartMs = performance.now();
     this.warpState = {
       startTimeMs: warpStartMs,
@@ -2647,6 +2677,7 @@ export class Stellata {
         startMs: warpStartMs + WARP_REORIENT_MS,
         durationMs,
       }),
+      chartPlateauDist,
     };
     // Planet bodies belong to the global PlanetBodyField — destination
     // hosts already render whenever the camera is within their cull
@@ -4044,8 +4075,39 @@ export class Stellata {
         this.tryMidFlyRecentre(state);
       }
       const out = this._tmpAnimateLocal;
-      if (state.dest.localPositionInto(out)) {
+      const haveDest = state.dest.localPositionInto(out);
+      if (haveDest) {
         this.camera.lookAt(out);
+      }
+      // Chart-mode close-approach plateau-trigger. The chart-style
+      // disc plateaus at `uChartDiscMaxPx` once `appMag ≤ magBright`,
+      // so further Fly produces no visible disc growth — under the
+      // cubic-Hermite log-d profile that "no progress signal" window
+      // can span hundreds of milliseconds. Pivot Fly → phase 3 early
+      // and let the parallax slerp carry the perceptual cue across
+      // the plateau zone. Gated on `recenteredToDest` so the trigger
+      // only fires once the destination is at local (0,0,0) — keeps
+      // the position transition geometrically clean (and means the
+      // distance check below is just `|camera.position|` modulo the
+      // dest-local sub-AU residual, which is well below any plateau
+      // distance of interest).
+      if (
+        state.chartPlateauDist !== null &&
+        state.recenteredToDest &&
+        haveDest &&
+        this.camera.position.distanceToSquared(out) <=
+          state.chartPlateauDist * state.chartPlateauDist
+      ) {
+        // End Fly NOW: set `pEnd` to the current camera position so
+        // phase 3's first frame snaps to where we already are (and
+        // captures `flyEndQuaternion` from the lookAt(dest) we just
+        // applied), then lerps `pEnd → B` over `postArrivalMs`.
+        // Updating `durationMs` to the current `flyElapsed` falls the
+        // next frame straight into the post-arrival branch without an
+        // extra Fly tick. `state.flyArrival` is no longer ticked, so
+        // its cached `pEnd` doesn't need updating.
+        state.pEnd.copy(this.camera.position);
+        state.durationMs = flyElapsed;
       }
       return;
     }
