@@ -39,6 +39,39 @@ defaults do NOT apply to this codebase. They are overridden by:
   Full rules in bd memories `alex-pr-review-style` and
   `stellata-named-constants-and-dry` (run `bd memories <key>` to read).
 
+## Folder & module conventions
+
+The codebase is organised by per-subsystem folder + cross-cutting type
+folder + a minimal root. Adding a new module follows three rules so we
+don't re-incur the kind of flat-folder / 4kloc-integration-shell drift
+that motivated `stellata-9mm.194`:
+
+- **Physical / visual / thematic subsystems get a folder from day 1.**
+  When adding the next layer of the model (Local Bubble, nebulae,
+  Radcliffe Wave, etc.), the first file lands in `src/client/<name>/`,
+  not flat. Day 1 includes: the renderer file, its loader, its
+  `*-pure.ts` helpers, its tests, its tuning section. CLAUDE.md's
+  module roster gets the entry in the same PR. Existing examples:
+  `solar-system/`, `local-group/`, `milkyway/`, `galactic/`,
+  `molecular-clouds/`, `chart-mode/`.
+- **Cross-cutting plumbing lands in the matching type folder.**
+  `overlays/`, `camera/`, `loaders/`, `ui/`, `util/`, `typeahead/`,
+  `modals/`, `debug/`. A new top-level type folder is only justified
+  when 3+ files belong there.
+- **Controllers extract at write time, not retrospectively.** State
+  with the shape "state struct + tick + dispose + state-changes-via-method"
+  lands as its own controller class. Camera-bound: `camera/<name>-controller.ts`.
+  Layer-bound: in the layer folder.
+
+Rules 4 + 5 (pure-helpers extract at second use; no multi-paragraph
+in-code prose) live in bd memory
+`stellata-folder-and-controller-conventions` — run `bd memories
+<key>` to read. The memory plus this section form the authoritative
+convention surface; controller-specific architectural prose lives in
+the matching `docs/*.md` (`docs/architecture.md`, `docs/camera-warp.md`,
+`docs/camera-observe.md`, `docs/camera-arrival.md`), updated by each
+extraction PR as the boundary it documents stabilises.
+
 ## Repo layout
 
 ```
@@ -175,9 +208,12 @@ Claude Code should read on demand when working on the relevant area.
   Stellarium HIP resolution, geometric-binary inference, GCVS
   cross-match, idempotency. Read when touching `scripts/` or `data/`.
 - **`docs/architecture.md`** — event bus, click-state machine, focused
-  constellation aim, floating origin, pin-to-center. The cross-cutting
-  patterns the rest of the codebase assumes. Read when changing state
-  flow, focus/vector behaviour, or anything that reads star positions.
+  constellation aim, floating origin, pin-to-center, FocusTarget
+  contract. The cross-cutting patterns the rest of the codebase
+  assumes. Read when changing state flow, focus/vector behaviour, or
+  anything that reads star positions. The 194 extraction chain adds
+  per-controller sections (Picker / Aim / Warp / ObserveTransition /
+  Focus) here as each one lands.
 - **`docs/url-state.md`** — `?v=` URL wire format: v3 envelope,
   presence mask, per-component vec3 sub-masks, legacy v1/v2 decode,
   process for adding a field, console helpers. Read when touching
