@@ -77,6 +77,15 @@ export function peakAmplitudeFactor(amplitudeMag: number, periodDays: number): n
 // (Alula Australis A/B at the same x/y/z) still tiebreak by brightness.
 export const PICK_MAG_BIAS_PX_PER_MAG = 0.05;
 
+// Floor on the prime-disc hit radius for any layer that uses the two-tier
+// pick contract (stars, Sol planets, eventually clouds / LG wireframes).
+// Tiny chart-mode discs (down to 1–2 px) leave a sub-pixel target that
+// the cursor can easily miss even when visually right on top of the
+// object. Floor the disc-test radius to a value the cursor can
+// realistically land within. Hoisted here (away from stellata.ts) so the
+// star and planet pick paths share a single source.
+export const MIN_DISC_HIT_RADIUS_PX = 4;
+
 // Score for a star pick candidate. Lower is better. Used by pickStar
 // for both the prime tier (cursor inside a rendered disc) and the
 // proximity-fallback tier (no disc hit, nearest centre within a

@@ -28,6 +28,7 @@ import { ObserveControls } from './observe-controls';
 import { mark as perfMark, measure as perfMeasure, frame as perfFrame } from './perf-hud';
 import {
   angularToPx as angularToPxPure,
+  MIN_DISC_HIT_RADIUS_PX,
   physSizePx,
   pickFromCandidates,
   pickScore,
@@ -287,15 +288,9 @@ const DCAM_LOG_FLOOR_PC = 1e-30;
 // literals as part of that bead, not here.
 const MIN_PHYSICAL_RADIUS_R_SUN = 1e-9;
 
-// Floor on the prime-disc hit radius. Tiny chart-mode discs (down to
-// 1–2 px) leave a sub-pixel target that the cursor can easily miss
-// even when visually right on top of the star. Hover then falls
-// through to the proximity fallback only if no other disc has won —
-// which on a crowded chart it often has, so the small star never
-// surfaces. Floor the disc-test radius to a value the cursor can
-// realistically land within. Shared by `pickStar` (winner selection)
-// and `pickStarHit` (tier classification for the hover engine).
-const MIN_DISC_HIT_RADIUS_PX = 4;
+// MIN_DISC_HIT_RADIUS_PX moved to star-geometry.ts — shared between the
+// star pick path and the planet pick path (stellata-lo5.4). Re-imported
+// at the top of this file alongside the other pick helpers.
 
 // Squared-length threshold below which `controls.target` is treated as
 // coincident with the local origin (= focal-star position). Engages the
