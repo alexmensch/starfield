@@ -14,10 +14,19 @@
 // `cameraDistancePc` breaks ties across providers — closer to camera
 // wins, matching what a human user expects when one object visually
 // sits in front of another.
+//
+// `hostStarIdx` is an optional sub-layer identity slot used by providers
+// whose `idx` alone doesn't pin a unique object — currently the planet
+// provider (a planet is identified by `(hostStarIdx, planetIdx)`,
+// future-ready for stellata-bk5 multi-host). Layers whose `idx` is
+// already a unique catalog row (stars, Local Group, clouds, the lone
+// heliopause apex) leave it `undefined`; the engine doesn't read it,
+// only the originating provider's `format` does.
 export type HoverHit = {
   idx: number;
   cameraDistancePc: number;
   tier: 'prime' | 'fallback';
+  hostStarIdx?: number;
 };
 
 // What the engine renders into the tooltip. Same shape star hover has
@@ -37,7 +46,12 @@ export type HoverPayload = {
 export interface HoverProvider<TKind extends HoverKind = HoverKind> {
   readonly kind: TKind;
   pick(clientX: number, clientY: number, pxThreshold: number): HoverHit | null;
-  format(idx: number): HoverPayload;
+  // Format receives the full `HoverHit` so a provider whose layer needs
+  // sub-layer identity (e.g. the planet provider reading `hostStarIdx`)
+  // can decode the winning pick without re-querying state. Star /
+  // Local Group / cloud / heliopause providers ignore everything but
+  // `hit.idx`.
+  format(hit: HoverHit): HoverPayload;
 }
 
 export type HoverKind =

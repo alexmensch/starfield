@@ -72,7 +72,7 @@ export function createHoverEngine(config: HoverEngineConfig): HoverEngine {
   };
 
   const renderPayload = (clientX: number, clientY: number, winner: HoverProviderHit) => {
-    const { name, lines } = winner.provider.format(winner.hit.idx);
+    const { name, lines } = winner.provider.format(winner.hit);
     const subLines = lines
       .map((l) => `<div class="tt-sub">${escapeHtml(l)}</div>`)
       .join('');

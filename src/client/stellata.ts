@@ -3430,17 +3430,17 @@ export class Stellata {
     return { idx, cameraDistancePc, tier };
   }
 
-  // Hover-engine entry point for the planet layer (stellata-lo5.4). Gates
-  // on the focused planet system: returns null when no host has planets
-  // attached, which is the cheapest form of the "Sol-focus-only" rule
-  // (v1 only attaches Sol; bk5 will broaden the gate to whichever host
-  // is focused).
+  // Hover-engine entry point for the planet layer (stellata-lo5.4).
+  // Walks every attached host's planets — focus state is intentionally
+  // NOT part of the gate (visibility ⇒ hoverable, per
+  // stellata-lo5-hover-conventions Rule 2). v1 attaches Sol once at
+  // startup, so the picker effectively walks Sol's planets regardless
+  // of which star is focused (or whether any is). The shader's own
+  // visibility kill condition (`appMag > maxAppMag + 0.5`) is mirrored
+  // inside the picker so invisible planets aren't surfaced.
   pickPlanetHit(clientX: number, clientY: number, pixelThreshold = 14): HoverHit | null {
-    const ps = this.focusedPlanetSystem;
-    if (!ps) return null;
     const rect = this.renderer.domElement.getBoundingClientRect();
     return this.planetBodyField.pick(
-      ps.hostStarIdx,
       this.camera,
       rect,
       clientX,
@@ -3449,26 +3449,33 @@ export class Stellata {
     );
   }
 
-  /** Live host→planet distance in pc for the focused host's planet at
-   *  `planetIdx`. Returns null when no planet system is focused or the
-   *  index is out of range. The hover formatter calls this so the
-   *  "distance from host" line follows the ephemeris through the orbit
-   *  rather than freezing at the mean semi-major axis. */
-  planetHostDistancePc(planetIdx: number): number | null {
-    const ps = this.focusedPlanetSystem;
-    if (!ps) return null;
-    return this.planetBodyField.planetHostDistancePc(ps.hostStarIdx, planetIdx);
+  /** Cached PlanetSystem for an attached host, or null if the host
+   *  isn't attached. Used by the planet hover formatter to resolve
+   *  `(hostStarIdx, planetIdx)` from a pick back to a Planet record
+   *  without re-running async `getPlanetSystem`. */
+  getAttachedPlanetSystem(hostStarIdx: number): PlanetSystem | null {
+    return this.planetBodyField.getAttachedPlanetSystem(hostStarIdx);
   }
 
-  /** Live apparent V mag for the focused host's planet at `planetIdx`,
-   *  matching the planet shader's reflected-light formula at the current
-   *  camera position. Returns null when no planet system is focused or
-   *  the index is out of range. */
-  planetApparentMag(planetIdx: number): number | null {
-    const ps = this.focusedPlanetSystem;
-    if (!ps) return null;
+  /** Live host→planet distance in pc for `(hostStarIdx, planetIdx)`,
+   *  using the latest cached `iLocalRel`. Returns null when the host
+   *  isn't attached or the index is out of range. The hover formatter
+   *  calls this so the "distance from host" line tracks the ephemeris
+   *  through the orbit rather than freezing at the mean semi-major
+   *  axis. Decoupled from focus state per the lo5 visibility-only
+   *  hover rule. */
+  planetHostDistancePc(hostStarIdx: number, planetIdx: number): number | null {
+    return this.planetBodyField.planetHostDistancePc(hostStarIdx, planetIdx);
+  }
+
+  /** Live apparent V mag for `(hostStarIdx, planetIdx)`, matching the
+   *  planet shader's reflected-light formula at the current camera
+   *  position. Returns null when the host isn't attached or the index
+   *  is out of range. Decoupled from focus state per the lo5
+   *  visibility-only hover rule. */
+  planetApparentMag(hostStarIdx: number, planetIdx: number): number | null {
     return this.planetBodyField.appMagFor(
-      ps.hostStarIdx,
+      hostStarIdx,
       planetIdx,
       this.camera.position,
     );

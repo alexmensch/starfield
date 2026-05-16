@@ -2,12 +2,17 @@
 // for Sol's planet layer, ready to extend to any future exoplanet host
 // without touching the engine.
 //
-// Both pick and format paths self-gate on Stellata's focused planet
-// system — when no host has planets attached, pick returns null and
-// format returns an empty payload (defensive; the engine won't call
-// format on a null hit). v1 only attaches Sol, so the gate effectively
-// means "the focused star is Sol"; bk5 will widen it to whichever
-// stellar host has a PlanetSystem.
+// Visibility ⇒ hoverable per stellata-lo5-hover-conventions Rule 2:
+// the provider does NOT gate on focus state. The picker walks every
+// attached host's planets and the shader's own kill condition
+// (appMag > maxAppMag + 0.5) is the only visibility predicate. v1 only
+// attaches Sol, so the picker effectively walks Sol's planets; bk5
+// adds further hosts without touching this provider.
+//
+// HoverHit carries an optional `hostStarIdx` so the formatter can
+// resolve `(hostStarIdx, planetIdx)` back to a Planet record without
+// re-walking the field's hosts map. The star provider leaves the slot
+// unset; the disambiguator ignores it.
 
 import type { Stellata } from '../stellata';
 import {
@@ -27,19 +32,21 @@ export function createPlanetHoverProvider(
   return {
     kind: 'planet',
     pick: (x, y, pxThreshold) => stellata.pickPlanetHit(x, y, pxThreshold),
-    format: (idx) => {
-      const ps = stellata.getFocusedPlanetSystem();
+    format: (hit) => {
+      const hostStarIdx = hit.hostStarIdx;
+      if (hostStarIdx === undefined) return { name: '', lines: [] };
+      const ps = stellata.getAttachedPlanetSystem(hostStarIdx);
       if (!ps) return { name: '', lines: [] };
-      // The PlanetSystem snapshot is the source of truth for `planets`;
+      // The cached PlanetSystem is the source of truth for `planets`;
       // live distance and apparent V mag come from the renderer's
       // PlanetBodyField via Stellata accessors so they track the
       // current camera + ephemeris.
       const ctx: PlanetHoverFormatContext = {
         planets: ps.planets,
-        distanceFromHostPc: (i) => stellata.planetHostDistancePc(i),
-        appMagFor: (i) => stellata.planetApparentMag(i),
+        distanceFromHostPc: (i) => stellata.planetHostDistancePc(hostStarIdx, i),
+        appMagFor: (i) => stellata.planetApparentMag(hostStarIdx, i),
       };
-      return formatPlanetHover(idx, ctx);
+      return formatPlanetHover(hit.idx, ctx);
     },
   };
 }

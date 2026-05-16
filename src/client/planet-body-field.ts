@@ -77,12 +77,7 @@ import {
   perceptualDmEff,
   planetApparentMagnitude,
 } from './perceptual-magnitude';
-import {
-  MIN_DISC_HIT_RADIUS_PX,
-  physSizePx,
-  pickFromCandidates,
-  type PickCandidate,
-} from './star-geometry';
+import { MIN_DISC_HIT_RADIUS_PX, physSizePx } from './star-geometry';
 import type { HoverHit } from './hover/hover-types';
 import planetVert from './shaders/planet.vert.glsl?raw';
 import planetFrag from './shaders/planet.frag.glsl?raw';
@@ -177,11 +172,16 @@ interface AttachedHost {
   count: number;
 }
 
-// Plain `PickCandidate` shape with no extra fields. Planets have no
-// brightness-bias tiebreak axis (one rendered disc per planet, no
-// duplicate-position siblings), so the default closest-to-cursor scorer
-// in `pickFromCandidates` is the right choice.
-type HoverPickCandidate = PickCandidate;
+// Per-candidate row in the cross-host pick reducer. Carries host idx so
+// the winning candidate's `(hostStarIdx, planetIdx)` identity rides
+// through to the returned HoverHit — `pickFromCandidates` in
+// star-geometry.ts can't be reused because it loses the host axis.
+type CrossHostCandidate = {
+  hostStarIdx: number;
+  planetIdx: number;
+  pxDist: number;
+  cameraDistancePc: number;
+};
 
 // Phase factor φ(α) for a planet given viewer→planet and viewer→host
 // vectors. Computes α = ∠(viewer–planet–host) and dispatches into
@@ -503,30 +503,46 @@ export class PlanetBodyField {
     return planetApparentMagnitude(host.hostAbsmag, dVh, dVp, dHp, planet.albedo, radiusPc, phi);
   }
 
+  /** Read-only handle to the PlanetSystem the field has cached for a
+   *  given host, or null if the host isn't attached. The hover formatter
+   *  uses this to look up `planets[]` for the winning host without
+   *  forcing the engine / Stellata to re-resolve via async
+   *  `getPlanetSystem`. */
+  getAttachedPlanetSystem(hostStarIdx: number): PlanetSystem | null {
+    const host = this.hosts.get(hostStarIdx);
+    return host ? host.ps : null;
+  }
+
   /**
    * Hover-engine pick path for the planet layer (stellata-lo5.4). Walks
-   * one host's planets, projects each to screen, classifies prime
-   * (cursor inside the rendered disc) vs fallback (cursor near the
-   * projected centre within `pxThreshold`), and returns the closest
-   * cursor hit.
+   * EVERY attached host's planets — the rule per
+   * [[stellata-lo5-hover-conventions]] is "visibility ⇒ hoverable", so
+   * focus state plays no part in the gate. v1 only attaches Sol, so the
+   * loop has one host to traverse; bk5 will iterate any registered
+   * exoplanet host that has live `iLocalRel` data.
    *
-   * Mirrors the planet vertex shader's `pxSize = max(appSize, physSize)`
-   * disc sizing exactly: appSize via perceptualAppSizePx, physSize via
-   * the angular-diameter formula, both keyed off the same uniforms the
-   * shader reads. Planets whose appMag exceeds `maxAppMag + 0.5` (the
-   * shader's soft-taper kill condition) are skipped — invisible
-   * planets aren't viable hover targets.
+   * Each candidate projects to screen, classifies prime (cursor inside
+   * the rendered disc) vs fallback (cursor near the projected centre
+   * within `pxThreshold`), and is reduced by the closest-cursor scorer.
+   * The winner's `hostStarIdx` rides in the returned `HoverHit` so the
+   * formatter can resolve `(hostStarIdx, planetIdx)` back to a Planet
+   * record without re-walking the hosts.
+   *
+   * Disc sizing mirrors the planet vertex shader's
+   * `pxSize = max(appSize, physSize)` exactly via the shared
+   * perceptual + angular-diameter helpers. Planets whose appMag exceeds
+   * `maxAppMag + 0.5` (the shader's soft-taper kill condition) are
+   * skipped — the GPU emits no quad, so hover can't pick what isn't
+   * drawn.
    */
   pick(
-    hostStarIdx: number,
     camera: THREE.PerspectiveCamera,
     rect: DOMRect,
     clientX: number,
     clientY: number,
     pxThreshold: number,
   ): HoverHit | null {
-    const host = this.hosts.get(hostStarIdx);
-    if (!host) return null;
+    if (this.hosts.size === 0) return null;
     const cursorX = clientX - rect.left;
     const cursorY = clientY - rect.top;
     const viewportW = rect.width;
@@ -539,77 +555,96 @@ export class PlanetBodyField {
     const sizeKnee = this.magShared.uSizeKnee.value;
     const camPos = camera.position;
 
-    const candidates: HoverPickCandidate[] = [];
+    // Cross-host single-winner reduction: track the best prime + best
+    // fallback hit by closest cursor pxDist across every attached
+    // host's planets, then prime-beats-fallback at the end. Each
+    // candidate carries its host idx alongside the planet idx so the
+    // winner's host identity rides through to the formatter.
+    let primeBest: CrossHostCandidate | null = null;
+    let fbBest: CrossHostCandidate | null = null;
     const v = new THREE.Vector3();
-    for (let i = 0; i < host.count; i++) {
-      const planet = host.ps.planets[i];
-      const base = (host.startInstance + i) * 3;
-      const planetX = host.hostLocalPos.x + this.bufLocalRel[base + 0];
-      const planetY = host.hostLocalPos.y + this.bufLocalRel[base + 1];
-      const planetZ = host.hostLocalPos.z + this.bufLocalRel[base + 2];
-      const dvx = planetX - camPos.x;
-      const dvy = planetY - camPos.y;
-      const dvz = planetZ - camPos.z;
-      const dVp = Math.sqrt(dvx * dvx + dvy * dvy + dvz * dvz);
-      if (dVp <= 0) continue;
-      const dhx = host.hostLocalPos.x - camPos.x;
-      const dhy = host.hostLocalPos.y - camPos.y;
-      const dhz = host.hostLocalPos.z - camPos.z;
-      const dVh = Math.sqrt(dhx * dhx + dhy * dhy + dhz * dhz);
-      const dHp = Math.sqrt(
-        this.bufLocalRel[base + 0] ** 2 +
-          this.bufLocalRel[base + 1] ** 2 +
-          this.bufLocalRel[base + 2] ** 2,
-      );
-      const phi = phaseFactorFor(dvx, dvy, dvz, dhx, dhy, dhz, planet.phaseCoefficients);
-      const radiusPc = planet.radiusKm * KM_PC;
-      const appMag = planetApparentMagnitude(
-        host.hostAbsmag,
-        dVh,
-        dVp,
-        dHp,
-        planet.albedo,
-        radiusPc,
-        phi,
-      );
-      // Same kill condition as the planet vertex shader's soft-taper
-      // discard (planet.vert.glsl ~line 167): if the planet is more
-      // than half a magnitude below the slider cutoff, the GPU emits
-      // no quad — hover can't pick what isn't drawn.
-      if (appMag > maxAppMag + 0.5) continue;
+    for (const host of this.hosts.values()) {
+      for (let i = 0; i < host.count; i++) {
+        const planet = host.ps.planets[i];
+        const base = (host.startInstance + i) * 3;
+        const planetX = host.hostLocalPos.x + this.bufLocalRel[base + 0];
+        const planetY = host.hostLocalPos.y + this.bufLocalRel[base + 1];
+        const planetZ = host.hostLocalPos.z + this.bufLocalRel[base + 2];
+        const dvx = planetX - camPos.x;
+        const dvy = planetY - camPos.y;
+        const dvz = planetZ - camPos.z;
+        const dVp = Math.sqrt(dvx * dvx + dvy * dvy + dvz * dvz);
+        if (dVp <= 0) continue;
+        const dhx = host.hostLocalPos.x - camPos.x;
+        const dhy = host.hostLocalPos.y - camPos.y;
+        const dhz = host.hostLocalPos.z - camPos.z;
+        const dVh = Math.sqrt(dhx * dhx + dhy * dhy + dhz * dhz);
+        const dHp = Math.sqrt(
+          this.bufLocalRel[base + 0] ** 2 +
+            this.bufLocalRel[base + 1] ** 2 +
+            this.bufLocalRel[base + 2] ** 2,
+        );
+        const phi = phaseFactorFor(dvx, dvy, dvz, dhx, dhy, dhz, planet.phaseCoefficients);
+        const radiusPc = planet.radiusKm * KM_PC;
+        const appMag = planetApparentMagnitude(
+          host.hostAbsmag,
+          dVh,
+          dVp,
+          dHp,
+          planet.albedo,
+          radiusPc,
+          phi,
+        );
+        // Same kill condition as the planet vertex shader's soft-taper
+        // discard: if the planet is more than half a mag below the
+        // slider cutoff, the GPU emits no quad and the hover can't
+        // pick what isn't drawn.
+        if (appMag > maxAppMag + 0.5) continue;
 
-      v.set(planetX, planetY, planetZ).project(camera);
-      if (v.z < -1 || v.z > 1) continue;
-      const screenX = (v.x + 1) * 0.5 * viewportW;
-      const screenY = (1 - v.y) * 0.5 * viewportH;
-      const pxDist = Math.hypot(cursorX - screenX, cursorY - screenY);
+        v.set(planetX, planetY, planetZ).project(camera);
+        if (v.z < -1 || v.z > 1) continue;
+        const screenX = (v.x + 1) * 0.5 * viewportW;
+        const screenY = (1 - v.y) * 0.5 * viewportH;
+        const pxDist = Math.hypot(cursorX - screenX, cursorY - screenY);
 
-      const physSize = physSizePx(radiusPc, dVp, viewportH, fovYRad);
-      const dMEff = perceptualDmEff(appMag, maxAppMag, sizeSpan, sizeKnee);
-      const appSize = perceptualAppSizePx(dMEff, sizeMin, sizeMax, sizeSpan);
-      const pxSize = Math.max(appSize, physSize);
-      const hitRadius = Math.max(pxSize * 0.5, MIN_DISC_HIT_RADIUS_PX);
+        const physSize = physSizePx(radiusPc, dVp, viewportH, fovYRad);
+        const dMEff = perceptualDmEff(appMag, maxAppMag, sizeSpan, sizeKnee);
+        const appSize = perceptualAppSizePx(dMEff, sizeMin, sizeMax, sizeSpan);
+        const pxSize = Math.max(appSize, physSize);
+        const hitRadius = Math.max(pxSize * 0.5, MIN_DISC_HIT_RADIUS_PX);
 
-      if (pxDist > hitRadius && pxDist > pxThreshold) continue;
-      candidates.push({ idx: i, pxDist, hitRadius });
+        const inPrime = pxDist <= hitRadius;
+        const inFallback = pxDist <= pxThreshold;
+        if (!inPrime && !inFallback) continue;
+
+        if (inPrime) {
+          if (primeBest === null || pxDist < primeBest.pxDist) {
+            primeBest = {
+              hostStarIdx: host.hostStarIdx,
+              planetIdx: i,
+              pxDist,
+              cameraDistancePc: dVp,
+            };
+          }
+        } else if (fbBest === null || pxDist < fbBest.pxDist) {
+          fbBest = {
+            hostStarIdx: host.hostStarIdx,
+            planetIdx: i,
+            pxDist,
+            cameraDistancePc: dVp,
+          };
+        }
+      }
     }
-    const winnerIdx = pickFromCandidates(candidates, pxThreshold);
-    if (winnerIdx < 0) return null;
-    const winner = candidates.find((c) => c.idx === winnerIdx)!;
-    const tier: 'prime' | 'fallback' =
-      winner.pxDist <= winner.hitRadius ? 'prime' : 'fallback';
-    // cameraDistancePc reads from the cached planet world position via
-    // the same arithmetic the candidate loop used — no second projection.
-    const base = (host.startInstance + winnerIdx) * 3;
-    const planetX = host.hostLocalPos.x + this.bufLocalRel[base + 0];
-    const planetY = host.hostLocalPos.y + this.bufLocalRel[base + 1];
-    const planetZ = host.hostLocalPos.z + this.bufLocalRel[base + 2];
-    const cameraDistancePc = Math.sqrt(
-      (planetX - camPos.x) ** 2 +
-        (planetY - camPos.y) ** 2 +
-        (planetZ - camPos.z) ** 2,
-    );
-    return { idx: winnerIdx, cameraDistancePc, tier };
+
+    const winner = primeBest ?? fbBest;
+    if (!winner) return null;
+    return {
+      idx: winner.planetIdx,
+      hostStarIdx: winner.hostStarIdx,
+      cameraDistancePc: winner.cameraDistancePc,
+      tier: primeBest !== null ? 'prime' : 'fallback',
+    };
   }
 
   setMonochrome(on: boolean): void {

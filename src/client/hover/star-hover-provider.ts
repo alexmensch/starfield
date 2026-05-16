@@ -24,6 +24,8 @@ export function createStarHoverProvider(
   return {
     kind: 'star',
     pick: (x, y, pxThreshold) => stellata.pickStarHit(x, y, pxThreshold),
-    format: (idx) => formatStarHover(idx, context),
+    // Stars are identified by catalog idx alone — sub-layer host
+    // identity (hit.hostStarIdx) is unused for this layer.
+    format: (hit) => formatStarHover(hit.idx, context),
   };
 }
