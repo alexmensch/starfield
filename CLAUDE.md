@@ -39,6 +39,35 @@ defaults do NOT apply to this codebase. They are overridden by:
   Full rules in bd memories `alex-pr-review-style` and
   `stellata-named-constants-and-dry` (run `bd memories <key>` to read).
 
+## Folder & module conventions
+
+The codebase is organised by per-subsystem folder + cross-cutting type
+folder + a minimal root. Adding a new module follows three rules so we
+don't re-incur the kind of flat-folder / 4kloc-integration-shell drift
+that motivated `stellata-9mm.194`:
+
+- **Physical / visual / thematic subsystems get a folder from day 1.**
+  When adding the next layer of the model (Local Bubble, nebulae,
+  Radcliffe Wave, etc.), the first file lands in `src/client/<name>/`,
+  not flat. Day 1 includes: the renderer file, its loader, its
+  `*-pure.ts` helpers, its tests, its tuning section. CLAUDE.md's
+  module roster gets the entry in the same PR. Existing examples:
+  `solar-system/`, `local-group/`, `milkyway/`, `galactic/`,
+  `molecular-clouds/`, `chart-mode/`.
+- **Cross-cutting plumbing lands in the matching type folder.**
+  `overlays/`, `camera/`, `loaders/`, `ui/`, `util/`, `typeahead/`,
+  `modals/`, `debug/`. A new top-level type folder is only justified
+  when 3+ files belong there.
+- **Controllers extract at write time, not retrospectively.** State
+  with the shape "state struct + tick + dispose + state-changes-via-method"
+  lands as its own controller class. Camera-bound: `camera/<name>-controller.ts`.
+  Layer-bound: in the layer folder.
+
+Full design + rationale in `docs/integration-shell-decomposition.md`.
+Memory `stellata-folder-and-controller-conventions` carries the same
+rules (plus the pure-helpers and in-code-prose rules) so `bd prime`
+surfaces them every session.
+
 ## Repo layout
 
 ```
@@ -178,6 +207,14 @@ Claude Code should read on demand when working on the relevant area.
   constellation aim, floating origin, pin-to-center. The cross-cutting
   patterns the rest of the codebase assumes. Read when changing state
   flow, focus/vector behaviour, or anything that reads star positions.
+- **`docs/integration-shell-decomposition.md`** — authoritative design
+  for the `stellata.ts` controller extraction (epic
+  `stellata-9mm.194`): folder taxonomy, per-controller public surfaces
+  (Picker / Aim / Warp / ObserveTransition / Focus), bottom-up
+  extraction sequence, FocusOps + FrameAnchor interfaces, the
+  composition shape after extraction. Also the authoritative home for
+  the folder & module conventions (5 rules). Read when executing any
+  child bead under 9mm.194, or when adding a new layer / controller.
 - **`docs/url-state.md`** — `?v=` URL wire format: v3 envelope,
   presence mask, per-component vec3 sub-masks, legacy v1/v2 decode,
   process for adding a field, console helpers. Read when touching
