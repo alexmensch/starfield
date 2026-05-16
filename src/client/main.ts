@@ -30,6 +30,7 @@ import { setupDebug } from './debug';
 import { escapeHtml } from './dom-util';
 import { createHoverEngine } from './hover/hover-engine';
 import { createStarHoverProvider } from './hover/star-hover-provider';
+import { createPlanetHoverProvider } from './hover/planet-hover-provider';
 
 async function main() {
   const canvas = document.getElementById('scene') as HTMLCanvasElement;
@@ -195,10 +196,13 @@ async function main() {
       stellata,
     });
 
-    // Hover-label engine (stellata-lo5). Star provider registers here;
-    // lo5.4+ add the Sol-planet / Local Group / heliopause providers.
-    // The engine reproduces the prior bindHoverTooltip behaviour byte
-    // for byte when only the star provider is registered.
+    // Hover-label engine (stellata-lo5). Star + planet providers register
+    // here; lo5.5+ add Local Group and heliopause. The planet provider
+    // self-gates on Stellata.getFocusedPlanetSystem(), so it's a no-op
+    // until the user focuses a host with attached planets (Sol in v1).
+    // Provider order is irrelevant — the disambiguator picks the winner
+    // across all providers per the prime>fallback / closest-camera-wins
+    // rule.
     const starHoverProvider = createStarHoverProvider({
       stellata,
       context: {
@@ -211,10 +215,11 @@ async function main() {
         amplitudeMag: catalog.amplitudeMag,
       },
     });
+    const planetHoverProvider = createPlanetHoverProvider({ stellata });
     createHoverEngine({
       canvas,
       tooltip,
-      initialProviders: [starHoverProvider],
+      initialProviders: [starHoverProvider, planetHoverProvider],
     });
 
     await new Promise((r) => requestAnimationFrame(r));

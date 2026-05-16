@@ -3430,6 +3430,50 @@ export class Stellata {
     return { idx, cameraDistancePc, tier };
   }
 
+  // Hover-engine entry point for the planet layer (stellata-lo5.4). Gates
+  // on the focused planet system: returns null when no host has planets
+  // attached, which is the cheapest form of the "Sol-focus-only" rule
+  // (v1 only attaches Sol; bk5 will broaden the gate to whichever host
+  // is focused).
+  pickPlanetHit(clientX: number, clientY: number, pixelThreshold = 14): HoverHit | null {
+    const ps = this.focusedPlanetSystem;
+    if (!ps) return null;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    return this.planetBodyField.pick(
+      ps.hostStarIdx,
+      this.camera,
+      rect,
+      clientX,
+      clientY,
+      pixelThreshold,
+    );
+  }
+
+  /** Live host→planet distance in pc for the focused host's planet at
+   *  `planetIdx`. Returns null when no planet system is focused or the
+   *  index is out of range. The hover formatter calls this so the
+   *  "distance from host" line follows the ephemeris through the orbit
+   *  rather than freezing at the mean semi-major axis. */
+  planetHostDistancePc(planetIdx: number): number | null {
+    const ps = this.focusedPlanetSystem;
+    if (!ps) return null;
+    return this.planetBodyField.planetHostDistancePc(ps.hostStarIdx, planetIdx);
+  }
+
+  /** Live apparent V mag for the focused host's planet at `planetIdx`,
+   *  matching the planet shader's reflected-light formula at the current
+   *  camera position. Returns null when no planet system is focused or
+   *  the index is out of range. */
+  planetApparentMag(planetIdx: number): number | null {
+    const ps = this.focusedPlanetSystem;
+    if (!ps) return null;
+    return this.planetBodyField.appMagFor(
+      ps.hostStarIdx,
+      planetIdx,
+      this.camera.position,
+    );
+  }
+
   private pointerDownAt: { x: number; y: number; t: number } | null = null;
   private twoFingerAngle: number | null = null;
   private gestureLastRotation = 0;
