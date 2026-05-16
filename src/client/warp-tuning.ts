@@ -355,9 +355,20 @@ export function buildWarpSection(stellata: Stellata): WarpTuningSection {
     const phase = stellata.getWarpPhase();
     if (!phase) return;
     const distCam = stellata.camera.position.distanceTo(w.B);
+    // Regime indicator on the phase line — outer / inner during Fly,
+    // 'done' once Fly completes and post-arrival starts. Reads the
+    // hybrid curve's outer→inner seam captured at warp start.
+    const phaseStr = phase.kind === 'fly' && phase.flyRegime
+      ? `fly:${phase.flyRegime}`
+      : phase.kind === 'post-arrival'
+        ? 'post-arrival (done)'
+        : phase.kind;
+    const seamStr = phase.flyArrivalUSeam != null && phase.flyArrivalUSeam >= 0
+      ? `  seam ${phase.flyArrivalUSeam.toFixed(3)}`
+      : '';
     const text =
-      `phase: ${phase.kind}  ${phase.elapsedMs.toFixed(0)} / ${phase.totalMs.toFixed(0)} ms\n` +
-      `u: ${phase.u.toFixed(3)}\n` +
+      `phase: ${phaseStr}  ${phase.elapsedMs.toFixed(0)} / ${phase.totalMs.toFixed(0)} ms\n` +
+      `u: ${phase.u.toFixed(3)}${seamStr}\n` +
       `cam → dest: ${distCam.toFixed(distCam < 1 ? 4 : 2)} pc\n` +
       `recentred: ${phase.recenteredToDest ? 'Y' : 'N'}  plateau: ${
         phase.chartPlateauDist != null ? phase.chartPlateauDist.toFixed(3) + ' pc' : '—'

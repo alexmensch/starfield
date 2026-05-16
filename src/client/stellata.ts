@@ -71,6 +71,7 @@ export {
 import {
   recordLastWarp,
   warpArrivalEaseFn,
+  warpArrivalHybridSeamK,
   warpChartPhase3Alpha,
   warpChartPhase3ScalingEnabled,
   warpChartPlateauMargin,
@@ -81,6 +82,7 @@ import {
   warpObserveTransitionMs,
   warpReorientMs,
 } from './warp-tuning';
+import { hybridUSeam } from './arrival-curves';
 import { EventBus } from './event-bus';
 
 export type MagPresetName = 'naked-eye' | 'binoculars' | 'all';
@@ -452,6 +454,15 @@ interface WarpState {
   // inline lerp because it's an observe handover, not a park-arrival
   // (docs/camera-arrival.md § Inventory).
   flyArrival: ArrivalState;
+  // Hybrid arrival profile's outer→inner seam u-value, captured at
+  // warp-Fly construction via `hybridUSeam(d0, dEnd, R, seam_k)`.
+  // Sentinel values: `-1` → fallback (cubic-Hermite log-d, no regime
+  // split — fires for clouds / outbound / null-R); `1` → pure outer
+  // (seam_k ≤ 1, no meaningful inner regime); `0` → pure inner
+  // (d_seam ≥ d0, no meaningful outer). Otherwise in the clamp window
+  // `[0.3, 0.85]`. Used by `getWarpPhase` for the live regime
+  // indicator in the debug-panel warp readout.
+  flyArrivalUSeam: number;
   // Chart-mode close-approach plateau distance. Set only when the warp
   // launches into a chart-mode observe-mode arrival (`returnToObserve`
   // + `filter.chart` + dest implements `chartPlateauDistance`). The
@@ -1202,7 +1213,13 @@ export class Stellata {
   /** Read-only snapshot of in-flight warp state for the debug-panel
    *  warp tuning readout. Returns null when no warp is active. Re-derives
    *  `u` from elapsed-in-phase so callers don't need access to the
-   *  ArrivalState internals. */
+   *  ArrivalState internals.
+   *
+   *  `flyRegime` is meaningful only when `kind === 'fly'`:
+   *    `'outer'` — linear-d piecewise-quad regime (u < u_seam).
+   *    `'inner'` — quintic-on-θ regime (u ≥ u_seam).
+   *    `'fallback'` — cubic-Hermite log-d (clouds, outbound, null R).
+   *  `'done'` is surfaced via `kind === 'post-arrival'`. */
   getWarpPhase(): {
     kind: 'reorient' | 'fly' | 'post-arrival' | 'idle';
     elapsedMs: number;
@@ -1211,6 +1228,8 @@ export class Stellata {
     recenteredToDest: boolean;
     chartPlateauDist: number | null;
     chartPlateauTriggered: boolean;
+    flyRegime?: 'outer' | 'inner' | 'fallback';
+    flyArrivalUSeam?: number;
   } | null {
     const w = this.warpState;
     if (!w) return null;
@@ -1227,11 +1246,16 @@ export class Stellata {
     const flyElapsed = elapsed - w.reorientMs;
     if (flyElapsed < w.durationMs) {
       const u = w.durationMs > 0 ? flyElapsed / w.durationMs : 1;
+      const uSeam = w.flyArrivalUSeam;
+      const flyRegime: 'outer' | 'inner' | 'fallback' =
+        uSeam < 0 ? 'fallback' : u < uSeam ? 'outer' : 'inner';
       return {
         kind: 'fly', elapsedMs: flyElapsed, totalMs: w.durationMs, u,
         recenteredToDest: w.recenteredToDest,
         chartPlateauDist: w.chartPlateauDist,
         chartPlateauTriggered: w.chartPlateauTriggered,
+        flyRegime,
+        flyArrivalUSeam: uSeam,
       };
     }
     const postElapsed = flyElapsed - w.durationMs;
@@ -2726,17 +2750,26 @@ export class Stellata {
     );
     const postArrivalMs = returnToObserve ? warpObserveTransitionMs() : 0;
     // Resolve the arrival curve with per-warp context. The hybrid curve
-    // consumes `{ d0, dEnd, targetRadius }`; other curves ignore it.
-    // `dest.physicalRadius()` returns null for clouds (no single
-    // geometric R) — the hybrid then falls back to cubic-Hermite for
-    // cloud destinations, which is the right behaviour because the
-    // close-approach angular cue doesn't apply to ellipsoids.
+    // consumes `{ d0, dEnd, targetRadius }`; missing R or outbound
+    // trajectory triggers the cubic-Hermite log-d fallback inside the
+    // closure (clouds, future kinds without a geometric radius).
     const flyD0 = pStart.distanceTo(B);
+    const flyDestR = dest.physicalRadius();
     const arrivalEaseFn = warpArrivalEaseFn({
       d0: flyD0,
       dEnd: endOffset,
-      targetRadius: dest.physicalRadius(),
+      targetRadius: flyDestR,
     });
+    // Cache the outer→inner seam u-value for the live regime indicator
+    // in the debug-panel warp readout. `getWarpPhase` reads this; the
+    // hybrid curve itself recomputes the same value internally, so the
+    // two stay in sync as long as the formula matches.
+    const flyArrivalUSeam = hybridUSeam(
+      flyD0,
+      endOffset,
+      flyDestR,
+      warpArrivalHybridSeamK(),
+    );
 
     this.controls.enabled = false;
     // Point orbit-target at the destination from the moment the warp begins
@@ -2807,6 +2840,7 @@ export class Stellata {
         durationMs,
         easeUFn: arrivalEaseFn,
       }),
+      flyArrivalUSeam,
       chartPlateauDist,
       chartPlateauTriggered: false,
       chartPhase3Scaled: false,
