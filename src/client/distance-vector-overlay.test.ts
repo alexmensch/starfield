@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { projectWithNearClip, viewportSegmentExit } from './distance-vector-overlay';
+import {
+  attachFontsReadyInvalidation,
+  makeLabelWidthCache,
+  projectWithNearClip,
+  viewportSegmentExit,
+} from './distance-vector-overlay';
 
 // Set up a perspective camera at the origin looking down -Z, mirroring the
 // canonical Stellata camera. matrixWorldInverse and projectionMatrix must
@@ -200,5 +205,61 @@ describe('distance-vector-overlay / viewportSegmentExit', () => {
     // no useful exit point; the contract is to return null since the
     // segment never enters/exits anything.
     expect(viewportSegmentExit(-10, -10, -10, -10, W, H)).toBeNull();
+  });
+});
+
+describe('distance-vector-overlay / label-width cache + fonts.ready invalidation', () => {
+  it('makeLabelWidthCache returns an empty cache', () => {
+    const cache = makeLabelWidthCache();
+    expect(cache.text).toBe('');
+    expect(cache.px).toBe(0);
+  });
+
+  it('invalidates the cache when document.fonts.ready resolves (9mm.149)', async () => {
+    // Regression for 9mm.149: when a webfont finishes loading after the
+    // first getComputedTextLength call, the cached width is pinned to the
+    // fallback-font measurement and the right-edge clamp / warp
+    // affordance mis-anchor for the page's lifetime. fonts.ready settles
+    // post-load (or fires immediately) and the listener must zero both
+    // the text key and the cached px so the next per-frame call
+    // re-measures with the loaded font.
+    const cache = makeLabelWidthCache();
+    cache.text = 'Sirius · 2.6 pc';
+    cache.px = 95;
+    let resolve!: () => void;
+    const ready = new Promise<void>((r) => { resolve = r; });
+    attachFontsReadyInvalidation(cache, { ready });
+    resolve();
+    // Drain microtasks so the .then() runs.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(cache.text).toBe('');
+    expect(cache.px).toBe(0);
+  });
+
+  it('is a no-op when the Fonts API is absent', () => {
+    // Older browsers don't expose document.fonts. The pre-fix behaviour
+    // was: cache stays text-keyed (re-measures when text changes, but
+    // doesn't catch font-load events). The helper must not throw in that
+    // case, and must leave the cache untouched.
+    const cache = makeLabelWidthCache();
+    cache.text = 'Vega';
+    cache.px = 42;
+    expect(() => attachFontsReadyInvalidation(cache, undefined)).not.toThrow();
+    expect(cache.text).toBe('Vega');
+    expect(cache.px).toBe(42);
+  });
+
+  it('swallows fonts.ready rejection without throwing', async () => {
+    const cache = makeLabelWidthCache();
+    cache.text = 'Polaris';
+    cache.px = 60;
+    const ready = Promise.reject(new Error('font load failed'));
+    attachFontsReadyInvalidation(cache, { ready });
+    await Promise.resolve();
+    await Promise.resolve();
+    // Cache untouched (no invalidation on rejection — graceful degradation).
+    expect(cache.text).toBe('Polaris');
+    expect(cache.px).toBe(60);
   });
 });

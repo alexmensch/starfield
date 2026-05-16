@@ -9,6 +9,8 @@ import {
   ARROW_LABEL_PADDING_PX,
 } from './arrow-path';
 import { projectToScreen } from './overlay-project';
+import { applyFade, setNumAttr, setStyle, setText } from './dirty-attr';
+import { FOCUS_RING_RADIUS_PX } from './focus-ring-overlay';
 
 // Nominal apparent length of each arrow on screen, in CSS pixels. The shaft
 // is built directly in screen space so this length is exact regardless of
@@ -20,11 +22,6 @@ const ARROW_PIXEL_LENGTH = 110;
 // HUD ring), so the arrows visually detach from the ring identically in
 // both modes.
 const RING_HALO_GAP_PX = 4;
-// Mirrors `RADIUS_PX` in focus-ring-overlay.ts. Duplicated here rather than
-// exported because the focus-ring module would have to import nothing else
-// from this one — keeping the focus ring's geometry self-contained beats
-// adding a one-symbol cross-import.
-const FOCUS_RING_RADIUS_PX = 24;
 // (Removed MIN_SHAFT_PIXEL_LENGTH cutoff — used to be 8 px; we now render at
 // any positive length so the drawn shaft is a continuous function of the
 // arrow's projection geometry. This is what makes the navigate-mode disc-
@@ -38,6 +35,41 @@ const FOCUS_RING_RADIUS_PX = 24;
 // FOVs (raw `sizeMax` is single-digit pixels and reads as a dot).
 const RING_FOV_ANCHOR_DEG = 10;
 const RING_SIZE_FACTOR = 5;
+// Per-arrow dirty-track state. The Sol/GC arrows recompute geometry every
+// frame, but on a stationary camera the resulting attributes are
+// identical to the previous frame; storing the last-written value lets
+// updateOne skip the SVG attribute / textContent / inline-style writes
+// (each of which forces re-parsing or style invalidation). NaN / '\0'
+// sentinels guarantee the first write always lands through the gate —
+// including for `lastPointerEvents` (steady-state '' would silently match
+// a naive '' sentinel and skip the first restore-to-clickable write).
+export interface ArrowState {
+  lastD: string;
+  lastLabelDisplay: string;
+  lastLabelText: string;
+  lastLabelX: number;
+  lastLabelY: number;
+  lastOpacity: number;
+  lastPointerEvents: string;
+}
+export function emptyArrowState(): ArrowState {
+  return {
+    lastD: '\0',
+    lastLabelDisplay: '\0',
+    lastLabelText: '\0',
+    lastLabelX: NaN,
+    lastLabelY: NaN,
+    // -Infinity (not NaN) because the inline opacity gate in applyFade
+    // uses the early-write `>= threshold` form, which NaN poisons in the
+    // wrong direction: `Math.abs(α − NaN) = NaN; NaN >= 0.0005 = false`
+    // → first-frame write skipped, arrow never fades. -Infinity makes the
+    // delta Infinity, which trips both gate directions. (Position sentinels
+    // above stay NaN because they route through setNumAttr's early-return
+    // `< threshold` form where NaN works correctly.)
+    lastOpacity: -Infinity,
+    lastPointerEvents: '\0',
+  };
+}
 
 /**
  * Map current vertical FOV (degrees) and the user-tuned max star size to
@@ -127,6 +159,15 @@ export class HudOverlay {
   private tmpSolLocal = new THREE.Vector3();
   private tmpGcLocal = new THREE.Vector3();
 
+  // Dirty-track state for Sol/GC arrows + the OBSERVE ring. See
+  // ArrowState comment above.
+  private solArrowState: ArrowState = emptyArrowState();
+  private gcArrowState: ArrowState = emptyArrowState();
+  private lastRingDisplay = '\0';
+  private lastRingCx = NaN;
+  private lastRingCy = NaN;
+  private lastRingR = NaN;
+
   // Click handlers — owned here so dispose() can remove them and let the SVG
   // labels release their references back to the Stellata closure.
   private onSolLabelClick: (() => void) | null = null;
@@ -212,12 +253,12 @@ export class HudOverlay {
     // so the arrows always tangent the ring rim, even mid-transition when
     // the anchor slides from the projected focal-star toward screen-centre.
     if (ringRadius > 0) {
-      this.ring.style.display = '';
-      this.ring.setAttribute('cx', cx.toFixed(1));
-      this.ring.setAttribute('cy', cy.toFixed(1));
-      this.ring.setAttribute('r', ringRadius.toFixed(1));
+      this.lastRingDisplay = setStyle(this.ring, 'display', '', this.lastRingDisplay);
+      this.lastRingCx = setNumAttr(this.ring, 'cx', cx, this.lastRingCx);
+      this.lastRingCy = setNumAttr(this.ring, 'cy', cy, this.lastRingCy);
+      this.lastRingR = setNumAttr(this.ring, 'r', ringRadius, this.lastRingR);
     } else {
-      this.ring.style.display = 'none';
+      this.lastRingDisplay = setStyle(this.ring, 'display', 'none', this.lastRingDisplay);
     }
 
     const targetMarginPx = Math.max(sizeMaxPx, 0);
@@ -231,7 +272,7 @@ export class HudOverlay {
       solDist, this.tmpSolLocal,
       camera, w, h,
       hideSolArrow, targetMarginPx, shaftStartPx, 'Sol',
-      navArrowFadeAlpha, this.solDebug,
+      navArrowFadeAlpha, this.solDebug, this.solArrowState,
     );
 
     const gcDist = this.tmpGcLocal.distanceTo(origin);
@@ -242,7 +283,7 @@ export class HudOverlay {
       gcDist, this.tmpGcLocal,
       camera, w, h,
       false, targetMarginPx, shaftStartPx, 'Galactic centre',
-      navArrowFadeAlpha, this.gcDebug,
+      navArrowFadeAlpha, this.gcDebug, this.gcArrowState,
     );
   }
 
@@ -283,6 +324,7 @@ export class HudOverlay {
     labelPrefix: string,
     fadeAlpha: number,
     debug: ArrowDebugRecord,
+    state: ArrowState,
   ): number {
     debug.hideRequested = hide;
     debug.dirPath = 'none';
@@ -294,7 +336,7 @@ export class HudOverlay {
 
     const dirLenSq = dir.lengthSq();
     if (hide || dirLenSq < 1e-12) {
-      this.hideArrow(path, bg, label);
+      this.hideArrow(path, bg, label, state);
       return 0;
     }
     dir.multiplyScalar(1 / Math.sqrt(dirLenSq));
@@ -310,7 +352,7 @@ export class HudOverlay {
     if (!sdir) {
       // dir is exactly along the camera axis — no preferred screen
       // direction (measure-zero orientation).
-      this.hideArrow(path, bg, label);
+      this.hideArrow(path, bg, label, state);
       return 0;
     }
     const sux = sdir[0];
@@ -340,7 +382,7 @@ export class HudOverlay {
     debug.shaftLengthPx = shaftLengthPx;
 
     if (shaftLengthPx <= 0) {
-      this.hideArrow(path, bg, label);
+      this.hideArrow(path, bg, label, state);
       return 0;
     }
 
@@ -357,22 +399,25 @@ export class HudOverlay {
     const chevronScale = Math.min(1, shaftLengthPx / CHEVRON_FULL_AT_PX);
     const d = buildArrowSvgPath(shaftStartX, shaftStartY, tipX, tipY, chevronScale);
     if (!d) {
-      this.hideArrow(path, bg, label);
+      this.hideArrow(path, bg, label, state);
       return 0;
     }
-    path.setAttribute('d', d);
-    bg.setAttribute('d', d);
+    if (d !== state.lastD) {
+      path.setAttribute('d', d);
+      bg.setAttribute('d', d);
+      state.lastD = d;
+    }
 
     const labelAnchorX = tipX + ARROW_LABEL_OFFSET_PX + ARROW_HEAD_DEPTH_PX;
     const labelAnchorY = tipY - ARROW_LABEL_OFFSET_PX;
     const sx = clamp(labelAnchorX, ARROW_LABEL_PADDING_PX, w - ARROW_LABEL_PADDING_PX);
     const sy = clamp(labelAnchorY, ARROW_LABEL_PADDING_PX, h - ARROW_LABEL_PADDING_PX);
-    label.style.display = '';
-    label.setAttribute('x', sx.toFixed(1));
-    label.setAttribute('y', sy.toFixed(1));
-    label.textContent = `${labelPrefix} · ${fmtDist(distancePc)}`;
+    state.lastLabelDisplay = setStyle(label, 'display', '', state.lastLabelDisplay);
+    state.lastLabelX = setNumAttr(label, 'x', sx, state.lastLabelX);
+    state.lastLabelY = setNumAttr(label, 'y', sy, state.lastLabelY);
+    state.lastLabelText = setText(label, `${labelPrefix} · ${fmtDist(distancePc)}`, state.lastLabelText);
 
-    applyFade(path, bg, label, fadeAlpha);
+    applyFade([path, bg, label], label, fadeAlpha, state);
     return shaftLengthPx;
   }
 
@@ -387,20 +432,60 @@ export class HudOverlay {
   }
 
   private hideAll() {
-    this.ring.style.display = 'none';
-    this.hideArrow(this.solPath, this.solBg, this.solLabel);
-    this.hideArrow(this.gcPath, this.gcBg, this.gcLabel);
+    this.lastRingDisplay = setStyle(this.ring, 'display', 'none', this.lastRingDisplay);
+    this.hideArrow(this.solPath, this.solBg, this.solLabel, this.solArrowState);
+    this.hideArrow(this.gcPath, this.gcBg, this.gcLabel, this.gcArrowState);
     this.solDrawnLen = 0;
     this.gcDrawnLen = 0;
     Object.assign(this.solDebug, emptyArrowDebug());
     Object.assign(this.gcDebug, emptyArrowDebug());
   }
 
-  private hideArrow(path: SVGPathElement, bg: SVGPathElement, label: SVGTextElement) {
-    path.setAttribute('d', '');
-    bg.setAttribute('d', '');
-    label.style.display = 'none';
+  // Hide an arrow. The visible d / display writes go through the dirty-
+  // track gate; the remaining numeric + text sentinels are reset to poison
+  // via resetArrowSentinels so the next show-from-hide cycle's first write
+  // always lands — without this reset, a re-show whose new label coords
+  // fell within ATTR_DIRTY_PX of the prior session's values would silently
+  // skip the setAttribute and inherit the stale x/y. Same shape as the
+  // heliopause first-load fix (PR #64) and the consistency-at-the-seam §3
+  // rule.
+  private hideArrow(
+    path: SVGPathElement,
+    bg: SVGPathElement,
+    label: SVGTextElement,
+    state: ArrowState,
+  ) {
+    // path + bg are kept in sync via the single state.lastD sentinel — write
+    // them as a pair inside one guard.
+    if ('' !== state.lastD) {
+      path.setAttribute('d', '');
+      bg.setAttribute('d', '');
+      state.lastD = '';
+    }
+    state.lastLabelDisplay = setStyle(label, 'display', 'none', state.lastLabelDisplay);
+    resetArrowSentinels(state);
   }
+}
+
+/**
+ * Reset every per-attribute sentinel in `state` to its poison-init value
+ * so the next visible frame's first write through the dirty-attr gate
+ * always lands. Used by `hideArrow` after the gated d / display writes.
+ * Surfaced for direct test coverage of the sentinel-wipe contract (9mm.170
+ * — without this reset the first show-from-hide cycle would inherit stale
+ * cx/cy/lx/ly/opacity from the prior visible session).
+ *
+ * `lastD` and `lastLabelDisplay` are NOT wiped — they pass through the
+ * dirty-attr gate so the hide-state value is the correct cached value.
+ * `lastOpacity` uses `-Infinity` (not NaN) to match the gate direction in
+ * `applyFade` — see emptyArrowState's comment for why NaN poisons it.
+ */
+export function resetArrowSentinels(state: ArrowState): void {
+  state.lastLabelText = '\0';
+  state.lastLabelX = NaN;
+  state.lastLabelY = NaN;
+  state.lastOpacity = -Infinity;
+  state.lastPointerEvents = '\0';
 }
 
 // The "active" ring the arrows attach to:
@@ -475,19 +560,3 @@ export function emptyArrowDebug(): ArrowDebugRecord {
   };
 }
 
-// Apply the navigate-mode arrow fade to a Sol or GC arrow's three SVG
-// elements. Pointer events are suppressed below half-opacity so a barely-
-// visible label can't accept the click that would aim the camera at it.
-function applyFade(
-  path: SVGPathElement,
-  bg: SVGPathElement,
-  label: SVGTextElement,
-  alpha: number,
-) {
-  const a = alpha.toFixed(3);
-  path.style.opacity = a;
-  bg.style.opacity = a;
-  label.style.opacity = a;
-  const clickable = alpha >= 0.5 ? '' : 'none';
-  label.style.pointerEvents = clickable;
-}
