@@ -3947,6 +3947,23 @@ export class Stellata {
     if (!delta) return;
     shiftWarpWaypoints(state, delta.x, delta.y, delta.z);
     shiftArrivalWaypoints(state.flyArrival, delta.x, delta.y, delta.z);
+    // Float32 residual snap (same shape as setFocus lines ~1531). The
+    // earlier `controls.target.copy(B)` at startWarp set target from a
+    // Vector3 derived via `_localPositions` (Float32) — the value has
+    // ~|B|·1e-7 ULP relative to true B. `recenterOrigin` then shifts
+    // target by a delta computed fresh in float64 from raw catalog
+    // reads, leaving target at `(true_B − rounded_B)` which is the
+    // ULP residual. lengthSq = ~|B|²·1e-14 fails the 1e-12 pin guard
+    // on any non-trivial warp (Sol→Rigel: ~|265pc|²·1e-14 ≈ 7e-10,
+    // ~700× over threshold). Snap target to clean (0,0,0) and shift
+    // camera by the same residual to preserve the cam-to-target
+    // offset — the user-visible pose doesn't change, but the pin
+    // guard now engages for the post-recentre Fly window as designed.
+    const t = this.controls.target;
+    this.camera.position.x -= t.x;
+    this.camera.position.y -= t.y;
+    this.camera.position.z -= t.z;
+    t.set(0, 0, 0);
     state.dest.applyFocus();
     state.recenteredToDest = true;
   }
