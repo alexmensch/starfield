@@ -2,9 +2,11 @@
 
 A second always-on reference overlay alongside the Milky Way disc
 (`docs/galactic-overlay.md`). Renders LineLoop outlines for the Magellanic
-Clouds, Sagittarius dSph, classical dSphs, and LVDB ultra-faints within
-250 kpc of Sol — plus the Milky Way label (the disc itself stays in
-`galactic-disc.ts`; only the SVG label lives here).
+Clouds, Sagittarius dSph, classical dSphs and ultra-faints within
+250 kpc, plus M31, M33, the M31 satellite subgroup, and the outer-band
+dwarfs (NGC 6822, IC 10, IC 1613, Leo A, WLM, Sextans A/B, …) out to the
+canonical 2 Mpc Local Group boundary — plus the Milky Way label (the
+disc itself stays in `galactic-disc.ts`; only the SVG label lives here).
 
 ## Visibility model — no toggle, no URL flag
 
@@ -26,13 +28,19 @@ data/local-group/
   lvdb-snapshot.csv   committed snapshot of Pace et al. 2024 dwarf_all
                       (CC0, peer-reviewed; arXiv:2411.07424). 909 rows.
   overrides.tsv       hand-curated structural detail for LMC, SMC,
-                      Sagittarius dSph.
+                      Sagittarius dSph, M 32, NGC 205, plus full
+                      standalone rows for M31 and M33 (omitted from
+                      LVDB's dwarf_all table — they're major spirals).
 
 scripts/
-  build-local-group.ts        I/O orchestration + idempotency.
+  build-local-group.ts        I/O orchestration + idempotency. TSV
+                              parser handles both LVDB-merge and
+                              standalone-position override rows.
   build-local-group-pure.ts   pure helpers (RA/Dec→ICRS, quaternion
                               construction per orient kind, override
-                              merge, distance filter). vitest-covered.
+                              merge, standalone-override builder,
+                              display-name + catalog-designation
+                              rules, distance filter). vitest-covered.
 
 public/local-group.json       generated artifact (gitignored).
 ```
@@ -50,20 +58,57 @@ npm run build:local-group -- --force
 ## Override schema
 
 `data/local-group/overrides.tsv` carries one row per object whose LVDB
-summary is too coarse for meaningful 3D rendering:
+summary is too coarse for meaningful 3D rendering, **plus** the rare
+case of an object that's not in LVDB at all (M31, M33 — LVDB's
+`dwarf_all` table excludes the major spirals).
 
 | Column              | Notes |
 | ------------------- | ----- |
-| `name`              | Matches LVDB's `name` column for merge. |
+| `name`              | Matches LVDB's `name` column for merge, **or** names a standalone object not in LVDB. |
 | `a_pc / b_pc / c_pc`| Local-frame semi-axes in parsecs. |
 | `orient`            | Orientation spec — see below. |
 | `ref_doi`           | Primary structural reference. |
+| `ra_deg`            | *Optional standalone position.* Populated for objects not in LVDB; leave empty for LVDB-merge rows. |
+| `dec_deg`           | *Optional standalone position.* Same — all three must be set together or all three empty. |
+| `distance_kpc`      | *Optional standalone position.* Same. |
 
-Override **replaces** the structural detail an LVDB row would otherwise
-produce; **position (RA/Dec/distance) still comes from LVDB.** Other
+For LVDB-merge rows, the override **replaces** the structural detail an
+LVDB row would otherwise produce; **position (RA/Dec/distance) still
+comes from LVDB.** For standalone rows (M31, M33), the override
+provides the position directly — no LVDB merge happens. Other
 LVDB-only dwarfs render as sky-plane oblate ellipsoids from
 `rhalf_physical` + `ellipticity` + `position_angle` — no override row
 needed.
+
+## Display-name rules
+
+`displayName(lvdbName)` decides the on-screen string for each object
+through three branches:
+
+1. **DISPLAY_NAME_OVERRIDES** — explicit map entries take precedence.
+   Covers Magellanic acronyms (LMC → "Large Magellanic Cloud") and
+   named non-dSph dwarfs the regex below would otherwise mis-suffix
+   (WLM, Leo A, Phoenix, Sextans A/B, Pegasus dIrr, …).
+2. **`isCatalogDesignation`** — names matching catalog prefixes
+   (NGC / IC / UGC / DDO / M / KK / PGC / HIPASS …) followed by digits
+   bypass the suffix and render as-is. "NGC 205", "M 32", "M31" all
+   pass through unchanged.
+3. **Default** — append "Dwarf Spheroidal". Used for bare constellation
+   names ("Sculptor", "Draco") and Roman-numeral satellites
+   ("Andromeda I", "Bootes II") where the suffix disambiguates from
+   the constellation and matches catalogue-paper convention.
+
+## MAX_DISTANCE_PC
+
+`scripts/build-local-group-pure.ts` exports `MAX_DISTANCE_PC =
+2_000_000` — the heliocentric envelope the build filter applies.
+2 Mpc covers the canonical Local Group (M31 + M33 + their satellites,
+plus the outer dIrrs out to ~1.4 Mpc) with comfort headroom past the
+~1.5 Mpc IAU-style boundary; beyond 2 Mpc we'd be picking up the
+IC 342 / Maffei groups — a separate decision. The constant is shared:
+the runtime camera envelope (`stellata.ts` — controls.maxDistance =
+2 Mpc, PerspectiveCamera far = 3 Mpc) is paired with this filter so a
+fully zoomed-out view shows the entire rendered catalogue.
 
 ### Orientation specs
 
@@ -176,9 +221,11 @@ rewritten through `DISPLAY_NAME_OVERRIDES` at build time so LVDB's
 
 ## What's deliberately out of scope
 
-- **M31, M33, NGC 205, M32, IC 10, NGC 6822, and Leo A / IC 1613 /
-  WLM** — past the current 250 kpc camera envelope. Tracked under
-  `stellata-1ui` (1.5–2 Mpc expansion; deferred).
+- **Galaxy groups past 2 Mpc** — IC 342 / Maffei groups, Sculptor
+  Group, M83 group, etc. Could be a future "broader neighbourhood"
+  layer but isn't part of the Local Group brief.
+- **M31 / M33 stellar streams + the Sagittarius stream** —
+  invisible / stellar-scale, not a wireframe primitive.
 - **Star catalogues for LMC/SMC/Sgr stellar populations** — AT-HYG
   depth doesn't reach LMC/SMC reliably; Sgr dSph red giants are
   marginal. See `stellata-cds-data-sources-and-detail-gradient`.
@@ -205,3 +252,11 @@ citations:
   (DOI: 10.1088/0004-637X/744/2/128) — SMC structure.
 - **Ibata et al. 1995**, *AJ* 110, 632 (DOI: 10.1086/192237) —
   Sagittarius dSph discovery + structure.
+- **McConnachie et al. 2018**, *ApJ* 868, 55
+  (DOI: 10.3847/1538-4357/aae8e7) — M31 inclined-disc structure from
+  the PAndAS survey (i ≈ 77°, PA ≈ 37°).
+- **Bonanos et al. 2006**, *ApJ* 652, 313 (DOI: 10.1086/508140) —
+  M33 Cepheid distance (840 ± 11 kpc) + disc inclination.
+- **McConnachie 2012**, *AJ* 144, 4
+  (DOI: 10.1088/0004-6256/144/1/4) — Local Group structural review
+  used for the M 32 + NGC 205 override entries.

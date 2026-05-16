@@ -1,7 +1,9 @@
-// Local Group wireframe layer (stellata-38m).
+// Local Group wireframe layer (stellata-38m / extended to 2 Mpc in
+// stellata-1ui).
 //
 // Renders LineLoop outlines for confirmed-galaxy Local Group members
-// within 250 kpc of Sol. Each object's geometry is pre-baked in
+// out to MAX_DISTANCE_PC of Sol (2 Mpc — M31 + M33 + Andromeda subgroup
+// + outer-band dIrrs). Each object's geometry is pre-baked in
 // absolute ICRS pc at construction; the group is rebased to
 // -worldOffset per frame so the floating origin doesn't drift the
 // outlines. Opacity tracks the same FADE_INNER_PC / FADE_OUTER_PC
