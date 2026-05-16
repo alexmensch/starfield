@@ -3,8 +3,10 @@ import {
   basisToQuaternion,
   buildLvdbDefault,
   buildOrientationQuat,
+  buildStandaloneOverride,
   displayName,
   filterForRendering,
+  isCatalogDesignation,
   mergeRowAndOverride,
   parseOrient,
   raDecDistanceToIcrs,
@@ -211,16 +213,17 @@ describe('filterForRendering', () => {
     ];
     expect(filterForRendering(rows)).toHaveLength(1);
   });
-  it('drops rows past MAX_DISTANCE_PC (= 250 kpc)', () => {
-    expect(MAX_DISTANCE_PC).toBe(250_000);
+  it('drops rows past MAX_DISTANCE_PC (= 2 Mpc)', () => {
+    expect(MAX_DISTANCE_PC).toBe(2_000_000);
     const rows = [
-      makeRow({ distanceKpc: 200, key: 'in' }),
-      makeRow({ distanceKpc: 250, key: 'edge-in' }),
-      makeRow({ distanceKpc: 250.001, key: 'edge-out' }),
-      makeRow({ distanceKpc: 1000, key: 'far' }),
+      makeRow({ distanceKpc: 200, key: 'inner' }),
+      makeRow({ distanceKpc: 780, key: 'm31-band' }),
+      makeRow({ distanceKpc: 2000, key: 'edge-in' }),
+      makeRow({ distanceKpc: 2000.001, key: 'edge-out' }),
+      makeRow({ distanceKpc: 5000, key: 'far' }),
     ];
     const kept = filterForRendering(rows).map((r) => r.key);
-    expect(kept).toEqual(['in', 'edge-in']);
+    expect(kept).toEqual(['inner', 'm31-band', 'edge-in']);
   });
   it('drops rows with missing RA/Dec', () => {
     const rows = [makeRow({ ra: NaN }), makeRow({ dec: NaN }), makeRow({})];
@@ -309,9 +312,42 @@ describe('displayName overrides + default type suffix', () => {
     expect(displayName('Sagittarius')).toBe('Sagittarius Dwarf Spheroidal');
     expect(displayName('Sculptor')).toBe('Sculptor Dwarf Spheroidal');
     expect(displayName('Bootes II')).toBe('Bootes II Dwarf Spheroidal');
+    expect(displayName('Andromeda I')).toBe('Andromeda I Dwarf Spheroidal');
+  });
+  it('catalog designations bypass the suffix — they self-identify', () => {
+    expect(displayName('NGC 205')).toBe('NGC 205');
+    expect(displayName('NGC 6822')).toBe('NGC 6822');
+    expect(displayName('IC 10')).toBe('IC 10');
+    expect(displayName('IC 1613')).toBe('IC 1613');
+    expect(displayName('M 32')).toBe('M 32');
+    expect(displayName('M31')).toBe('M31');
+    expect(displayName('M33')).toBe('M33');
+    expect(displayName('UGC 4879')).toBe('UGC 4879');
+    expect(displayName('DDO 82')).toBe('DDO 82');
+  });
+  it('explicitly overrides the named non-dSph dwarfs that the regex misses', () => {
+    expect(displayName('Leo A')).toBe('Leo A');
+    expect(displayName('WLM')).toBe('WLM');
+    expect(displayName('Phoenix')).toBe('Phoenix Dwarf');
+    expect(displayName('Pegasus dIrr')).toBe('Pegasus Dwarf Irregular');
+    expect(displayName('Sextans A')).toBe('Sextans A');
+    expect(displayName('Sextans B')).toBe('Sextans B');
+    expect(displayName('Sagittarius dIrr')).toBe('Sagittarius Dwarf Irregular');
   });
   it('exports the override map for callers that need to enumerate it', () => {
-    expect(Object.keys(DISPLAY_NAME_OVERRIDES).sort()).toEqual(['LMC', 'SMC']);
+    expect(Object.keys(DISPLAY_NAME_OVERRIDES).sort()).toEqual([
+      'LGS 3',
+      'LMC',
+      'Leo A',
+      'Pegasus W',
+      'Pegasus dIrr',
+      'Phoenix',
+      'SMC',
+      'Sagittarius dIrr',
+      'Sextans A',
+      'Sextans B',
+      'WLM',
+    ]);
   });
   it('mergeRowAndOverride emits the display name on the LgObject (override path)', () => {
     const row: LvdbRow = {
@@ -340,6 +376,78 @@ describe('displayName overrides + default type suffix', () => {
     };
     const out = mergeRowAndOverride(row, undefined)!;
     expect(out.name).toBe('Sculptor Dwarf Spheroidal');
+  });
+});
+
+describe('isCatalogDesignation', () => {
+  it('matches recognised catalog prefixes followed by digits', () => {
+    expect(isCatalogDesignation('NGC 205')).toBe(true);
+    expect(isCatalogDesignation('IC 10')).toBe(true);
+    expect(isCatalogDesignation('M 32')).toBe(true);
+    expect(isCatalogDesignation('M31')).toBe(true);     // no space
+    expect(isCatalogDesignation('UGC 4879')).toBe(true);
+    expect(isCatalogDesignation('UGCA 292')).toBe(true);
+    expect(isCatalogDesignation('DDO 82')).toBe(true);
+    expect(isCatalogDesignation('KKH 37')).toBe(true);
+    expect(isCatalogDesignation('PGC 41210')).toBe(true);
+  });
+  it('rejects proper names and bare constellation names', () => {
+    expect(isCatalogDesignation('Sculptor')).toBe(false);
+    expect(isCatalogDesignation('Andromeda I')).toBe(false);
+    expect(isCatalogDesignation('Phoenix')).toBe(false);
+    expect(isCatalogDesignation('Pegasus dIrr')).toBe(false);
+    expect(isCatalogDesignation('WLM')).toBe(false);
+    expect(isCatalogDesignation('Leo A')).toBe(false);
+    expect(isCatalogDesignation('LGS 3')).toBe(false); // LGS not in the prefix list
+  });
+  it('requires a digit after the prefix — bare letters don\'t pass', () => {
+    expect(isCatalogDesignation('NGC')).toBe(false);
+    expect(isCatalogDesignation('IC')).toBe(false);
+    expect(isCatalogDesignation('M')).toBe(false);
+  });
+});
+
+describe('buildStandaloneOverride', () => {
+  const m31: OverrideRow = {
+    name: 'M31',
+    axes: [15000, 15000, 500],
+    orient: 'disc:i=77,pa=37',
+    refDoi: '10.3847/1538-4357/aae8e7',
+    raDeg: 10.6847,
+    decDeg: 41.2687,
+    distanceKpc: 776,
+  };
+  it('synthesises a full LgObject from override-only fields', () => {
+    const out = buildStandaloneOverride(m31)!;
+    expect(out).not.toBeNull();
+    expect(out.id).toBe('m31');
+    expect(out.name).toBe('M31');                      // catalog-designation, no suffix
+    expect(out.kind).toBe('disc');
+    expect(out.axes).toEqual([15000, 15000, 500]);
+    expect(out.source).toBe('OVERRIDE');
+    expect(out.distance).toBe(776_000);
+    expect(Math.hypot(...out.center)).toBeCloseTo(776_000, 0);
+  });
+  it('returns null when distance exceeds MAX_DISTANCE_PC', () => {
+    const farFlung: OverrideRow = {
+      ...m31,
+      distanceKpc: MAX_DISTANCE_PC / 1000 + 1,         // 2001 kpc
+    };
+    expect(buildStandaloneOverride(farFlung)).toBeNull();
+  });
+  it('returns null when distance is non-positive or non-finite', () => {
+    expect(buildStandaloneOverride({ ...m31, distanceKpc: 0 })).toBeNull();
+    expect(buildStandaloneOverride({ ...m31, distanceKpc: -100 })).toBeNull();
+    expect(buildStandaloneOverride({ ...m31, distanceKpc: NaN })).toBeNull();
+  });
+  it('throws when ra/dec/distance are missing — config error, surface loudly', () => {
+    const noPos: OverrideRow = {
+      name: 'NoPos',
+      axes: [1, 1, 1],
+      orient: 'los',
+      refDoi: 'x',
+    };
+    expect(() => buildStandaloneOverride(noPos)).toThrow(/no LVDB match/);
   });
 });
 
