@@ -666,12 +666,14 @@ export class Stellata {
 
     // Near plane must be strictly smaller than controls.minDistance,
     // otherwise a maximally-zoomed-in star lands on the clip plane and
-    // disappears at the closest zoom.
+    // disappears at the closest zoom. Far plane sits 1 Mpc past the
+    // 2 Mpc maxDistance so M31 / M33 + outer dwarfs render with comfort
+    // headroom when the camera reaches the maxDistance shell.
     this.camera = new THREE.PerspectiveCamera(
       DEFAULT_FOV,
       window.innerWidth / window.innerHeight,
       1e-10,
-      500_000,
+      3_000_000,
     );
     this.camera.position.set(0, 0, 30);
 
@@ -686,7 +688,7 @@ export class Stellata {
     this.controls.staticMoving = false;
     this.controls.dynamicDampingFactor = 0.15;
     this.controls.minDistance = GLOBAL_MIN_DIST_PC;
-    this.controls.maxDistance = 250_000;
+    this.controls.maxDistance = 2_000_000;
     this.controls.target.set(0, 0, 0);
 
     // OBSERVE-mode look-around controller. Starts disabled; enable() runs
