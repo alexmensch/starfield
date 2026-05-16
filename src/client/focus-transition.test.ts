@@ -14,11 +14,15 @@ import {
 } from './stellata';
 
 describe('camera-lerp duration consolidation (r9q.2)', () => {
-  it('routes WARP_REORIENT_MS / AIM_T_MAX_MS / FOCUS_LERP_MS through CAMERA_LERP_MS', () => {
+  it('routes AIM_T_MAX_MS / FOCUS_LERP_MS through CAMERA_LERP_MS', () => {
     expect(CAMERA_LERP_MS).toBe(2000);
-    expect(WARP_REORIENT_MS).toBe(CAMERA_LERP_MS);
     expect(AIM_T_MAX_MS).toBe(CAMERA_LERP_MS);
     expect(FOCUS_LERP_MS).toBe(CAMERA_LERP_MS);
+  });
+
+  it('keeps WARP_REORIENT_MS tuned slightly under the canonical lerp', () => {
+    expect(WARP_REORIENT_MS).toBe(1800);
+    expect(WARP_REORIENT_MS).toBeLessThan(CAMERA_LERP_MS);
   });
 });
 

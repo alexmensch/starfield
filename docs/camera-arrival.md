@@ -42,8 +42,8 @@ place and the helper owns both the time and the distance profile.
 | Path | Location | Duration | Endpoint |
 |---|---|---|---|
 | Focus-park lerp (star, cloud) | `focus-transition.ts:tickFocusLerp` | `FOCUS_LERP_MS = 2000` ms | `parkDist` |
-| Warp Fly phase | `stellata.ts:updateWarp` | `WARP_T_MIN_MS … WARP_T_MAX_MS` (5–20 s) | `endOffset` (≈ destination `parkDist`) |
-| Navigate-mode unfocus | `stellata.ts:unfocus` | `OBSERVE_TRANSITION_MS = 1200` ms | `parkDist` (outbound) |
+| Warp Fly phase | `stellata.ts:updateWarp` | `WARP_T_MIN_MS … WARP_T_MAX_MS` (3–20 s) | `endOffset` (≈ destination `parkDist`) |
+| Navigate-mode unfocus | `stellata.ts:unfocus` | `OBSERVE_TRANSITION_MS = 1800` ms | `parkDist` (outbound) |
 
 **Excluded: Warp Phase 3 (observe→observe arrivals).** Phase 3's
 position track lerps `pEnd → (0,0,0)` over `OBSERVE_TRANSITION_MS` and
@@ -291,7 +291,7 @@ log-d-only design.
    doesn't apply (no "approach"). Triggers the cubic-Hermite log-d
    fallback, which carries the camera outward over the same eased-u
    shape that brought it in. The unfocus animate path
-   (`OBSERVE_TRANSITION_MS = 1200`) feels symmetric with the
+   (`OBSERVE_TRANSITION_MS = 1800`) feels symmetric with the
    focus-park inbound (when that inbound was on the fallback path).
 
 4. **`pStart` and `pEnd` not co-linear with `target.center`.** Not a

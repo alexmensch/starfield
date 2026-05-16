@@ -19,7 +19,7 @@ an anchor, but disabling the button advertises the affordance up-front.
 
 **Camera state on enter:** position lerps to `(0, 0, 0)` local (the
 focused star's position under the floating origin) over
-`OBSERVE_TRANSITION_MS = 1200 ms`. The focal star stays visible across
+`OBSERVE_TRANSITION_MS = 1800 ms`. The focal star stays visible across
 the glide and is hidden via `uHideFocusIdx = focusedStar` only at
 `finishObserveTransition`'s `enter` branch — once the camera is parked
 on top of it. Hiding it at transition start would feel like the star

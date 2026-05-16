@@ -125,11 +125,14 @@ uses (`body.warping`), CSS rule shares the selector. Stellata fires
 the `'focusLerp'` event on start / end edges; `main.ts` toggles
 the body class.
 
-`CAMERA_LERP_MS = 2000` is the canonical 2 s constant — `WARP_REORIENT_MS`,
-`AIM_T_MAX_MS`, and `FOCUS_LERP_MS` all alias it so the three
-camera-move animations read as the same family. `WARP_T_K_MS = 2000`
-stays a separate literal because it's a log-scale flight coefficient
-(see `docs/camera-warp.md`), not a duration.
+`CAMERA_LERP_MS = 2000` is the canonical 2 s constant for non-warp
+camera lerps — `AIM_T_MAX_MS` and `FOCUS_LERP_MS` alias it so the
+focus-park glide and aim animation read as the same family. The warp's
+`WARP_REORIENT_MS = 1800` was once part of this family but tuning
+moved it slightly under the canonical lerp — the reorient phase reads
+snappier than a generic camera glide. `WARP_T_K_MS = 3000` is a
+separate literal — a log-scale flight coefficient (see
+`docs/camera-warp.md`), not a duration.
 
 `cancelFocusLerp` is wired at every site that already calls
 `cancelUnfocusLerp` (`focusStar`, `flyToCloud`, `unfocus`, `startWarp`,

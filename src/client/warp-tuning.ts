@@ -50,9 +50,9 @@ import {
  *  the knob reads as the natural "fraction of the way along the
  *  trajectory" the user expects. */
 export const DEFAULT_MID_FLY_RECENTRE_FRAC = 0.5;
-export const DEFAULT_CHART_PLATEAU_MARGIN = 1.0;
-export const DEFAULT_CHART_PHASE3_SCALING_ENABLED = false;
-export const DEFAULT_CHART_PHASE3_ALPHA = 0.5;
+export const DEFAULT_CHART_PLATEAU_MARGIN = 0.7;
+export const DEFAULT_CHART_PHASE3_SCALING_ENABLED = true;
+export const DEFAULT_CHART_PHASE3_ALPHA = 0.2;
 // Hybrid-curve seam distance multiplier: d_seam = seam_k · parkDist.
 // The hybrid switches from a linear-d piecewise-quad outer regime to
 // a quintic-smootherstep on θ inner regime at d_seam from the

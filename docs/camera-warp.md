@@ -22,7 +22,7 @@ lerp).
 Two- or three-phase animation in `stellata.ts updateWarp`, depending
 on whether the warp re-enters OBSERVE on arrival:
 
-1. **Reorient** (`WARP_REORIENT_MS` = 2000). Camera position
+1. **Reorient** (`WARP_REORIENT_MS` = 1800). Camera position
    spherically slerps around A from wherever the user was to `A +
    dirBack × sourceOffset` (on the travel line, offset behind A from
    B's perspective). Simultaneously the orbit distance eases linearly
@@ -121,7 +121,7 @@ on whether the warp re-enters OBSERVE on arrival:
    detect.
 
 3. **Post-arrival reorient** (only when `returnToObserve`, duration =
-   `OBSERVE_TRANSITION_MS` = 1200 ms). Quaternion slerps from the
+   `OBSERVE_TRANSITION_MS` = 1800 ms). Quaternion slerps from the
    fly-end "looking at B" orientation back to the `startQuaternion`
    snapshot taken at warp start. The user sees the same celestial
    direction they were facing when they picked the destination, now
