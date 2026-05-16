@@ -15,6 +15,8 @@ import dustParticleFrag from './shaders/dust-particle.frag.glsl?raw';
 (THREE.ShaderChunk as Record<string, string>)['stellata_perceptual_disc'] =
   perceptualDiscChunk;
 import { GalacticDisc } from './galactic-disc';
+import { LocalGroupLayer } from './local-group';
+import type { LgCatalog } from './local-group-loader';
 import { GalacticGrid } from './galactic-grid';
 import { HudOverlay } from './hud-overlay';
 import { GALACTIC_CENTRE_PC } from './galactic-coords';
@@ -622,6 +624,12 @@ export class Stellata {
   private heliopause: Heliopause;
   private galacticGrid: GalacticGrid;
   private hudOverlay: HudOverlay;
+
+  // Local Group wireframe layer (stellata-38m). null until
+  // attachLocalGroup() runs; absent layer is a no-op everywhere.
+  // No toggle / URL flag — inherits the always-on model from the MW
+  // disc with the same FADE_INNER_PC / FADE_OUTER_PC reveal curve.
+  private localGroupLayer: LocalGroupLayer | null = null;
 
   // Molecular cloud overlay. null until attachClouds() runs;
   // the layer loads asynchronously after the catalog and search index so
@@ -1637,6 +1645,25 @@ export class Stellata {
 
   /** Wire the loaded molecular cloud catalog into the scene. Idempotent —
    *  calling again replaces the layer. Pass null to detach. */
+  /** Attach (or replace, or detach with null) the Local Group wireframe
+   *  layer. Mirrors attachClouds — load is async in main.ts, the layer
+   *  appears once the JSON arrives. Empty catalog detaches. */
+  attachLocalGroup(catalog: LgCatalog | null) {
+    if (this.localGroupLayer) {
+      this.scene.remove(this.localGroupLayer.group);
+      this.localGroupLayer.dispose();
+      this.localGroupLayer = null;
+    }
+    if (catalog === null || catalog.objects.length === 0) return;
+    this.localGroupLayer = new LocalGroupLayer(catalog);
+    this.localGroupLayer.setMonochrome(this.monochrome);
+    this.scene.add(this.localGroupLayer.group);
+  }
+
+  /** Direct access to the Local Group layer for dev-console / label
+   *  wiring in main.ts. null until attachLocalGroup runs. */
+  get localGroup(): LocalGroupLayer | null { return this.localGroupLayer; }
+
   attachClouds(catalog: CloudCatalog | null) {
     if (this.clouds) {
       this.scene.remove(this.clouds.group);
@@ -2165,6 +2192,7 @@ export class Stellata {
     this.glowMaterial.needsUpdate = true;
     this.renderer.setClearColor(on ? 0xf5f2ea : 0x000000, on ? 1 : 0);
     this.galacticDisc.setMonochrome(on);
+    this.localGroupLayer?.setMonochrome(on);
     this.galacticGrid.setMonochrome(on);
     this.hudOverlay.setMonochrome(on);
     this.clouds?.setMonochrome(on);
@@ -3653,6 +3681,7 @@ export class Stellata {
   private updateGalacticLayers() {
     if (this.warpState) {
       this.galacticDisc.group.visible = false;
+      if (this.localGroupLayer) this.localGroupLayer.group.visible = false;
       this.galacticGrid.group.visible = false;
       this.hudOverlay.setVisible(false);
       // Orbit rings are focus-only — no warp-destination ring preview.
@@ -3684,6 +3713,7 @@ export class Stellata {
     const az = cam.z + this.worldOffset.z;
     const distFromSol = Math.sqrt(ax * ax + ay * ay + az * az);
     this.galacticDisc.update(this.worldOffset, distFromSol);
+    this.localGroupLayer?.update(this.worldOffset, distFromSol);
 
     if (this.filter.showGalacticGrid) {
       this.galacticGrid.group.visible = true;
@@ -3959,6 +3989,7 @@ export class Stellata {
     this.coreMaskMaterial.dispose();
     this.disposeParticles({ removeFromScene: false });
     this.clouds?.dispose();
+    this.localGroupLayer?.dispose();
     this.galacticDisc.dispose();
     this.galacticGrid.dispose();
     this.orbitRingsLayer.dispose();

@@ -839,10 +839,15 @@ body.monochrome .hud-ring {
   stroke-width: 3px;
   stroke-linejoin: round;
 }
-/* Heliopause apex label (3re.5). Dimmer than .planet-label since it
-   names a chrome boundary rather than an interactive object — same
-   font/halo treatment so it reads as part of the same family. */
-.heliopause-label {
+/* Heliopause apex label (3re.5) + Local Group / Milky Way labels
+   (stellata-38m). Dimmer than .planet-label since these name chrome
+   boundaries / structural context rather than interactive objects —
+   same font/halo treatment so they read as part of one family. The
+   LG and heliopause labels share styling intentionally; if the two
+   families ever need to diverge, split them then. */
+.heliopause-label,
+.lg-label,
+#mw-label {
   font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.08em;
