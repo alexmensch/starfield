@@ -3,13 +3,49 @@ import type { Stellata } from './stellata';
 import { projectToScreen } from './overlay-project';
 
 const RADIUS_PX = 24;
+// Half a .toFixed(1) step — below this the attribute string round-trips to
+// the same value, so the browser would treat the write as a no-op anyway
+// (after re-parsing the attribute). Mirrors chart-labels.ts.
+const ATTR_DIRTY_PX = 0.05;
 
 export function createFocusRingOverlay(stellata: Stellata) {
   const ring = document.getElementById('focus-ring') as unknown as SVGCircleElement;
   const v = new THREE.Vector3();
 
-  const hide = () => { ring.style.display = 'none'; };
-  const show = () => { ring.style.display = ''; };
+  // Sentinel-init: NaN for numeric attrs (any real write differs by > 0.05)
+  // and a poison string for display (any 'none' / '' write differs from the
+  // poison). Without poison, the first show() after init would skip the
+  // write because the steady-state display is '' and the DOM default is '',
+  // but a parent stylesheet could resolve `pointer-events` / `visibility`
+  // differently — keep the first-frame write explicit.
+  let lastCx = NaN;
+  let lastCy = NaN;
+  let lastR = NaN;
+  let lastDisplay = '\0';
+
+  const setDisplay = (value: string) => {
+    if (value === lastDisplay) return;
+    ring.style.display = value;
+    lastDisplay = value;
+  };
+  const hide = () => setDisplay('none');
+  const show = () => setDisplay('');
+
+  const setCx = (value: number) => {
+    if (Math.abs(value - lastCx) < ATTR_DIRTY_PX) return;
+    ring.setAttribute('cx', value.toFixed(1));
+    lastCx = value;
+  };
+  const setCy = (value: number) => {
+    if (Math.abs(value - lastCy) < ATTR_DIRTY_PX) return;
+    ring.setAttribute('cy', value.toFixed(1));
+    lastCy = value;
+  };
+  const setR = (value: number) => {
+    if (Math.abs(value - lastR) < ATTR_DIRTY_PX) return;
+    ring.setAttribute('r', value.toFixed(1));
+    lastR = value;
+  };
 
   const syncVisibility = () => {
     if (stellata.getFocusedStar() === null) hide();
@@ -84,9 +120,9 @@ export function createFocusRingOverlay(stellata: Stellata) {
       sy = projected[1];
     }
 
-    if (ring.style.display === 'none') show();
-    ring.setAttribute('cx', sx.toFixed(1));
-    ring.setAttribute('cy', sy.toFixed(1));
-    ring.setAttribute('r', r.toFixed(1));
+    show();
+    setCx(sx);
+    setCy(sy);
+    setR(r);
   });
 }
