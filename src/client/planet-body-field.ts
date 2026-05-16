@@ -484,14 +484,34 @@ export class PlanetBodyField {
     const host = this.hosts.get(hostStarIdx);
     if (!host) return null;
     if (planetIdx < 0 || planetIdx >= host.count) return null;
+    return this.evalPlanetView(host, planetIdx, cameraPosLocal).appMag;
+  }
+
+  /**
+   * Geometry-and-photometry of one of the host's planets evaluated from
+   * a single viewer position in the local frame. Mirrors the planet
+   * vertex shader's reflected-light pipeline (phase factor → apparent
+   * magnitude) and produces the world-space planet position the picker
+   * projects to screen — single source for the math that both
+   * `appMagFor` (hover formatter feed) and `pick` (hover picker)
+   * consume, so the two can't drift on phase / albedo / radius logic.
+   *
+   * No null branch: caller has already checked the host attached state
+   * and the planetIdx range.
+   */
+  private evalPlanetView(
+    host: AttachedHost,
+    planetIdx: number,
+    cameraPosLocal: Readonly<THREE.Vector3>,
+  ): { appMag: number; planetX: number; planetY: number; planetZ: number; dVp: number } {
     const planet = host.ps.planets[planetIdx];
     const base = (host.startInstance + planetIdx) * 3;
-    const px = host.hostLocalPos.x + this.bufLocalRel[base + 0];
-    const py = host.hostLocalPos.y + this.bufLocalRel[base + 1];
-    const pz = host.hostLocalPos.z + this.bufLocalRel[base + 2];
-    const dvx = px - cameraPosLocal.x;
-    const dvy = py - cameraPosLocal.y;
-    const dvz = pz - cameraPosLocal.z;
+    const planetX = host.hostLocalPos.x + this.bufLocalRel[base + 0];
+    const planetY = host.hostLocalPos.y + this.bufLocalRel[base + 1];
+    const planetZ = host.hostLocalPos.z + this.bufLocalRel[base + 2];
+    const dvx = planetX - cameraPosLocal.x;
+    const dvy = planetY - cameraPosLocal.y;
+    const dvz = planetZ - cameraPosLocal.z;
     const dVp = Math.sqrt(dvx * dvx + dvy * dvy + dvz * dvz);
     const dhx = host.hostLocalPos.x - cameraPosLocal.x;
     const dhy = host.hostLocalPos.y - cameraPosLocal.y;
@@ -505,7 +525,16 @@ export class PlanetBodyField {
     );
     const phi = phaseFactorFor(dvx, dvy, dvz, dhx, dhy, dhz, planet.phaseCoefficients);
     const radiusPc = planet.radiusKm * KM_PC;
-    return planetApparentMagnitude(host.hostAbsmag, dVh, dVp, dHp, planet.albedo, radiusPc, phi);
+    const appMag = planetApparentMagnitude(
+      host.hostAbsmag,
+      dVh,
+      dVp,
+      dHp,
+      planet.albedo,
+      radiusPc,
+      phi,
+    );
+    return { appMag, planetX, planetY, planetZ, dVp };
   }
 
   /** Read-only handle to the PlanetSystem the field has cached for a
@@ -572,36 +601,9 @@ export class PlanetBodyField {
     const v = new THREE.Vector3();
     for (const host of this.hosts.values()) {
       for (let i = 0; i < host.count; i++) {
-        const planet = host.ps.planets[i];
-        const base = (host.startInstance + i) * 3;
-        const planetX = host.hostLocalPos.x + this.bufLocalRel[base + 0];
-        const planetY = host.hostLocalPos.y + this.bufLocalRel[base + 1];
-        const planetZ = host.hostLocalPos.z + this.bufLocalRel[base + 2];
-        const dvx = planetX - camPos.x;
-        const dvy = planetY - camPos.y;
-        const dvz = planetZ - camPos.z;
-        const dVp = Math.sqrt(dvx * dvx + dvy * dvy + dvz * dvz);
+        const { appMag, planetX, planetY, planetZ, dVp } =
+          this.evalPlanetView(host, i, camPos);
         if (dVp <= 0) continue;
-        const dhx = host.hostLocalPos.x - camPos.x;
-        const dhy = host.hostLocalPos.y - camPos.y;
-        const dhz = host.hostLocalPos.z - camPos.z;
-        const dVh = Math.sqrt(dhx * dhx + dhy * dhy + dhz * dhz);
-        const dHp = Math.sqrt(
-          this.bufLocalRel[base + 0] ** 2 +
-            this.bufLocalRel[base + 1] ** 2 +
-            this.bufLocalRel[base + 2] ** 2,
-        );
-        const phi = phaseFactorFor(dvx, dvy, dvz, dhx, dhy, dhz, planet.phaseCoefficients);
-        const radiusPc = planet.radiusKm * KM_PC;
-        const appMag = planetApparentMagnitude(
-          host.hostAbsmag,
-          dVh,
-          dVp,
-          dHp,
-          planet.albedo,
-          radiusPc,
-          phi,
-        );
         // Same kill condition as the planet vertex shader's soft-taper
         // discard: if the planet is more than half a mag below the
         // slider cutoff, the GPU emits no quad and the hover can't
@@ -614,6 +616,7 @@ export class PlanetBodyField {
         const screenY = (1 - v.y) * 0.5 * viewportH;
         const pxDist = Math.hypot(cursorX - screenX, cursorY - screenY);
 
+        const radiusPc = host.ps.planets[i].radiusKm * KM_PC;
         const physSize = physSizePx(radiusPc, dVp, viewportH, fovYRad);
         const dMEff = perceptualDmEff(appMag, maxAppMag, sizeSpan, sizeKnee);
         const appSize = perceptualAppSizePx(dMEff, sizeMin, sizeMax, sizeSpan);
