@@ -125,6 +125,18 @@ when the camera sits inside the disc (`||cam − GC|| <
 mwInsideDiscPc`), every label is suppressed (you can't usefully label
 extragalactic context while you're inside the galaxy yourself).
 
+Filter order, per candidate:
+
+1. Inside-MW guard fires globally (returns empty).
+2. Behind-camera test: candidate's camera-space `z ≥ 0` (Three.js
+   conventions; camera looks down `-Z`) → skip.
+3. Apparent-size floor: `2·atan(maxAxis / camToObj) × (h_px / fov_rad)
+   < minPixelSize` → skip.
+4. Viewport-overlap test: project the centroid to viewport coords,
+   pad by half pxSize, intersect with the viewport rectangle. Objects
+   whose centroid is off-screen but whose disc edge crosses the
+   viewport still count (the MW disc at grazing incidence).
+
 The ranking lives in the pure `computeVisibleLabels(candidates, params)`
 helper (testable in isolation). A per-frame handler — registered the
 first time `createMilkyWayLabel` or `createLocalGroupLabels` is called

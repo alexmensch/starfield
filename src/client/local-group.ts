@@ -272,8 +272,17 @@ export interface RankingParams {
   cameraAbs: THREE.Vector3;
   /** Galactic centre in absolute ICRS pc — pivot of the inside-MW guard. */
   galacticCentreAbs: THREE.Vector3;
+  /** Floating-origin offset — subtracted from each candidate's centerAbs
+   *  to get its position in the renderer's local world frame. */
+  worldOffset: THREE.Vector3;
+  /** Camera matrixWorldInverse — for renderer-local-world → camera-space. */
+  matrixWorldInverse: THREE.Matrix4;
+  /** Camera projectionMatrix — for camera-space → NDC. */
+  projectionMatrix: THREE.Matrix4;
   /** Camera vertical FOV in degrees. */
   fovDeg: number;
+  /** Viewport width in pixels. */
+  viewportWidthPx: number;
   /** Viewport height in pixels. */
   viewportHeightPx: number;
   /** Max number of labels visible at once. */
@@ -302,16 +311,30 @@ export const setMinPixelSize = (px: number): void => { minPixelSize = px; };
 export const getMwInsideDiscPc = (): number => mwInsideDiscPc;
 export const setMwInsideDiscPc = (pc: number): void => { mwInsideDiscPc = pc; };
 
+// Scratch vector for the pure helper. Lives at module scope so the
+// per-frame ranking pass allocates zero. Pure helper is single-
+// threaded (frame handler) so no aliasing concerns.
+const tmpProj = /*@__PURE__*/ new THREE.Vector3();
+
 /** Pure: given candidates + viewing params, return the set of IDs whose
  *  labels should be visible this frame.
  *
- *  Inside-MW guard fires first — when the camera sits inside the disc,
- *  every label is suppressed (you can't usefully label extragalactic
- *  context while you're inside the galaxy yourself). Otherwise, each
- *  candidate's apparent pixel diameter is computed via
- *  2·atan(maxAxis / cam-to-centre) × (h_px / fov_rad); anything below
- *  `minPixelSize` is dropped; the survivors are sorted descending and
- *  the top `topN` win. */
+ *  Filters in this order:
+ *  1. Inside-MW guard — when the camera sits inside the disc, every
+ *     label is suppressed (you can't usefully label extragalactic
+ *     context while you're inside the galaxy yourself).
+ *  2. Behind-camera test — candidate's camera-space z must be < 0
+ *     (camera looks down -Z by Three.js convention).
+ *  3. Sub-pixel floor — apparent pixel diameter
+ *     `2·atan(maxAxis / cam-to-centre) × (h_px / fov_rad)` must be ≥
+ *     `minPixelSize`.
+ *  4. Viewport-overlap test — the candidate's silhouette bounding
+ *     circle (projected centroid ± half pxSize) must intersect the
+ *     viewport rectangle. This lets big objects whose centroid is
+ *     off-screen but whose disc edge crosses the viewport still
+ *     compete for a label slot.
+ *
+ *  Survivors are sorted by descending pxSize; the top `topN` win. */
 export function computeVisibleLabels(
   candidates: readonly LabelCandidate[],
   params: RankingParams,
@@ -326,13 +349,31 @@ export function computeVisibleLabels(
   const pxPerRad = params.viewportHeightPx / ((params.fovDeg * Math.PI) / 180);
   const ranked: { id: string; px: number }[] = [];
   for (const cand of candidates) {
-    const dx = params.cameraAbs.x - cand.centerAbs.x;
-    const dy = params.cameraAbs.y - cand.centerAbs.y;
-    const dz = params.cameraAbs.z - cand.centerAbs.z;
-    const camToObj = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    // Move candidate to the renderer's local-world frame (subtract
+    // worldOffset) so the camera's matrices apply.
+    tmpProj.set(
+      cand.centerAbs.x - params.worldOffset.x,
+      cand.centerAbs.y - params.worldOffset.y,
+      cand.centerAbs.z - params.worldOffset.z,
+    );
+    tmpProj.applyMatrix4(params.matrixWorldInverse);
+    // Camera looks down -Z: anything at z ≥ 0 is behind the camera.
+    if (tmpProj.z >= 0) continue;
+    // Camera-space length = camera-to-object distance.
+    const camToObj = tmpProj.length();
     const angSizeRad = 2 * Math.atan(cand.maxAxis / Math.max(camToObj, 1));
     const pxSize = angSizeRad * pxPerRad;
     if (pxSize < params.minPixelSize) continue;
+    // Project to NDC, convert to viewport pixel coords.
+    tmpProj.applyMatrix4(params.projectionMatrix);
+    const screenX = (tmpProj.x + 1) * 0.5 * params.viewportWidthPx;
+    const screenY = (1 - tmpProj.y) * 0.5 * params.viewportHeightPx;
+    // Silhouette bounding-circle overlap with the viewport. Padding by
+    // half pxSize so a big object with off-screen centroid still
+    // counts when its edge crosses the screen.
+    const r = pxSize * 0.5;
+    if (screenX + r < 0 || screenX - r > params.viewportWidthPx) continue;
+    if (screenY + r < 0 || screenY - r > params.viewportHeightPx) continue;
     ranked.push({ id: cand.id, px: pxSize });
   }
   ranked.sort((a, b) => b.px - a.px);
@@ -362,10 +403,21 @@ function ensureRankingHandlerRegistered(stellata: Stellata): void {
     const c = stellata.camera.position;
     const w = stellata.getWorldOffset();
     tmpCamAbs.set(c.x + w.x, c.y + w.y, c.z + w.z);
+    // Make sure the camera's matrices reflect this frame's camera
+    // pose — controls.update() mutates camera.position but doesn't
+    // propagate to matrixWorld/matrixWorldInverse. The render call
+    // will refresh them anyway, but our ranking runs before render
+    // each frame (it's a 'frame' event handler), so we have to flush
+    // explicitly or we read last-frame's projection.
+    stellata.camera.updateMatrixWorld();
     visibleLabelIds = computeVisibleLabels(candidates, {
       cameraAbs: tmpCamAbs,
       galacticCentreAbs: GALACTIC_CENTRE_PC,
+      worldOffset: w,
+      matrixWorldInverse: stellata.camera.matrixWorldInverse,
+      projectionMatrix: stellata.camera.projectionMatrix,
       fovDeg: stellata.camera.fov,
+      viewportWidthPx: window.innerWidth,
       viewportHeightPx: window.innerHeight,
       topN,
       minPixelSize,

@@ -134,7 +134,8 @@ describe('LocalGroupLayer', () => {
 // Reference setup for the ranking helper — camera and reference values
 // chosen so each test reads cleanly without per-test arithmetic clutter.
 const REFERENCE_FOV_DEG = 60;
-const REFERENCE_VIEWPORT_PX = 800;
+const REFERENCE_VIEWPORT_W = 800;
+const REFERENCE_VIEWPORT_H = 600;
 
 function makeCandidate(o: Partial<LabelCandidate>): LabelCandidate {
   return {
@@ -144,15 +145,37 @@ function makeCandidate(o: Partial<LabelCandidate>): LabelCandidate {
   };
 }
 
-function makeParams(overrides: Partial<RankingParams> = {}): RankingParams {
+/** Build a fully-populated RankingParams from a camera eye + look-at
+ *  pair, with per-test tunable overrides. The camera looks at `target`
+ *  with a 60° FOV in a 800×600 viewport unless overridden. */
+function makeParams(
+  eye: THREE.Vector3,
+  target: THREE.Vector3,
+  overrides: Partial<RankingParams> = {},
+): RankingParams {
+  const cam = new THREE.PerspectiveCamera(
+    REFERENCE_FOV_DEG,
+    REFERENCE_VIEWPORT_W / REFERENCE_VIEWPORT_H,
+    0.01,
+    1e9,
+  );
+  cam.position.copy(eye);
+  cam.lookAt(target);
+  cam.updateMatrixWorld(true);
+  cam.matrixWorldInverse.copy(cam.matrixWorld).invert();
   return {
-    cameraAbs: overrides.cameraAbs ?? new THREE.Vector3(),
-    galacticCentreAbs: overrides.galacticCentreAbs ?? GALACTIC_CENTRE_PC,
-    fovDeg: overrides.fovDeg ?? REFERENCE_FOV_DEG,
-    viewportHeightPx: overrides.viewportHeightPx ?? REFERENCE_VIEWPORT_PX,
-    topN: overrides.topN ?? 5,
-    minPixelSize: overrides.minPixelSize ?? 6,
-    mwInsideDiscPc: overrides.mwInsideDiscPc ?? 10_000,
+    cameraAbs: eye,
+    galacticCentreAbs: GALACTIC_CENTRE_PC,
+    worldOffset: new THREE.Vector3(),
+    matrixWorldInverse: cam.matrixWorldInverse,
+    projectionMatrix: cam.projectionMatrix,
+    fovDeg: REFERENCE_FOV_DEG,
+    viewportWidthPx: REFERENCE_VIEWPORT_W,
+    viewportHeightPx: REFERENCE_VIEWPORT_H,
+    topN: 5,
+    minPixelSize: 6,
+    mwInsideDiscPc: 10_000,
+    ...overrides,
   };
 }
 
@@ -166,32 +189,28 @@ describe('computeVisibleLabels — global apparent-size ranking', () => {
   });
 
   it('inside-MW guard: empty result when camera is inside the disc threshold', () => {
-    // Camera within 1 pc of GC → well inside the 10 kpc default guard.
-    const cam = GALACTIC_CENTRE_PC.clone();
+    const eye = GALACTIC_CENTRE_PC.clone();
+    const target = eye.clone().add(new THREE.Vector3(1, 0, 0));
     const cands: LabelCandidate[] = [
-      makeCandidate({
-        id: 'mw', centerAbs: GALACTIC_CENTRE_PC, maxAxis: 15_000,
-      }),
-      makeCandidate({
-        id: 'lmc', centerAbs: new THREE.Vector3(15_000, 5_000, -42_000), maxAxis: 4_500,
-      }),
+      makeCandidate({ id: 'mw', centerAbs: GALACTIC_CENTRE_PC, maxAxis: 15_000 }),
+      makeCandidate({ id: 'lmc', centerAbs: new THREE.Vector3(15_000, 5_000, -42_000), maxAxis: 4_500 }),
     ];
-    const result = computeVisibleLabels(cands, makeParams({ cameraAbs: cam }));
+    const result = computeVisibleLabels(cands, makeParams(eye, target));
     expect(result.size).toBe(0);
   });
 
   it('outside the disc: ranks by apparent pixel size, returns top N', () => {
-    // Camera 50 kpc away from GC, looking at three candidates of
-    // wildly different sizes at the same distance. Largest wins.
-    const cam = new THREE.Vector3(50_000, 0, 0).add(GALACTIC_CENTRE_PC);
-    const ref = new THREE.Vector3(0, 0, 0).add(GALACTIC_CENTRE_PC);
+    // Camera 50 kpc behind GC along +X, looking at GC. Three candidates
+    // collocated AT GC with different sizes — largest wins.
+    const eye = new THREE.Vector3(50_000, 0, 0).add(GALACTIC_CENTRE_PC);
+    const target = GALACTIC_CENTRE_PC.clone();
     const cands: LabelCandidate[] = [
-      makeCandidate({ id: 'big', centerAbs: ref.clone(), maxAxis: 5_000 }),
-      makeCandidate({ id: 'mid', centerAbs: ref.clone(), maxAxis: 500 }),
-      makeCandidate({ id: 'small', centerAbs: ref.clone(), maxAxis: 50 }),
+      makeCandidate({ id: 'big', centerAbs: target.clone(), maxAxis: 5_000 }),
+      makeCandidate({ id: 'mid', centerAbs: target.clone(), maxAxis: 500 }),
+      makeCandidate({ id: 'small', centerAbs: target.clone(), maxAxis: 50 }),
     ];
-    const result = computeVisibleLabels(cands, makeParams({
-      cameraAbs: cam, topN: 2, minPixelSize: 0.01,
+    const result = computeVisibleLabels(cands, makeParams(eye, target, {
+      topN: 2, minPixelSize: 0.01,
     }));
     expect(result.size).toBe(2);
     expect(result.has('big')).toBe(true);
@@ -200,64 +219,121 @@ describe('computeVisibleLabels — global apparent-size ranking', () => {
   });
 
   it('sub-pixel cutoff drops candidates below minPixelSize', () => {
-    // Camera 1 Mpc out — a 50 pc dwarf subtends 0.6 arcsec ≈ ~0.005 px
-    // at 60° FOV / 800 px height. Below any reasonable floor.
-    const cam = new THREE.Vector3(1_000_000, 0, 0).add(GALACTIC_CENTRE_PC);
+    const eye = new THREE.Vector3(1_000_000, 0, 0).add(GALACTIC_CENTRE_PC);
+    const target = GALACTIC_CENTRE_PC.clone();
     const cands: LabelCandidate[] = [
-      makeCandidate({
-        id: 'tiny', centerAbs: GALACTIC_CENTRE_PC, maxAxis: 50,
-      }),
-      makeCandidate({
-        id: 'mw', centerAbs: GALACTIC_CENTRE_PC, maxAxis: 15_000,
-      }),
+      makeCandidate({ id: 'tiny', centerAbs: target.clone(), maxAxis: 50 }),
+      makeCandidate({ id: 'mw', centerAbs: target.clone(), maxAxis: 15_000 }),
     ];
-    const result = computeVisibleLabels(cands, makeParams({ cameraAbs: cam }));
-    // MW at 1 Mpc subtends ~1.7° ≈ 24 px, passes the 6 px default.
-    // Tiny dwarf doesn't.
+    const result = computeVisibleLabels(cands, makeParams(eye, target));
     expect(result.has('mw')).toBe(true);
     expect(result.has('tiny')).toBe(false);
   });
 
   it('topN=0 disables labels entirely', () => {
-    const cam = new THREE.Vector3(50_000, 0, 0).add(GALACTIC_CENTRE_PC);
+    const eye = new THREE.Vector3(50_000, 0, 0).add(GALACTIC_CENTRE_PC);
+    const target = GALACTIC_CENTRE_PC.clone();
     const cands: LabelCandidate[] = [
-      makeCandidate({ id: 'a', centerAbs: GALACTIC_CENTRE_PC, maxAxis: 5_000 }),
+      makeCandidate({ id: 'a', centerAbs: target.clone(), maxAxis: 5_000 }),
     ];
-    const result = computeVisibleLabels(cands, makeParams({
-      cameraAbs: cam, topN: 0,
-    }));
+    const result = computeVisibleLabels(cands, makeParams(eye, target, { topN: 0 }));
     expect(result.size).toBe(0);
   });
 
   it('mwInsideDiscPc=0 disables the inside-MW guard entirely', () => {
-    // Camera at GC. With guard=0, MW still has to pass apparent-size /
-    // and survive the sub-pixel filter — but it should NOT be empty
-    // purely because of the guard.
-    const cam = GALACTIC_CENTRE_PC.clone();
+    // Camera at GC. With guard=0, MW competes for a label slot via
+    // apparent size — at zero distance it definitely passes any
+    // reasonable sub-pixel floor.
+    const eye = GALACTIC_CENTRE_PC.clone();
+    const target = eye.clone().add(new THREE.Vector3(1, 0, 0));
     const cands: LabelCandidate[] = [
+      // Place the "MW" candidate slightly in front of the camera so
+      // the behind-camera filter doesn't reject it.
       makeCandidate({
-        id: 'mw', centerAbs: GALACTIC_CENTRE_PC, maxAxis: 15_000,
+        id: 'mw',
+        centerAbs: eye.clone().add(new THREE.Vector3(100, 0, 0)),
+        maxAxis: 15_000,
       }),
     ];
-    // Use camToObj=1 floor in computeVisibleLabels (so the angular
-    // size doesn't blow up to π at distance 0), then the candidate
-    // passes the sub-pixel filter trivially.
-    const result = computeVisibleLabels(cands, makeParams({
-      cameraAbs: cam, mwInsideDiscPc: 0,
+    const result = computeVisibleLabels(cands, makeParams(eye, target, {
+      mwInsideDiscPc: 0,
     }));
     expect(result.has('mw')).toBe(true);
   });
 
-  it('outside the disc but everything is sub-pixel → empty', () => {
-    // No mwInsideDisc trigger, but all candidates are too far away to
-    // earn a label.
-    const cam = new THREE.Vector3(50_000_000, 0, 0).add(GALACTIC_CENTRE_PC);
+  it('skips candidates behind the camera even when otherwise huge', () => {
+    // Camera looks down -Z. The "front" candidate is at -Z relative to
+    // the camera; the "behind" candidate is at +Z (behind). Without
+    // the behind-camera filter, both would compete for the top slot
+    // — the bug Alex flagged.
+    const eye = new THREE.Vector3(0, 0, 0).add(GALACTIC_CENTRE_PC);
+    const target = eye.clone().add(new THREE.Vector3(0, 0, -1));
     const cands: LabelCandidate[] = [
       makeCandidate({
-        id: 'mw', centerAbs: GALACTIC_CENTRE_PC, maxAxis: 15_000,
+        id: 'front',
+        centerAbs: eye.clone().add(new THREE.Vector3(0, 0, -10_000)),
+        maxAxis: 1_000,
+      }),
+      makeCandidate({
+        id: 'behind',
+        centerAbs: eye.clone().add(new THREE.Vector3(0, 0, 10_000)),
+        maxAxis: 1_000,
       }),
     ];
-    const result = computeVisibleLabels(cands, makeParams({ cameraAbs: cam }));
-    expect(result.size).toBe(0);
+    const result = computeVisibleLabels(cands, makeParams(eye, target, {
+      mwInsideDiscPc: 0,
+    }));
+    expect(result.has('front')).toBe(true);
+    expect(result.has('behind')).toBe(false);
+  });
+
+  it('skips candidates whose projected silhouette falls outside the viewport', () => {
+    // Camera at origin looking down -Z. "centre" sits straight ahead;
+    // "off-right" sits hugely far to the +X side at the same depth,
+    // so its centroid lands well outside the +X viewport edge AND its
+    // silhouette doesn't reach back into the viewport.
+    const eye = new THREE.Vector3(0, 0, 0).add(GALACTIC_CENTRE_PC);
+    const target = eye.clone().add(new THREE.Vector3(0, 0, -1));
+    const cands: LabelCandidate[] = [
+      makeCandidate({
+        id: 'centre',
+        centerAbs: eye.clone().add(new THREE.Vector3(0, 0, -1000)),
+        maxAxis: 50,
+      }),
+      makeCandidate({
+        id: 'off-right',
+        centerAbs: eye.clone().add(new THREE.Vector3(100_000, 0, -1000)),
+        maxAxis: 50,
+      }),
+    ];
+    const result = computeVisibleLabels(cands, makeParams(eye, target, {
+      mwInsideDiscPc: 0,
+    }));
+    expect(result.has('centre')).toBe(true);
+    expect(result.has('off-right')).toBe(false);
+  });
+
+  it('big object with off-screen centroid still counts when silhouette overlaps viewport', () => {
+    // Centroid sits a little past the +X edge of the viewport, but the
+    // object is large enough that its disc edge reaches back inside
+    // the screen — the MW-disc-at-grazing-incidence case. Without
+    // silhouette-padding, this candidate would be wrongly excluded.
+    const eye = new THREE.Vector3(0, 0, 0).add(GALACTIC_CENTRE_PC);
+    const target = eye.clone().add(new THREE.Vector3(0, 0, -1));
+    // At depth d=1000 with 60° vertical FOV / aspect 4:3, the
+    // half-width on screen is d·tan(30°)·(4/3) ≈ 770. A centroid at
+    // x=900 sits just past the right edge; an object of radius 500
+    // reaches back to x=400, well inside the viewport.
+    const cands: LabelCandidate[] = [
+      makeCandidate({
+        id: 'huge-edge',
+        centerAbs: eye.clone().add(new THREE.Vector3(900, 0, -1000)),
+        maxAxis: 500,
+      }),
+    ];
+    const result = computeVisibleLabels(cands, makeParams(eye, target, {
+      mwInsideDiscPc: 0,
+    }));
+    expect(result.has('huge-edge')).toBe(true);
   });
 });
