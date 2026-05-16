@@ -1,10 +1,13 @@
 # Galactic reference system
 
-Three layers anchor the local star clump against the Milky Way's geometry:
-the galactic disc outline (always-on midplane ring + bulge wireframe), the
-toggleable galactic coordinate sphere, and the HUD layer (Sol/GC arrows
-plus the OBSERVE-mode ring). Together they give the user "which way is
-out, and how far am I from the centre" without obscuring the local stars.
+Four layers anchor the local star clump against the Milky Way's geometry:
+the galactic disc outline (always-on midplane ring + bulge wireframe),
+the Local Group wireframe layer (Magellanic Clouds + dwarf satellites
+plus M31 / M33 / the M31 subgroup + outer-band dIrrs out to 2 Mpc —
+`docs/local-group.md`), the toggleable galactic coordinate sphere, and
+the HUD layer (Sol/GC arrows plus the OBSERVE-mode ring). Together they
+give the user "which way is out, how far am I from the centre, and what
+else is nearby at galactic scales" without obscuring the local stars.
 
 **Shared module** `galactic-coords.ts` exports `GAL_TO_ICRS` (Matrix4)
 and `GALACTIC_CENTRE_PC` (Vector3 at R₀ = 8.122 kpc), built from the
@@ -22,11 +25,28 @@ sits ~8 kpc *inside* the disc, not at its middle. Each ring is a basic
 `GAL_TO_ICRS` plus the GC offset; per frame `discGroup.position` is
 rebased to `-worldOffset` (via `.copy(worldOffset).negate()` on the
 group's own position vector so the shared `worldOffset` is never
-mutated). Opacity smoothsteps from 0 to 0.55 between **500 pc and 5 kpc**
-distance-from-Sol so the disc stays out of the way for local browsing
-and reveals as the user zooms out. In chart mode the layer is hidden
-entirely — a 15 kpc reference ring reads as visual noise on a paper-chart
-aesthetic, and the arrows + sphere already provide orientation.
+mutated). Opacity smoothsteps from 0 to 0.55 between
+`FADE_INNER_PC = 500` pc and `FADE_OUTER_PC = 5000` pc distance-from-Sol
+(constants hoisted to `galactic-fade.ts`, shared with the Local Group
+wireframe layer so both reveal in lockstep). In chart mode the layer is
+hidden entirely — a 15 kpc reference ring reads as visual noise on a
+paper-chart aesthetic, and the arrows + sphere already provide
+orientation.
+
+**Local Group wireframes** (`local-group.ts` + `local-group-loader.ts`,
+build pipeline `scripts/build-local-group.ts`) — LineLoop outlines for
+~120 confirmed-galaxy objects out to the 2 Mpc Local Group boundary:
+LMC (inclined disc), SMC (line-of-sight elongated triaxial), Sagittarius
+dSph, the classical dSphs (Sculptor / Draco / Fornax / Carina / Sextans /
+Leo I/II / Ursa Minor) and ultra-faints at ≤ 250 kpc; M31 (inclined
+disc), M33 (inclined disc), M 32 + NGC 205 + the M31 satellite subgroup,
+IC 10, NGC 6822, Leo A, IC 1613, WLM and the outer-band dIrrs beyond.
+Same fade curve as the disc — invisible during local browsing, present
+once the camera sits more than ~5 kpc from Sol. Labels (MW at the
+galactic centre, per-object for the largest LG members) bind through the
+shared `distance-gated-label.ts` engine; visibility is governed by the
+per-frame apparent-size ranking (top-N + sub-pixel floor + inside-MW
+guard). Full detail in `docs/local-group.md`.
 
 **Galactic coordinate sphere** (`galactic-grid.ts`, toggleable) —
 equator + 16 latitude rings every 10° (range −80° to +80°) + 36
@@ -117,21 +137,30 @@ zero orientation). Sol arrow also hidden when focused on Sol —
 pointing at yourself adds nothing.
 
 **Navigate-mode arrow fade.** As the user orbits close to a focused star,
-the rendered disc grows past the standard chevron length and the Sol/GC
-chevrons would otherwise sit on top of the disc. `Stellata.getNavigateArrowFadeAlpha`
-computes a single alpha each frame, applied uniformly to Sol arrow, GC
-arrow, and the distance-vector chevron so all three reference arrows
-fade together. The fade keys on the *actually drawn* shaft lengths
-(`HudOverlay.getDrawnLengths`, with one frame of lag — alpha read at the
-start of frame N uses values stored by frame N-1's render). Coverage is
-`(discRadius − shaftStart) / max(solDrawn, gcDrawn)`, where `discRadius`
-is the focal star's *peak-amplitude* disc radius (so a high-amplitude
+the rendered disc grows past the standard chevron length and the
+reference arrows would otherwise sit on top of the disc. The fade is
+*per-arrow*: the Sol/GC chevron pair shares one alpha keyed on
+`max(solDrawnLen, gcDrawnLen)` (so when one chevron is shortened by
+its target projecting close to the focused star the still-full sibling
+drives the threshold), and the distance-vector chevron computes its own
+alpha against its own drawn shaft length. The distance-vector is
+typically longer than the nominal Sol/GC chevrons — it spans focal star
+→ destination — so it outlasts them by design. The shared smoothstep
+lives in `src/client/arrow-fade.ts` as `focusedArrowFadeAlpha`, called
+from `HudOverlay.update` for Sol/GC and from `distance-vector-overlay`
+for the distance-vector. Each consumer feeds *this frame's* shaft
+length (no one-frame lag — eliminates the toggle-on flash that the
+prior last-frame-drawn-lengths design produced). Coverage is
+`(discRadius − shaftStart) / shaftLength`, where `discRadius` is the
+focal star's *peak-amplitude* disc radius (so a high-amplitude
 variable's pulsation doesn't oscillate the fade). Smoothstep eased over
-[0.5, 0.75]. During an in-flight observe transition the alpha holds the
-*source*-mode value (navigate alpha during enter, 1 during exit) and
-snaps to the destination on completion — visible alpha changes during
-the camera glide would render on top of the focal disc and look like
-chrome floating over the star, so we wait for the transition to finish.
+[0.5, 0.75] (`COVERAGE_FADE_START`, `COVERAGE_FADE_END`). During an
+in-flight observe transition the alpha holds the *source*-mode value
+(navigate-style disc-coverage fade during enter, alpha=1 during exit)
+and snaps to the destination on completion — visible alpha changes
+during the camera glide would render on top of the focal disc and look
+like chrome floating over the star, so we wait for the transition to
+finish.
 
 Diagnostic readout: the **Arrows** section of the unified debug panel
 (`debug.panel()`, or the hidden triple-tap-D affordance) shows live drawn

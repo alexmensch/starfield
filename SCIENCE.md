@@ -343,6 +343,93 @@ label anchoring: see `docs/solar-system.md` § Heliopause boundary.
 Implementation: `src/client/heliopause.ts` and
 `src/client/shaders/heliopause.{vert,frag}.glsl`.
 
+## Local Group wireframes
+
+The Local Group wireframe layer renders LineLoop outlines for confirmed-
+galaxy members out to the canonical 2 Mpc Local Group boundary —
+M31 + M33 + the Andromeda subgroup, plus the outer dIrrs (NGC 6822,
+IC 10, IC 1613, Leo A, WLM, Sextans A/B, …). Geometry is representational
+(stylised LineLoop ellipsoids and discs), but every position, distance,
+and structural parameter comes from peer-reviewed catalogues:
+
+**Primary catalogue**: Pace et al. 2024, *Local Volume Database*, Open
+Journal of Astrophysics, arXiv:2411.07424 (CC0). A frozen snapshot of
+the `dwarf_all` table lives at `data/local-group/lvdb-snapshot.csv` —
+909 rows covering the full Local Volume. The build pipeline
+(`scripts/build-local-group.ts`) filters to `confirmed_real = 1`,
+`confirmed_galaxy = 1`, and heliocentric distance ≤ 2 Mpc; ~121
+objects pass the filter.
+
+LVDB provides position (ra, dec, distance), projected half-light
+radius (`rhalf_physical`), ellipticity, and position angle for each
+dwarf. The build script projects these into a sky-plane oblate
+ellipsoid for the default rendering path:
+
+- `a_pc = rhalf_physical` (semi-major axis in the sky plane)
+- `b_pc = a_pc · (1 − ellipticity)` (sky-plane minor axis)
+- `c_pc = b_pc` (line-of-sight extent — axially symmetric around the
+  projected major axis; line-of-sight 3D extent is generally not
+  observationally constrained)
+- Orientation: long axis at the catalogued position angle east of
+  north; minor axes complete a right-handed basis with the line of
+  sight.
+
+**Hand-curated overrides** in `data/local-group/overrides.tsv` replace
+structural detail for the singular cases LVDB's summary row can't
+capture, and add the two major spirals LVDB's `dwarf_all` table omits:
+
+- **LMC (49.59 kpc)**: inclined disc at i = 32°, line of nodes PA =
+  135° (van der Marel & Kallivayalil 2014, *ApJ* 781, 121,
+  DOI 10.1088/0004-637X/781/2/121; distance Pietrzyński et al. 2019,
+  *Nature* 567, 200, DOI 10.1038/s41586-019-0999-4). Scale length 4.5
+  kpc, scale height 1 kpc.
+- **SMC (62.81 kpc)**: triaxial 1 : 1.33 : 1.61 with the longest axis
+  along line of sight (Subramanian & Subramaniam 2012, *ApJ* 744, 128,
+  DOI 10.1088/0004-637X/744/2/128; distance Graczyk et al. 2020,
+  *ApJ* 904, 13, DOI 10.3847/1538-4357/abbb2b). Resulting semi-axes
+  3.73 / 4.96 / 6.0 kpc.
+- **Sagittarius dSph (26.3 kpc)**: 3D axis allocation — LVDB's
+  projected ellipticity captures the sky-plane shape but not the
+  line-of-sight extent (Ibata et al. 1995, *AJ* 110, 632,
+  DOI 10.1086/192237).
+- **M 32 (~773 kpc)**: optical-extent ellipsoid 1.6 / 1.2 / 1.2 kpc
+  at PA 159°. LVDB's half-light radius of 105 pc renders sub-pixel
+  at LG distances; the override uses the broader optical/D₂₅ extent
+  cited in McConnachie 2012, *AJ* 144, 4
+  (DOI 10.1088/0004-6256/144/1/4).
+- **NGC 205 / M 110 (~835 kpc)**: 2.7 / 1.5 / 1.5 kpc at PA 170° from
+  the same McConnachie 2012 review — again the optical extent rather
+  than the small half-light radius.
+- **M31 / Andromeda (776 kpc)**: inclined disc at i = 77°, line of
+  nodes PA = 37°, 15 kpc disc radius × 500 pc thickness — the
+  structural parameters from the PAndAS survey (McConnachie et al.
+  2018, *ApJ* 868, 55, DOI 10.3847/1538-4357/aae8e7). Standalone row
+  (not in LVDB's `dwarf_all` table; the override carries RA, Dec,
+  distance directly).
+- **M33 / Triangulum (840 kpc)**: inclined disc at i = 54°, line of
+  nodes PA = 22°, 8.5 kpc disc radius × 400 pc thickness — distance
+  from the Cepheid measurement of Bonanos et al. 2006, *ApJ* 652, 313
+  (DOI 10.1086/508140). Standalone row.
+
+Per the project's `frozen-external-data` convention, refreshing the
+LVDB snapshot is an explicit manual step (curl + `npm run
+build:local-group --force`) — `npm run build` never touches the
+network.
+
+Per the `stellata-data-fidelity-principle`, hand-curated overrides are
+the exception, reserved for objects with well-studied departures that
+no canonical structural row resolves — or, in the case of M31 / M33,
+for the major spirals that the LVDB `dwarf_all` table excludes by
+construction. Other Local Volume dwarfs render from their LVDB row
+directly. As future LVDB snapshots land, the default-path objects
+update automatically; only the overrides need re-review against any
+structural-paper updates.
+
+Implementation: `src/client/local-group.ts`,
+`src/client/local-group-loader.ts`, `scripts/build-local-group.ts`,
+`scripts/build-local-group-pure.ts`. Rendering walkthrough in
+`docs/local-group.md`.
+
 ## Galactic coordinate system
 
 The shared module `src/client/galactic-coords.ts` exports two constants

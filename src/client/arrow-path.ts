@@ -9,6 +9,19 @@ import * as THREE from 'three';
 export const ARROW_HEAD_DEPTH_PX = 5;
 export const ARROW_HEAD_HALF_WIDTH_PX = 4;
 
+// Nominal apparent length of each Sol/GC and POI locator arrow on screen,
+// in CSS pixels. Shafts are built directly in screen space so this length
+// is exact regardless of how the arrow's 3D direction projects. Both the
+// HUD (hud-overlay) and the POI overlay (poi-overlay) shrink the shaft
+// per-frame so the tip never crowds the projected target's disc.
+export const ARROW_PIXEL_LENGTH = 110;
+
+// Halo gap between the active ring rim (focus-ring in navigate, HUD ring
+// in observe, per-POI ring on POIs) and any arrow shaft that attaches to
+// it. Same gap everywhere so the arrows visually detach from their ring
+// identically in every layer.
+export const RING_HALO_GAP_PX = 4;
+
 /**
  * Screen-space unit direction from screen centre to a world-space
  * direction vector, robust to behind-camera targets. Used by the HUD's

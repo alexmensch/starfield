@@ -6,13 +6,18 @@ import {
   ARROW_HEAD_DEPTH_PX,
   ARROW_LABEL_OFFSET_PX,
   ARROW_LABEL_PADDING_PX,
+  RING_HALO_GAP_PX,
 } from './arrow-path';
 import { applyFade, emptyFadeState, setNumAttr, setStrAttr, setStyle, setText } from './dirty-attr';
+import { focusedArrowFadeAlpha } from './arrow-fade';
+import { FOCUS_RING_RADIUS_PX } from './focus-ring-overlay';
 
-// Source-end offset — shaft starts past the focus ring (radius 24 px) so it
-// doesn't crowd the focused star's disc. Matches the Sol/GC arrow start
-// offset for visual consistency across all reference arrows.
-const SOURCE_OFFSET_PX = 28;
+// Source-end offset — shaft starts FOCUS_RING_RADIUS_PX + RING_HALO_GAP_PX
+// past the focused star so it doesn't crowd the disc. Same derivation the
+// HUD's Sol/GC arrows use for their navigate-mode shaft start, so any
+// future change to the focus-ring radius or the universal halo gap
+// propagates here automatically.
+const SOURCE_OFFSET_PX = FOCUS_RING_RADIUS_PX + RING_HALO_GAP_PX;
 // Cap how far past the viewport the clipped "off-screen" endpoint can extend,
 // so the generated SVG path doesn't contain absurd coordinates.
 const MAX_OFFSCREEN_FACTOR = 1.5;
@@ -54,9 +59,12 @@ export function createDistanceVectorOverlay(
   let lastLabelY = NaN;
   let lastWarpX = NaN;
   let lastWarpY = NaN;
-  // Fade state (opacity + pointer-events) shared with hud-overlay's
-  // Sol/GC arrows so the three reference arrows fade in unison under the
-  // same dirty-track / pointer-policy contract. See applyFade in dirty-attr.ts.
+  // Fade state (opacity + pointer-events). Shares the applyFade /
+  // dirty-track / pointer-policy contract with hud-overlay's Sol/GC
+  // arrows but computes its OWN alpha against its OWN drawn shaft
+  // length — the distance-vector is typically longer than Sol/GC and
+  // outlasts their fade by design (ml8 option B). See applyFade in
+  // dirty-attr.ts and focusedArrowFadeAlpha in arrow-fade.ts.
   const fadeState = emptyFadeState();
   let lastDistUiDisplay = '\0';
   // Cache getComputedTextLength keyed on the rendered string. SVG's
@@ -196,14 +204,35 @@ export function createDistanceVectorOverlay(
     lastWarpX = setNumAttr(warpText, 'x', warpX, lastWarpX);
     lastWarpY = setNumAttr(warpText, 'y', my, lastWarpY);
 
-    // Navigate-mode disc-coverage fade — drops opacity to 0 as the focused
-    // star's disc grows past the standard Sol/GC chevron length. Same alpha
-    // is applied to the HUD Sol/GC arrows via the shared applyFade so all
-    // three reference arrows fade in unison; computation lives in Stellata
-    // so consumers stay synchronised within a frame. Pointer-events on the
-    // ui group go through the same helper (suppressed below half-alpha so
-    // the barely-visible label + warp affordance don't accept stray clicks).
-    applyFade([line, lineBg, distUi], distUi, stellata.getNavigateArrowFadeAlpha(), fadeState);
+    // Per-arrow disc-coverage fade — drops opacity to 0 as the focused
+    // star's disc grows past THIS arrow's drawn shaft length. The
+    // distance-vector is typically longer than the nominal Sol/GC
+    // chevrons (it spans from focal star to its destination), so it
+    // outlasts them — by design, per the ml8 bead's option B. The HUD
+    // Sol/GC arrows compute their own shared alpha inside hud-overlay.ts
+    // against `max(solShaftLen, gcShaftLen)`.
+    //
+    // discRadius = 0 when the source end is a cloud (no stellar disc) —
+    // the fade is then alpha=1 (no disc-coverage problem to solve).
+    // Likewise alpha=1 in steady-state observe mode (focal star isn't
+    // centred so there's nothing to clear chrome out of the way for).
+    //
+    // Drawn-shaft length is the distance from shaftStart to tip (with
+    // SOURCE_OFFSET_PX inset at the source end and the destination's
+    // rendered silhouette inset at the tip end) — i.e., the visible line.
+    const discRadiusPx = fromStar !== null ? stellata.getFocusedStarPeakDiscRadiusPx() : 0;
+    const shaftDrawnLenPx = Math.hypot(tipX - shaftStartX, tipY - shaftStartY);
+    const arrowAlpha = focusedArrowFadeAlpha(
+      stellata.getCameraMode(),
+      stellata.getObserveTransitionProgress(),
+      discRadiusPx,
+      shaftDrawnLenPx,
+      SOURCE_OFFSET_PX,
+    );
+    // Pointer-events on the ui group go through the same helper
+    // (suppressed below half-alpha so the barely-visible label + warp
+    // affordance don't accept stray clicks).
+    applyFade([line, lineBg, distUi], distUi, arrowAlpha, fadeState);
   });
 }
 

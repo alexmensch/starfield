@@ -65,6 +65,16 @@
            orbit-ring heuristic so the label disappears in lockstep
            with the planet labels. -->
       <text id="heliopause-label" class="heliopause-label" text-anchor="start" dominant-baseline="hanging">Heliopause</text>
+      <!-- Milky Way label (stellata-38m). Anchored to the galactic-
+           centre projection; fades in once the camera is far enough
+           from GC that the disc reads as a whole structure. Same
+           SVG layer as the Local Group labels below. -->
+      <text id="mw-label" class="lg-label" text-anchor="start" dominant-baseline="hanging">Milky Way</text>
+      <!-- Per-object Local Group labels (LMC, SMC, Sagittarius, classical
+           dSphs). Pooled <text> children minted at runtime by main.ts
+           from the loaded local-group.json — one per labelled object
+           (those with a non-null labelThresholdPc). -->
+      <g id="lg-labels"></g>
       <circle id="focus-ring" class="focus-ring" />
     </svg>
 

@@ -28,6 +28,7 @@ import * as THREE from 'three';
 import type { Stellata } from './stellata';
 import { AU_PC } from './astronomy-constants';
 import { LABEL_OFFSET_PX } from './planet-labels';
+import { createDistanceGatedLabel } from './distance-gated-label';
 import heliopauseVert from './shaders/heliopause.vert.glsl?raw';
 import heliopauseFrag from './shaders/heliopause.frag.glsl?raw';
 
@@ -198,115 +199,33 @@ const SAMPLE_POINTS_LOCAL: readonly THREE.Vector3[] = (() => {
   return arr;
 })();
 
-// Screen-space direction the label sits along, as a unit vector.
-// (1, 1)/√2 — bottom-right diagonal in CSS coords (where +y is down).
-// Constant direction → the gap to the silhouette stays the same as
-// the camera orbits, instead of varying with the rotated ellipse's
-// bbox-vs-curve mismatch.
-const LABEL_DIR_X = Math.SQRT1_2;
-const LABEL_DIR_Y = Math.SQRT1_2;
-
-// Temporal smoothing factor — fraction of the gap to the new target
-// covered each frame. The support point is one of 62 discrete samples,
-// so it switches abruptly between neighbours as the camera rotates;
-// per-frame lerp turns those discrete jumps into a smooth chase. 0.25
-// settles in ~4-5 frames (~70 ms at 60 fps), short enough to feel
-// responsive on continuous camera motion.
-const LABEL_LERP = 0.25;
-
 /** Mount the SVG "Heliopause" label and bind per-frame projection.
- *  Visibility tracks the same predicate the planet labels use —
- *  `stellata.anyOrbitRingVisible()` — so the heliopause label appears
- *  whenever any planet ring would draw and vanishes in lockstep with
- *  the last planet label. The label hugs the bottom-right of the
- *  egg's projected silhouette at a constant 10 px gap, computed each
- *  frame from the silhouette's support point in that direction. */
+ *  Thin wrapper around the shared distance-gated label engine that
+ *  carries the heliopause-specific configuration: the 62-sample
+ *  ellipsoid silhouette, the bottom-right anchor direction, and the
+ *  visibility predicate gated on the same orbit-ring heuristic the
+ *  planet labels use — so the heliopause label appears whenever any
+ *  planet ring would draw and vanishes in lockstep with the last
+ *  planet label. */
 export function createHeliopauseLabel(stellata: Stellata): void {
-  const text = document.getElementById('heliopause-label') as unknown as SVGTextElement | null;
-  if (!text) return;
-
-  const tmp = new THREE.Vector3();
-  // Poison sentinel — `null` disagrees with both true and false so the
-  // first setVisible() call always writes through. The SVG element has
-  // no `display: none` in markup, so without this the camera-inside-
-  // bubble first-load path leaves the label visible at SVG (0,0).
-  let visible: boolean | null = null;
-  // Smoothed screen position, null while hidden so the next show
-  // snaps to the current target instead of sliding from the last
-  // visible position.
-  let smoothedX: number | null = null;
-  let smoothedY: number | null = null;
-  const setVisible = (on: boolean): void => {
-    if (on === visible) return;
-    text.style.display = on ? '' : 'none';
-    visible = on;
-    if (!on) {
-      smoothedX = null;
-      smoothedY = null;
-    }
-  };
-  setVisible(false);
-
-  stellata.on('frame', () => {
-    const ps = stellata.getFocusedPlanetSystem();
-    if (!ps || stellata.getMonochrome()) {
-      setVisible(false);
-      return;
-    }
-    // Unified rule with planet labels: hide the heliopause label
-    // whenever the orbit-ring visibility heuristic has collapsed all
-    // rings (far framings) — and, by the same predicate, keep it on
-    // while at least one planet label is up.
-    if (!stellata.anyOrbitRingVisible()) {
-      setVisible(false);
-      return;
-    }
-    const camera = stellata.camera;
-    const w = window.innerWidth;
-    const h = window.innerHeight;
-    // Find the silhouette's *support point* in the chosen offset
-    // direction — the surface sample whose screen position projects
-    // furthest along (LABEL_DIR_X, LABEL_DIR_Y). The label then sits
-    // at support + LABEL_OFFSET_PX in that same direction, giving a
-    // constant gap from the silhouette curve regardless of camera
-    // angle. (Bbox-corner placement gives a gap that varies because
-    // the ellipse curves inward from the corner — for a circle the
-    // corner is √2·r from centre while the curve is at r, so the
-    // gap balloons by ~41% relative to a true tangent offset.)
-    let bestProj = -Infinity;
-    let bestX = 0, bestY = 0;
-    for (const sample of SAMPLE_POINTS_LOCAL) {
-      tmp.copy(sample);
-      tmp.applyMatrix4(camera.matrixWorldInverse);
-      // Any sample behind the near plane = the egg straddles the
-      // camera (user inside or partially inside the bubble); the
-      // projection wraps around in that regime, so bail.
-      if (tmp.z >= -camera.near) {
-        setVisible(false);
-        return;
-      }
-      tmp.applyMatrix4(camera.projectionMatrix);
-      const sx = (tmp.x + 1) * 0.5 * w;
-      const sy = (1 - tmp.y) * 0.5 * h;
-      const proj = sx * LABEL_DIR_X + sy * LABEL_DIR_Y;
-      if (proj > bestProj) {
-        bestProj = proj;
-        bestX = sx;
-        bestY = sy;
-      }
-    }
-    const targetX = bestX + LABEL_OFFSET_PX * LABEL_DIR_X;
-    const targetY = bestY + LABEL_OFFSET_PX * LABEL_DIR_Y;
-    if (smoothedX === null || smoothedY === null) {
-      // First visible frame after a hide — snap.
-      smoothedX = targetX;
-      smoothedY = targetY;
-    } else {
-      smoothedX += (targetX - smoothedX) * LABEL_LERP;
-      smoothedY += (targetY - smoothedY) * LABEL_LERP;
-    }
-    setVisible(true);
-    text.setAttribute('x', smoothedX.toFixed(1));
-    text.setAttribute('y', smoothedY.toFixed(1));
+  createDistanceGatedLabel(stellata, {
+    elementId: 'heliopause-label',
+    sampleCount: SAMPLE_POINTS_LOCAL.length,
+    // SAMPLE_POINTS_LOCAL is already in Sol-anchored local pc — which
+    // *is* world space whenever the heliopause label can show (the
+    // predicate below requires a focused planet system, and Sol is the
+    // only planet-bearing host in v1 so worldOffset == Sol's absolute
+    // position). No worldOffset subtraction needed here.
+    getWorldSample: (i, out) => out.copy(SAMPLE_POINTS_LOCAL[i]),
+    visible: () =>
+      stellata.getFocusedPlanetSystem() !== null
+      && !stellata.getMonochrome()
+      && stellata.anyOrbitRingVisible(),
+    // Bottom-right diagonal (1, 1)/√2 in CSS y-down coords.
+    labelDir: { x: Math.SQRT1_2, y: Math.SQRT1_2 },
+    offsetPx: LABEL_OFFSET_PX,
+    // Settles in ~4-5 frames (~70 ms at 60 fps) — responsive but smooth
+    // enough to hide the support-point's discrete neighbour switching.
+    lerp: 0.25,
   });
 }
