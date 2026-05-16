@@ -73,6 +73,29 @@ const FRESNEL_POWER = 2.5;
 export const HELIOPAUSE_APEX_LOCAL_PC: Readonly<THREE.Vector3> =
   APEX_DIR_ICRS.clone().multiplyScalar(UPWIND_APEX_AU * AU_PC);
 
+/** Upwind apex distance from Sol in AU. The shell's upwind boundary
+ *  (Voyager 1 termination crossing, 2012-08-25). Surfaced for hover
+ *  labels so the readout is keyed off the same constant the geometry
+ *  is derived from rather than duplicated downstream. */
+export const HELIOPAUSE_UPWIND_APEX_AU = UPWIND_APEX_AU;
+
+/** Visibility predicate for the heliopause apex marker / label /
+ *  hover pick. Single source of truth shared between the SVG label
+ *  engine and the hover picker — drift between the two would make
+ *  hover diverge silently from what the user sees on screen.
+ *
+ *  Predicate: a planet system is focused, chart mode is off, and at
+ *  least one orbit ring is currently drawn. In v1 the only attached
+ *  planet host is Sol, so "focused planet system" effectively means
+ *  "Sol focused"; once stellata-bk5 attaches exoplanet hosts the
+ *  apex visibility will need to additionally require Sol-host —
+ *  flag at that bead, don't pre-empt here. */
+export function isHeliopauseApexVisible(stellata: Stellata): boolean {
+  return stellata.getFocusedPlanetSystem() !== null
+    && !stellata.getMonochrome()
+    && stellata.anyOrbitRingVisible();
+}
+
 // Group quaternion that rotates +Z onto the antiapex direction in ICRS.
 // Same value the Heliopause instance applies to its group; precomputed
 // at module load so the label overlay can pre-rotate its sample points
@@ -217,10 +240,7 @@ export function createHeliopauseLabel(stellata: Stellata): void {
     // only planet-bearing host in v1 so worldOffset == Sol's absolute
     // position). No worldOffset subtraction needed here.
     getWorldSample: (i, out) => out.copy(SAMPLE_POINTS_LOCAL[i]),
-    visible: () =>
-      stellata.getFocusedPlanetSystem() !== null
-      && !stellata.getMonochrome()
-      && stellata.anyOrbitRingVisible(),
+    visible: () => isHeliopauseApexVisible(stellata),
     // Bottom-right diagonal (1, 1)/√2 in CSS y-down coords.
     labelDir: { x: Math.SQRT1_2, y: Math.SQRT1_2 },
     offsetPx: LABEL_OFFSET_PX,

@@ -40,7 +40,11 @@ import {
 import { getPlanetSystem, hasPlanets, type PlanetSystem } from './planet-system';
 import { OrbitRingsLayer } from './orbit-rings-layer';
 import { PlanetBodyField } from './planet-body-field';
-import { Heliopause } from './heliopause';
+import {
+  Heliopause,
+  HELIOPAUSE_APEX_LOCAL_PC,
+  isHeliopauseApexVisible,
+} from './heliopause';
 import { R_SUN_PC } from './astronomy-constants';
 import {
   type FocusLerpState,
@@ -3466,6 +3470,35 @@ export class Stellata {
       clientY,
       pixelThreshold,
     );
+  }
+
+  // Hover-engine entry point for the heliopause apex (stellata-lo5.6).
+  // Fallback-only tier — the apex is a labelled point with no rendered
+  // disc. Gated on the same visibility predicate the SVG apex label
+  // uses (`isHeliopauseApexVisible`), so hover and label switch on/off
+  // together as the user changes focus, opens chart mode, or zooms past
+  // the orbit-ring fade. v1's heliopause label predicate already implies
+  // Sol focus (it requires a focused planet system, and Sol is the only
+  // attached host), so HELIOPAUSE_APEX_LOCAL_PC is the apex's world
+  // position whenever the predicate passes — no worldOffset adjust here.
+  pickHeliopauseHit(clientX: number, clientY: number, pixelThreshold = 14): HoverHit | null {
+    if (!isHeliopauseApexVisible(this)) return null;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const cursorX = clientX - rect.left;
+    const cursorY = clientY - rect.top;
+    const apex = HELIOPAUSE_APEX_LOCAL_PC;
+    const v = new THREE.Vector3(apex.x, apex.y, apex.z).project(this.camera);
+    if (v.z < -1 || v.z > 1) return null;
+    const screenX = (v.x + 1) * 0.5 * rect.width;
+    const screenY = (1 - v.y) * 0.5 * rect.height;
+    const pxDist = Math.hypot(cursorX - screenX, cursorY - screenY);
+    if (pxDist > pixelThreshold) return null;
+    const cam = this.camera.position;
+    const dx = apex.x - cam.x;
+    const dy = apex.y - cam.y;
+    const dz = apex.z - cam.z;
+    const cameraDistancePc = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    return { idx: 0, cameraDistancePc, tier: 'fallback' };
   }
 
   /** Cached PlanetSystem for an attached host, or null if the host
