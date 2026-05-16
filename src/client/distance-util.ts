@@ -30,8 +30,16 @@ export function fmtDist(pc: number): string {
   if (v < 10_000) return `${Math.round(v)} ${unit}`;
   // Thousands: "k" stays glued to the number ("10k pc"); strip trailing
   // ".0" so round values read cleanly.
-  const kStr = (v / 1000).toFixed(1).replace(/\.0$/, '');
-  return `${kStr}k ${unit}`;
+  if (v < 1_000_000) {
+    const kStr = (v / 1000).toFixed(1).replace(/\.0$/, '');
+    return `${kStr}k ${unit}`;
+  }
+  // Millions: kicks in at 1 Mpc / ~3.26 Mly. Without this tier, M31 at
+  // 776 kpc in ly mode renders as "2531k ly" — correct but harder to
+  // parse than "2.53M ly". Two decimals so 1.5 Mpc shows as "1.5M pc"
+  // (trailing zeros stripped) rather than "2M pc" (lossy round).
+  const mStr = (v / 1_000_000).toFixed(2).replace(/\.?0+$/, '');
+  return `${mStr}M ${unit}`;
 }
 
 // Pc/ly above AU_SWITCH_PC (~0.01 pc ≈ 2063 AU); AU below. The toggle
