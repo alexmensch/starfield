@@ -47,6 +47,19 @@ import { type ArrivalState, newArrival, shiftArrivalWaypoints, tickArrival } fro
 import { shiftWarpWaypoints } from './warp-pure';
 import type { FocusTarget } from './focus-target';
 import { chartPlateauDistancePc } from './chart-disc-pure';
+import {
+  recordLastWarp,
+  warpArrivalEaseFn,
+  warpChartPhase3Alpha,
+  warpChartPhase3ScalingEnabled,
+  warpChartPlateauMargin,
+  warpFlyTKMs,
+  warpFlyTMaxMs,
+  warpFlyTMinMs,
+  warpMidFlyRecentreFrac,
+  warpObserveTransitionMs,
+  warpReorientMs,
+} from './warp-tuning';
 import { EventBus } from './event-bus';
 
 export type MagPresetName = 'naked-eye' | 'binoculars' | 'all';
@@ -451,6 +464,19 @@ interface WarpState {
   // to its full `durationMs` — the legacy navigate / non-chart-mode
   // observe behaviour.
   chartPlateauDist: number | null;
+  // Set the frame the chart-mode plateau-trigger fires (Fly → phase 3
+  // pivot). Used by the warp-tuning debug readout and surfaced in
+  // `recordLastWarp` at finishWarp time. Independent of
+  // `chartPlateauDist` being non-null — a warp that's in chart mode but
+  // never reaches plateau (e.g. the user skips it before entering the
+  // plateau zone) leaves this false.
+  chartPlateauTriggered: boolean;
+  // True when the plateau-trigger fired AND the debug panel's
+  // "chart phase-3 duration scaling" knob was enabled at that moment,
+  // so `state.postArrivalMs` was scaled by `1 + α·log10(d_trigger /
+  // endOffset)` instead of staying at the shipped `OBSERVE_TRANSITION_MS`
+  // default. Readout-only flag for the debug summary.
+  chartPhase3Scaled: boolean;
 }
 
 type Target = { kind: 'star'; idx: number } | { kind: 'cloud'; idx: number };
@@ -1172,6 +1198,52 @@ export class Stellata {
   getMonochrome(): boolean { return this.monochrome; }
   getWarpActive(): boolean { return this.warpState !== null; }
 
+  /** Read-only snapshot of in-flight warp state for the debug-panel
+   *  warp tuning readout. Returns null when no warp is active. Re-derives
+   *  `u` from elapsed-in-phase so callers don't need access to the
+   *  ArrivalState internals. */
+  getWarpPhase(): {
+    kind: 'reorient' | 'fly' | 'post-arrival' | 'idle';
+    elapsedMs: number;
+    totalMs: number;
+    u: number;
+    recenteredToDest: boolean;
+    chartPlateauDist: number | null;
+    chartPlateauTriggered: boolean;
+  } | null {
+    const w = this.warpState;
+    if (!w) return null;
+    const elapsed = performance.now() - w.startTimeMs;
+    if (elapsed < w.reorientMs) {
+      const u = elapsed / w.reorientMs;
+      return {
+        kind: 'reorient', elapsedMs: elapsed, totalMs: w.reorientMs, u,
+        recenteredToDest: w.recenteredToDest,
+        chartPlateauDist: w.chartPlateauDist,
+        chartPlateauTriggered: w.chartPlateauTriggered,
+      };
+    }
+    const flyElapsed = elapsed - w.reorientMs;
+    if (flyElapsed < w.durationMs) {
+      const u = w.durationMs > 0 ? flyElapsed / w.durationMs : 1;
+      return {
+        kind: 'fly', elapsedMs: flyElapsed, totalMs: w.durationMs, u,
+        recenteredToDest: w.recenteredToDest,
+        chartPlateauDist: w.chartPlateauDist,
+        chartPlateauTriggered: w.chartPlateauTriggered,
+      };
+    }
+    const postElapsed = flyElapsed - w.durationMs;
+    const u = w.postArrivalMs > 0 ? Math.min(1, postElapsed / w.postArrivalMs) : 1;
+    return {
+      kind: 'post-arrival', elapsedMs: postElapsed,
+      totalMs: w.postArrivalMs, u,
+      recenteredToDest: w.recenteredToDest,
+      chartPlateauDist: w.chartPlateauDist,
+      chartPlateauTriggered: w.chartPlateauTriggered,
+    };
+  }
+
   // Warp endpoints + destination identity for read-only consumers (e.g.
   // the scale-bar focus indicator) that need to react to the in-flight
   // warp without subscribing to per-frame state. Returns null when no
@@ -1795,6 +1867,7 @@ export class Stellata {
         parkDist,
         FOCUS_LERP_MS,
         performance.now(),
+        warpArrivalEaseFn(),
       ));
       // controls.enabled stays true — see focusStar's comment.
     } else if (eyeDist > parkDist) {
@@ -2043,6 +2116,7 @@ export class Stellata {
             target: { center: this.controls.target, parkDist: minDist },
             startMs: unfocusStartMs,
             durationMs: OBSERVE_TRANSITION_MS,
+            easeUFn: warpArrivalEaseFn(),
           }),
         };
         this.bus.emit('state');
@@ -2341,6 +2415,7 @@ export class Stellata {
         parkDist,
         FOCUS_LERP_MS,
         performance.now(),
+        warpArrivalEaseFn(),
       ));
       // Deliberately do NOT toggle controls.enabled. The animate-loop
       // dispatcher routes through updateFocusLerp before
@@ -2608,10 +2683,20 @@ export class Stellata {
     // runs instead of NaN-ing out.
     const dir0 = mag0 > 1e-9 ? radial.divideScalar(mag0) : dirBack.clone();
 
+    // Warp duration / phase-3 / reorient durations + arrival curve are
+    // read from the warp-tuning module so the debug panel can override
+    // them live (next warp picks up the change). When the panel is closed
+    // or its sliders untouched the getters return the shipped defaults
+    // (`WARP_T_*`, `WARP_REORIENT_MS`, `OBSERVE_TRANSITION_MS`,
+    // cubic-Hermite), so behaviour is identical to a build without the
+    // panel.
+    const reorientMs = warpReorientMs();
     const durationMs = Math.min(
-      WARP_T_MAX_MS,
-      WARP_T_MIN_MS + WARP_T_K_MS * Math.log10(1 + distPc),
+      warpFlyTMaxMs(),
+      warpFlyTMinMs() + warpFlyTKMs() * Math.log10(1 + distPc),
     );
+    const postArrivalMs = returnToObserve ? warpObserveTransitionMs() : 0;
+    const arrivalEaseFn = warpArrivalEaseFn();
 
     this.controls.enabled = false;
     // Point orbit-target at the destination from the moment the warp begins
@@ -2635,17 +2720,21 @@ export class Stellata {
     // (chart-mode.ts auto-clears on observe→navigate), and the plateau
     // only matters when the destination disc is magnitude-driven —
     // both conditions captured here so the Fly phase doesn't have to
-    // re-derive them per frame.
-    const chartPlateauDist =
+    // re-derive them per frame. `warpChartPlateauMargin()` lets the
+    // debug panel scale the trigger distance — >1 fires earlier
+    // (farther out), <1 fires later (deeper into the plateau).
+    const rawPlateauDist =
       returnToObserve && this.filter.chart
         ? dest.chartPlateauDistance(
             this.material.uniforms.uChartMagBright.value as number,
           )
         : null;
+    const chartPlateauDist =
+      rawPlateauDist !== null ? rawPlateauDist * warpChartPlateauMargin() : null;
     const warpStartMs = performance.now();
     this.warpState = {
       startTimeMs: warpStartMs,
-      reorientMs: WARP_REORIENT_MS,
+      reorientMs,
       durationMs,
       // Post-arrival slerp only runs when we're returning to OBSERVE.
       // Navigate-mode arrival re-engages TrackballControls, whose update()
@@ -2655,7 +2744,7 @@ export class Stellata {
       // jarring snap-back. Skipping the slerp on navigate keeps the
       // landing visually consistent with how navigate-mode focuses
       // already work.
-      postArrivalMs: returnToObserve ? OBSERVE_TRANSITION_MS : 0,
+      postArrivalMs,
       A,
       dir0,
       mag0,
@@ -2674,10 +2763,13 @@ export class Stellata {
         pStart,
         pEnd,
         target: { center: B, parkDist: endOffset },
-        startMs: warpStartMs + WARP_REORIENT_MS,
+        startMs: warpStartMs + reorientMs,
         durationMs,
+        easeUFn: arrivalEaseFn,
       }),
       chartPlateauDist,
+      chartPlateauTriggered: false,
+      chartPhase3Scaled: false,
     };
     // Planet bodies belong to the global PlanetBodyField — destination
     // hosts already render whenever the camera is within their cull
@@ -2698,6 +2790,20 @@ export class Stellata {
   private finishWarp() {
     const state = this.warpState;
     if (!state) return;
+    // Record warp summary for the debug-panel readout BEFORE clearing
+    // state. Cheap (one object write to a module-level slot). Source
+    // identity comes from the FocusTarget snapshotted at startWarp time;
+    // total ms is wall-clock since warp start.
+    recordLastWarp({
+      sourceKind: state.source.kind,
+      sourceIdx: state.source.idx,
+      destKind: state.dest.kind,
+      destIdx: state.dest.idx,
+      totalMs: performance.now() - state.startTimeMs,
+      plateauFired: state.chartPlateauTriggered,
+      plateauScaledPhase3: state.chartPhase3Scaled,
+      plateauDistPc: state.chartPlateauDist,
+    });
     const Bout = this._tmpAnimateLocal;
     const B = state.dest.localPositionInto(Bout) ? Bout.clone() : null;
     if (!B) {
@@ -3971,7 +4077,11 @@ export class Stellata {
     const ax = tmp.x - state.A.x, ay = tmp.y - state.A.y, az = tmp.z - state.A.z;
     const abDist2 = ax * ax + ay * ay + az * az;
     // Past trajectory midpoint? Fall through to the recentre; else bail.
-    if (cbDist2 >= 0.25 * abDist2) return;
+    // The fraction (0.25 = midpoint by default) is tunable via the warp
+    // debug panel — lower fires the recentre later (less of Fly under
+    // the dest-local frame), higher fires it earlier.
+    const frac = warpMidFlyRecentreFrac();
+    if (cbDist2 >= frac * frac * abDist2) return;
     // `anchorInto` overwrites `tmp` from local-frame to absolute-frame.
     if (!state.dest.anchorInto(tmp)) return;
     const delta = this.recenterOrigin(tmp);
@@ -4093,6 +4203,7 @@ export class Stellata {
       // distance of interest).
       if (
         state.chartPlateauDist !== null &&
+        !state.chartPlateauTriggered &&
         state.recenteredToDest &&
         haveDest &&
         this.camera.position.distanceToSquared(out) <=
@@ -4108,6 +4219,24 @@ export class Stellata {
         // its cached `pEnd` doesn't need updating.
         state.pEnd.copy(this.camera.position);
         state.durationMs = flyElapsed;
+        state.chartPlateauTriggered = true;
+        // Optional chart phase-3 duration scaling (debug-panel knob).
+        // For long warps where the plateau distance is large compared
+        // to `endOffset`, the default fixed-duration phase 3 sweeps a
+        // lot of distance in 1200 ms which can feel too fast. Scale by
+        // `1 + α·log10(d_trigger / endOffset)` so longer plateau-to-park
+        // hauls get proportionally more time. Default-off; the knob
+        // reads from warp-tuning at the trigger moment so the user can
+        // dial it in across smoke warps.
+        if (warpChartPhase3ScalingEnabled()) {
+          const dTrigger = this.camera.position.distanceTo(out);
+          if (dTrigger > state.endOffset && state.endOffset > 0) {
+            const alpha = warpChartPhase3Alpha();
+            const scale = 1 + alpha * Math.log10(dTrigger / state.endOffset);
+            state.postArrivalMs *= Math.max(1, scale);
+            state.chartPhase3Scaled = true;
+          }
+        }
       }
       return;
     }

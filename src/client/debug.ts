@@ -5,6 +5,7 @@ import { buildStarSection } from './star-tuning';
 import { buildPerfSection } from './perf-hud';
 import { buildPinSection } from './pin-debug-hud';
 import { buildArrowSection } from './arrow-fade-debug-hud';
+import { buildWarpSection } from './warp-tuning';
 import {
   type DecodedView,
   type IdMaps,
@@ -93,6 +94,7 @@ export function setupDebug(stellata: Stellata, idMaps: IdMaps): DebugTools {
       mountLiveSection(built.body, 'Perf', 'perf', buildPerfSection()),
       mountLiveSection(built.body, 'Pin', 'pin', buildPinSection(stellata)),
       mountLiveSection(built.body, 'Arrows', 'arrows', buildArrowSection(stellata)),
+      mountLiveSection(built.body, 'Warp', 'warp', buildWarpSection(stellata)),
     );
 
     document.body.appendChild(panel);

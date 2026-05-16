@@ -35,6 +35,12 @@ export interface ArrivalState {
   d0: number;
   dEnd: number;
   dir: THREE.Vector3;
+  /** The eased-u curve evaluated per tick. Defaults to cubic-Hermite
+   *  smoothstep at construction time when the caller omits `easeUFn` in
+   *  `NewArrivalOpts`. Captured here (not re-read per tick) so a
+   *  mid-flight knob change on the debug panel doesn't mutate the
+   *  in-flight curve — next warp picks up the change. */
+  easeUFn: (u: number) => number;
 }
 
 export interface NewArrivalOpts {
@@ -49,6 +55,12 @@ export interface NewArrivalOpts {
   target: ArrivalTarget;
   startMs: number;
   durationMs: number;
+  /** Optional eased-u curve. Omit for the shipped cubic-Hermite default
+   *  (`3u² − 2u³`). Pass a different function to swap the perceptual
+   *  shape — see `arrival-curves.ts` for the canonical alternatives.
+   *  Frozen into the returned `ArrivalState` at construction time so
+   *  the per-tick math is bit-stable across the lerp's lifetime. */
+  easeUFn?: (u: number) => number;
 }
 
 /** Build an `ArrivalState`. Inputs are cloned so callers can mutate
@@ -81,6 +93,7 @@ export function newArrival(opts: NewArrivalOpts): ArrivalState {
     d0,
     dEnd,
     dir,
+    easeUFn: opts.easeUFn ?? easeArrival,
   };
 }
 
@@ -88,6 +101,8 @@ export function newArrival(opts: NewArrivalOpts): ArrivalState {
 // `f(0) = 0`, `f(1) = 1`, `f'(0) = f'(1) = 0`. See
 // `docs/camera-arrival.md` § Profile for why this replaced the legacy
 // piecewise quadratic (one polynomial, C¹-continuous, smooth jerk at 0.5).
+// Default for `NewArrivalOpts.easeUFn`; `arrival-curves.ts` mirrors this
+// alongside the alternate shapes the debug panel exposes.
 function easeArrival(u: number): number {
   return u * u * (3 - 2 * u);
 }
@@ -143,7 +158,7 @@ export function tickArrival(
     if (state.qStart && state.qEnd) camera.quaternion.copy(state.qEnd);
     return { done: true };
   }
-  const f = easeArrival(u);
+  const f = state.easeUFn(u);
   // d(u) = d0 · (dEnd/d0)^f. Outbound (d0 < dEnd) and inbound (d0 > dEnd)
   // share the same formula — the sign of log(dEnd/d0) carries the camera
   // the correct direction. When d0 == dEnd the ratio is 1, d stays

@@ -60,6 +60,7 @@ export function newFocusLerpFrom(
   parkDist: number,
   durationMs: number,
   startTimeMs: number,
+  easeUFn?: (u: number) => number,
 ): FocusLerpState {
   const offset = new THREE.Vector3().subVectors(cameraPos, target);
   if (offset.lengthSq() === 0) offset.set(0, 0, 1);
@@ -83,6 +84,7 @@ export function newFocusLerpFrom(
     target: { center: target, parkDist },
     startMs: startTimeMs,
     durationMs,
+    easeUFn,
   });
 }
 
