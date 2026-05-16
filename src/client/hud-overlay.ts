@@ -104,13 +104,13 @@ export interface HudUpdateOpts {
   /** Eased progress of the in-flight observe transition, or null. Driven
    *  by Stellata.getObserveTransitionProgress(). */
   transition: { f: number; kind: 'enter' | 'exit' } | null;
-  /** Focused star's peak-amplitude rendered disc diameter in CSS pixels,
+  /** Focused star's peak-amplitude rendered disc *radius* in CSS pixels,
    *  or 0 when no star is focused. The Sol/GC chevrons fade together once
    *  the disc grows past `max(solShaftLen, gcShaftLen)` — see
    *  arrow-fade.ts. Computing alpha from this-frame's shaft geometry +
    *  this-frame's disc size eliminates the one-frame lag that caused the
    *  ml8 toggle-on flash. */
-  focusedDiscPx: number;
+  focusedDiscRadiusPx: number;
   /** Viewport size in CSS pixels. */
   w: number;
   h: number;
@@ -220,7 +220,7 @@ export class HudOverlay {
     }
 
     const { camera, target, worldOffset, focusedLocal, hideSolArrow,
-            sizeMaxPx, cameraMode, transition, focusedDiscPx, w, h } = opts;
+            sizeMaxPx, cameraMode, transition, focusedDiscRadiusPx, w, h } = opts;
 
     // Sol's local-frame position is `-worldOffset` (Sol is the catalog
     // origin); GC is the absolute GC vector minus the same offset.
@@ -303,7 +303,7 @@ export class HudOverlay {
     // shaft length (option B from the ml8 bead).
     const refLen = Math.max(this.solDrawnLen, this.gcDrawnLen);
     const alpha = focusedArrowFadeAlpha(
-      cameraMode, transition, focusedDiscPx * 0.5, refLen, shaftStartPx,
+      cameraMode, transition, focusedDiscRadiusPx, refLen, shaftStartPx,
     );
     this.lastFadeAlpha = alpha;
     if (this.solDrawnLen > 0) {

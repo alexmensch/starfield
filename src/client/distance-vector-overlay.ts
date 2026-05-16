@@ -216,7 +216,7 @@ export function createDistanceVectorOverlay(
     // Drawn-shaft length is the distance from shaftStart to tip (with
     // SOURCE_OFFSET_PX inset at the source end and the destination's
     // rendered silhouette inset at the tip end) — i.e., the visible line.
-    const discRadiusPx = fromStar !== null ? stellata.getFocusedStarPeakDiscPx() * 0.5 : 0;
+    const discRadiusPx = fromStar !== null ? stellata.getFocusedStarPeakDiscRadiusPx() : 0;
     const shaftDrawnLenPx = Math.hypot(tipX - shaftStartX, tipY - shaftStartY);
     const arrowAlpha = focusedArrowFadeAlpha(
       stellata.getCameraMode(),
