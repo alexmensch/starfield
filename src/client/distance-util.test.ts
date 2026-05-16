@@ -108,7 +108,12 @@ describe('distance-util / fmtDist (pc)', () => {
   it('is monotonically non-decreasing across the formatted-tier boundaries', () => {
     // Across each tier change, larger pc still produces a value-equal-or-
     // greater displayed magnitude — the units don't lie about ordering.
-    const samples = [0.001, 0.005, 0.01, 0.5, 1, 10, 99, 100, 9999, 10000, 50000];
+    // The list covers every tier boundary, including the k → M crossover
+    // at 1 Mpc that the 1ui expansion introduced.
+    const samples = [
+      0.001, 0.005, 0.01, 0.5, 1, 10, 99, 100, 9999,
+      10000, 50000, 999_999, 1_000_000, 1_500_000, 2_000_000,
+    ];
     for (let i = 1; i < samples.length; i++) {
       const a = fmtDist(samples[i - 1]);
       const b = fmtDist(samples[i]);
