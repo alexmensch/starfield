@@ -54,15 +54,13 @@ on whether the warp re-enters OBSERVE on arrival:
    Camera position rides the line from `pStart` (= A + dirBack ×
    sourceOffset) to `pEnd` (= B − forward × endOffset), delegated to
    `camera-motion.ts`'s `tickArrival` so the Fly phase shares the
-   arrival-curve resolved by `warpArrivalEaseFn()` with focus-park and
-   unfocus. Default is cubic-Hermite log-d. The trapezoidal alternative
-   (warp-tuning panel) gives a constant-slope cruise band and a short
-   decel window. The hybrid alternative splits the warp into a
-   linear-d outer regime (rocket-impulse parallax-driven approach) and
-   an angular-size inner regime (smooth perceptual landing on
-   destination disc growth). See `docs/camera-arrival.md` § Profile,
-   § Trapezoidal alternative, and § Hybrid linear-d + angular-size
-   profile. `camera.lookAt(B)` throughout.
+   shipped arrival profile with focus-park and unfocus. The profile is
+   the **hybrid two-regime curve** — linear-d piecewise-quad outer
+   (rocket-impulse, parallax-driven) → quintic smootherstep on
+   angular-size inner (smooth perceptual landing on disc growth), with
+   a single tunable seam-distance multiplier. See
+   `docs/camera-arrival.md` § Profile for the geometry and the
+   panel-knob wiring. `camera.lookAt(B)` throughout.
 
    **Mid-Fly floating-origin recentre.** The moment the camera passes
    the trajectory midpoint (`|camera − B|² < ¼·|B − A|²` — the

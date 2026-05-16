@@ -63,227 +63,142 @@ the easing form differs from the helper's.
 
 ## Profile
 
-For all park-arrivals (focus-park, warp Fly, unfocus), evolve **camera
-distance from target centre** as a smoothstep over `log d`:
+The shipped arrival profile is a **hybrid two-regime curve**: linear-d
+piecewise-quadratic in the far approach (parallax-driven), quintic
+smootherstep on angular size in the close approach
+(angular-growth-driven), joined at a seam where both regimes arrive at
+zero velocity. The hybrid is the ONLY user-facing arrival profile;
+`arrival-curves.ts` keeps a cubic-Hermite log-d smoothstep internally as
+a fallback for kinds without a geometric radius (clouds) and for
+outbound trajectories (unfocus), where the regime split doesn't apply.
 
-```
-u       = clamp((nowMs − startMs) / durationMs, 0, 1)
-u_eased = 3·u² − 2·u³                          // cubic Hermite smoothstep
-d(u)    = d0 · (d_end / d0)^u_eased
-```
+### Why two regimes
 
-The new helper adopts the cubic Hermite form `3u² − 2u³` (one
-polynomial, C¹-continuous everywhere, identical to GLSL's `smoothstep`)
-rather than the legacy piecewise quadratic. The shape difference is
-invisible — both have `f(0)=0`, `f(1)=1`, `f(0.5)=0.5`, and zero
-derivative at the endpoints; they differ by at most ~3% at the
-quartiles. Adopting cubic Hermite collapses the two-branch
-implementation to a single line and gives smooth jerk at `u=0.5` where
-the piecewise variant has a kink.
-
-with `d0 = |pStart − target.center|`, `d_end = parkDist`. Camera
-position rides the line through `target.center` and `pStart`:
-
-```
-dir   = (pStart − target.center).normalize()
-pos   = target.center + dir · d(u)
-```
-
-### Properties
-
-- **Endpoints.** `d(0) = d0` exactly; `d(1) = d_end` exactly.
-  Cubic-Hermite has `f(0) = 0`, `f(1) = 1`.
-- **Zero velocity at the endpoints.** `f'(0) = f'(1) = 0`, so
-  `dd/du → 0` at both ends — the camera ramps up smoothly from rest at
-  the start and arrests smoothly at parkDist.
-- **Uniform log-rate at the midpoint.** `f'(0.5) = 1.5`, giving peak
-  octaves-per-second of `1.5·log(d_end/d0)/durationMs`. For Sol arrival
-  from 1 pc (~5.3 decades), peak rate is ~7.9 dec/s — well under the
-  perceptual blur threshold.
-- **Direction-agnostic.** For outbound (unfocus), `d0 < d_end` and
-  `log(d_end/d0) > 0` — the same formula carries the camera outward.
-  No `direction` flag needed in the helper; the sign of
-  `log(d_end/d0)` is enough.
-
-### Why smoothstep on log d, not identity
-
-Three `u_eased` candidates were considered: identity, smoothstep, and a
-tanh-edge variant. Identity (`u_eased = u`) is the minimal log-distance
-profile and gives constant octaves-per-second throughout — pure
-log-uniform motion. It works mathematically but sacrifices two things:
-
-1. **Non-zero velocity at the endpoints.** The camera leaves `d0` at
-   full log-rate and lands at `parkDist` at full log-rate. From rest,
-   the start reads as a jolt; into a hard floor, the landing reads as
-   a stop, not an arrival.
-2. **Mismatch with the orientation track.** `tickFocusLerp` slerps the
-   camera quaternion with smoothstep easing in parallel with the
-   position lerp. If position uses identity-log-d while orientation
-   uses smoothstep, the two tracks diverge — orientation eases, position
-   doesn't.
-
-Smoothstep on `log d` preserves the symmetry with the orientation
-slerp (same shape, same time parameter, both ease in and out) and
-avoids both jolts. Tanh-edge offers nothing extra: it's a more
-expensive way to spell smoothstep for this regime.
-
-## Trapezoidal alternative — cruise band in log-d space
-
-Cubic-Hermite's smooth-landing property comes from `f'(1) = 0`, which
-*also* means `dd/du → 0` and therefore `dθ/du → 0` as `u → 1`. For
-arrivals where the disc renderer crosses its `vPhysRatio ≥ 0.5`
-geometric threshold mid-warp (Sol from 10 pc: at `u ≈ 0.46`;
-Betelgeuse from 200 pc: at `u ≈ 0.59`), the back half of the warp
-sits inside "disc visible" territory with progressively slower
-angular-size growth, and the last ~10–20 % of `u` reads as a
-perceptual standstill — even though log-distance is still being
-covered.
-
-The fix is to redistribute slope mass. Cubic-Hermite concentrates
-`f'(u) = 6u(1 − u)` at `u = 0.5` (peak `1.5`) and tapers from there.
-A **trapezoidal velocity profile** spreads slope across a cruise band
-at constant `v` instead, with short quadratic ramps at the endpoints
-to preserve the gentle launch and the smooth landing:
-
-```
-v       = 1 / (1 − t_accel/2 − t_decel/2)            // cruise slope
-
-u ∈ [0, t_accel]:        f(u) = (v / (2·t_accel)) · u²
-u ∈ [t_accel, 1-t_decel]: f(u) = v·u − v·t_accel/2
-u ∈ [1-t_decel, 1]:       s = (u − (1 − t_decel)) / t_decel
-                          f(u) = 1 − (v·t_decel/2) · (1 − s)²
-```
-
-Two parameters (`t_accel`, `t_decel` ∈ (0, 0.5)) set the ramp widths;
-`v` is fixed by the area constraint `f(1) = 1`.
-
-### Properties
-
-- **Endpoints and slopes match cubic-Hermite.** `f(0) = 0`, `f(1) = 1`,
-  `f'(0) = f'(1) = 0`. C¹-continuous everywhere (C² at the two joins
-  is discontinuous but velocity is smooth, so no perceptual kink).
-- **Constant log-rate across the cruise band.** Slope is exactly `v`
-  on `[t_accel, 1 − t_decel]`. For the default
-  `(t_accel, t_decel) = (0.15, 0.10)`, `v ≈ 1.143` — only 14 % above
-  cubic-Hermite's peak slope, but *sustained* across 75 % of the warp.
-- **Decel window controlled directly.** The "smooth landing" tail
-  is exactly `t_decel` of total warp time, independent of `d0/d_end`.
-  At the default 10 %, an 8-second Sol-from-10-pc warp spends ~800 ms
-  in decel — short enough to read as "arrival" rather than "standstill."
-- **Degenerate cases interpolate the spectrum.** `(0.5, 0.5)`
-  recovers the legacy main-branch piecewise-quadratic
-  `f = 2u² | 1 − 2(1 − u)²` exactly (no cruise zone; rocket-impulse
-  feel applied to log-d instead of linear-d). `(0.01, 0.01)`
-  approaches identity over most of the domain (near-linear log-rate,
-  brief ramps at the ends).
-
-### Wire-up
-
-Exposed via `arrival-curves.ts` as `easeTrapezoid(u, t_accel, t_decel)`
-and the `'trapezoid'` arm of `resolveArrivalCurve`. The warp-tuning
-debug panel exposes the curve selector and the two ramp-width sliders;
-defaults match the constants above. Capture-at-warp-start semantics
-in `warpArrivalEaseFn()` mean live-tuning a slider mid-flight doesn't
-mutate an in-flight warp — the next warp picks up the new values.
-
-The shipped default remains `'cubic-hermite'` until manual smokes
-confirm the trapezoidal feel across the test scenarios; the
-trapezoidal curve is a tunable opt-in via the panel.
-
-## Hybrid linear-d + angular-size profile
-
-Smoke testing the trapezoidal alternative revealed that *no* single-
-regime profile on log-d space can deliver the perceptual rhythm the
-viewer expects, because camera linear velocity is
+No single-regime profile on log-d space can deliver the perceptual
+rhythm the viewer expects. Camera linear velocity is
 `d · f' · |log_ratio| / T_warp` and `d` shrinks geometrically across
-the warp. Linear velocity therefore peaks very early — around
-`u ≈ √(t_accel / (v · |log_ratio|)) ≈ 0.16` for a Sol-from-10-pc
-warp under any of the log-d curves — and decreases monotonically
-afterward regardless of the curve's `f'(u)` shape. Background-star
-parallax flow tracks linear velocity, so the camera reads as
-"decelerating" after the early peak no matter what `f` looks like.
+the warp, so linear velocity peaks very early
+(`u ≈ √(t_accel / (v · |log_ratio|)) ≈ 0.16` for a Sol-from-10-pc
+warp under any log-d curve) and decreases monotonically afterward
+regardless of the curve's `f'(u)` shape. Background-star parallax flow
+tracks linear velocity, so the camera reads as "decelerating" after the
+early peak no matter what `f` looks like.
 
-The hybrid splits the warp into two regimes, each with its own
-geometry:
+Splitting the warp into two regimes — each with its own geometry —
+lets the early phase use **linear-d** (keeps linear velocity high, so
+parallax sweep stays salient) and the late phase use **angular size**
+(keeps perceptual approach alive even as linear velocity collapses).
 
-- **Outer (`u ∈ [0, u_seam]`)** — piecewise-quadratic on LINEAR
-  distance from `d_0` to `d_seam`:
-  ```
-  τ           = u / u_seam
-  f_outer(τ)  = 2·τ²              if τ < 0.5
-                1 − 2·(1 − τ)²   if τ ≥ 0.5
-  d_target(u) = d_0 − f_outer(τ) · (d_0 − d_seam)
-  ```
-  Matches the pre-2br.3 main-branch "rocket impulse" feel
-  (constant linear acceleration to τ = 0.5, constant linear
-  deceleration after) on the truncated range `[d_0, d_seam]`.
-  Linear velocity is high through the cruise, so background-star
-  parallax stays salient.
+### Geometry
 
-- **Inner (`u ∈ [u_seam, 1]`)** — quintic smootherstep on angular
-  size `θ = R / d` from `θ_seam = R/d_seam` to `θ_end = R/d_end`:
-  ```
-  σ            = (u − u_seam) / (1 − u_seam)
-  S(σ)         = 10·σ³ − 15·σ⁴ + 6·σ⁵
-  θ(σ)         = θ_seam + S(σ) · (θ_end − θ_seam)
-  d_target(u)  = R / θ(σ)
-  ```
-  `S'(σ) = S''(σ) = 0` at both endpoints, so the regime arrives
-  with zero velocity AND zero acceleration — the cleanest possible
-  perceptual standstill. The visual cue is destination disc
-  growth, which is exactly what the user tracks once parallax has
-  collapsed at short range.
+Per-warp constants captured at resolve time:
 
-**Seam.** `d_seam = seam_k · parkDist`, with `seam_k = 500` by
-default — the geometric midpoint of the empirical 100 – 1000 × parkDist
-range. The seam itself happens at zero velocity from both sides
-(outer's piecewise-quad ends at v = 0; inner's quintic starts at
-v = 0), so the "two-region split" rejection in the next section does
-NOT apply here: that rejection assumes a velocity-matching constraint
-at non-zero v, which the hybrid sidesteps by handing off at v = 0.
+```
+R         = target.physicalRadius() (pc)               // from catalog
+d_seam    = seam_k · parkDist                          // default seam_k = 100
+θ_seam    = R / d_seam
+θ_end     = R / d_end
+u_seam    = clamp(log(d_0 / d_seam) / log(d_0 / d_end), 0.3, 0.85)
+```
+
+**Outer (`u ∈ [0, u_seam]`)** — piecewise-quadratic on linear distance
+from `d_0` to `d_seam`:
+
+```
+τ           = u / u_seam
+f_outer(τ)  = 2·τ²              if τ < 0.5
+              1 − 2·(1 − τ)²    if τ ≥ 0.5
+d_target(u) = d_0 − f_outer(τ) · (d_0 − d_seam)
+```
+
+Matches the pre-2br.3 main-branch "rocket impulse" feel exactly on the
+truncated range `[d_0, d_seam]`: constant linear acceleration to
+τ = 0.5, constant linear deceleration after. Linear velocity stays
+high through the cruise, so background-star parallax remains the
+dominant cue.
+
+**Inner (`u ∈ [u_seam, 1]`)** — quintic smootherstep on angular size
+`θ = R / d`:
+
+```
+σ            = (u − u_seam) / (1 − u_seam)
+S(σ)         = 10·σ³ − 15·σ⁴ + 6·σ⁵
+θ(σ)         = θ_seam + S(σ) · (θ_end − θ_seam)
+d_target(u)  = R / θ(σ)
+```
+
+`S'(0) = S'(1) = 0` AND `S''(0) = S''(1) = 0`, so the regime arrives
+with zero velocity AND zero acceleration — the cleanest possible
+perceptual standstill. The visual cue is destination disc growth,
+which is what the user tracks once parallax has collapsed at short
+range.
+
+**v = 0 handoff at the seam.** Both regimes arrive at the seam with
+zero velocity (outer's piecewise-quad ends at v = 0; inner's quintic
+starts at v = 0 via `S'(0) = 0`), so the handoff is velocity-continuous
+without the matching constraint that killed the previously-rejected
+dWindow split (see § "What about a two-region split at dWindow?"
+below). The trade-off is a momentary neutral coast at the seam, which
+is perceptually masked because parallax has already collapsed by then
+and angular growth hasn't yet become salient.
 
 **Time split.** `u_seam` is auto-computed from log-distance share with
-a clamp so each regime always gets meaningful time:
-```
-u_seam = clamp(log(d_0 / d_seam) / log(d_0 / d_end), 0.3, 0.85)
-```
-Not exposed as a panel slider — letting `u_seam` and `seam_k` drift
-independently would confuse the perceptual model.
+a clamp so each regime always gets meaningful time. Not exposed as a
+panel slider — letting `u_seam` and `seam_k` drift independently would
+confuse the perceptual model.
 
-### Log-d equivalent
+### Log-d equivalent — preserved `tickArrival` formula
 
 The hybrid is exposed via `arrival-curves.ts` as
-`easeHybrid(u, d_0, d_end, R, seam_k)` and the `'hybrid'` arm of
-`resolveArrivalCurve`. The function builds `d_target(u)` in real
-distance space (linear-d outer + angular-size inner) but RETURNS the
-log-d-equivalent eased-u value:
+`easeHybrid(u, d_0, d_end, R, seam_k)` and `resolveHybridCurve`. The
+function builds `d_target(u)` in real distance space (linear-d outer +
+angular-size inner) but RETURNS the log-d-equivalent eased-u value:
+
 ```
 f(u) = log(d_target(u) / d_0) / log(d_end / d_0)
 ```
+
 That keeps the existing `tickArrival` formula
 `d(u) = d_0 · (d_end/d_0)^f(u)` unchanged — the hybrid geometry lives
 entirely inside the curve closure, the consumer is none the wiser.
 
+### Properties
+
+- **Endpoints.** `d(0) = d_0` exactly; `d(1) = d_end` exactly.
+- **Zero velocity at endpoints.** Outer's piecewise-quad has
+  `dd/du = 0` at u = 0; inner's quintic has both `dd/du = 0` and
+  `d²d/du² = 0` at u = 1. The arrival settles with no abrupt jolt.
+- **Direction-agnostic for inbound only.** Hybrid applies only when
+  `d_end < d_0`. Outbound trajectories (unfocus) trigger the
+  cubic-Hermite fallback.
+- **Tunable via `seam_k`.** Default `100`. Slider range `0 – 2000`,
+  step 10. `seam_k ≤ 1` degenerates to pure outer (no inner regime,
+  matches pre-2br.3 main-branch warp) — useful as a comparison
+  baseline. `seam_k · parkDist > d_0` degenerates to pure inner (no
+  outer regime), with the inner spanning the full warp from `d_0` to
+  `d_end`.
+
 ### Fallbacks
 
-The hybrid silently falls back to cubic-Hermite when:
+`easeHybrid` returns cubic-Hermite log-d smoothstep
+(`f(u) = 3u² − 2u³`) when:
 
 - `targetRadius` is null (clouds — ellipsoid axes don't reduce to a
   single geometric R; future opaque ensembles).
 - The trajectory is outbound (`d_end > d_0`, e.g. the unfocus path).
-  The seam concept only applies when approaching a destination.
-- The per-warp `ArrivalCurveContext` is missing at resolution time
-  (callers that haven't been retrofitted to pass it).
+- The per-warp `ArrivalCurveContext` is missing at resolution time.
 
 ### Wire-up
 
-The four call sites that resolve the arrival curve (warp Fly,
-focus-park lerp for star and cloud, navigate-mode unfocus) each pass
-an `ArrivalCurveContext` carrying `{ d_0, d_end, targetRadius }`.
-`FocusTarget.physicalRadius(): number | null` provides R for the
-hybrid; stars return `catalog.physicalRadius[idx] · R_SUN_PC`, clouds
-return `null`. The shipped default remains `'cubic-hermite'`; the
-hybrid is opt-in via the panel until manual smokes promote it.
+All four arrival-curve call sites (warp Fly, focus-park for stars and
+clouds, navigate-mode unfocus) pass an `ArrivalCurveContext` carrying
+`{ d_0, d_end, targetRadius }`. `FocusTarget.physicalRadius()`
+provides `R`; stars read it from the catalog, clouds return `null`.
+
+The warp-tuning debug panel exposes a single `seam k` slider.
+Capture-at-warp-start semantics in `warpArrivalEaseFn(ctx)` mean
+live-tuning the slider mid-flight doesn't mutate an in-flight warp —
+the next warp picks up the new value.
 
 ## What about a two-region split at `dWindow`?
 
@@ -327,12 +242,36 @@ linear-d velocity to a non-zero log-d velocity over zero time — and
 adds two knobs (`dWindow`, `T_in/T`) for a result that the
 single-region log-d profile delivers with neither knob.
 
-**Decision: single-region log-d smoothstep across `[d0, parkDist]`,
-no window split.** The "decel kicks in at ~10²–10³·parkDist" property
-emerges from the smoothstep shape rather than being engineered with a
-seam. For typical `d0/parkDist` (≥ 10³), the last 3 decades of distance
-correspond to roughly the last half of `u`, which is exactly where
-smoothstep's deceleration concentrates. No knob required.
+**Historical decision (superseded).** The original conclusion was
+"single-region log-d smoothstep, no window split" — the smoothstep
+shape made the velocity-continuous dWindow design unworkable AND
+arguably unnecessary because cubic-Hermite's tail naturally
+decelerates across the last few decades. That conclusion has since
+been revisited.
+
+Smoke testing the log-d cubic-Hermite (and the trapezoidal-in-log-d
+alternative) revealed a different problem: linear velocity collapses
+geometrically across any log-d profile, so background-star parallax
+reads as decelerating from very early in the warp regardless of the
+curve's `f(u)` shape. The resolution shipped in 1.12.0 is the
+**hybrid two-regime design** — see § Profile above. The hybrid IS a
+two-region split, but with different math:
+
+- Outer uses **linear-d** piecewise-quad (not smoothstep on linear-d).
+  Different shape, different endpoint behaviour.
+- Inner uses **angular-size** quintic smootherstep (not log-d).
+  Different geometry entirely.
+- Both regimes hand off at v = 0, so the velocity-continuity
+  constraint that forced the 97 % / 3 % time split in the dWindow
+  analysis above doesn't apply — the seam absorbs zero velocity
+  rather than matching a non-zero one.
+
+The dWindow rejection is still correct for the specific question it
+asked ("can we velocity-match log-d-inner to smoothstep-on-linear-d
+outer?"). What it didn't anticipate was that *both* sides of the
+hybrid could land at v = 0 by picking different curve shapes than the
+two it considered. Keep this section as the historical record of the
+log-d-only design.
 
 ## Edge cases
 
@@ -341,17 +280,19 @@ smoothstep's deceleration concentrates. No knob required.
    `done: true` on first tick and writes `pEnd` directly.
 
 2. **Target without an effective radius (clouds, future generic
-   focusables).** Log-distance still works — `parkDist` is the only
-   per-target input the profile needs. The `effectiveRadius` field on
-   `ArrivalTarget` is reserved for a future angular-rate-bounded
-   variant, not used by the log-d profile itself.
+   focusables).** The hybrid requires a single geometric `R` for the
+   inner angular-size regime, so kinds that return `null` from
+   `FocusTarget.physicalRadius()` trigger the cubic-Hermite log-d
+   fallback. `parkDist` is the only per-target input the fallback
+   needs. See § Worked examples below for the fallback's worked
+   tables — still applicable to cloud arrivals today.
 
-3. **Outbound (unfocus).** `d0 < d_end`, `log(d_end/d0) > 0`, the same
-   formula carries the camera outward over the same `u_eased`. Mirrors
-   the inbound landing — zero velocity at the inside endpoint, zero
-   velocity at the park endpoint. The unfocus animate path
+3. **Outbound (unfocus).** `d0 < d_end`, so the hybrid's seam concept
+   doesn't apply (no "approach"). Triggers the cubic-Hermite log-d
+   fallback, which carries the camera outward over the same eased-u
+   shape that brought it in. The unfocus animate path
    (`OBSERVE_TRANSITION_MS = 1200`) feels symmetric with the
-   focus-park inbound.
+   focus-park inbound (when that inbound was on the fallback path).
 
 4. **`pStart` and `pEnd` not co-linear with `target.center`.** Not a
    concern for the three helper sites today: focus-park constructs
@@ -364,6 +305,12 @@ smoothstep's deceleration concentrates. No knob required.
    if it ever comes up.
 
 ## Worked examples
+
+These tables describe the **cubic-Hermite log-d fallback profile**
+(`u_eased = 3u² − 2u³`) — what fires for cloud destinations, outbound
+unfocus, and any inbound star warp whose ctx is missing. The shipped
+hybrid profile uses different math for inbound star approaches; see
+§ Profile above for its geometry.
 
 **Sol from 1 pc** (`parkDist ≈ AU_PC ≈ 4.85·10⁻⁶ pc`):
 

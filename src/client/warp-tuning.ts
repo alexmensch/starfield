@@ -1,8 +1,7 @@
 import type { Stellata } from './stellata';
 import {
   type ArrivalCurveContext,
-  type ArrivalCurveId,
-  resolveArrivalCurve,
+  resolveHybridCurve,
 } from './arrival-curves';
 
 // Warp-curve tuning section for the unified debug panel (mounted from
@@ -54,22 +53,13 @@ export const DEFAULT_MID_FLY_RECENTRE_FRAC = 0.5;
 export const DEFAULT_CHART_PLATEAU_MARGIN = 1.0;
 export const DEFAULT_CHART_PHASE3_SCALING_ENABLED = false;
 export const DEFAULT_CHART_PHASE3_ALPHA = 0.5;
-export const DEFAULT_ARRIVAL_POWER_P = 2;
-// Trapezoidal curve defaults. The accel ramp sets the gentle-launch
-// feel (the "rocket impulse" easing in); the decel ramp sets the
-// "we're parking" easing out. Sum of the two leaves 75 % of warp time
-// in the constant-slope cruise — long enough that angular size of the
-// target grows visibly through the close-approach rather than tapering
-// to a perceptual standstill before arrival.
-export const DEFAULT_ARRIVAL_TRAPEZOID_T_ACCEL = 0.15;
-export const DEFAULT_ARRIVAL_TRAPEZOID_T_DECEL = 0.10;
 // Hybrid-curve seam distance multiplier: d_seam = seam_k · parkDist.
-// Default 500 is the geometric midpoint of the empirical "decel kicks
-// in" range cited in `docs/camera-arrival.md` (Sol ≈ 1000×, Betelgeuse
-// ≈ 295× parkDist). The hybrid switches from a linear-d piecewise-quad
-// outer regime to a quintic-smootherstep on θ inner regime at this
-// distance from the destination.
-export const DEFAULT_ARRIVAL_HYBRID_SEAM_K = 500;
+// The hybrid switches from a linear-d piecewise-quad outer regime to
+// a quintic-smootherstep on θ inner regime at d_seam from the
+// destination. seam_k ≤ 1 degenerates to pure outer (matches the
+// pre-2br.3 main-branch warp's piecewise-quad on linear-d) — useful
+// at the low end of the slider for direct comparison.
+export const DEFAULT_ARRIVAL_HYBRID_SEAM_K = 100;
 
 interface Knobs {
   reorientMs: number;
@@ -77,10 +67,6 @@ interface Knobs {
   flyTMaxMs: number;
   flyTKMs: number;
   observeTransitionMs: number;
-  arrivalCurve: ArrivalCurveId;
-  arrivalPowerP: number;
-  arrivalTrapezoidTAccel: number;
-  arrivalTrapezoidTDecel: number;
   arrivalHybridSeamK: number;
   midFlyRecentreFrac: number;
   chartPlateauMargin: number;
@@ -94,10 +80,6 @@ const knobs: Knobs = {
   flyTMaxMs: WARP_T_MAX_MS,
   flyTKMs: WARP_T_K_MS,
   observeTransitionMs: OBSERVE_TRANSITION_MS,
-  arrivalCurve: 'cubic-hermite',
-  arrivalPowerP: DEFAULT_ARRIVAL_POWER_P,
-  arrivalTrapezoidTAccel: DEFAULT_ARRIVAL_TRAPEZOID_T_ACCEL,
-  arrivalTrapezoidTDecel: DEFAULT_ARRIVAL_TRAPEZOID_T_DECEL,
   arrivalHybridSeamK: DEFAULT_ARRIVAL_HYBRID_SEAM_K,
   midFlyRecentreFrac: DEFAULT_MID_FLY_RECENTRE_FRAC,
   chartPlateauMargin: DEFAULT_CHART_PLATEAU_MARGIN,
@@ -117,20 +99,7 @@ export function warpFlyTMaxMs(): number { return knobs.flyTMaxMs; }
 export function warpFlyTKMs(): number { return knobs.flyTKMs; }
 export function warpObserveTransitionMs(): number { return knobs.observeTransitionMs; }
 export function warpArrivalEaseFn(ctx?: ArrivalCurveContext): (u: number) => number {
-  return resolveArrivalCurve(
-    knobs.arrivalCurve,
-    knobs.arrivalPowerP,
-    knobs.arrivalTrapezoidTAccel,
-    knobs.arrivalTrapezoidTDecel,
-    knobs.arrivalHybridSeamK,
-    ctx,
-  );
-}
-export function warpArrivalTrapezoidTAccel(): number {
-  return knobs.arrivalTrapezoidTAccel;
-}
-export function warpArrivalTrapezoidTDecel(): number {
-  return knobs.arrivalTrapezoidTDecel;
+  return resolveHybridCurve(knobs.arrivalHybridSeamK, ctx);
 }
 export function warpArrivalHybridSeamK(): number {
   return knobs.arrivalHybridSeamK;
@@ -257,74 +226,15 @@ export function buildWarpSection(stellata: Stellata): WarpTuningSection {
     fmt: fmtMs,
   });
 
-  // Arrival curve selector.
-  {
-    const row = document.createElement('div');
-    row.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:3px;';
-    const label = document.createElement('span');
-    label.style.cssText = 'flex:0 0 90px;color:#aaa;';
-    label.textContent = 'curve';
-    const sel = document.createElement('select');
-    sel.style.cssText = 'flex:1;background:#222;color:#fff;border:1px solid #444;';
-    for (const id of [
-      'cubic-hermite',
-      'quintic-hermite',
-      'power',
-      'trapezoid',
-      'hybrid',
-    ] as const) {
-      const opt = document.createElement('option');
-      opt.value = id;
-      opt.textContent = id;
-      if (id === knobs.arrivalCurve) opt.selected = true;
-      sel.appendChild(opt);
-    }
-    sel.addEventListener('change', () => {
-      knobs.arrivalCurve = sel.value as ArrivalCurveId;
-    });
-    row.appendChild(label);
-    row.appendChild(sel);
-    slidersBox.appendChild(row);
-  }
-
+  // Hybrid-curve seam distance multiplier: d_seam = seam_k · parkDist.
+  // Default 100. Range starts at 0 — values ≤ 1 degenerate to pure
+  // linear-d piecewise-quad (matches the pre-2br.3 main-branch warp
+  // exactly) and are useful for direct A/B comparison. Step 10 keeps
+  // the slider granular at the low end where the perceptual difference
+  // is largest.
   addSlider({
-    label: 'power p',
-    min: 0.25, max: 4, step: 0.05,
-    initial: knobs.arrivalPowerP,
-    onChange: (v) => { knobs.arrivalPowerP = v; },
-    fmt: fmtFrac,
-  });
-
-  // Trapezoid ramp widths. Inactive unless `curve` is set to
-  // `'trapezoid'`. Matches the `power p` UX — slider stays visible so
-  // the user can dial it before flipping to that curve. Range floor
-  // matches `TRAPEZOID_MIN_RAMP` in arrival-curves.ts; the function
-  // clamps anyway but the slider min keeps the UI honest. Max 0.5 lets
-  // the user reach the symmetric `(0.5, 0.5)` legacy-piecewise-quad
-  // edge case exactly.
-  addSlider({
-    label: 'tz accel',
-    min: 0.01, max: 0.5, step: 0.01,
-    initial: knobs.arrivalTrapezoidTAccel,
-    onChange: (v) => { knobs.arrivalTrapezoidTAccel = v; },
-    fmt: fmtFrac,
-  });
-  addSlider({
-    label: 'tz decel',
-    min: 0.01, max: 0.5, step: 0.01,
-    initial: knobs.arrivalTrapezoidTDecel,
-    onChange: (v) => { knobs.arrivalTrapezoidTDecel = v; },
-    fmt: fmtFrac,
-  });
-
-  // Hybrid-curve seam distance multiplier. d_seam = seam_k · parkDist.
-  // Inactive unless `curve === 'hybrid'`. Range and step chosen to span
-  // the empirical 100–1000 × parkDist range from
-  // `docs/camera-arrival.md`. Stays visible alongside the other curve
-  // sliders matching the trapezoid / power UX.
-  addSlider({
-    label: 'hy seam k',
-    min: 100, max: 2000, step: 50,
+    label: 'seam k',
+    min: 0, max: 2000, step: 10,
     initial: knobs.arrivalHybridSeamK,
     onChange: (v) => { knobs.arrivalHybridSeamK = v; },
     fmt: (v) => v.toFixed(0),
@@ -405,16 +315,7 @@ export function buildWarpSection(stellata: Stellata): WarpTuningSection {
       `WARP_T_MAX_MS = ${knobs.flyTMaxMs}\n` +
       `WARP_T_K_MS = ${knobs.flyTKMs}\n` +
       `OBSERVE_TRANSITION_MS = ${knobs.observeTransitionMs}\n` +
-      `arrivalCurve = '${knobs.arrivalCurve}'${
-        knobs.arrivalCurve === 'power'
-          ? ` (p=${knobs.arrivalPowerP.toFixed(2)})`
-          : knobs.arrivalCurve === 'trapezoid'
-            ? ` (a=${knobs.arrivalTrapezoidTAccel.toFixed(2)},`
-              + ` d=${knobs.arrivalTrapezoidTDecel.toFixed(2)})`
-            : knobs.arrivalCurve === 'hybrid'
-              ? ` (seam_k=${knobs.arrivalHybridSeamK.toFixed(0)})`
-              : ''
-      }\n` +
+      `DEFAULT_ARRIVAL_HYBRID_SEAM_K = ${knobs.arrivalHybridSeamK.toFixed(0)}\n` +
       `midFlyRecentreFrac = ${knobs.midFlyRecentreFrac.toFixed(2)}\n` +
       `chartPlateauMargin = ${knobs.chartPlateauMargin.toFixed(2)}\n` +
       `chartPhase3Scaling = ${knobs.chartPhase3ScalingEnabled}` +
