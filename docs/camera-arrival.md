@@ -127,6 +127,69 @@ slerp (same shape, same time parameter, both ease in and out) and
 avoids both jolts. Tanh-edge offers nothing extra: it's a more
 expensive way to spell smoothstep for this regime.
 
+## Trapezoidal alternative — cruise band in log-d space
+
+Cubic-Hermite's smooth-landing property comes from `f'(1) = 0`, which
+*also* means `dd/du → 0` and therefore `dθ/du → 0` as `u → 1`. For
+arrivals where the disc renderer crosses its `vPhysRatio ≥ 0.5`
+geometric threshold mid-warp (Sol from 10 pc: at `u ≈ 0.46`;
+Betelgeuse from 200 pc: at `u ≈ 0.59`), the back half of the warp
+sits inside "disc visible" territory with progressively slower
+angular-size growth, and the last ~10–20 % of `u` reads as a
+perceptual standstill — even though log-distance is still being
+covered.
+
+The fix is to redistribute slope mass. Cubic-Hermite concentrates
+`f'(u) = 6u(1 − u)` at `u = 0.5` (peak `1.5`) and tapers from there.
+A **trapezoidal velocity profile** spreads slope across a cruise band
+at constant `v` instead, with short quadratic ramps at the endpoints
+to preserve the gentle launch and the smooth landing:
+
+```
+v       = 1 / (1 − t_accel/2 − t_decel/2)            // cruise slope
+
+u ∈ [0, t_accel]:        f(u) = (v / (2·t_accel)) · u²
+u ∈ [t_accel, 1-t_decel]: f(u) = v·u − v·t_accel/2
+u ∈ [1-t_decel, 1]:       s = (u − (1 − t_decel)) / t_decel
+                          f(u) = 1 − (v·t_decel/2) · (1 − s)²
+```
+
+Two parameters (`t_accel`, `t_decel` ∈ (0, 0.5)) set the ramp widths;
+`v` is fixed by the area constraint `f(1) = 1`.
+
+### Properties
+
+- **Endpoints and slopes match cubic-Hermite.** `f(0) = 0`, `f(1) = 1`,
+  `f'(0) = f'(1) = 0`. C¹-continuous everywhere (C² at the two joins
+  is discontinuous but velocity is smooth, so no perceptual kink).
+- **Constant log-rate across the cruise band.** Slope is exactly `v`
+  on `[t_accel, 1 − t_decel]`. For the default
+  `(t_accel, t_decel) = (0.15, 0.10)`, `v ≈ 1.143` — only 14 % above
+  cubic-Hermite's peak slope, but *sustained* across 75 % of the warp.
+- **Decel window controlled directly.** The "smooth landing" tail
+  is exactly `t_decel` of total warp time, independent of `d0/d_end`.
+  At the default 10 %, an 8-second Sol-from-10-pc warp spends ~800 ms
+  in decel — short enough to read as "arrival" rather than "standstill."
+- **Degenerate cases interpolate the spectrum.** `(0.5, 0.5)`
+  recovers the legacy main-branch piecewise-quadratic
+  `f = 2u² | 1 − 2(1 − u)²` exactly (no cruise zone; rocket-impulse
+  feel applied to log-d instead of linear-d). `(0.01, 0.01)`
+  approaches identity over most of the domain (near-linear log-rate,
+  brief ramps at the ends).
+
+### Wire-up
+
+Exposed via `arrival-curves.ts` as `easeTrapezoid(u, t_accel, t_decel)`
+and the `'trapezoid'` arm of `resolveArrivalCurve`. The warp-tuning
+debug panel exposes the curve selector and the two ramp-width sliders;
+defaults match the constants above. Capture-at-warp-start semantics
+in `warpArrivalEaseFn()` mean live-tuning a slider mid-flight doesn't
+mutate an in-flight warp — the next warp picks up the new values.
+
+The shipped default remains `'cubic-hermite'` until manual smokes
+confirm the trapezoidal feel across the test scenarios; the
+trapezoidal curve is a tunable opt-in via the panel.
+
 ## What about a two-region split at `dWindow`?
 
 An obvious alternative is a two-region design: smoothstep on linear-d

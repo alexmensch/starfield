@@ -53,9 +53,13 @@ on whether the warp re-enters OBSERVE on arrival:
 2. **Fly** (log-scaled duration, `WARP_T_MIN_MS` to `WARP_T_MAX_MS`).
    Camera position rides the line from `pStart` (= A + dirBack ×
    sourceOffset) to `pEnd` (= B − forward × endOffset), delegated to
-   `camera-motion.ts`'s `tickArrival` so the Fly phase shares the same
-   cubic-Hermite log-distance profile as focus-park and unfocus. See
-   `docs/camera-arrival.md` § Profile. `camera.lookAt(B)` throughout.
+   `camera-motion.ts`'s `tickArrival` so the Fly phase shares the
+   arrival-curve resolved by `warpArrivalEaseFn()` with focus-park and
+   unfocus. Default is cubic-Hermite log-d; the trapezoidal alternative
+   (warp-tuning panel) gives a constant-slope cruise band and a short
+   decel window if the cubic-Hermite tail reads as a perceptual
+   standstill. See `docs/camera-arrival.md` § Profile and § Trapezoidal
+   alternative. `camera.lookAt(B)` throughout.
 
    **Mid-Fly floating-origin recentre.** The moment the camera passes
    the trajectory midpoint (`|camera − B|² < ¼·|B − A|²` — the
