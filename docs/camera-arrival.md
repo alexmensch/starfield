@@ -269,6 +269,18 @@ export function tickArrival(
   nowMs: number,
   camera: THREE.PerspectiveCamera,
 ): { done: boolean };
+
+/** Migrate an in-flight ArrivalState into a new floating-origin frame
+ *  by shifting every cached position by `−delta`. Used by warp's
+ *  mid-Fly recentre (stellata-2br.5) so the per-frame `tickArrival`
+ *  math stays consistent after the floating origin moves onto the
+ *  destination. `d0` / `dEnd` / `dir` are translation-invariant so
+ *  no recompute is needed. Sibling to `shiftWarpWaypoints` in
+ *  `warp-pure.ts`. */
+export function shiftArrivalWaypoints(
+  state: ArrivalState,
+  dx: number, dy: number, dz: number,
+): void;
 ```
 
 `tickArrival` writes `camera.position` and (when `qStart`/`qEnd` are
@@ -276,4 +288,7 @@ present) `camera.quaternion`. Returns `done: true` once
 `nowMs ≥ startMs + durationMs`, mirroring `tickFocusLerp`'s contract.
 
 `parkDistance(...)` stays in `focus-transition.ts` — it computes a
-per-object property and isn't a motion concern.
+per-object property and isn't a motion concern. The per-object
+geometry that warp / arrival reads (anchor, local position,
+park radius) flows through the `FocusTarget` contract — see
+`docs/architecture.md` § FocusTarget contract.

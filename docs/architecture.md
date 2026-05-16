@@ -182,6 +182,66 @@ catalog index space. Float32 precision is sufficient at any magnitude
 because the user-visible pose is the cam/tgt offset *within* the
 local frame, stored at full Float32 precision relative to the anchor.
 
+## FocusTarget contract
+
+Warp, focus-park lerp, mid-Fly recentre, and any future camera-transition
+code consume focusable objects through the **`FocusTarget` interface**
+(`src/client/focus-target.ts`). The warp animation has no
+kind-switch statements — adding a new focusable kind (planet, probe,
+nebula, exoplanet, …) consists of:
+
+1. Implementing the interface (typically as a factory method on
+   `Stellata` that returns an object closing over the per-kind
+   catalog / state / event-bus references).
+2. Plumbing pick / click handling for the new kind so its
+   `FocusTarget` can be passed to `startWarp` / `focusStar`-style
+   entry points.
+
+That's it. The warp internals (`updateWarp`, `finishWarp`, mid-Fly
+recentre, pin guard, scale-bar focus tracking, …) stay agnostic above
+this seam and do not need to change. This is the bar set by
+stellata-2br.5 — no future-kind work should ever need to touch the
+warp animation code again.
+
+### The interface
+
+```ts
+interface FocusTarget {
+  readonly kind: 'star' | 'cloud';   // extend the union per new kind
+  readonly idx: number;
+  anchorInto(out: Vector3): boolean;        // absolute-space anchor
+  localPositionInto(out: Vector3): boolean; // current floating-frame position
+  parkRadius(): number;                     // camera-to-anchor at parked pose
+  applyFocus(): void;                       // per-kind state mutation, no events
+  emitFocusEvents(): void;                  // deferred event family fire
+}
+```
+
+| Method | Role |
+|---|---|
+| `anchorInto` | Input to `recenterOrigin`. The floating origin lands here when the object is focused. |
+| `localPositionInto` | Per-frame `camera.lookAt(...)` source during warp Fly. Also used by overlays that project the object's position. |
+| `parkRadius` | The warp computes `pStart` / `pEnd` as `anchor − travelDir · parkRadius()` for source and destination respectively — symmetric across both endpoints. |
+| `applyFocus` | Sets the per-kind `focusedStar` / `focusedCloud` / etc. field, updates derived state (`minDistance`, planet system attach), clears whichever sibling-kind focus was set. **No events fire.** |
+| `emitFocusEvents` | Fires the deferred event family — typically `'focus'` / `'cloudFocus'` (plus a sibling-clearing `null` emit when the previously-focused object was a different kind), then `'state'`. Called from `finishWarp` after the camera lands. |
+
+The applyFocus/emitFocusEvents split is what lets the mid-Fly recentre
+(stellata-2br.5) mutate focus state at the trajectory midpoint
+without firing UI-visible events ~half a warp duration before the
+camera actually arrives — events settle in lock-step with the
+landing.
+
+### How the warp consumes it
+
+`WarpState` carries `source: FocusTarget` and `dest: FocusTarget`. The
+warp animation reads geometry via the interface methods and mutates
+focus state via `dest.applyFocus()` (mid-Fly recentre) and
+`dest.emitFocusEvents()` (`finishWarp`). No `destKind` switches
+remain in the warp pipeline; the dispatch table sits in the
+`makeStarFocusTarget` / `makeCloudFocusTarget` factory methods on
+`Stellata`, which is the one place that needs editing when a new kind
+is added.
+
 ## Pin-to-center (`uPinFocusToCenter`)
 
 After the physical-orbit floor (`R / tan(0.45·fovMinor)` for a Sol-class
@@ -196,8 +256,21 @@ chain with `projectionMatrix * vec4(0, 0, -dPc, 1)` for the matched
 int uniform, ~5 lines of GLSL, no CPU cost.
 
 JS-side per frame in `stellata.ts`: pin engages iff
-`focusedStar !== null && cameraMode === 'navigate' && !warpState
-&& !aimState && controls.target.lengthSq() < 1e-12`.
+`focusedStar !== null && cameraMode === 'navigate'
+&& (!warpState || warpState.recenteredToDest)
+&& !aimState && !focusLerpState
+&& controls.target.lengthSq() < 1e-12`.
+
+The `warpState.recenteredToDest` clause relaxes the pin guard for the
+post-recentre window of warp Fly: after the mid-Fly recentre
+(stellata-2br.5) the destination is at local `(0,0,0)` and the camera
+is doing `lookAt(local origin)` per frame, so pin-to-NDC matches the
+geometry `lookAt` is already computing. The shader pin then bypasses
+any residual Float32 noise in the projection chain through to
+`finishWarp`. The `focusLerpState` clause stays unconditional —
+focus-park slerps the camera quaternion through an arc that's not
+continuously aimed at the focal star, so pinning would snap-jump it
+to NDC origin before the slerp finishes rotating into it.
 
 **Load-bearing invariant:** `controls.target` must be `(0,0,0)`
 *exactly* (length < 1e-6 pc). Any code path that engages focus while
@@ -224,9 +297,11 @@ Three residual sources have bitten this:
 
 Limitations: pan moves target away → pin disengages (intentional;
 post-pan the focused star isn't at view centre). Doesn't fire in
-observe mode, during warp, or during aim animations — the mid-warp
-close-approach drift would need pin generalisation to support
-non-origin pin targets.
+observe mode or during aim animations. Pin DOES fire during the
+post-recentre window of warp Fly (see `warpState.recenteredToDest`
+in the guard above); pre-recentre Fly stays guarded because the
+focused star is the source, not the destination the camera is
+flying toward.
 
 **Where to look:**
 - `src/client/shaders/star.vert.glsl` — `uPinFocusToCenter` decl + use site.

@@ -57,6 +57,34 @@ on whether the warp re-enters OBSERVE on arrival:
    cubic-Hermite log-distance profile as focus-park and unfocus. See
    `docs/camera-arrival.md` § Profile. `camera.lookAt(B)` throughout.
 
+   **Mid-Fly floating-origin recentre.** The moment the camera passes
+   the trajectory midpoint (`|camera − B|² < ¼·|B − A|²` — the
+   "source star is behind the camera" cue), `updateWarp` calls
+   `tryMidFlyRecentre`, which shifts the floating origin onto the
+   destination's absolute anchor and migrates the in-flight
+   `WarpState` waypoints + `ArrivalState` cached vectors into the
+   new frame via `shiftWarpWaypoints` + `shiftArrivalWaypoints`.
+   After the shift, `dest.localPositionInto` returns ≈(0,0,0), so
+   the per-frame `lookAt(B)` becomes `lookAt(local origin)` —
+   geometrically equivalent, numerically clean.
+
+   Why this exists: under the cubic-Hermite log-d Fly profile the
+   camera spends the last ~19% of Fly inside `|B − camera| <
+   ULP(|B|)` for long-range arrivals (e.g. Betelgeuse → Sol). In
+   that zone `B − camera.position` loses all Float32 precision and
+   the `lookAt` quaternion jitters across representable values, so
+   the destination renders off-screen for several frames before
+   `finishWarp` recentres and snaps it to NDC origin. Recentring
+   mid-Fly eliminates the chaos zone entirely (stellata-2br.5).
+
+   Kind-agnostic via the `FocusTarget` contract — works for any
+   focusable kind that implements `anchorInto` and `applyFocus`.
+   `dest.applyFocus()` mutates focus state in place; the deferred
+   event family is fired from `finishWarp` via
+   `dest.emitFocusEvents()` so the search-row label and friends
+   settle in lock-step with the camera landing rather than ~half a
+   warp duration early.
+
 3. **Post-arrival reorient** (only when `returnToObserve`, duration =
    `OBSERVE_TRANSITION_MS` = 1200 ms). Quaternion slerps from the
    fly-end "looking at B" orientation back to the `startQuaternion`
