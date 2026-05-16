@@ -7,6 +7,7 @@
 // handover, not a park-arrival).
 
 import * as THREE from 'three';
+import { cubicHermite } from './arrival-curves';
 
 /** Where the camera is heading. `parkDist` is the eventual radial
  *  distance from `center` (= `dEnd` on the helper sites). The optional
@@ -93,18 +94,8 @@ export function newArrival(opts: NewArrivalOpts): ArrivalState {
     d0,
     dEnd,
     dir,
-    easeUFn: opts.easeUFn ?? easeArrival,
+    easeUFn: opts.easeUFn ?? cubicHermite,
   };
-}
-
-// Cubic-Hermite smoothstep — `3u² − 2u³`, identical to GLSL's smoothstep.
-// `f(0) = 0`, `f(1) = 1`, `f'(0) = f'(1) = 0`. See
-// `docs/camera-arrival.md` § Profile for why this replaced the legacy
-// piecewise quadratic (one polynomial, C¹-continuous, smooth jerk at 0.5).
-// Default for `NewArrivalOpts.easeUFn`; `arrival-curves.ts` mirrors this
-// alongside the alternate shapes the debug panel exposes.
-function easeArrival(u: number): number {
-  return u * u * (3 - 2 * u);
 }
 
 /** Migrate an in-flight `ArrivalState` into a new floating-origin frame

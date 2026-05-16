@@ -58,11 +58,10 @@ const HYBRID_U_SEAM_MAX = 0.85;
 
 // Cubic-Hermite smoothstep — `3u² − 2u³`, identical to GLSL's
 // `smoothstep`.  Used as the fallback inside the hybrid curve when
-// per-warp context is unavailable (clouds, outbound, missing ctx).
-// Not exported — the hybrid is the only user-facing arrival profile;
-// `camera-motion.ts` keeps its own private copy as the default
-// `easeUFn` when none is supplied at `newArrival` construction.
-function cubicHermite(u: number): number {
+// per-warp context is unavailable (clouds, outbound, missing ctx), and
+// re-exported as `camera-motion.ts`'s default `easeUFn` so the
+// canonical fallback shape lives in exactly one place.
+export function cubicHermite(u: number): number {
   return u * u * (3 - 2 * u);
 }
 

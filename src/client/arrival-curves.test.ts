@@ -1,17 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  cubicHermite,
   easeHybrid,
   hybridUSeam,
   resolveHybridCurve,
 } from './arrival-curves';
-
-// Cubic-Hermite reference for fallback comparisons. Mirrors the
-// private `cubicHermite` inside arrival-curves.ts; both must stay
-// bit-identical because the public API documents the fallback as
-// "cubic-Hermite log-d."
-function cubicHermiteRef(u: number): number {
-  return u * u * (3 - 2 * u);
-}
 
 describe('easeHybrid', () => {
   // Representative Sol-from-10-pc warp.
@@ -134,7 +127,7 @@ describe('easeHybrid', () => {
   it('null R fallback — bit-equal to cubic-Hermite across u', () => {
     for (let i = 0; i <= 20; i++) {
       const u = i / 20;
-      expect(easeHybrid(u, D0, D_END, null, SEAM_K)).toBe(cubicHermiteRef(u));
+      expect(easeHybrid(u, D0, D_END, null, SEAM_K)).toBe(cubicHermite(u));
     }
   });
 
@@ -144,7 +137,7 @@ describe('easeHybrid', () => {
     for (let i = 0; i <= 20; i++) {
       const u = i / 20;
       expect(easeHybrid(u, dOutStart, dOutEnd, R_SOL, SEAM_K))
-        .toBe(cubicHermiteRef(u));
+        .toBe(cubicHermite(u));
     }
   });
 
@@ -209,7 +202,7 @@ describe('resolveHybridCurve', () => {
     const fn = resolveHybridCurve(100);
     for (let i = 0; i <= 10; i++) {
       const u = i / 10;
-      expect(fn(u)).toBe(cubicHermiteRef(u));
+      expect(fn(u)).toBe(cubicHermite(u));
     }
   });
 
@@ -231,6 +224,6 @@ describe('resolveHybridCurve', () => {
       dEnd: 2.4e-5,
       targetRadius: null,
     });
-    expect(fn(0.5)).toBe(cubicHermiteRef(0.5));
+    expect(fn(0.5)).toBe(cubicHermite(0.5));
   });
 });
