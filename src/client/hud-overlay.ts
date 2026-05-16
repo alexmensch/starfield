@@ -11,6 +11,7 @@ import {
 import { projectToScreen } from './overlay-project';
 import { applyFade, setNumAttr, setStyle, setText } from './dirty-attr';
 import { FOCUS_RING_RADIUS_PX } from './focus-ring-overlay';
+import { focusedArrowFadeAlpha } from './arrow-fade';
 
 // Nominal apparent length of each arrow on screen, in CSS pixels. The shaft
 // is built directly in screen space so this length is exact regardless of
@@ -103,11 +104,13 @@ export interface HudUpdateOpts {
   /** Eased progress of the in-flight observe transition, or null. Driven
    *  by Stellata.getObserveTransitionProgress(). */
   transition: { f: number; kind: 'enter' | 'exit' } | null;
-  /** Navigate-mode opacity for Sol/GC arrows + labels. Multiplied onto each
-   *  element's opacity each frame; pointer events suppressed when alpha is
-   *  low so the (invisible) labels don't accept clicks. Always 1 outside
-   *  navigate. Driven by Stellata.getNavigateArrowFadeAlpha(). */
-  navArrowFadeAlpha: number;
+  /** Focused star's peak-amplitude rendered disc diameter in CSS pixels,
+   *  or 0 when no star is focused. The Sol/GC chevrons fade together once
+   *  the disc grows past `max(solShaftLen, gcShaftLen)` — see
+   *  arrow-fade.ts. Computing alpha from this-frame's shaft geometry +
+   *  this-frame's disc size eliminates the one-frame lag that caused the
+   *  ml8 toggle-on flash. */
+  focusedDiscPx: number;
   /** Viewport size in CSS pixels. */
   w: number;
   h: number;
@@ -217,7 +220,7 @@ export class HudOverlay {
     }
 
     const { camera, target, worldOffset, focusedLocal, hideSolArrow,
-            sizeMaxPx, cameraMode, transition, navArrowFadeAlpha, w, h } = opts;
+            sizeMaxPx, cameraMode, transition, focusedDiscPx, w, h } = opts;
 
     // Sol's local-frame position is `-worldOffset` (Sol is the catalog
     // origin); GC is the absolute GC vector minus the same offset.
@@ -264,6 +267,12 @@ export class HudOverlay {
     const targetMarginPx = Math.max(sizeMaxPx, 0);
     this.lastShaftStartPx = shaftStartPx;
 
+    // Two-pass: first commit each arrow's geometry (path / label / debug
+    // record), then compute the shared Sol+GC fade alpha from THIS frame's
+    // shaft lengths and apply it. The previous design read last frame's
+    // drawn lengths from `getDrawnLengths()` to compute alpha BEFORE
+    // updateOne ran — that one-frame lag is exactly what flashed Sol/GC at
+    // alpha=1 the first frame after a HUD toggle-on (ml8 symptom 1).
     const solDist = this.tmpSolLocal.distanceTo(origin);
     this.solDrawnLen = this.updateOne(
       this.solPath, this.solBg, this.solLabel,
@@ -272,7 +281,7 @@ export class HudOverlay {
       solDist, this.tmpSolLocal,
       camera, w, h,
       hideSolArrow, targetMarginPx, shaftStartPx, 'Sol',
-      navArrowFadeAlpha, this.solDebug, this.solArrowState,
+      this.solDebug, this.solArrowState,
     );
 
     const gcDist = this.tmpGcLocal.distanceTo(origin);
@@ -283,8 +292,28 @@ export class HudOverlay {
       gcDist, this.tmpGcLocal,
       camera, w, h,
       false, targetMarginPx, shaftStartPx, 'Galactic centre',
-      navArrowFadeAlpha, this.gcDebug, this.gcArrowState,
+      this.gcDebug, this.gcArrowState,
     );
+
+    // Sol+GC share one alpha so the chevron pair fades together. The ref
+    // length is the longer of the two so a degenerate-projection arrow
+    // (Sol projects close to focus, shrunk to 0) doesn't drag the pair to
+    // alpha=0 — the still-visible sibling drives the threshold. The
+    // distance-vector overlay computes its OWN alpha against its OWN
+    // shaft length (option B from the ml8 bead).
+    const refLen = Math.max(this.solDrawnLen, this.gcDrawnLen);
+    const alpha = focusedArrowFadeAlpha(
+      cameraMode, transition, focusedDiscPx * 0.5, refLen, shaftStartPx,
+    );
+    this.lastFadeAlpha = alpha;
+    if (this.solDrawnLen > 0) {
+      this.solDebug.fadeAlpha = alpha;
+      applyFade([this.solPath, this.solBg, this.solLabel], this.solLabel, alpha, this.solArrowState);
+    }
+    if (this.gcDrawnLen > 0) {
+      this.gcDebug.fadeAlpha = alpha;
+      applyFade([this.gcPath, this.gcBg, this.gcLabel], this.gcLabel, alpha, this.gcArrowState);
+    }
   }
 
   /** Sol/GC arrow shaft lengths actually drawn last frame, in CSS pixels.
@@ -306,6 +335,13 @@ export class HudOverlay {
   getShaftStartPx(): number { return this.lastShaftStartPx; }
   private lastShaftStartPx = 0;
 
+  /** Sol/GC pair's most-recent fade alpha (the value applied to both
+   *  arrows this frame). 1 when no fade is engaged. Surfaced for the
+   *  arrow-fade debug HUD so the panel can show the alpha the chevrons
+   *  actually painted at, without having to re-derive it. */
+  getCurrentFadeAlpha(): number { return this.lastFadeAlpha; }
+  private lastFadeAlpha = 1;
+
   private updateOne(
     path: SVGPathElement,
     bg: SVGPathElement,
@@ -322,17 +358,23 @@ export class HudOverlay {
     targetMarginPx: number,
     shaftStartPx: number,
     labelPrefix: string,
-    fadeAlpha: number,
     debug: ArrowDebugRecord,
     state: ArrowState,
   ): number {
+    // updateOne commits arrow geometry (path / label) and returns the
+    // drawn shaft length. The caller (update) applies the shared Sol/GC
+    // fade alpha after both arrows are committed, so the alpha responds
+    // to THIS frame's geometry — no one-frame lag.
     debug.hideRequested = hide;
     debug.dirPath = 'none';
     debug.behindCamera = false;
     debug.shrunkToTarget = false;
     debug.projAlong = 0;
     debug.shaftLengthPx = 0;
-    debug.fadeAlpha = fadeAlpha;
+    // debug.fadeAlpha is populated by the caller after the shared alpha
+    // is computed; default to 1 so an arrow hidden this frame reports
+    // "no fade" rather than a stale value.
+    debug.fadeAlpha = 1;
 
     const dirLenSq = dir.lengthSq();
     if (hide || dirLenSq < 1e-12) {
@@ -417,7 +459,6 @@ export class HudOverlay {
     state.lastLabelY = setNumAttr(label, 'y', sy, state.lastLabelY);
     state.lastLabelText = setText(label, `${labelPrefix} · ${fmtDist(distancePc)}`, state.lastLabelText);
 
-    applyFade([path, bg, label], label, fadeAlpha, state);
     return shaftLengthPx;
   }
 
@@ -437,6 +478,7 @@ export class HudOverlay {
     this.hideArrow(this.gcPath, this.gcBg, this.gcLabel, this.gcArrowState);
     this.solDrawnLen = 0;
     this.gcDrawnLen = 0;
+    this.lastFadeAlpha = 1;
     Object.assign(this.solDebug, emptyArrowDebug());
     Object.assign(this.gcDebug, emptyArrowDebug());
   }

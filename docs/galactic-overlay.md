@@ -137,21 +137,30 @@ zero orientation). Sol arrow also hidden when focused on Sol —
 pointing at yourself adds nothing.
 
 **Navigate-mode arrow fade.** As the user orbits close to a focused star,
-the rendered disc grows past the standard chevron length and the Sol/GC
-chevrons would otherwise sit on top of the disc. `Stellata.getNavigateArrowFadeAlpha`
-computes a single alpha each frame, applied uniformly to Sol arrow, GC
-arrow, and the distance-vector chevron so all three reference arrows
-fade together. The fade keys on the *actually drawn* shaft lengths
-(`HudOverlay.getDrawnLengths`, with one frame of lag — alpha read at the
-start of frame N uses values stored by frame N-1's render). Coverage is
-`(discRadius − shaftStart) / max(solDrawn, gcDrawn)`, where `discRadius`
-is the focal star's *peak-amplitude* disc radius (so a high-amplitude
+the rendered disc grows past the standard chevron length and the
+reference arrows would otherwise sit on top of the disc. The fade is
+*per-arrow*: the Sol/GC chevron pair shares one alpha keyed on
+`max(solDrawnLen, gcDrawnLen)` (so when one chevron is shortened by
+its target projecting close to the focused star the still-full sibling
+drives the threshold), and the distance-vector chevron computes its own
+alpha against its own drawn shaft length. The distance-vector is
+typically longer than the nominal Sol/GC chevrons — it spans focal star
+→ destination — so it outlasts them by design. The shared smoothstep
+lives in `src/client/arrow-fade.ts` as `focusedArrowFadeAlpha`, called
+from `HudOverlay.update` for Sol/GC and from `distance-vector-overlay`
+for the distance-vector. Each consumer feeds *this frame's* shaft
+length (no one-frame lag — eliminates the toggle-on flash that the
+prior last-frame-drawn-lengths design produced). Coverage is
+`(discRadius − shaftStart) / shaftLength`, where `discRadius` is the
+focal star's *peak-amplitude* disc radius (so a high-amplitude
 variable's pulsation doesn't oscillate the fade). Smoothstep eased over
-[0.5, 0.75]. During an in-flight observe transition the alpha holds the
-*source*-mode value (navigate alpha during enter, 1 during exit) and
-snaps to the destination on completion — visible alpha changes during
-the camera glide would render on top of the focal disc and look like
-chrome floating over the star, so we wait for the transition to finish.
+[0.5, 0.75] (`COVERAGE_FADE_START`, `COVERAGE_FADE_END`). During an
+in-flight observe transition the alpha holds the *source*-mode value
+(navigate-style disc-coverage fade during enter, alpha=1 during exit)
+and snaps to the destination on completion — visible alpha changes
+during the camera glide would render on top of the focal disc and look
+like chrome floating over the star, so we wait for the transition to
+finish.
 
 Diagnostic readout: the **Arrows** section of the unified debug panel
 (`debug.panel()`, or the hidden triple-tap-D affordance) shows live drawn
