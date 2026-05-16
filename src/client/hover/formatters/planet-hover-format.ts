@@ -8,6 +8,11 @@
 //   • physical equatorial radius and orbital period derived from
 //     Kepler's third law against `semiMajorAxisAu`.
 //
+// Quantity labels are spelled out in full ("Radius", "Period",
+// "App Magnitude") per stellata-lo5-hover-conventions Rule 1 — single
+// letters are too compressed for the user to parse at a 280 ms hover
+// delay.
+//
 // Pure: takes only its inputs as a context bundle. The host→planet
 // distance and the apparent magnitude come in as functions so the
 // formatter doesn't need a Three.js camera or a live PlanetBodyField —
@@ -42,17 +47,17 @@ export function formatPlanetHover(
   const dist = ctx.distanceFromHostPc(planetIdx);
   const appMag = ctx.appMagFor(planetIdx);
   const distStr = dist !== null ? fmtDistAuto(dist) : '';
-  const magStr = appMag !== null ? `V ${formatAppMag(appMag)}` : '';
+  const magStr = appMag !== null ? `App Magnitude ${formatAppMag(appMag)}` : '';
   const headLine = [distStr, magStr].filter(Boolean).join(' · ');
   if (headLine) lines.push(headLine);
 
-  const radiusStr = `R ${formatKm(planet.radiusKm)} km`;
+  const radiusStr = `Radius ${formatKm(planet.radiusKm)} km`;
   // Kepler's third law in the Sun-mass system: T(years) = a(AU)^1.5.
   // For exoplanets (bk5) the host-mass term reappears as T = a^1.5/√M;
   // until then every attached host is Sol-mass so the simple form is
   // exact.
   const yearsPeriod = Math.pow(planet.semiMajorAxisAu, 1.5);
-  const periodStr = `P ${formatPeriodYears(yearsPeriod)} yr`;
+  const periodStr = `Period ${formatPeriodYears(yearsPeriod)} yr`;
   lines.push(`${radiusStr} · ${periodStr}`);
 
   return { name: planet.name, lines };

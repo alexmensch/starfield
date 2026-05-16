@@ -42,21 +42,25 @@ describe('formatPlanetHover', () => {
     }));
     expect(out.name).toBe('Mercury');
     expect(out.lines).toEqual([
-      '0.310 AU · V -2.5',
-      'R 2,440 km · P 0.24 yr',
+      '0.310 AU · App Magnitude -2.5',
+      'Radius 2,440 km · Period 0.24 yr',
     ]);
   });
 
-  it('formats Earth at 1 AU as full-phase (sun-angle 0)', () => {
-    // Earth idx = 2. 1 AU in pc, app mag at sub-solar viewer
-    // (degenerate but legal): pick a representative −3.99.
+  it('formats Earth at a representative orbital distance', () => {
+    // Earth idx = 2. The test feeds a fixed 1 AU input — a fake
+    // current-position stand-in for golden-string stability. Real
+    // Earth varies 0.983-1.017 AU through its orbit (e = 0.0167);
+    // the live hover path reads the actual distance from
+    // PlanetBodyField's ephemeris-driven iLocalRel cache. This test
+    // only pins the formatter, not the ephemeris.
     const out = formatPlanetHover(2, buildCtx({
       Earth: { distancePc: 1 / 206264.80624709636, appMag: -3.99 },
     }));
     expect(out.name).toBe('Earth');
     expect(out.lines).toEqual([
-      '1.0 AU · V -4.0',
-      'R 6,371 km · P 1.00 yr',
+      '1.0 AU · App Magnitude -4.0',
+      'Radius 6,371 km · Period 1.00 yr',
     ]);
   });
 
@@ -69,8 +73,8 @@ describe('formatPlanetHover', () => {
     expect(out.name).toBe('Jupiter');
     // Kepler 3rd law: 5.203^1.5 ≈ 11.86 → rounds to 12 (>= 10 tier).
     expect(out.lines).toEqual([
-      '5.2 AU · V -2.7',
-      'R 69,911 km · P 12 yr',
+      '5.2 AU · App Magnitude -2.7',
+      'Radius 69,911 km · Period 12 yr',
     ]);
   });
 
@@ -79,19 +83,19 @@ describe('formatPlanetHover', () => {
       Pluto: { distancePc: 39 / 206264.80624709636, appMag: 14.3 },
     }));
     expect(out.name).toBe('Pluto');
-    expect(out.lines[0]).toBe('39.0 AU · V +14.3');
+    expect(out.lines[0]).toBe('39.0 AU · App Magnitude +14.3');
   });
 
   it('falls back gracefully when live values are null', () => {
-    // The provider should never hand the formatter a null pair (it
-    // gates on focused planet system before calling), but guard the
-    // formatter against the degenerate state. Empty head line should
-    // not appear — only the period/radius line survives.
+    // The provider should never hand the formatter a null pair (the
+    // pick path returns null whenever the planet isn't visible) but
+    // guard the formatter against the degenerate state. Empty head
+    // line should not appear — only the period/radius line survives.
     const out = formatPlanetHover(2, buildCtx({
       Earth: { distancePc: null, appMag: null },
     }));
     expect(out.name).toBe('Earth');
-    expect(out.lines).toEqual(['R 6,371 km · P 1.00 yr']);
+    expect(out.lines).toEqual(['Radius 6,371 km · Period 1.00 yr']);
   });
 
   it('returns empty payload for out-of-range index', () => {
