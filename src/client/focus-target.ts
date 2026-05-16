@@ -73,6 +73,16 @@ export interface FocusTarget {
    *  Called from `finishWarp` after the camera has fully landed. */
   emitFocusEvents(): void;
 
+  /** Physical radius of the focal object in parsecs, or `null` when
+   *  the kind has no well-defined geometric radius (clouds: ellipsoid
+   *  axes don't reduce to a single radius). Consumed by arrival curves
+   *  that need angular size on screen — e.g. the `'hybrid'` curve in
+   *  `arrival-curves.ts` uses `θ = R / d` to drive the close-approach
+   *  smoothstep. Kinds that return `null` cause angular-size-based
+   *  curves to silently fall back to a log-d profile rather than
+   *  fail. */
+  physicalRadius(): number | null;
+
   /** Camera-to-anchor distance at which the chart-mode rendered disc
    *  reaches its `uChartDiscMaxPx` plateau, given the current
    *  `uChartMagBright` setting (the magnitude that maps to max disc

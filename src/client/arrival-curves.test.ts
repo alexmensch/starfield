@@ -4,6 +4,7 @@ import {
   easeQuinticHermite,
   easePower,
   easeTrapezoid,
+  easeHybrid,
   resolveArrivalCurve,
 } from './arrival-curves';
 
@@ -173,29 +174,195 @@ describe('easeTrapezoid', () => {
   });
 });
 
+describe('easeHybrid', () => {
+  // Representative Sol-from-10-pc warp.
+  // R_sun ≈ 2.26e-8 pc; rounded for readability.
+  const R_SOL = 2.3e-8;
+  const D0 = 10;        // 10 pc start
+  const D_END = 2.4e-5; // ~5 AU park
+  const SEAM_K = 500;
+  const D_SEAM = SEAM_K * D_END;
+
+  // Map eased-u f back to the absolute distance the consumer would see
+  // — `d(u) = d0 · (d_end/d0)^f(u)`. The test cases reason in real
+  // distance space, which is easier to verify than eased-u.
+  function dOf(f: number): number {
+    return D0 * Math.pow(D_END / D0, f);
+  }
+
+  it('endpoints — f(0) = 0, f(1) = 1', () => {
+    expect(easeHybrid(0, D0, D_END, R_SOL, SEAM_K)).toBeCloseTo(0, 10);
+    expect(easeHybrid(1, D0, D_END, R_SOL, SEAM_K)).toBeCloseTo(1, 10);
+  });
+
+  it('seam value — d_target(u_seam) ≈ d_seam', () => {
+    const uSeamRaw =
+      Math.log(D0 / D_SEAM) / Math.log(D0 / D_END);
+    const uSeam = Math.min(Math.max(uSeamRaw, 0.3), 0.85);
+    const f = easeHybrid(uSeam, D0, D_END, R_SOL, SEAM_K);
+    const d = dOf(f);
+    expect(d).toBeCloseTo(D_SEAM, 6);
+  });
+
+  it('seam velocity ≈ 0 on both sides (v=0 handoff)', () => {
+    const uSeamRaw =
+      Math.log(D0 / D_SEAM) / Math.log(D0 / D_END);
+    const uSeam = Math.min(Math.max(uSeamRaw, 0.3), 0.85);
+    const eps = 1e-5;
+    const dBefore = dOf(easeHybrid(uSeam - eps, D0, D_END, R_SOL, SEAM_K));
+    const dAt = dOf(easeHybrid(uSeam, D0, D_END, R_SOL, SEAM_K));
+    const dAfter = dOf(easeHybrid(uSeam + eps, D0, D_END, R_SOL, SEAM_K));
+    // Numerical derivative of d wrt u on each side. Both quadratic
+    // ramps land at u_seam with df/du = 0 (outer pq ends at τ=1,
+    // inner quintic starts at σ=0 with S'(0)=0), so dd/du also → 0.
+    // Tolerance is loose because we're sandwiched between two
+    // quadratic regions — second-order terms dominate at this ε.
+    const ddBefore = Math.abs((dAt - dBefore) / eps);
+    const ddAfter = Math.abs((dAfter - dAt) / eps);
+    // Scale tolerance by |d0 - d_seam| / 1 — pure dimensional check
+    // that the velocity is "small" relative to the regime's distance
+    // range, not literal zero.
+    const slopeRef = (D0 - D_SEAM);
+    expect(ddBefore / slopeRef).toBeLessThan(5e-4);
+    expect(ddAfter / slopeRef).toBeLessThan(5e-4);
+  });
+
+  it('outer regime matches piecewise-quad on linear-d', () => {
+    const uSeamRaw =
+      Math.log(D0 / D_SEAM) / Math.log(D0 / D_END);
+    const uSeam = Math.min(Math.max(uSeamRaw, 0.3), 0.85);
+    // Sample at τ = 0.25, 0.5, 0.75 within the outer regime.
+    for (const tau of [0.25, 0.5, 0.75]) {
+      const u = tau * uSeam;
+      const fOuterAnalytic = tau < 0.5
+        ? 2 * tau * tau
+        : 1 - 2 * (1 - tau) * (1 - tau);
+      const dExpected = D0 - fOuterAnalytic * (D0 - D_SEAM);
+      const dActual = dOf(easeHybrid(u, D0, D_END, R_SOL, SEAM_K));
+      expect(dActual).toBeCloseTo(dExpected, 6);
+    }
+  });
+
+  it('inner regime mid-σ matches quintic-smootherstep on θ', () => {
+    const uSeamRaw =
+      Math.log(D0 / D_SEAM) / Math.log(D0 / D_END);
+    const uSeam = Math.min(Math.max(uSeamRaw, 0.3), 0.85);
+    // σ = 0.5 corresponds to u halfway through the inner regime.
+    const u = uSeam + 0.5 * (1 - uSeam);
+    // Quintic at σ=0.5: 10·0.125 − 15·0.0625 + 6·0.03125 = 0.5.
+    const sigmaS = 0.5;
+    const thetaSeam = R_SOL / D_SEAM;
+    const thetaEnd = R_SOL / D_END;
+    const thetaExpected = thetaSeam + sigmaS * (thetaEnd - thetaSeam);
+    const dExpected = R_SOL / thetaExpected;
+    const dActual = dOf(easeHybrid(u, D0, D_END, R_SOL, SEAM_K));
+    expect(dActual).toBeCloseTo(dExpected, 8);
+  });
+
+  it('quintic landing — d²θ/du² at u = 1 is ≈ 0', () => {
+    // Sample three points near u = 1 and check the second-difference
+    // of θ wrt u falls off to noise.
+    const eps = 1e-4;
+    const f1 = easeHybrid(1, D0, D_END, R_SOL, SEAM_K);
+    const f2 = easeHybrid(1 - eps, D0, D_END, R_SOL, SEAM_K);
+    const f3 = easeHybrid(1 - 2 * eps, D0, D_END, R_SOL, SEAM_K);
+    const theta1 = R_SOL / dOf(f1);
+    const theta2 = R_SOL / dOf(f2);
+    const theta3 = R_SOL / dOf(f3);
+    // d²θ/du² ≈ (θ1 - 2·θ2 + θ3) / ε². For quintic landing, this
+    // should be small relative to the inner regime's θ range.
+    const thetaSeam = R_SOL / D_SEAM;
+    const thetaEnd = R_SOL / D_END;
+    const dThetaDdu2 = (theta1 - 2 * theta2 + theta3) / (eps * eps);
+    const scale = thetaEnd - thetaSeam;
+    expect(Math.abs(dThetaDdu2) / scale).toBeLessThan(0.1);
+  });
+
+  it('degenerate d_seam >= d_0 — pure inner regime, endpoints exact', () => {
+    // For seam_k * d_end > d_0, the whole warp runs the inner regime.
+    // Endpoints must still land exactly.
+    const closeD0 = D_SEAM * 0.5; // start well inside the seam radius
+    expect(easeHybrid(0, closeD0, D_END, R_SOL, SEAM_K)).toBeCloseTo(0, 10);
+    expect(easeHybrid(1, closeD0, D_END, R_SOL, SEAM_K)).toBeCloseTo(1, 10);
+    // Inner is monotone — sample a few u and check d strictly decreases.
+    let prevD = closeD0 * 1.01;
+    for (let i = 1; i <= 10; i++) {
+      const u = i / 10;
+      const f = easeHybrid(u, closeD0, D_END, R_SOL, SEAM_K);
+      const d = closeD0 * Math.pow(D_END / closeD0, f);
+      expect(d).toBeLessThan(prevD);
+      prevD = d;
+    }
+  });
+
+  it('null R fallback — bit-equal to cubic-Hermite across u', () => {
+    for (let i = 0; i <= 20; i++) {
+      const u = i / 20;
+      expect(easeHybrid(u, D0, D_END, null, SEAM_K)).toBe(easeCubicHermite(u));
+    }
+  });
+
+  it('outbound (d_end > d_0) fallback — bit-equal to cubic-Hermite', () => {
+    // Unfocus path: camera starts inside parkDist, moves outward.
+    const dOutStart = 1e-5;
+    const dOutEnd = 2e-5;
+    for (let i = 0; i <= 20; i++) {
+      const u = i / 20;
+      expect(easeHybrid(u, dOutStart, dOutEnd, R_SOL, SEAM_K))
+        .toBe(easeCubicHermite(u));
+    }
+  });
+
+  it('monotonic d across full warp', () => {
+    let prevD = D0 * 1.01;
+    for (let i = 0; i <= 200; i++) {
+      const u = i / 200;
+      const f = easeHybrid(u, D0, D_END, R_SOL, SEAM_K);
+      const d = dOf(f);
+      expect(d).toBeLessThan(prevD);
+      prevD = d;
+    }
+  });
+});
+
 describe('resolveArrivalCurve', () => {
   it('cubic-hermite branch', () => {
-    const fn = resolveArrivalCurve('cubic-hermite', 2, 0.15, 0.1);
+    const fn = resolveArrivalCurve('cubic-hermite', 2, 0.15, 0.1, 500);
     expect(fn(0.5)).toBeCloseTo(easeCubicHermite(0.5), 12);
   });
   it('quintic-hermite branch', () => {
-    const fn = resolveArrivalCurve('quintic-hermite', 2, 0.15, 0.1);
+    const fn = resolveArrivalCurve('quintic-hermite', 2, 0.15, 0.1, 500);
     expect(fn(0.5)).toBeCloseTo(easeQuinticHermite(0.5), 12);
   });
   it('power branch captures p at resolve time', () => {
-    const fn2 = resolveArrivalCurve('power', 2, 0.15, 0.1);
-    const fn3 = resolveArrivalCurve('power', 3, 0.15, 0.1);
+    const fn2 = resolveArrivalCurve('power', 2, 0.15, 0.1, 500);
+    const fn3 = resolveArrivalCurve('power', 3, 0.15, 0.1, 500);
     expect(fn2(0.5)).toBeCloseTo(0.25, 12);
     expect(fn3(0.5)).toBeCloseTo(0.125, 12);
     // Both stay independent if the caller resolves with different p values.
   });
   it('trapezoid branch captures ramp widths at resolve time', () => {
-    const fnA = resolveArrivalCurve('trapezoid', 2, 0.15, 0.10);
-    const fnB = resolveArrivalCurve('trapezoid', 2, 0.5, 0.5);
+    const fnA = resolveArrivalCurve('trapezoid', 2, 0.15, 0.10, 500);
+    const fnB = resolveArrivalCurve('trapezoid', 2, 0.5, 0.5, 500);
     // Same u, different closure inputs → independent results.
     expect(fnA(0.5)).toBeCloseTo(easeTrapezoid(0.5, 0.15, 0.10), 12);
     expect(fnB(0.5)).toBeCloseTo(easeTrapezoid(0.5, 0.5, 0.5), 12);
     // Sanity: the legacy degenerate case lands at f(0.5) = 0.5.
     expect(fnB(0.5)).toBeCloseTo(0.5, 10);
+  });
+  it('hybrid branch captures ctx at resolve time', () => {
+    const ctx = { d0: 10, dEnd: 2.4e-5, targetRadius: 2.3e-8 };
+    const fn = resolveArrivalCurve('hybrid', 2, 0.15, 0.1, 500, ctx);
+    expect(fn(0)).toBeCloseTo(0, 10);
+    expect(fn(1)).toBeCloseTo(1, 10);
+    // Sample agrees with the direct easeHybrid call.
+    expect(fn(0.5)).toBeCloseTo(
+      easeHybrid(0.5, ctx.d0, ctx.dEnd, ctx.targetRadius, 500),
+      12,
+    );
+  });
+  it('hybrid branch without ctx falls back to cubic-Hermite', () => {
+    const fn = resolveArrivalCurve('hybrid', 2, 0.15, 0.1, 500);
+    expect(fn(0.5)).toBe(easeCubicHermite(0.5));
   });
 });

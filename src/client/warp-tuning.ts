@@ -1,5 +1,9 @@
 import type { Stellata } from './stellata';
-import { type ArrivalCurveId, resolveArrivalCurve } from './arrival-curves';
+import {
+  type ArrivalCurveContext,
+  type ArrivalCurveId,
+  resolveArrivalCurve,
+} from './arrival-curves';
 
 // Warp-curve tuning section for the unified debug panel (mounted from
 // debug.ts). Exposes two surfaces:
@@ -59,6 +63,13 @@ export const DEFAULT_ARRIVAL_POWER_P = 2;
 // to a perceptual standstill before arrival.
 export const DEFAULT_ARRIVAL_TRAPEZOID_T_ACCEL = 0.15;
 export const DEFAULT_ARRIVAL_TRAPEZOID_T_DECEL = 0.10;
+// Hybrid-curve seam distance multiplier: d_seam = seam_k · parkDist.
+// Default 500 is the geometric midpoint of the empirical "decel kicks
+// in" range cited in `docs/camera-arrival.md` (Sol ≈ 1000×, Betelgeuse
+// ≈ 295× parkDist). The hybrid switches from a linear-d piecewise-quad
+// outer regime to a quintic-smootherstep on θ inner regime at this
+// distance from the destination.
+export const DEFAULT_ARRIVAL_HYBRID_SEAM_K = 500;
 
 interface Knobs {
   reorientMs: number;
@@ -70,6 +81,7 @@ interface Knobs {
   arrivalPowerP: number;
   arrivalTrapezoidTAccel: number;
   arrivalTrapezoidTDecel: number;
+  arrivalHybridSeamK: number;
   midFlyRecentreFrac: number;
   chartPlateauMargin: number;
   chartPhase3ScalingEnabled: boolean;
@@ -86,6 +98,7 @@ const knobs: Knobs = {
   arrivalPowerP: DEFAULT_ARRIVAL_POWER_P,
   arrivalTrapezoidTAccel: DEFAULT_ARRIVAL_TRAPEZOID_T_ACCEL,
   arrivalTrapezoidTDecel: DEFAULT_ARRIVAL_TRAPEZOID_T_DECEL,
+  arrivalHybridSeamK: DEFAULT_ARRIVAL_HYBRID_SEAM_K,
   midFlyRecentreFrac: DEFAULT_MID_FLY_RECENTRE_FRAC,
   chartPlateauMargin: DEFAULT_CHART_PLATEAU_MARGIN,
   chartPhase3ScalingEnabled: DEFAULT_CHART_PHASE3_SCALING_ENABLED,
@@ -103,12 +116,14 @@ export function warpFlyTMinMs(): number { return knobs.flyTMinMs; }
 export function warpFlyTMaxMs(): number { return knobs.flyTMaxMs; }
 export function warpFlyTKMs(): number { return knobs.flyTKMs; }
 export function warpObserveTransitionMs(): number { return knobs.observeTransitionMs; }
-export function warpArrivalEaseFn(): (u: number) => number {
+export function warpArrivalEaseFn(ctx?: ArrivalCurveContext): (u: number) => number {
   return resolveArrivalCurve(
     knobs.arrivalCurve,
     knobs.arrivalPowerP,
     knobs.arrivalTrapezoidTAccel,
     knobs.arrivalTrapezoidTDecel,
+    knobs.arrivalHybridSeamK,
+    ctx,
   );
 }
 export function warpArrivalTrapezoidTAccel(): number {
@@ -116,6 +131,9 @@ export function warpArrivalTrapezoidTAccel(): number {
 }
 export function warpArrivalTrapezoidTDecel(): number {
   return knobs.arrivalTrapezoidTDecel;
+}
+export function warpArrivalHybridSeamK(): number {
+  return knobs.arrivalHybridSeamK;
 }
 export function warpMidFlyRecentreFrac(): number { return knobs.midFlyRecentreFrac; }
 export function warpChartPlateauMargin(): number { return knobs.chartPlateauMargin; }
@@ -248,7 +266,13 @@ export function buildWarpSection(stellata: Stellata): WarpTuningSection {
     label.textContent = 'curve';
     const sel = document.createElement('select');
     sel.style.cssText = 'flex:1;background:#222;color:#fff;border:1px solid #444;';
-    for (const id of ['cubic-hermite', 'quintic-hermite', 'power', 'trapezoid'] as const) {
+    for (const id of [
+      'cubic-hermite',
+      'quintic-hermite',
+      'power',
+      'trapezoid',
+      'hybrid',
+    ] as const) {
       const opt = document.createElement('option');
       opt.value = id;
       opt.textContent = id;
@@ -291,6 +315,19 @@ export function buildWarpSection(stellata: Stellata): WarpTuningSection {
     initial: knobs.arrivalTrapezoidTDecel,
     onChange: (v) => { knobs.arrivalTrapezoidTDecel = v; },
     fmt: fmtFrac,
+  });
+
+  // Hybrid-curve seam distance multiplier. d_seam = seam_k · parkDist.
+  // Inactive unless `curve === 'hybrid'`. Range and step chosen to span
+  // the empirical 100–1000 × parkDist range from
+  // `docs/camera-arrival.md`. Stays visible alongside the other curve
+  // sliders matching the trapezoid / power UX.
+  addSlider({
+    label: 'hy seam k',
+    min: 100, max: 2000, step: 50,
+    initial: knobs.arrivalHybridSeamK,
+    onChange: (v) => { knobs.arrivalHybridSeamK = v; },
+    fmt: (v) => v.toFixed(0),
   });
 
   addSlider({
@@ -374,7 +411,9 @@ export function buildWarpSection(stellata: Stellata): WarpTuningSection {
           : knobs.arrivalCurve === 'trapezoid'
             ? ` (a=${knobs.arrivalTrapezoidTAccel.toFixed(2)},`
               + ` d=${knobs.arrivalTrapezoidTDecel.toFixed(2)})`
-            : ''
+            : knobs.arrivalCurve === 'hybrid'
+              ? ` (seam_k=${knobs.arrivalHybridSeamK.toFixed(0)})`
+              : ''
       }\n` +
       `midFlyRecentreFrac = ${knobs.midFlyRecentreFrac.toFixed(2)}\n` +
       `chartPlateauMargin = ${knobs.chartPlateauMargin.toFixed(2)}\n` +

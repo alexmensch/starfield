@@ -1860,6 +1860,10 @@ export class Stellata {
     const eyeDist = this.camera.position.distanceTo(target);
 
     if (animate && eyeDist > parkDist) {
+      // Cloud destination — `targetRadius: null` triggers the hybrid
+      // curve's fallback to cubic-Hermite. Clouds have no single
+      // geometric R (ellipsoid axes), so angular-size driving doesn't
+      // apply.
       this.startFocusLerp(newFocusLerpFrom(
         this.camera.position,
         startQuat,
@@ -1868,7 +1872,11 @@ export class Stellata {
         parkDist,
         FOCUS_LERP_MS,
         performance.now(),
-        warpArrivalEaseFn(),
+        warpArrivalEaseFn({
+          d0: eyeDist,
+          dEnd: parkDist,
+          targetRadius: null,
+        }),
       ));
       // controls.enabled stays true — see focusStar's comment.
     } else if (eyeDist > parkDist) {
@@ -2117,7 +2125,16 @@ export class Stellata {
             target: { center: this.controls.target, parkDist: minDist },
             startMs: unfocusStartMs,
             durationMs: OBSERVE_TRANSITION_MS,
-            easeUFn: warpArrivalEaseFn(),
+            // Outbound — d0 < dEnd (camera was inside parkDist,
+            // moving outward to minDist). The hybrid curve detects
+            // outbound and falls back to cubic-Hermite; passing
+            // `targetRadius: null` enforces the same path even if
+            // a future curve cared about direction.
+            easeUFn: warpArrivalEaseFn({
+              d0: eye,
+              dEnd: minDist,
+              targetRadius: null,
+            }),
           }),
         };
         this.bus.emit('state');
@@ -2416,7 +2433,12 @@ export class Stellata {
         parkDist,
         FOCUS_LERP_MS,
         performance.now(),
-        warpArrivalEaseFn(),
+        warpArrivalEaseFn({
+          d0: eyeDist,
+          dEnd: parkDist,
+          targetRadius:
+            Math.max(this.catalog.physicalRadius[starIndex], 1e-9) * R_SUN_PC,
+        }),
       ));
       // Deliberately do NOT toggle controls.enabled. The animate-loop
       // dispatcher routes through updateFocusLerp before
@@ -2511,6 +2533,8 @@ export class Stellata {
         this.bus.emit('focus', idx);
         this.bus.emit('state');
       },
+      physicalRadius: () =>
+        Math.max(this.catalog.physicalRadius[idx], 1e-9) * R_SUN_PC,
       chartPlateauDistance: (magBright) =>
         chartPlateauDistancePc(this.catalog.absmag[idx], magBright),
     };
@@ -2552,6 +2576,10 @@ export class Stellata {
         this.bus.emit('cloudFocus', idx);
         this.bus.emit('state');
       },
+      // Clouds have no single geometric radius — the ellipsoid axes
+      // vary by 2-3× per cloud. Angular-size-based arrival curves
+      // (e.g. `'hybrid'`) fall back to log-d when this returns null.
+      physicalRadius: () => null,
       // Clouds render as isobar contours in chart mode (not as
       // magnitude-driven discs), so there's no disc plateau to detect.
       chartPlateauDistance: () => null,
@@ -2697,7 +2725,18 @@ export class Stellata {
       warpFlyTMinMs() + warpFlyTKMs() * Math.log10(1 + distPc),
     );
     const postArrivalMs = returnToObserve ? warpObserveTransitionMs() : 0;
-    const arrivalEaseFn = warpArrivalEaseFn();
+    // Resolve the arrival curve with per-warp context. The hybrid curve
+    // consumes `{ d0, dEnd, targetRadius }`; other curves ignore it.
+    // `dest.physicalRadius()` returns null for clouds (no single
+    // geometric R) — the hybrid then falls back to cubic-Hermite for
+    // cloud destinations, which is the right behaviour because the
+    // close-approach angular cue doesn't apply to ellipsoids.
+    const flyD0 = pStart.distanceTo(B);
+    const arrivalEaseFn = warpArrivalEaseFn({
+      d0: flyD0,
+      dEnd: endOffset,
+      targetRadius: dest.physicalRadius(),
+    });
 
     this.controls.enabled = false;
     // Point orbit-target at the destination from the moment the warp begins
