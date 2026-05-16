@@ -274,6 +274,17 @@ const VAR_TROUGH_FLOOR_FRACTION = 0.2;
 // just keeps Math.log10 / division well-defined at the singular point.
 const DCAM_LOG_FLOOR_PC = 1e-30;
 
+// Floor on a catalog `physicalRadius[idx]` (in solar radii) before
+// converting to parsecs (`* R_SUN_PC`). Keeps R > 0 in geometric
+// formulas — angular-arrival θ = R/d, perceptual-disc kernels, the
+// hybrid arrival curve's inner regime. 1e-9 R_sun ≈ 0.7 km, six
+// orders of magnitude below any catalog entry, so the clamp never
+// fires on real data; it just defines a numerically-safe limit. Six
+// pre-existing sites in this file floor the same quantity at 1e-9 or
+// 1e-6 inconsistently (stellata-9mm.195) — migrate them off the
+// literals as part of that bead, not here.
+const MIN_PHYSICAL_RADIUS_R_SUN = 1e-9;
+
 // Squared-length threshold below which `controls.target` is treated as
 // coincident with the local origin (= focal-star position). Engages the
 // uPinFocusToCenter shader pin so the focused star renders at NDC (0,0)
@@ -2492,7 +2503,7 @@ export class Stellata {
           d0: eyeDist,
           dEnd: parkDist,
           targetRadius:
-            Math.max(this.catalog.physicalRadius[starIndex], 1e-9) * R_SUN_PC,
+            Math.max(this.catalog.physicalRadius[starIndex], MIN_PHYSICAL_RADIUS_R_SUN) * R_SUN_PC,
         }),
       ));
       // Deliberately do NOT toggle controls.enabled. The animate-loop
@@ -2589,7 +2600,7 @@ export class Stellata {
         this.bus.emit('state');
       },
       physicalRadius: () =>
-        Math.max(this.catalog.physicalRadius[idx], 1e-9) * R_SUN_PC,
+        Math.max(this.catalog.physicalRadius[idx], MIN_PHYSICAL_RADIUS_R_SUN) * R_SUN_PC,
       chartPlateauDistance: (magBright) =>
         chartPlateauDistancePc(this.catalog.absmag[idx], magBright),
     };
