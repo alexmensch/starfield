@@ -1,12 +1,14 @@
 # Hand-curated structural overrides for Local Group objects whose LVDB
-# summary row is too coarse for meaningful 3D rendering. Each row
-# *replaces* the structural detail (axes + orientation) derived from
-# LVDB for the named object; position (RA/Dec/distance) still flows
-# from LVDB. Other objects render from LVDB's rhalf_physical /
-# ellipticity / position_angle as a sky-plane oblate ellipsoid.
+# summary row is too coarse for meaningful 3D rendering, plus a handful
+# of major LG members not present in LVDB at all (M31, M33 — the
+# `dwarf_all` table excludes the three major spirals). LVDB-matched
+# rows leave the optional position columns empty; standalone rows
+# (M31, M33) populate them.
 #
 # Columns:
-#   name              — display name (must match LVDB's `name` column for merge)
+#   name              — display name (must match LVDB's `name` column
+#                        for merge; otherwise treated as a standalone
+#                        row requiring ra/dec/distance below)
 #   a_pc, b_pc, c_pc  — local-frame semi-axes in parsecs
 #   orient            — orientation of the local frame in ICRS:
 #                         disc:i=X,pa=Y   disc plane normal at inclination i
@@ -24,19 +26,29 @@
 #                                         choice for the basis seed).
 #   ref_doi            — primary structural reference (DOI without resolver
 #                        prefix).
+#   ra_deg, dec_deg,   — optional standalone position. Populated only
+#   distance_kpc          when this row names an object not in LVDB
+#                         (M31, M33); leave empty for LVDB-merge rows.
+#                         All three must be set together or all empty.
 #
 # Per stellata-data-fidelity-principle: hand-curated overrides are
 # acceptable only for truly singular edge cases where no canonical source
 # resolves them. LVDB's projected (rhalf, ellipticity, PA) captures the
-# typical dSph adequately; the three objects below have well-studied
+# typical dSph adequately; LMC / SMC / Sgr below carry well-studied
 # departures (LMC's inclined disc; SMC's line-of-sight elongation; Sgr's
 # 3D extent through tidal disruption) that warrant per-object detail.
+# M31 / M33 are major spirals omitted from the LVDB dwarf_all table —
+# hand-curated entries are the only way they reach the renderer.
 #
 # Label visibility is governed at runtime by apparent-size ranking
 # (local-group.ts → computeVisibleLabels) — no per-object threshold
 # column. The MW-inside guard is the only exception, and it applies
 # globally rather than per-object.
-name	a_pc	b_pc	c_pc	orient	ref_doi
+name	a_pc	b_pc	c_pc	orient	ref_doi	ra_deg	dec_deg	distance_kpc
 LMC	4500	4500	1000	disc:i=32,pa=135	10.1088/0004-637X/781/2/121
 SMC	3730	4960	6000	los	10.1088/0004-637X/744/2/128
 Sagittarius	2616	942	1000	pa:102	10.1086/192237
+M 32	1600	1200	1200	pa:159	10.1088/0004-6256/144/1/4
+NGC 205	2700	1500	1500	pa:170	10.1088/0004-6256/144/1/4
+M31	15000	15000	500	disc:i=77,pa=37	10.3847/1538-4357/aae8e7	10.6847	41.2687	776
+M33	8500	8500	400	disc:i=54,pa=22	10.1086/508140	23.4625	30.6602	840

@@ -192,10 +192,12 @@ Claude Code should read on demand when working on the relevant area.
   sphere (b/l grid), Sol/GC SVG arrows, HUD ring, navigate↔observe
   shaft-start lerp. Read when touching any of those layers.
 - **`docs/local-group.md`** — Local Group wireframe layer (LMC, SMC,
-  Sagittarius dSph, classical dSphs, LVDB ultra-faints within 250 kpc),
+  Sagittarius dSph, classical dSphs, LVDB ultra-faints — plus M31,
+  M33, NGC 205, M 32, IC 10 and the outer-band dIrrs out to 2 Mpc),
   MW label, per-object dwarf labels via the shared distance-gated
-  label engine. Data pipeline + override schema + orient specs +
-  quaternion construction. Read when touching `local-group.{ts,
+  label engine. Data pipeline + override schema (with optional
+  standalone-position columns for objects not in LVDB) + orient
+  specs + quaternion construction. Read when touching `local-group.{ts,
   test.ts}`, `local-group-loader.ts`, `scripts/build-local-group*.ts`,
   or `data/local-group/`.
 - **`docs/molecular-clouds.md`** — cloud ellipsoids: data, shader,

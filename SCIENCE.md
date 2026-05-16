@@ -346,8 +346,9 @@ Implementation: `src/client/heliopause.ts` and
 ## Local Group wireframes
 
 The Local Group wireframe layer renders LineLoop outlines for confirmed-
-galaxy members within 250 kpc of Sol — sized to the camera envelope
-established in `stellata-5gq`. Geometry is representational
+galaxy members out to the canonical 2 Mpc Local Group boundary —
+M31 + M33 + the Andromeda subgroup, plus the outer dIrrs (NGC 6822,
+IC 10, IC 1613, Leo A, WLM, Sextans A/B, …). Geometry is representational
 (stylised LineLoop ellipsoids and discs), but every position, distance,
 and structural parameter comes from peer-reviewed catalogues:
 
@@ -356,7 +357,7 @@ Journal of Astrophysics, arXiv:2411.07424 (CC0). A frozen snapshot of
 the `dwarf_all` table lives at `data/local-group/lvdb-snapshot.csv` —
 909 rows covering the full Local Volume. The build pipeline
 (`scripts/build-local-group.ts`) filters to `confirmed_real = 1`,
-`confirmed_galaxy = 1`, and heliocentric distance ≤ 250 kpc; ~52
+`confirmed_galaxy = 1`, and heliocentric distance ≤ 2 Mpc; ~121
 objects pass the filter.
 
 LVDB provides position (ra, dec, distance), projected half-light
@@ -373,9 +374,9 @@ ellipsoid for the default rendering path:
   north; minor axes complete a right-handed basis with the line of
   sight.
 
-**Three hand-curated overrides** in `data/local-group/overrides.tsv`
-replace structural detail for the singular cases LVDB's summary row
-can't capture:
+**Hand-curated overrides** in `data/local-group/overrides.tsv` replace
+structural detail for the singular cases LVDB's summary row can't
+capture, and add the two major spirals LVDB's `dwarf_all` table omits:
 
 - **LMC (49.59 kpc)**: inclined disc at i = 32°, line of nodes PA =
   135° (van der Marel & Kallivayalil 2014, *ApJ* 781, 121,
@@ -391,6 +392,24 @@ can't capture:
   projected ellipticity captures the sky-plane shape but not the
   line-of-sight extent (Ibata et al. 1995, *AJ* 110, 632,
   DOI 10.1086/192237).
+- **M 32 (~773 kpc)**: optical-extent ellipsoid 1.6 / 1.2 / 1.2 kpc
+  at PA 159°. LVDB's half-light radius of 105 pc renders sub-pixel
+  at LG distances; the override uses the broader optical/D₂₅ extent
+  cited in McConnachie 2012, *AJ* 144, 4
+  (DOI 10.1088/0004-6256/144/1/4).
+- **NGC 205 / M 110 (~835 kpc)**: 2.7 / 1.5 / 1.5 kpc at PA 170° from
+  the same McConnachie 2012 review — again the optical extent rather
+  than the small half-light radius.
+- **M31 / Andromeda (776 kpc)**: inclined disc at i = 77°, line of
+  nodes PA = 37°, 15 kpc disc radius × 500 pc thickness — the
+  structural parameters from the PAndAS survey (McConnachie et al.
+  2018, *ApJ* 868, 55, DOI 10.3847/1538-4357/aae8e7). Standalone row
+  (not in LVDB's `dwarf_all` table; the override carries RA, Dec,
+  distance directly).
+- **M33 / Triangulum (840 kpc)**: inclined disc at i = 54°, line of
+  nodes PA = 22°, 8.5 kpc disc radius × 400 pc thickness — distance
+  from the Cepheid measurement of Bonanos et al. 2006, *ApJ* 652, 313
+  (DOI 10.1086/508140). Standalone row.
 
 Per the project's `frozen-external-data` convention, refreshing the
 LVDB snapshot is an explicit manual step (curl + `npm run
@@ -399,10 +418,12 @@ network.
 
 Per the `stellata-data-fidelity-principle`, hand-curated overrides are
 the exception, reserved for objects with well-studied departures that
-no canonical structural row resolves. Other Local Volume dwarfs render
-from their LVDB row directly. As future LVDB snapshots land, the
-default-path objects update automatically; only the three overrides
-need re-review against any structural-paper updates.
+no canonical structural row resolves — or, in the case of M31 / M33,
+for the major spirals that the LVDB `dwarf_all` table excludes by
+construction. Other Local Volume dwarfs render from their LVDB row
+directly. As future LVDB snapshots land, the default-path objects
+update automatically; only the overrides need re-review against any
+structural-paper updates.
 
 Implementation: `src/client/local-group.ts`,
 `src/client/local-group-loader.ts`, `scripts/build-local-group.ts`,

@@ -84,10 +84,12 @@ describe('distance-util / fmtDist (pc)', () => {
     expect(fmtDist(9999)).toBe('9999 pc');
   });
 
-  it('uses k-suffix at and above 10000 pc', () => {
+  it('uses k-suffix between 10000 pc and 1 Mpc', () => {
     expect(fmtDist(10000)).toBe('10k pc');
     expect(fmtDist(15500)).toBe('15.5k pc');
     expect(fmtDist(100000)).toBe('100k pc');
+    expect(fmtDist(776_000)).toBe('776k pc'); // M31 — 776 kpc
+    expect(fmtDist(999_999)).toBe('1000k pc');
   });
 
   it('strips trailing .0 from k-suffix output', () => {
@@ -96,10 +98,22 @@ describe('distance-util / fmtDist (pc)', () => {
     expect(fmtDist(20000)).toBe('20k pc');
   });
 
+  it('uses M-suffix at and above 1 Mpc', () => {
+    expect(fmtDist(1_000_000)).toBe('1M pc');         // exactly 1 Mpc
+    expect(fmtDist(1_500_000)).toBe('1.5M pc');       // 1.5 Mpc — trailing .0 from 1.50 stripped
+    expect(fmtDist(1_530_000)).toBe('1.53M pc');      // two-decimal precision retained
+    expect(fmtDist(2_000_000)).toBe('2M pc');         // 2 Mpc — both trailing zeros stripped
+  });
+
   it('is monotonically non-decreasing across the formatted-tier boundaries', () => {
     // Across each tier change, larger pc still produces a value-equal-or-
     // greater displayed magnitude — the units don't lie about ordering.
-    const samples = [0.001, 0.005, 0.01, 0.5, 1, 10, 99, 100, 9999, 10000, 50000];
+    // The list covers every tier boundary, including the k → M crossover
+    // at 1 Mpc that the 1ui expansion introduced.
+    const samples = [
+      0.001, 0.005, 0.01, 0.5, 1, 10, 99, 100, 9999,
+      10000, 50000, 999_999, 1_000_000, 1_500_000, 2_000_000,
+    ];
     for (let i = 1; i < samples.length; i++) {
       const a = fmtDist(samples[i - 1]);
       const b = fmtDist(samples[i]);
@@ -119,11 +133,20 @@ describe('distance-util / fmtDist (ly)', () => {
   });
 
   it('uses ly unit suffix in all tiers', () => {
-    expect(fmtDist(0.001)).toMatch(/ ly$/); // 4-decimal tier
-    expect(fmtDist(0.05)).toMatch(/ ly$/);  // 3-decimal tier
-    expect(fmtDist(10)).toMatch(/ ly$/);    // 1-decimal tier
-    expect(fmtDist(500)).toMatch(/ ly$/);   // integer tier
-    expect(fmtDist(50000)).toMatch(/ ly$/); // k-suffix tier
+    expect(fmtDist(0.001)).toMatch(/ ly$/);  // 4-decimal tier
+    expect(fmtDist(0.05)).toMatch(/ ly$/);   // 3-decimal tier
+    expect(fmtDist(10)).toMatch(/ ly$/);     // 1-decimal tier
+    expect(fmtDist(500)).toMatch(/ ly$/);    // integer tier
+    expect(fmtDist(50000)).toMatch(/ ly$/);  // k-suffix tier
+    expect(fmtDist(1_500_000)).toMatch(/M ly$/); // M-suffix tier at Mpc scale
+  });
+
+  it('reaches the M-suffix tier for M31-scale distances (~2.5 Mly per Mpc)', () => {
+    // M31 at 776 kpc → 776e3 * 3.2616 ≈ 2.53 Mly. The M-suffix tier
+    // kicks in once the *displayed* value crosses 1e6, so 776 kpc in ly
+    // mode lands in M-suffix territory even though it's "k pc" in pc
+    // mode.
+    expect(fmtDist(776_000)).toBe('2.53M ly');
   });
 
   it('switches tiers based on the converted value, not the pc input', () => {

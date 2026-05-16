@@ -17,6 +17,7 @@ import dustParticleFrag from './shaders/dust-particle.frag.glsl?raw';
 import { GalacticDisc } from './galactic-disc';
 import { LocalGroupLayer } from './local-group';
 import type { LgCatalog } from './local-group-loader';
+import { MAX_DISTANCE_PC, CAMERA_FAR_PC } from '../../scripts/build-local-group-pure';
 import { GalacticGrid } from './galactic-grid';
 import { HudOverlay } from './hud-overlay';
 import { GALACTIC_CENTRE_PC } from './galactic-coords';
@@ -666,12 +667,14 @@ export class Stellata {
 
     // Near plane must be strictly smaller than controls.minDistance,
     // otherwise a maximally-zoomed-in star lands on the clip plane and
-    // disappears at the closest zoom.
+    // disappears at the closest zoom. Far plane (`CAMERA_FAR_PC`) is
+    // paired with `MAX_DISTANCE_PC` so the build filter and camera can
+    // never drift; see build-local-group-pure.ts for the definition.
     this.camera = new THREE.PerspectiveCamera(
       DEFAULT_FOV,
       window.innerWidth / window.innerHeight,
       1e-10,
-      500_000,
+      CAMERA_FAR_PC,
     );
     this.camera.position.set(0, 0, 30);
 
@@ -686,7 +689,7 @@ export class Stellata {
     this.controls.staticMoving = false;
     this.controls.dynamicDampingFactor = 0.15;
     this.controls.minDistance = GLOBAL_MIN_DIST_PC;
-    this.controls.maxDistance = 250_000;
+    this.controls.maxDistance = MAX_DISTANCE_PC;
     this.controls.target.set(0, 0, 0);
 
     // OBSERVE-mode look-around controller. Starts disabled; enable() runs

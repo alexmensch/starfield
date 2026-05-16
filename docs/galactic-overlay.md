@@ -3,11 +3,11 @@
 Four layers anchor the local star clump against the Milky Way's geometry:
 the galactic disc outline (always-on midplane ring + bulge wireframe),
 the Local Group wireframe layer (Magellanic Clouds + dwarf satellites
-within 250 kpc — `docs/local-group.md`), the toggleable galactic
-coordinate sphere, and the HUD layer (Sol/GC arrows plus the OBSERVE-mode
-ring). Together they give the user "which way is out, how far am I from
-the centre, and what else is nearby at galactic scales" without
-obscuring the local stars.
+plus M31 / M33 / the M31 subgroup + outer-band dIrrs out to 2 Mpc —
+`docs/local-group.md`), the toggleable galactic coordinate sphere, and
+the HUD layer (Sol/GC arrows plus the OBSERVE-mode ring). Together they
+give the user "which way is out, how far am I from the centre, and what
+else is nearby at galactic scales" without obscuring the local stars.
 
 **Shared module** `galactic-coords.ts` exports `GAL_TO_ICRS` (Matrix4)
 and `GALACTIC_CENTRE_PC` (Vector3 at R₀ = 8.122 kpc), built from the
@@ -35,15 +35,18 @@ orientation.
 
 **Local Group wireframes** (`local-group.ts` + `local-group-loader.ts`,
 build pipeline `scripts/build-local-group.ts`) — LineLoop outlines for
-~52 confirmed-galaxy LVDB objects within 250 kpc of Sol: LMC (inclined
-disc), SMC (line-of-sight elongated triaxial), Sagittarius dSph,
-classical dSphs (Sculptor / Draco / Fornax / Carina / Sextans / Leo I/II
-/ Ursa Minor), and the ultra-faint dwarfs LVDB lists at this scale.
+~120 confirmed-galaxy objects out to the 2 Mpc Local Group boundary:
+LMC (inclined disc), SMC (line-of-sight elongated triaxial), Sagittarius
+dSph, the classical dSphs (Sculptor / Draco / Fornax / Carina / Sextans /
+Leo I/II / Ursa Minor) and ultra-faints at ≤ 250 kpc; M31 (inclined
+disc), M33 (inclined disc), M 32 + NGC 205 + the M31 satellite subgroup,
+IC 10, NGC 6822, Leo A, IC 1613, WLM and the outer-band dIrrs beyond.
 Same fade curve as the disc — invisible during local browsing, present
 once the camera sits more than ~5 kpc from Sol. Labels (MW at the
-galactic centre, per-object for the labelled members) bind through the
-shared `distance-gated-label.ts` engine and gate on camera-to-object-
-centre distance. Full detail in `docs/local-group.md`.
+galactic centre, per-object for the largest LG members) bind through the
+shared `distance-gated-label.ts` engine; visibility is governed by the
+per-frame apparent-size ranking (top-N + sub-pixel floor + inside-MW
+guard). Full detail in `docs/local-group.md`.
 
 **Galactic coordinate sphere** (`galactic-grid.ts`, toggleable) —
 equator + 16 latitude rings every 10° (range −80° to +80°) + 36

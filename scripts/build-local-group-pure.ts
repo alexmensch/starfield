@@ -3,9 +3,22 @@
 // orientation quaternion construction, and label-threshold defaulting
 // without touching the filesystem.
 
-/** Max heliocentric distance (parsecs) we render. Mirrors the camera
- *  envelope set in stellata-5gq: 250 kpc maxDistance. */
-export const MAX_DISTANCE_PC = 250_000;
+/** Max heliocentric distance (parsecs) we render. 2 Mpc covers the
+ *  canonical Local Group: M31 + M33 + their satellite subgroup, plus
+ *  Sextans A/B and a handful of outer-band dwarfs that bleed past the
+ *  ~1.5 Mpc IAU-style boundary. Beyond 2 Mpc we'd be picking up the
+ *  IC 342 / Maffei groups — a separate decision.
+ *
+ *  Single source of truth — the runtime camera envelope in
+ *  `src/client/stellata.ts` imports this and derives `CAMERA_FAR_PC`
+ *  from it, so the build filter and the camera can never drift. */
+export const MAX_DISTANCE_PC = 2_000_000;
+
+/** Far plane for the runtime camera, paired with `MAX_DISTANCE_PC`.
+ *  Sits 1 Mpc past `controls.maxDistance` (= `MAX_DISTANCE_PC`) so M31 /
+ *  M33 + outer dwarfs render with comfort headroom when the camera
+ *  reaches the maxDistance shell. */
+export const CAMERA_FAR_PC = MAX_DISTANCE_PC + 1_000_000;
 
 export type LgKind = 'disc' | 'ellipsoid';
 
@@ -17,6 +30,14 @@ export interface OverrideRow {
    *  sky direction. */
   orient: string;
   refDoi: string;
+  /** Optional standalone position. Populated only for rows that name
+   *  objects not in LVDB (M31, M33). When present, the row builds a
+   *  full LgObject without an LVDB merge; the three values must all be
+   *  set together. When absent, the row supplements an LVDB row whose
+   *  position drives the merge. */
+  raDeg?: number;
+  decDeg?: number;
+  distanceKpc?: number;
 }
 
 export interface LvdbRow {
@@ -284,25 +305,54 @@ export function filterForRendering(rows: LvdbRow[]): LvdbRow[] {
  *  override-merge (overrides.tsv → LVDB row) and per-row identity, but
  *  the on-disk + on-screen display string is rewritten through this
  *  map for objects whose canonical name diverges from the LVDB
- *  shortform OR whose type-suffix differs from the default. */
+ *  shortform OR whose type-suffix differs from the default.
+ *
+ *  Catalog-designation names (M31, M 32, NGC 205, IC 10, etc.) are
+ *  handled by `isCatalogDesignation` and bypass the type-suffix without
+ *  needing an entry here. This map exists for the *named* dwarfs whose
+ *  type is not the default dSph — dIrrs, dwarf transitions, and one-
+ *  word proper names that read fine without a suffix. */
 export const DISPLAY_NAME_OVERRIDES: Record<string, string> = {
   LMC: 'Large Magellanic Cloud',
   SMC: 'Small Magellanic Cloud',
+  'Leo A': 'Leo A',
+  'Leo P': 'Leo P',
+  WLM: 'WLM',
+  Phoenix: 'Phoenix Dwarf',
+  'LGS 3': 'LGS 3',
+  'Pegasus dIrr': 'Pegasus Dwarf Irregular',
+  'Pegasus W': 'Pegasus W',
+  'Sextans A': 'Sextans A',
+  'Sextans B': 'Sextans B',
+  'Sagittarius dIrr': 'Sagittarius Dwarf Irregular',
+  // LVDB "Aquarius" is DDO 210 (dTr / dIrr per McConnachie 2012),
+  // distinct from the Aquarius II / III dSphs which keep the default
+  // suffix. "Antlia B" is a transition dwarf per Hargis 2020.
+  Aquarius: 'Aquarius Dwarf',
+  'Antlia B': 'Antlia B Dwarf',
 };
 
 /** Default type suffix appended to LVDB names that aren't in the
- *  override map. Every dwarf galaxy at ≤ 250 kpc that we currently
- *  render (52 objects: LMC, SMC, Sagittarius, and ~49 classical /
- *  ultra-faint satellites) is a dSph, with LMC and SMC the only two
- *  exceptions handled via DISPLAY_NAME_OVERRIDES. Without the suffix,
- *  bare names like "Sculptor", "Draco", "Hercules" collide with the
- *  constellation names; "Sagittarius" alone is ambiguous with the
- *  Sagittarius Dwarf Irregular at 1.2 Mpc. Astronomers disambiguate
- *  the same way in papers — we follow the convention. */
+ *  override map AND aren't catalog designations. Bare constellation
+ *  names like "Sculptor", "Draco", "Hercules" collide with the
+ *  constellation names without it; the suffix disambiguates and
+ *  matches how astronomers refer to these objects in papers. */
 export const DEFAULT_TYPE_SUFFIX = 'Dwarf Spheroidal';
+
+/** True if the name reads as a galaxy-catalog designation — a recognised
+ *  prefix (NGC, IC, UGC, UGCA, DDO, ESO, M, AGC, KK, KKR, KKH, KDG, PGC,
+ *  HIPASS) followed by a digit, with optional whitespace. Catalog
+ *  designations already self-identify and don't need a type suffix
+ *  ("NGC 205" reads cleaner than "NGC 205 Dwarf Spheroidal"). */
+export function isCatalogDesignation(name: string): boolean {
+  return /^(NGC|IC|UGC|UGCA|DDO|ESO|M|AGC|KKR|KKH|KK|KDG|PGC|HIPASS)\s*\d/i.test(
+    name,
+  );
+}
 
 export function displayName(lvdbName: string): string {
   if (lvdbName in DISPLAY_NAME_OVERRIDES) return DISPLAY_NAME_OVERRIDES[lvdbName];
+  if (isCatalogDesignation(lvdbName)) return lvdbName;
   return `${lvdbName} ${DEFAULT_TYPE_SUFFIX}`;
 }
 
@@ -329,6 +379,37 @@ export function buildLvdbDefault(row: LvdbRow): {
   };
 }
 
+/** Assemble an LgObject from already-resolved fields. Both call sites
+ *  (`mergeRowAndOverride` and `buildStandaloneOverride`) arrive at the
+ *  same shape after they decide where axes/orient/position come from;
+ *  the trailing `kind` derivation, ICRS conversion, quaternion build,
+ *  and display-name / slug routing is identical. Centralised here so
+ *  the two paths can never drift on rendering semantics. */
+function buildLgObjectFromOrient(
+  nameKey: string,
+  idKey: string,
+  raDeg: number,
+  decDeg: number,
+  distancePc: number,
+  axes: [number, number, number],
+  orient: Orientation,
+  source: 'LVDB' | 'OVERRIDE',
+): LgObject {
+  const kind: LgKind = orient.kind === 'disc' ? 'disc' : 'ellipsoid';
+  const center = raDecDistanceToIcrs(raDeg, decDeg, distancePc);
+  const quat = buildOrientationQuat(raDeg, decDeg, orient);
+  return {
+    name: displayName(nameKey),
+    id: slugify(idKey),
+    center,
+    kind,
+    axes,
+    quat,
+    source,
+    distance: distancePc,
+  };
+}
+
 /** Merge an LVDB row with an optional override into a fully-shaped
  *  LgObject. Override (when present) replaces axes + orient; LVDB
  *  always provides the position. Returns null when the row has no
@@ -338,38 +419,58 @@ export function mergeRowAndOverride(
   row: LvdbRow,
   override: OverrideRow | undefined,
 ): LgObject | null {
-  let kind: LgKind;
   let axes: [number, number, number];
   let orient: Orientation;
   let source: 'LVDB' | 'OVERRIDE';
   if (override) {
-    // Override wins on structure. Kind is inferred from orient shape:
-    // 'disc' orient → disc; anything else → ellipsoid.
+    // Override wins on structure.
     orient = parseOrient(override.orient);
-    kind = orient.kind === 'disc' ? 'disc' : 'ellipsoid';
     axes = override.axes;
     source = 'OVERRIDE';
   } else {
     const lvdb = buildLvdbDefault(row);
     if (!lvdb) return null;
-    kind = lvdb.kind;
     axes = lvdb.axes;
     orient = lvdb.orient;
     source = 'LVDB';
   }
-  const distancePc = row.distanceKpc * 1000;
-  const center = raDecDistanceToIcrs(row.ra, row.dec, distancePc);
-  const quat = buildOrientationQuat(row.ra, row.dec, orient);
-  return {
-    name: displayName(row.name),
-    id: slugify(row.key),
-    center,
-    kind,
+  return buildLgObjectFromOrient(
+    row.name,
+    row.key,
+    row.ra,
+    row.dec,
+    row.distanceKpc * 1000,
     axes,
-    quat,
+    orient,
     source,
-    distance: distancePc,
-  };
+  );
+}
+
+/** Build a full LgObject from an override row that carries its own
+ *  position (raDeg, decDeg, distanceKpc) — used for objects that aren't
+ *  in LVDB at all (M31, M33; the LVDB `dwarf_all` table excludes the
+ *  three major spirals). The row's distance must be ≤ MAX_DISTANCE_PC.
+ *  Returns null if the row falls outside the envelope so the caller can
+ *  log it and continue. */
+export function buildStandaloneOverride(ov: OverrideRow): LgObject | null {
+  if (ov.raDeg === undefined || ov.decDeg === undefined || ov.distanceKpc === undefined) {
+    throw new Error(
+      `overrides.tsv: '${ov.name}' has no LVDB match and no ra_deg/dec_deg/distance_kpc — cannot build position`,
+    );
+  }
+  const distancePc = ov.distanceKpc * 1000;
+  if (!Number.isFinite(distancePc) || distancePc <= 0) return null;
+  if (distancePc > MAX_DISTANCE_PC) return null;
+  return buildLgObjectFromOrient(
+    ov.name,
+    ov.name,
+    ov.raDeg,
+    ov.decDeg,
+    distancePc,
+    ov.axes,
+    parseOrient(ov.orient),
+    'OVERRIDE',
+  );
 }
 
 /** Round a number to N decimal places. Strips JS float noise from
