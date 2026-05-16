@@ -59,7 +59,7 @@ export function formatStarHover(
   if (period > 0 && amp > 0) {
     const periodStr =
       period >= 10 ? `${period.toFixed(0)}d` : `${period.toFixed(2)}d`;
-    lines.push(`Variable · P=${periodStr}, Δ=${amp.toFixed(1)}mag`);
+    lines.push(`Variable · Period ${periodStr} · Δmag ${amp.toFixed(1)}`);
   }
   return { name, lines };
 }

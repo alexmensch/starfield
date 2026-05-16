@@ -66,7 +66,7 @@ describe('formatStarHover', () => {
     expect(out.lines).toEqual([
       'Cetus · 87.7 pc',
       'M5-9e',
-      'Variable · P=332d, Δ=7.6mag',
+      'Variable · Period 332d · Δmag 7.6',
     ]);
   });
 
@@ -89,7 +89,7 @@ describe('formatStarHover', () => {
       amplitudeMag: new Float32Array([1.0, 0, 0]),
     });
     const out = formatStarHover(0, ctx);
-    expect(out.lines).toContain('Variable · P=0.57d, Δ=1.0mag');
+    expect(out.lines).toContain('Variable · Period 0.57d · Δmag 1.0');
   });
 
   it('falls back to "Unnamed #idx" when starLabels has no entry', () => {
