@@ -9,6 +9,7 @@ import {
   ARROW_LABEL_PADDING_PX,
 } from './arrow-path';
 import { projectToScreen } from './overlay-project';
+import { setNumAttr, setStyle, setText } from './dirty-attr';
 
 // Nominal apparent length of each arrow on screen, in CSS pixels. The shaft
 // is built directly in screen space so this length is exact regardless of
@@ -38,14 +39,14 @@ const FOCUS_RING_RADIUS_PX = 24;
 // FOVs (raw `sizeMax` is single-digit pixels and reads as a dot).
 const RING_FOV_ANCHOR_DEG = 10;
 const RING_SIZE_FACTOR = 5;
-// Half a .toFixed(1) step. Mirrors chart-labels.ts.
-const ATTR_DIRTY_PX = 0.05;
 // Per-arrow dirty-track state. The Sol/GC arrows recompute geometry every
 // frame, but on a stationary camera the resulting attributes are
 // identical to the previous frame; storing the last-written value lets
 // updateOne skip the SVG attribute / textContent / inline-style writes
-// (each of which forces re-parsing or style invalidation). Sentinels
-// guarantee the first write always happens.
+// (each of which forces re-parsing or style invalidation). NaN / '\0'
+// sentinels guarantee the first write always lands through the gate —
+// including for `lastPointerEvents` (steady-state '' would silently match
+// a naive '' sentinel and skip the first restore-to-clickable write).
 interface ArrowState {
   lastD: string;
   lastLabelDisplay: string;
@@ -57,13 +58,13 @@ interface ArrowState {
 }
 function emptyArrowState(): ArrowState {
   return {
-    lastD: '',
-    lastLabelDisplay: '',
-    lastLabelText: '',
-    lastLabelX: -Infinity,
-    lastLabelY: -Infinity,
-    lastOpacity: -1,
-    lastPointerEvents: '',
+    lastD: '\0',
+    lastLabelDisplay: '\0',
+    lastLabelText: '\0',
+    lastLabelX: NaN,
+    lastLabelY: NaN,
+    lastOpacity: NaN,
+    lastPointerEvents: '\0',
   };
 }
 
@@ -159,10 +160,10 @@ export class HudOverlay {
   // ArrowState comment above.
   private solArrowState: ArrowState = emptyArrowState();
   private gcArrowState: ArrowState = emptyArrowState();
-  private lastRingDisplay = '';
-  private lastRingCx = -Infinity;
-  private lastRingCy = -Infinity;
-  private lastRingR = -Infinity;
+  private lastRingDisplay = '\0';
+  private lastRingCx = NaN;
+  private lastRingCy = NaN;
+  private lastRingR = NaN;
 
   // Click handlers — owned here so dispose() can remove them and let the SVG
   // labels release their references back to the Stellata closure.
@@ -249,25 +250,12 @@ export class HudOverlay {
     // so the arrows always tangent the ring rim, even mid-transition when
     // the anchor slides from the projected focal-star toward screen-centre.
     if (ringRadius > 0) {
-      if (this.lastRingDisplay !== '') {
-        this.ring.style.display = '';
-        this.lastRingDisplay = '';
-      }
-      if (Math.abs(cx - this.lastRingCx) >= ATTR_DIRTY_PX) {
-        this.ring.setAttribute('cx', cx.toFixed(1));
-        this.lastRingCx = cx;
-      }
-      if (Math.abs(cy - this.lastRingCy) >= ATTR_DIRTY_PX) {
-        this.ring.setAttribute('cy', cy.toFixed(1));
-        this.lastRingCy = cy;
-      }
-      if (Math.abs(ringRadius - this.lastRingR) >= ATTR_DIRTY_PX) {
-        this.ring.setAttribute('r', ringRadius.toFixed(1));
-        this.lastRingR = ringRadius;
-      }
-    } else if (this.lastRingDisplay !== 'none') {
-      this.ring.style.display = 'none';
-      this.lastRingDisplay = 'none';
+      this.lastRingDisplay = setStyle(this.ring, 'display', '', this.lastRingDisplay);
+      this.lastRingCx = setNumAttr(this.ring, 'cx', cx, this.lastRingCx);
+      this.lastRingCy = setNumAttr(this.ring, 'cy', cy, this.lastRingCy);
+      this.lastRingR = setNumAttr(this.ring, 'r', ringRadius, this.lastRingR);
+    } else {
+      this.lastRingDisplay = setStyle(this.ring, 'display', 'none', this.lastRingDisplay);
     }
 
     const targetMarginPx = Math.max(sizeMaxPx, 0);
@@ -421,23 +409,10 @@ export class HudOverlay {
     const labelAnchorY = tipY - ARROW_LABEL_OFFSET_PX;
     const sx = clamp(labelAnchorX, ARROW_LABEL_PADDING_PX, w - ARROW_LABEL_PADDING_PX);
     const sy = clamp(labelAnchorY, ARROW_LABEL_PADDING_PX, h - ARROW_LABEL_PADDING_PX);
-    if (state.lastLabelDisplay !== '') {
-      label.style.display = '';
-      state.lastLabelDisplay = '';
-    }
-    if (Math.abs(sx - state.lastLabelX) >= ATTR_DIRTY_PX) {
-      label.setAttribute('x', sx.toFixed(1));
-      state.lastLabelX = sx;
-    }
-    if (Math.abs(sy - state.lastLabelY) >= ATTR_DIRTY_PX) {
-      label.setAttribute('y', sy.toFixed(1));
-      state.lastLabelY = sy;
-    }
-    const labelText = `${labelPrefix} · ${fmtDist(distancePc)}`;
-    if (labelText !== state.lastLabelText) {
-      label.textContent = labelText;
-      state.lastLabelText = labelText;
-    }
+    state.lastLabelDisplay = setStyle(label, 'display', '', state.lastLabelDisplay);
+    state.lastLabelX = setNumAttr(label, 'x', sx, state.lastLabelX);
+    state.lastLabelY = setNumAttr(label, 'y', sy, state.lastLabelY);
+    state.lastLabelText = setText(label, `${labelPrefix} · ${fmtDist(distancePc)}`, state.lastLabelText);
 
     applyFade(path, bg, label, fadeAlpha, state);
     return shaftLengthPx;
@@ -454,10 +429,7 @@ export class HudOverlay {
   }
 
   private hideAll() {
-    if (this.lastRingDisplay !== 'none') {
-      this.ring.style.display = 'none';
-      this.lastRingDisplay = 'none';
-    }
+    this.lastRingDisplay = setStyle(this.ring, 'display', 'none', this.lastRingDisplay);
     this.hideArrow(this.solPath, this.solBg, this.solLabel, this.solArrowState);
     this.hideArrow(this.gcPath, this.gcBg, this.gcLabel, this.gcArrowState);
     this.solDrawnLen = 0;
@@ -472,15 +444,14 @@ export class HudOverlay {
     label: SVGTextElement,
     state: ArrowState,
   ) {
-    if (state.lastD !== '') {
+    // path + bg are kept in sync via the single state.lastD sentinel — write
+    // them as a pair inside one guard.
+    if ('' !== state.lastD) {
       path.setAttribute('d', '');
       bg.setAttribute('d', '');
       state.lastD = '';
     }
-    if (state.lastLabelDisplay !== 'none') {
-      label.style.display = 'none';
-      state.lastLabelDisplay = 'none';
-    }
+    state.lastLabelDisplay = setStyle(label, 'display', 'none', state.lastLabelDisplay);
   }
 }
 
@@ -569,6 +540,9 @@ function applyFade(
   alpha: number,
   state: ArrowState,
 ) {
+  // Opacity has its own .toFixed(3)-matched threshold (0.0005) rather than
+  // the position-precision ATTR_DIRTY_PX (0.05); inline rather than via
+  // setStyle so all three elements update under one guard.
   if (Math.abs(alpha - state.lastOpacity) >= 0.0005) {
     const a = alpha.toFixed(3);
     path.style.opacity = a;
@@ -576,9 +550,9 @@ function applyFade(
     label.style.opacity = a;
     state.lastOpacity = alpha;
   }
+  // pointerEvents sentinel is poison-init ('\0') so the steady-state
+  // clickable '' value doesn't silently match a freshly-emitted state and
+  // skip the first restore-to-clickable write (9mm.167).
   const clickable = alpha >= 0.5 ? '' : 'none';
-  if (clickable !== state.lastPointerEvents) {
-    label.style.pointerEvents = clickable;
-    state.lastPointerEvents = clickable;
-  }
+  state.lastPointerEvents = setStyle(label, 'pointerEvents', clickable, state.lastPointerEvents);
 }

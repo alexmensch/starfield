@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { Stellata } from './stellata';
 import { projectToScreen } from './overlay-project';
+import { setStrAttr } from './dirty-attr';
 
 // Pixel radius left blank around every figure-star so lines don't obscure
 // the star glyph.
@@ -18,14 +19,10 @@ export function createConstellationOverlay(stellata: Stellata) {
   // Dirty-tracked path data — segments.join('') is recomputed every frame
   // but is identical when the camera is stationary. Skipping the
   // setAttribute avoids SVG attribute parsing on a string that can be
-  // hundreds of segments wide in chart mode.
-  let lastD = '';
-
-  const setD = (d: string) => {
-    if (d === lastD) return;
-    figure.setAttribute('d', d);
-    lastD = d;
-  };
+  // hundreds of segments wide in chart mode. Poison '\0' sentinel forces
+  // the first write through even when the initial computed d is the empty
+  // string (e.g. session starts with no constellation highlighted).
+  let lastD = '\0';
 
   const update = () => {
     const f = stellata.getFilter();
@@ -33,7 +30,7 @@ export function createConstellationOverlay(stellata: Stellata) {
     visible = f.showConstellation;
     chartActive = f.chart && stellata.getCameraMode() === 'observe';
     if (!visible || (current < 0 && !chartActive)) {
-      setD('');
+      lastD = setStrAttr(figure, 'd', '', lastD);
       return;
     }
     tick();
@@ -78,7 +75,7 @@ export function createConstellationOverlay(stellata: Stellata) {
         }
       }
     }
-    setD(segments.join(''));
+    lastD = setStrAttr(figure, 'd', segments.join(''), lastD);
   };
 
   stellata.on('filter', update);

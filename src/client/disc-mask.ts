@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { Stellata } from './stellata';
 import { projectToScreen } from './overlay-project';
 import { selectMaskCandidates } from './disc-mask-pure';
+import { setNumAttr } from './dirty-attr';
 
 // Per-frame SVG mask updater. Overlays that should appear BEHIND any close
 // rendered-disc star apply `mask="url(#disc-occlude-mask)"`. This module
@@ -35,10 +36,6 @@ const DISC_THRESHOLD_PX = 48;
 // without ever firing in practice. Exceeding it warns once (dev signal
 // that the iteration source changed); growth itself is not blocked.
 const MAX_MASK_CIRCLES = 64;
-// Half a .toFixed(1) step — below this the attribute string round-trips to
-// the same value, so the browser would treat the write as a no-op anyway
-// (after re-parsing the attribute). Mirrors chart-labels.ts.
-const ATTR_DIRTY_PX = 0.05;
 
 interface Slot {
   el: SVGCircleElement;
@@ -81,26 +78,10 @@ export function createDiscMask(stellata: Stellata) {
 
   const v = new THREE.Vector3();
 
-  const setCx = (s: Slot, value: number) => {
-    if (Math.abs(value - s.lastCx) < ATTR_DIRTY_PX) return;
-    s.el.setAttribute('cx', value.toFixed(1));
-    s.lastCx = value;
-  };
-  const setCy = (s: Slot, value: number) => {
-    if (Math.abs(value - s.lastCy) < ATTR_DIRTY_PX) return;
-    s.el.setAttribute('cy', value.toFixed(1));
-    s.lastCy = value;
-  };
-  const setR = (s: Slot, value: number) => {
-    if (Math.abs(value - s.lastR) < ATTR_DIRTY_PX) return;
-    s.el.setAttribute('r', value.toFixed(1));
-    s.lastR = value;
-  };
-
   const clearSlot = (s: Slot) => {
-    setCx(s, -100);
-    setCy(s, -100);
-    setR(s, 0);
+    s.lastCx = setNumAttr(s.el, 'cx', -100, s.lastCx);
+    s.lastCy = setNumAttr(s.el, 'cy', -100, s.lastCy);
+    s.lastR = setNumAttr(s.el, 'r', 0, s.lastR);
   };
 
   // Project a star's world position to screen + set a mask circle. Returns
@@ -113,9 +94,9 @@ export function createDiscMask(stellata: Stellata) {
     v.set(positions[idx * 3], positions[idx * 3 + 1], positions[idx * 3 + 2]);
     const projected = projectToScreen(v, camera, window.innerWidth, window.innerHeight);
     if (!projected) return false;
-    setCx(s, projected[0]);
-    setCy(s, projected[1]);
-    setR(s, size * 0.5);
+    s.lastCx = setNumAttr(s.el, 'cx', projected[0], s.lastCx);
+    s.lastCy = setNumAttr(s.el, 'cy', projected[1], s.lastCy);
+    s.lastR = setNumAttr(s.el, 'r', size * 0.5, s.lastR);
     return true;
   };
 

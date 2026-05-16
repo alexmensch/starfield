@@ -4,6 +4,7 @@ import type { ChartModeContext } from './chart-mode';
 import { mark as perfMark, measure as perfMeasure } from './perf-hud';
 import { FLAG_BINARY_PRIMARY } from '../../scripts/catalog-pure';
 import { projectToScreen } from './overlay-project';
+import { setNumAttr } from './dirty-attr';
 
 // Chart-mode label engine. Per-frame, projects every candidate
 // label (proper-named star, Bayer-letter star, constellation Latin name,
@@ -132,10 +133,6 @@ const tmpCloudLocal = new THREE.Vector3();
 const pool = new Map<string, PooledText>();
 const ringPool = new Map<number, PooledCircle>();
 const wingPool = new Map<number, PooledLine>();
-// 0.05px threshold — half the display precision of .toFixed(1). Below
-// this, the attribute string would round to the same value, so the
-// browser would treat the write as a no-op anyway (after re-parsing).
-const ATTR_DIRTY_PX = 0.05;
 const tmpV3 = new THREE.Vector3();
 
 export function startChartLabels(
@@ -554,14 +551,8 @@ function tick(
       pool.set(cand.key, p);
     }
     if (p.el.textContent !== cand.text) p.el.textContent = cand.text;
-    if (Math.abs(cand.x - p.lastX) >= ATTR_DIRTY_PX) {
-      p.el.setAttribute('x', cand.x.toFixed(1));
-      p.lastX = cand.x;
-    }
-    if (Math.abs(cand.y - p.lastY) >= ATTR_DIRTY_PX) {
-      p.el.setAttribute('y', cand.y.toFixed(1));
-      p.lastY = cand.y;
-    }
+    p.lastX = setNumAttr(p.el, 'x', cand.x, p.lastX);
+    p.lastY = setNumAttr(p.el, 'y', cand.y, p.lastY);
   }
   for (const [key, p] of pool) {
     if (!used.has(key)) {
@@ -639,22 +630,13 @@ function tick(
         p = { el, lastCx: -Infinity, lastCy: -Infinity, lastR: -Infinity };
         ringPool.set(idx, p);
       }
-      if (Math.abs(xy[0] - p.lastCx) >= ATTR_DIRTY_PX) {
-        p.el.setAttribute('cx', xy[0].toFixed(1));
-        p.lastCx = xy[0];
-      }
-      if (Math.abs(xy[1] - p.lastCy) >= ATTR_DIRTY_PX) {
-        p.el.setAttribute('cy', xy[1].toFixed(1));
-        p.lastCy = xy[1];
-      }
-      // r uses .toFixed(2), so half-precision is 0.005 — but the ring
-      // radius is dominated by the disc-pulse magnitude formula and
-      // changes whenever the camera moves. The tighter threshold here
-      // catches the genuinely-static-frame case.
-      if (Math.abs(ringR - p.lastR) >= 0.005) {
-        p.el.setAttribute('r', ringR.toFixed(2));
-        p.lastR = ringR;
-      }
+      p.lastCx = setNumAttr(p.el, 'cx', xy[0], p.lastCx);
+      p.lastCy = setNumAttr(p.el, 'cy', xy[1], p.lastCy);
+      // r uses .toFixed(2) — setNumAttr derives the matched 0.005
+      // threshold from decimals=2. The ring radius is dominated by the
+      // disc-pulse magnitude formula and changes whenever the camera
+      // moves, so this catches the genuinely-static-frame case.
+      p.lastR = setNumAttr(p.el, 'r', ringR, p.lastR, 2);
       usedRings.add(idx);
     }
   }
@@ -700,18 +682,13 @@ function tick(
         p = { el, lastX1: -Infinity, lastX2: -Infinity, lastY: -Infinity };
         wingPool.set(idx, p);
       }
-      if (Math.abs(x1 - p.lastX1) >= ATTR_DIRTY_PX) {
-        p.el.setAttribute('x1', x1.toFixed(1));
-        p.lastX1 = x1;
-      }
-      if (Math.abs(x2 - p.lastX2) >= ATTR_DIRTY_PX) {
-        p.el.setAttribute('x2', x2.toFixed(1));
-        p.lastX2 = x2;
-      }
-      if (Math.abs(y - p.lastY) >= ATTR_DIRTY_PX) {
-        p.el.setAttribute('y1', y.toFixed(1));
+      p.lastX1 = setNumAttr(p.el, 'x1', x1, p.lastX1);
+      p.lastX2 = setNumAttr(p.el, 'x2', x2, p.lastX2);
+      // y1 and y2 are kept in sync via one sentinel; write them as a pair.
+      const yNext = setNumAttr(p.el, 'y1', y, p.lastY);
+      if (yNext !== p.lastY) {
         p.el.setAttribute('y2', y.toFixed(1));
-        p.lastY = y;
+        p.lastY = yNext;
       }
       usedWings.add(idx);
     }

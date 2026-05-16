@@ -11,6 +11,7 @@ import {
 } from './arrow-path';
 import { projectToScreen } from './overlay-project';
 import { ringRadiusPx } from './hud-overlay';
+import { setNumAttr, setStrAttr, setStyle, setText } from './dirty-attr';
 
 // Point-of-interest overlay. Single-click on a star in OBSERVE pins it
 // (Stellata.togglePoi). The pin renders two ways:
@@ -45,8 +46,6 @@ const ON_SCREEN_PULL_IN_PX = 40;
 const POI_RING_RADIUS_PX = 24;
 const LABEL_RIM_GAP_PX = 6;
 const LABEL_DIAG = (POI_RING_RADIUS_PX + LABEL_RIM_GAP_PX) / Math.SQRT2;
-// Half a .toFixed(1) step. Mirrors chart-labels.ts.
-const ATTR_DIRTY_PX = 0.05;
 
 interface Entry {
   idx: number;
@@ -129,40 +128,19 @@ export function createPoiOverlay(
 
     return {
       idx, arrowPath, arrowLabel, ring, onScreenLabel,
-      lastArrowD: '',
-      lastArrowLabelDisplay: '',
-      lastArrowLabelText: '',
-      lastArrowLabelX: -Infinity,
-      lastArrowLabelY: -Infinity,
-      lastRingDisplay: '',
-      lastRingCx: -Infinity,
-      lastRingCy: -Infinity,
-      lastOnScreenLabelDisplay: '',
-      lastOnScreenLabelText: '',
-      lastOnScreenLabelX: -Infinity,
-      lastOnScreenLabelY: -Infinity,
+      lastArrowD: '\0',
+      lastArrowLabelDisplay: '\0',
+      lastArrowLabelText: '\0',
+      lastArrowLabelX: NaN,
+      lastArrowLabelY: NaN,
+      lastRingDisplay: '\0',
+      lastRingCx: NaN,
+      lastRingCy: NaN,
+      lastOnScreenLabelDisplay: '\0',
+      lastOnScreenLabelText: '\0',
+      lastOnScreenLabelX: NaN,
+      lastOnScreenLabelY: NaN,
     };
-  }
-
-  function setArrowD(e: Entry, d: string) {
-    if (d === e.lastArrowD) return;
-    e.arrowPath.setAttribute('d', d);
-    e.lastArrowD = d;
-  }
-  function setArrowLabelDisplay(e: Entry, v: string) {
-    if (v === e.lastArrowLabelDisplay) return;
-    e.arrowLabel.style.display = v;
-    e.lastArrowLabelDisplay = v;
-  }
-  function setRingDisplay(e: Entry, v: string) {
-    if (v === e.lastRingDisplay) return;
-    e.ring.style.display = v;
-    e.lastRingDisplay = v;
-  }
-  function setOnScreenLabelDisplay(e: Entry, v: string) {
-    if (v === e.lastOnScreenLabelDisplay) return;
-    e.onScreenLabel.style.display = v;
-    e.lastOnScreenLabelDisplay = v;
   }
 
   function destroyEntry(e: Entry) {
@@ -187,10 +165,10 @@ export function createPoiOverlay(
   }
 
   function hideEntry(e: Entry) {
-    setArrowD(e, '');
-    setArrowLabelDisplay(e, 'none');
-    setRingDisplay(e, 'none');
-    setOnScreenLabelDisplay(e, 'none');
+    e.lastArrowD = setStrAttr(e.arrowPath, 'd', '', e.lastArrowD);
+    e.lastArrowLabelDisplay = setStyle(e.arrowLabel, 'display', 'none', e.lastArrowLabelDisplay);
+    e.lastRingDisplay = setStyle(e.ring, 'display', 'none', e.lastRingDisplay);
+    e.lastOnScreenLabelDisplay = setStyle(e.onScreenLabel, 'display', 'none', e.lastOnScreenLabelDisplay);
   }
 
   // Idempotent show/hide: track visibility so the per-frame handler
@@ -289,19 +267,13 @@ export function createPoiOverlay(
 
       if (onScreen && projected) {
         // Hide arrow chrome.
-        setArrowD(e, '');
-        setArrowLabelDisplay(e, 'none');
+        e.lastArrowD = setStrAttr(e.arrowPath, 'd', '', e.lastArrowD);
+        e.lastArrowLabelDisplay = setStyle(e.arrowLabel, 'display', 'none', e.lastArrowLabelDisplay);
 
         // Ring at the projected star.
-        setRingDisplay(e, '');
-        if (Math.abs(projected[0] - e.lastRingCx) >= ATTR_DIRTY_PX) {
-          e.ring.setAttribute('cx', projected[0].toFixed(1));
-          e.lastRingCx = projected[0];
-        }
-        if (Math.abs(projected[1] - e.lastRingCy) >= ATTR_DIRTY_PX) {
-          e.ring.setAttribute('cy', projected[1].toFixed(1));
-          e.lastRingCy = projected[1];
-        }
+        e.lastRingDisplay = setStyle(e.ring, 'display', '', e.lastRingDisplay);
+        e.lastRingCx = setNumAttr(e.ring, 'cx', projected[0], e.lastRingCx);
+        e.lastRingCy = setNumAttr(e.ring, 'cy', projected[1], e.lastRingCy);
 
         // On-screen label anchored just outside the ring rim along a 45°
         // diagonal. Fixed-pixel offset → label-to-star distance is
@@ -310,29 +282,20 @@ export function createPoiOverlay(
         const fullText = conCode
           ? `${name} · ${conCode} · ${fmtDist(distPc)}`
           : `${name} · ${fmtDist(distPc)}`;
-        setOnScreenLabelDisplay(e, '');
-        if (fullText !== e.lastOnScreenLabelText) {
-          e.onScreenLabel.textContent = fullText;
-          e.lastOnScreenLabelText = fullText;
-        }
+        e.lastOnScreenLabelDisplay = setStyle(e.onScreenLabel, 'display', '', e.lastOnScreenLabelDisplay);
+        e.lastOnScreenLabelText = setText(e.onScreenLabel, fullText, e.lastOnScreenLabelText);
         const lx = projected[0] + LABEL_DIAG;
         const ly = projected[1] + LABEL_DIAG;
-        if (Math.abs(lx - e.lastOnScreenLabelX) >= ATTR_DIRTY_PX) {
-          e.onScreenLabel.setAttribute('x', lx.toFixed(1));
-          e.lastOnScreenLabelX = lx;
-        }
-        if (Math.abs(ly - e.lastOnScreenLabelY) >= ATTR_DIRTY_PX) {
-          e.onScreenLabel.setAttribute('y', ly.toFixed(1));
-          e.lastOnScreenLabelY = ly;
-        }
+        e.lastOnScreenLabelX = setNumAttr(e.onScreenLabel, 'x', lx, e.lastOnScreenLabelX);
+        e.lastOnScreenLabelY = setNumAttr(e.onScreenLabel, 'y', ly, e.lastOnScreenLabelY);
         continue;
       }
 
       // Off screen — draw arrow on the HUD ring rim. Screen-direction
       // derivation via the shared cascade (target's projection if
       // available, view-space xy fallback otherwise).
-      setRingDisplay(e, 'none');
-      setOnScreenLabelDisplay(e, 'none');
+      e.lastRingDisplay = setStyle(e.ring, 'display', 'none', e.lastRingDisplay);
+      e.lastOnScreenLabelDisplay = setStyle(e.onScreenLabel, 'display', 'none', e.lastOnScreenLabelDisplay);
 
       tmpDir.set(
         tmpStarLocal.x - camPos.x,
@@ -383,7 +346,7 @@ export function createPoiOverlay(
         hideEntry(e);
         continue;
       }
-      setArrowD(e, d);
+      e.lastArrowD = setStrAttr(e.arrowPath, 'd', d, e.lastArrowD);
 
       // Name-only label clamped to viewport with the same padding the
       // Sol/GC arrows use.
@@ -391,19 +354,10 @@ export function createPoiOverlay(
       const labelAnchorY = tipY - ARROW_LABEL_OFFSET_PX;
       const sx = clamp(labelAnchorX, ARROW_LABEL_PADDING_PX, w - ARROW_LABEL_PADDING_PX);
       const sy = clamp(labelAnchorY, ARROW_LABEL_PADDING_PX, h - ARROW_LABEL_PADDING_PX);
-      setArrowLabelDisplay(e, '');
-      if (name !== e.lastArrowLabelText) {
-        e.arrowLabel.textContent = name;
-        e.lastArrowLabelText = name;
-      }
-      if (Math.abs(sx - e.lastArrowLabelX) >= ATTR_DIRTY_PX) {
-        e.arrowLabel.setAttribute('x', sx.toFixed(1));
-        e.lastArrowLabelX = sx;
-      }
-      if (Math.abs(sy - e.lastArrowLabelY) >= ATTR_DIRTY_PX) {
-        e.arrowLabel.setAttribute('y', sy.toFixed(1));
-        e.lastArrowLabelY = sy;
-      }
+      e.lastArrowLabelDisplay = setStyle(e.arrowLabel, 'display', '', e.lastArrowLabelDisplay);
+      e.lastArrowLabelText = setText(e.arrowLabel, name, e.lastArrowLabelText);
+      e.lastArrowLabelX = setNumAttr(e.arrowLabel, 'x', sx, e.lastArrowLabelX);
+      e.lastArrowLabelY = setNumAttr(e.arrowLabel, 'y', sy, e.lastArrowLabelY);
     }
   });
 }

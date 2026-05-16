@@ -1,12 +1,9 @@
 import * as THREE from 'three';
 import type { Stellata } from './stellata';
 import { projectToScreen } from './overlay-project';
+import { setNumAttr, setStyle } from './dirty-attr';
 
 const RADIUS_PX = 24;
-// Half a .toFixed(1) step — below this the attribute string round-trips to
-// the same value, so the browser would treat the write as a no-op anyway
-// (after re-parsing the attribute). Mirrors chart-labels.ts.
-const ATTR_DIRTY_PX = 0.05;
 
 export function createFocusRingOverlay(stellata: Stellata) {
   const ring = document.getElementById('focus-ring') as unknown as SVGCircleElement;
@@ -23,29 +20,8 @@ export function createFocusRingOverlay(stellata: Stellata) {
   let lastR = NaN;
   let lastDisplay = '\0';
 
-  const setDisplay = (value: string) => {
-    if (value === lastDisplay) return;
-    ring.style.display = value;
-    lastDisplay = value;
-  };
-  const hide = () => setDisplay('none');
-  const show = () => setDisplay('');
-
-  const setCx = (value: number) => {
-    if (Math.abs(value - lastCx) < ATTR_DIRTY_PX) return;
-    ring.setAttribute('cx', value.toFixed(1));
-    lastCx = value;
-  };
-  const setCy = (value: number) => {
-    if (Math.abs(value - lastCy) < ATTR_DIRTY_PX) return;
-    ring.setAttribute('cy', value.toFixed(1));
-    lastCy = value;
-  };
-  const setR = (value: number) => {
-    if (Math.abs(value - lastR) < ATTR_DIRTY_PX) return;
-    ring.setAttribute('r', value.toFixed(1));
-    lastR = value;
-  };
+  const hide = () => { lastDisplay = setStyle(ring, 'display', 'none', lastDisplay); };
+  const show = () => { lastDisplay = setStyle(ring, 'display', '', lastDisplay); };
 
   const syncVisibility = () => {
     if (stellata.getFocusedStar() === null) hide();
@@ -121,8 +97,8 @@ export function createFocusRingOverlay(stellata: Stellata) {
     }
 
     show();
-    setCx(sx);
-    setCy(sy);
-    setR(r);
+    lastCx = setNumAttr(ring, 'cx', sx, lastCx);
+    lastCy = setNumAttr(ring, 'cy', sy, lastCy);
+    lastR = setNumAttr(ring, 'r', r, lastR);
   });
 }

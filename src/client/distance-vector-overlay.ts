@@ -7,6 +7,7 @@ import {
   ARROW_LABEL_OFFSET_PX,
   ARROW_LABEL_PADDING_PX,
 } from './arrow-path';
+import { setNumAttr, setStrAttr, setStyle, setText } from './dirty-attr';
 
 // Source-end offset — shaft starts past the focus ring (radius 24 px) so it
 // doesn't crowd the focused star's disc. Matches the Sol/GC arrow start
@@ -15,10 +16,6 @@ const SOURCE_OFFSET_PX = 28;
 // Cap how far past the viewport the clipped "off-screen" endpoint can extend,
 // so the generated SVG path doesn't contain absurd coordinates.
 const MAX_OFFSCREEN_FACTOR = 1.5;
-// Half a .toFixed(1) step — below this the attribute string round-trips to
-// the same value, so the browser would treat the write as a no-op anyway
-// after re-parsing. Mirrors chart-labels.ts.
-const ATTR_DIRTY_PX = 0.05;
 // Module-level scratches for projectWithNearClip — the function is called
 // at most once per frame from this module's onFrame handler, so a shared
 // scratch costs nothing and avoids three Vector3 allocations per frame.
@@ -48,17 +45,18 @@ export function createDistanceVectorOverlay(
   // Dirty-tracked attribute state — the per-frame handler recomputes every
   // value, but on a stationary camera the values are identical to the
   // previous frame. Skipping setAttribute / textContent / style writes
-  // avoids SVG re-parse and inline-style invalidation cost. Sentinels
-  // guarantee the first write always happens.
-  let lastLineD = '';
-  let lastLineBgD = '';
-  let lastLabelText = '';
-  let lastLabelX = -Infinity;
-  let lastLabelY = -Infinity;
-  let lastWarpX = -Infinity;
-  let lastWarpY = -Infinity;
+  // avoids SVG re-parse and inline-style invalidation cost. NaN / '\0'
+  // sentinels guarantee the first write always lands through the gate.
+  let lastLineD = '\0';
+  let lastLineBgD = '\0';
+  let lastLabelText = '\0';
+  let lastLabelX = NaN;
+  let lastLabelY = NaN;
+  let lastWarpX = NaN;
+  let lastWarpY = NaN;
   let lastOpacity = -1;
-  let lastPointerEvents = '';
+  let lastPointerEvents = '\0';
+  let lastDistUiDisplay = '\0';
   // Cache getComputedTextLength keyed on the rendered string. SVG's
   // getComputedTextLength forces a layout flush; it's stable for a given
   // string + font, so once measured we don't need to re-measure on a
@@ -66,24 +64,14 @@ export function createDistanceVectorOverlay(
   let labelWidthCacheText = '';
   let labelWidthCachePx = 0;
 
-  const setLineD = (d: string) => {
-    if (d === lastLineD) return;
-    line.setAttribute('d', d);
-    lastLineD = d;
-  };
-  const setLineBgD = (d: string) => {
-    if (d === lastLineBgD) return;
-    lineBg.setAttribute('d', d);
-    lastLineBgD = d;
-  };
   const hide = () => {
     if (!visible) return;
-    setLineD('');
-    setLineBgD('');
+    lastLineD = setStrAttr(line, 'd', '', lastLineD);
+    lastLineBgD = setStrAttr(lineBg, 'd', '', lastLineBgD);
     // Hide the whole UI group so both label and warp suffix disappear at
     // once. Using display rather than clearing textContent keeps the static
     // warp element in the DOM so its :hover styling keeps working on show.
-    distUi.style.display = 'none';
+    lastDistUiDisplay = setStyle(distUi, 'display', 'none', lastDistUiDisplay);
     visible = false;
   };
 
@@ -155,8 +143,8 @@ export function createDistanceVectorOverlay(
 
     const d = buildArrowSvgPath(shaftStartX, shaftStartY, tipX, tipY);
     if (!d) { hide(); return; }
-    setLineD(d);
-    setLineBgD(d);
+    lastLineD = setStrAttr(line, 'd', d, lastLineD);
+    lastLineBgD = setStrAttr(lineBg, 'd', d, lastLineBgD);
 
     // True 3D distance, always shown regardless of clipping.
     const dx = tmpB.x - tmpA.x;
@@ -173,14 +161,11 @@ export function createDistanceVectorOverlay(
     const anchorX = exit ? exit[0] : tipX;
     const anchorY = exit ? exit[1] : tipY;
     if (!visible) {
-      distUi.style.display = '';
+      lastDistUiDisplay = setStyle(distUi, 'display', '', lastDistUiDisplay);
       visible = true;
     }
     const labelText = `${destLabel} · ${fmtDist(distPc)}`;
-    if (labelText !== lastLabelText) {
-      label.textContent = labelText;
-      lastLabelText = labelText;
-    }
+    lastLabelText = setText(label, labelText, lastLabelText);
     // The label is anchor-start so `x` is its left edge; subtract its width
     // from the right-side clamp so the visible text stays inside the
     // viewport when the line exits near the right edge. Caching by text
@@ -196,25 +181,13 @@ export function createDistanceVectorOverlay(
     const mxMax = Math.max(ARROW_LABEL_PADDING_PX, w - ARROW_LABEL_PADDING_PX - labelWidth);
     const mx = Math.max(ARROW_LABEL_PADDING_PX, Math.min(mxMax, labelAnchorX));
     const my = Math.max(ARROW_LABEL_PADDING_PX, Math.min(h - ARROW_LABEL_PADDING_PX, labelAnchorY));
-    if (Math.abs(mx - lastLabelX) >= ATTR_DIRTY_PX) {
-      label.setAttribute('x', mx.toFixed(1));
-      lastLabelX = mx;
-    }
-    if (Math.abs(my - lastLabelY) >= ATTR_DIRTY_PX) {
-      label.setAttribute('y', my.toFixed(1));
-      lastLabelY = my;
-    }
+    lastLabelX = setNumAttr(label, 'x', mx, lastLabelX);
+    lastLabelY = setNumAttr(label, 'y', my, lastLabelY);
 
     // Position the warp affordance to the right of the distance label.
     const warpX = mx + labelWidth + WARP_GAP_PX;
-    if (Math.abs(warpX - lastWarpX) >= ATTR_DIRTY_PX) {
-      warpText.setAttribute('x', warpX.toFixed(1));
-      lastWarpX = warpX;
-    }
-    if (Math.abs(my - lastWarpY) >= ATTR_DIRTY_PX) {
-      warpText.setAttribute('y', my.toFixed(1));
-      lastWarpY = my;
-    }
+    lastWarpX = setNumAttr(warpText, 'x', warpX, lastWarpX);
+    lastWarpY = setNumAttr(warpText, 'y', my, lastWarpY);
 
     // Navigate-mode disc-coverage fade — drops opacity to 0 as the focused
     // star's disc grows past the standard Sol/GC chevron length. Same alpha
@@ -232,10 +205,7 @@ export function createDistanceVectorOverlay(
       lastOpacity = alpha;
     }
     const pe = alpha >= 0.5 ? '' : 'none';
-    if (pe !== lastPointerEvents) {
-      distUi.style.pointerEvents = pe;
-      lastPointerEvents = pe;
-    }
+    lastPointerEvents = setStyle(distUi, 'pointerEvents', pe, lastPointerEvents);
   });
 }
 
