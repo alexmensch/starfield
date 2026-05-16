@@ -63,10 +63,14 @@ that motivated `stellata-9mm.194`:
   lands as its own controller class. Camera-bound: `camera/<name>-controller.ts`.
   Layer-bound: in the layer folder.
 
-Full design + rationale in `docs/integration-shell-decomposition.md`.
-Memory `stellata-folder-and-controller-conventions` carries the same
-rules (plus the pure-helpers and in-code-prose rules) so `bd prime`
-surfaces them every session.
+Rules 4 + 5 (pure-helpers extract at second use; no multi-paragraph
+in-code prose) live in bd memory
+`stellata-folder-and-controller-conventions` — run `bd memories
+<key>` to read. The memory plus this section form the authoritative
+convention surface; controller-specific architectural prose lives in
+the matching `docs/*.md` (`docs/architecture.md`, `docs/camera-warp.md`,
+`docs/camera-observe.md`, `docs/camera-arrival.md`), updated by each
+extraction PR as the boundary it documents stabilises.
 
 ## Repo layout
 
@@ -204,17 +208,12 @@ Claude Code should read on demand when working on the relevant area.
   Stellarium HIP resolution, geometric-binary inference, GCVS
   cross-match, idempotency. Read when touching `scripts/` or `data/`.
 - **`docs/architecture.md`** — event bus, click-state machine, focused
-  constellation aim, floating origin, pin-to-center. The cross-cutting
-  patterns the rest of the codebase assumes. Read when changing state
-  flow, focus/vector behaviour, or anything that reads star positions.
-- **`docs/integration-shell-decomposition.md`** — authoritative design
-  for the `stellata.ts` controller extraction (epic
-  `stellata-9mm.194`): folder taxonomy, per-controller public surfaces
-  (Picker / Aim / Warp / ObserveTransition / Focus), bottom-up
-  extraction sequence, FocusOps + FrameAnchor interfaces, the
-  composition shape after extraction. Also the authoritative home for
-  the folder & module conventions (5 rules). Read when executing any
-  child bead under 9mm.194, or when adding a new layer / controller.
+  constellation aim, floating origin, pin-to-center, FocusTarget
+  contract. The cross-cutting patterns the rest of the codebase
+  assumes. Read when changing state flow, focus/vector behaviour, or
+  anything that reads star positions. The 194 extraction chain adds
+  per-controller sections (Picker / Aim / Warp / ObserveTransition /
+  Focus) here as each one lands.
 - **`docs/url-state.md`** — `?v=` URL wire format: v3 envelope,
   presence mask, per-component vec3 sub-masks, legacy v1/v2 decode,
   process for adding a field, console helpers. Read when touching
