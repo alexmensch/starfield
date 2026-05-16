@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { applyFade, emptyArrowState } from './hud-overlay';
+import { applyFade } from './dirty-attr';
+import { emptyArrowState, resetArrowSentinels, type ArrowState } from './hud-overlay';
 
 function makeFadeEls() {
   const style = {} as Record<string, string>;
@@ -23,7 +24,7 @@ describe('hud-overlay applyFade', () => {
     const bg = makeFadeEls();
     const label = makeFadeEls();
     const state = emptyArrowState();
-    applyFade(path.el, bg.el, label.el, 0.5, state);
+    applyFade([path.el, bg.el, label.el], label.el, 0.5, state);
     expect(path.style.opacity).toBe('0.500');
     expect(bg.style.opacity).toBe('0.500');
     expect(label.style.opacity).toBe('0.500');
@@ -35,11 +36,11 @@ describe('hud-overlay applyFade', () => {
     const bg = makeFadeEls();
     const label = makeFadeEls();
     const state = emptyArrowState();
-    applyFade(path.el, bg.el, label.el, 0.5, state);
+    applyFade([path.el, bg.el, label.el], label.el, 0.5, state);
     path.style.opacity = 'sentinel'; // overwrite to detect a re-write
     bg.style.opacity = 'sentinel';
     label.style.opacity = 'sentinel';
-    applyFade(path.el, bg.el, label.el, 0.5001, state);
+    applyFade([path.el, bg.el, label.el], label.el, 0.5001, state);
     expect(path.style.opacity).toBe('sentinel');
     expect(bg.style.opacity).toBe('sentinel');
     expect(label.style.opacity).toBe('sentinel');
@@ -50,12 +51,43 @@ describe('hud-overlay applyFade', () => {
     const bg = makeFadeEls();
     const label = makeFadeEls();
     const state = emptyArrowState();
-    applyFade(path.el, bg.el, label.el, 1.0, state);
+    applyFade([path.el, bg.el, label.el], label.el, 1.0, state);
     expect(label.style.pointerEvents).toBe('');
     expect(state.lastPointerEvents).toBe('');
-    applyFade(path.el, bg.el, label.el, 0.3, state);
+    applyFade([path.el, bg.el, label.el], label.el, 0.3, state);
     expect(label.style.pointerEvents).toBe('none');
     expect(state.lastPointerEvents).toBe('none');
+  });
+
+  it('resetArrowSentinels wipes every per-attribute sentinel back to its poison-init value (9mm.170)', () => {
+    // Regression for 9mm.170: hideArrow must wipe the numeric / text /
+    // opacity / pointer-events sentinels, not just the visible d / display
+    // pair. Without this, the next show-from-hide cycle would inherit
+    // stale cx/cy/lx/ly from the prior visible session whenever the new
+    // coords fell within ATTR_DIRTY_PX of them — silently skipping the
+    // first-frame setAttribute and pinning the label to its old position.
+    const populated: ArrowState = {
+      lastD: 'M250,100L300,150',
+      lastLabelDisplay: '',
+      lastLabelText: 'Sol · 4.2 pc',
+      lastLabelX: 312,
+      lastLabelY: 96,
+      lastOpacity: 0.7,
+      lastPointerEvents: '',
+    };
+    resetArrowSentinels(populated);
+    // Numeric sentinels return to NaN (any real value differs).
+    expect(Number.isNaN(populated.lastLabelX)).toBe(true);
+    expect(Number.isNaN(populated.lastLabelY)).toBe(true);
+    // String + opacity sentinels return to their canonical poisons.
+    expect(populated.lastLabelText).toBe('\0');
+    expect(populated.lastOpacity).toBe(-Infinity);
+    expect(populated.lastPointerEvents).toBe('\0');
+    // d + display are NOT reset — they ride the dirty-attr gate so the
+    // hide-state value (set elsewhere in hideArrow) stays as the cached
+    // last value.
+    expect(populated.lastD).toBe('M250,100L300,150');
+    expect(populated.lastLabelDisplay).toBe('');
   });
 
   it("first pointer-events write lands from poison '\\0' sentinel even when alpha=1 yields ''", () => {
@@ -68,7 +100,7 @@ describe('hud-overlay applyFade', () => {
     const label = makeFadeEls();
     const state = emptyArrowState();
     expect(state.lastPointerEvents).toBe('\0');
-    applyFade(path.el, bg.el, label.el, 1.0, state);
+    applyFade([path.el, bg.el, label.el], label.el, 1.0, state);
     expect(label.style.pointerEvents).toBe('');
     expect(state.lastPointerEvents).toBe('');
   });

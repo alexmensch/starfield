@@ -12,6 +12,7 @@ import {
 import { projectToScreen } from './overlay-project';
 import { ringRadiusPx } from './hud-overlay';
 import { setNumAttr, setStrAttr, setStyle, setText } from './dirty-attr';
+import { FOCUS_RING_RADIUS_PX } from './focus-ring-overlay';
 
 // Point-of-interest overlay. Single-click on a star in OBSERVE pins it
 // (Stellata.togglePoi). The pin renders two ways:
@@ -38,14 +39,14 @@ const MIN_SHAFT_PIXEL_LENGTH = 8;
 // as on-screen so its label survives small look-around drifts without
 // flipping to arrow mode every couple of frames.
 const ON_SCREEN_PULL_IN_PX = 40;
-// Per-POI ring around the pinned star. Same radius as the focus ring so
-// the two read as the same kind of indicator. The on-screen label rides
-// just outside this rim along a 45° diagonal, which is what makes the
-// label-to-star distance FOV-invariant: ring radius is fixed in screen
-// pixels regardless of how FOV scales the rendered disc.
-const POI_RING_RADIUS_PX = 24;
+// Per-POI ring around the pinned star — same screen radius as the focus
+// ring so the two read as the same kind of indicator (shared
+// FOCUS_RING_RADIUS_PX). The on-screen label rides just outside this rim
+// along a 45° diagonal, which is what makes the label-to-star distance
+// FOV-invariant: ring radius is fixed in screen pixels regardless of how
+// FOV scales the rendered disc.
 const LABEL_RIM_GAP_PX = 6;
-const LABEL_DIAG = (POI_RING_RADIUS_PX + LABEL_RIM_GAP_PX) / Math.SQRT2;
+const LABEL_DIAG = (FOCUS_RING_RADIUS_PX + LABEL_RIM_GAP_PX) / Math.SQRT2;
 
 interface Entry {
   idx: number;
@@ -101,7 +102,7 @@ export function createPoiOverlay(
 
     const ring = document.createElementNS(NS, 'circle') as SVGCircleElement;
     ring.setAttribute('class', 'poi-ring');
-    ring.setAttribute('r', POI_RING_RADIUS_PX.toFixed(1));
+    ring.setAttribute('r', FOCUS_RING_RADIUS_PX.toFixed(1));
     ringsGroup!.appendChild(ring);
 
     const onScreenLabel = document.createElementNS(NS, 'text') as SVGTextElement;

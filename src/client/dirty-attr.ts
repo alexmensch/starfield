@@ -89,3 +89,47 @@ export function setStyle(
   (el.style as unknown as Record<string, string>)[prop] = value;
   return value;
 }
+
+/**
+ * Minimal state shape required by `applyFade`. Caller stores the last-
+ * written opacity (init `-Infinity` so the first call's `|alpha − last| >=
+ * threshold` gate always trips — NaN poisons the gate in the wrong
+ * direction) and the last-written pointer-events string (init `'\0'` so
+ * the steady-state `''` value doesn't silently match a freshly-emitted
+ * state and skip the first restore-to-clickable write).
+ */
+export interface FadeState {
+  lastOpacity: number;
+  lastPointerEvents: string;
+}
+
+/** Convenience: returns a FadeState with the canonical poison sentinels. */
+export function emptyFadeState(): FadeState {
+  return { lastOpacity: -Infinity, lastPointerEvents: '\0' };
+}
+
+/**
+ * Per-frame fade: write `alpha.toFixed(3)` to every supplied element's
+ * inline `opacity` under a single 0.0005-threshold guard (the .toFixed(3)
+ * precision floor — half-step matches `setNumAttr`'s default-decimals=3
+ * derivation), and toggle `clickableEl`'s inline `pointerEvents` at the
+ * 0.5 alpha boundary so labels that fade past half-opacity stop accepting
+ * clicks. Shared between hud-overlay (Sol/GC arrows) and distance-vector
+ * (vector + warp affordance) so all three reference arrows fade in unison
+ * under the same dirty-track / pointer-policy contract. Mutates `state`.
+ */
+export function applyFade(
+  opacityEls: { style: CSSStyleDeclaration }[],
+  clickableEl: { style: CSSStyleDeclaration },
+  alpha: number,
+  state: FadeState,
+): void {
+  const threshold = 0.5 * Math.pow(10, -3);
+  if (Math.abs(alpha - state.lastOpacity) >= threshold) {
+    const a = alpha.toFixed(3);
+    for (const el of opacityEls) el.style.opacity = a;
+    state.lastOpacity = alpha;
+  }
+  const pe = alpha >= 0.5 ? '' : 'none';
+  state.lastPointerEvents = setStyle(clickableEl, 'pointerEvents', pe, state.lastPointerEvents);
+}

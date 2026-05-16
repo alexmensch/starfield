@@ -7,7 +7,7 @@ import {
   ARROW_LABEL_OFFSET_PX,
   ARROW_LABEL_PADDING_PX,
 } from './arrow-path';
-import { setNumAttr, setStrAttr, setStyle, setText } from './dirty-attr';
+import { applyFade, emptyFadeState, setNumAttr, setStrAttr, setStyle, setText } from './dirty-attr';
 
 // Source-end offset — shaft starts past the focus ring (radius 24 px) so it
 // doesn't crowd the focused star's disc. Matches the Sol/GC arrow start
@@ -54,33 +54,22 @@ export function createDistanceVectorOverlay(
   let lastLabelY = NaN;
   let lastWarpX = NaN;
   let lastWarpY = NaN;
-  let lastOpacity = -1;
-  let lastPointerEvents = '\0';
+  // Fade state (opacity + pointer-events) shared with hud-overlay's
+  // Sol/GC arrows so the three reference arrows fade in unison under the
+  // same dirty-track / pointer-policy contract. See applyFade in dirty-attr.ts.
+  const fadeState = emptyFadeState();
   let lastDistUiDisplay = '\0';
   // Cache getComputedTextLength keyed on the rendered string. SVG's
   // getComputedTextLength forces a layout flush; it's stable for a given
   // string + font, so once measured we don't need to re-measure on a
-  // stationary camera.
-  //
-  // The cache key is the rendered text alone, so a webfont load (FOUT/FOIT)
-  // *after* the first measurement would leave the cached width pinned to
-  // the fallback-font measurement and mis-anchor the right-edge clamp +
-  // warp affordance for the lifetime of the page. Invalidate once when
-  // document.fonts.ready fires (settles within a few hundred ms of page
-  // load, fires immediately if all fonts were already loaded). The
-  // catch-clauses guard older browsers where the Fonts API isn't present
-  // — the cache simply stays text-keyed, which is the pre-fix behaviour.
-  let labelWidthCacheText = '';
-  let labelWidthCachePx = 0;
-  try {
-    const fonts = (document as Document & { fonts?: { ready?: Promise<unknown> } }).fonts;
-    fonts?.ready?.then(() => {
-      labelWidthCacheText = '';
-      labelWidthCachePx = 0;
-    }).catch(() => { /* ignored: cache stays text-keyed */ });
-  } catch {
-    /* ignored: fonts API not available */
-  }
+  // stationary camera. The cache is invalidated once when document.fonts.ready
+  // fires so a fallback-font measurement doesn't get pinned past the
+  // webfont swap — see attachFontsReadyInvalidation.
+  const labelWidthCache = makeLabelWidthCache();
+  attachFontsReadyInvalidation(
+    labelWidthCache,
+    (document as Document & { fonts?: { ready?: Promise<unknown> } }).fonts,
+  );
 
   const hide = () => {
     if (!visible) return;
@@ -188,11 +177,11 @@ export function createDistanceVectorOverlay(
     // from the right-side clamp so the visible text stays inside the
     // viewport when the line exits near the right edge. Caching by text
     // content avoids the per-frame layout flush forced by getComputedTextLength.
-    let labelWidth = labelWidthCachePx;
-    if (labelText !== labelWidthCacheText) {
+    let labelWidth = labelWidthCache.px;
+    if (labelText !== labelWidthCache.text) {
       labelWidth = label.getComputedTextLength();
-      labelWidthCacheText = labelText;
-      labelWidthCachePx = labelWidth;
+      labelWidthCache.text = labelText;
+      labelWidthCache.px = labelWidth;
     }
     const labelAnchorX = anchorX + ARROW_LABEL_OFFSET_PX + ARROW_HEAD_DEPTH_PX;
     const labelAnchorY = anchorY - ARROW_LABEL_OFFSET_PX;
@@ -209,21 +198,12 @@ export function createDistanceVectorOverlay(
 
     // Navigate-mode disc-coverage fade — drops opacity to 0 as the focused
     // star's disc grows past the standard Sol/GC chevron length. Same alpha
-    // is applied to the HUD Sol/GC arrows so all three reference arrows
-    // fade in unison; computation lives in Stellata so consumers stay
-    // synchronised within a frame. Pointer-events suppressed below half so
-    // the (barely visible) label + warp affordance don't accept stray
-    // clicks during fade-out.
-    const alpha = stellata.getNavigateArrowFadeAlpha();
-    if (Math.abs(alpha - lastOpacity) >= 0.0005) {
-      const a = alpha.toFixed(3);
-      line.style.opacity = a;
-      lineBg.style.opacity = a;
-      distUi.style.opacity = a;
-      lastOpacity = alpha;
-    }
-    const pe = alpha >= 0.5 ? '' : 'none';
-    lastPointerEvents = setStyle(distUi, 'pointerEvents', pe, lastPointerEvents);
+    // is applied to the HUD Sol/GC arrows via the shared applyFade so all
+    // three reference arrows fade in unison; computation lives in Stellata
+    // so consumers stay synchronised within a frame. Pointer-events on the
+    // ui group go through the same helper (suppressed below half-alpha so
+    // the barely-visible label + warp affordance don't accept stray clicks).
+    applyFade([line, lineBg, distUi], distUi, stellata.getNavigateArrowFadeAlpha(), fadeState);
   });
 }
 
@@ -282,6 +262,45 @@ export function projectWithNearClip(
   }
 
   return { pA, pB };
+}
+
+/**
+ * Cache for SVG getComputedTextLength results. The key is the rendered
+ * text alone; on a webfont load (FOUT/FOIT) the *same* text reflows to a
+ * different pixel width, so the cache must be invalidated when the
+ * webfonts settle — see attachFontsReadyInvalidation. Without that, the
+ * right-edge clamp + warp affordance stay pinned to the fallback-font
+ * measurement for the lifetime of the page (the 9mm.149 bug).
+ */
+export interface LabelWidthCache {
+  text: string;
+  px: number;
+}
+
+export function makeLabelWidthCache(): LabelWidthCache {
+  return { text: '', px: 0 };
+}
+
+/**
+ * Attach a one-shot listener to document.fonts.ready that zeros the cache
+ * so the next per-frame call re-measures with the loaded webfont. Settles
+ * within a few hundred ms of page load (or fires immediately if all fonts
+ * were already in cache). The try/catch + optional-chaining guard older
+ * browsers where the Fonts API isn't present — the cache simply stays
+ * text-keyed, which is the pre-fix behaviour.
+ */
+export function attachFontsReadyInvalidation(
+  cache: LabelWidthCache,
+  fonts: { ready?: Promise<unknown> } | undefined,
+): void {
+  try {
+    fonts?.ready?.then(() => {
+      cache.text = '';
+      cache.px = 0;
+    }).catch(() => { /* ignored: cache stays text-keyed */ });
+  } catch {
+    /* ignored: fonts API not available */
+  }
 }
 
 // Liang-Barsky exit point: where does segment (ax,ay)→(bx,by) leave the
