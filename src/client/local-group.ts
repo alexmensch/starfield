@@ -31,11 +31,23 @@
 
 import * as THREE from 'three';
 import type { LgCatalog, LgObject } from './local-group-loader';
+import { maxSemiAxisPc } from './local-group-loader';
 import { FADE_INNER_PC, FADE_OUTER_PC, smoothstep } from './galactic-fade';
 import type { Stellata } from './stellata';
 import { createDistanceGatedLabel } from './distance-gated-label';
 import { GAL_TO_ICRS, GALACTIC_CENTRE_PC } from './galactic-coords';
 import { MIDPLANE_RADIUS_PC } from './galactic-disc';
+import {
+  MIN_DISC_HIT_RADIUS_PX,
+  pickFromCandidates,
+  type PickCandidate,
+} from './star-geometry';
+import type { HoverHit } from './hover/hover-types';
+
+// LG-specific pick candidate. Carries `cameraDistancePc` so the
+// winning candidate rides distance through to the `HoverHit` without
+// the picker re-projecting after the reducer runs.
+type LgPickCandidate = PickCandidate & { cameraDistancePc: number };
 
 const RING_SEGMENTS = 64;
 
@@ -129,6 +141,85 @@ export class LocalGroupLayer {
    *  subtracts worldOffset to get world-space coords for projection. */
   getAbsSample(objectIdx: number, sampleIdx: number, out: THREE.Vector3): void {
     out.copy(this.absSamples[objectIdx][sampleIdx]);
+  }
+
+  /** Hover-engine entry point for the Local Group layer (stellata-lo5.5).
+   *
+   *  Visibility-only gate per stellata-lo5-hover-conventions Rule 2:
+   *  mirrors the renderer's "is this drawn?" predicate exactly — chart
+   *  (mono) mode and the distance-fade smoothstep are both encoded by
+   *  `group.visible`, which `update()` flips each frame. The pick
+   *  short-circuits when the group is hidden.
+   *
+   *  Per-object pickbox: project `centerAbs - worldOffset` to screen,
+   *  estimate the projected silhouette radius as the angular size of the
+   *  largest semi-axis (the orientation-independent upper bound — no
+   *  direction perpendicular to the line of sight can extend farther
+   *  than `maxSemiAxisPc(obj)` from the centroid). Two-tier per the
+   *  shared pick contract (star + planet pickers): prime if the cursor
+   *  sits inside the floored hit radius (`MIN_DISC_HIT_RADIUS_PX`
+   *  floor matches stars + planets so distant LG objects with
+   *  sub-pixel angular size remain hoverable); fallback if within
+   *  `pixelThreshold` of the centroid.
+   *
+   *  Within-tier scoring is closest-cursor-wins via the default
+   *  `pickFromCandidates` scorer (no brightness bias — LG wireframes
+   *  have no apparent-magnitude axis). Each candidate carries its
+   *  `cameraDistancePc` so the winning candidate hands `tier` +
+   *  distance straight to the returned `HoverHit` — no re-projection.
+   */
+  pick(
+    camera: THREE.PerspectiveCamera,
+    worldOffset: THREE.Vector3,
+    rect: DOMRect,
+    clientX: number,
+    clientY: number,
+    pixelThreshold: number,
+  ): HoverHit | null {
+    if (!this.group.visible) return null;
+
+    const cursorX = clientX - rect.left;
+    const cursorY = clientY - rect.top;
+    const viewportW = rect.width;
+    const viewportH = rect.height;
+    const fovYRad = (camera.fov * Math.PI) / 180;
+    const pxPerRad = viewportH / fovYRad;
+    const camPos = camera.position;
+    const v = new THREE.Vector3();
+    const candidates: LgPickCandidate[] = [];
+
+    for (let i = 0; i < this.objects.length; i++) {
+      const obj = this.objects[i];
+      const lx = obj.centerAbs.x - worldOffset.x;
+      const ly = obj.centerAbs.y - worldOffset.y;
+      const lz = obj.centerAbs.z - worldOffset.z;
+
+      v.set(lx, ly, lz).project(camera);
+      if (v.z < -1 || v.z > 1) continue;
+
+      const dx = lx - camPos.x;
+      const dy = ly - camPos.y;
+      const dz = lz - camPos.z;
+      const cameraDistancePc = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+      const screenX = (v.x + 1) * 0.5 * viewportW;
+      const screenY = (1 - v.y) * 0.5 * viewportH;
+      const pxDist = Math.hypot(cursorX - screenX, cursorY - screenY);
+
+      const pxSize = 2 * Math.atan(maxSemiAxisPc(obj) / Math.max(cameraDistancePc, 1)) * pxPerRad;
+      const hitRadius = Math.max(pxSize * 0.5, MIN_DISC_HIT_RADIUS_PX);
+
+      if (pxDist > hitRadius && pxDist > pixelThreshold) continue;
+      candidates.push({ idx: i, pxDist, hitRadius, cameraDistancePc });
+    }
+
+    const winner = pickFromCandidates(candidates, pixelThreshold);
+    if (winner === null) return null;
+    return {
+      idx: winner.candidate.idx,
+      cameraDistancePc: winner.candidate.cameraDistancePc,
+      tier: winner.tier,
+    };
   }
 
   dispose(): void {
@@ -486,7 +577,7 @@ export function createLocalGroupLabels(
     candidates.push({
       id: obj.id,
       centerAbs: obj.centerAbs.clone(),
-      maxAxis: Math.max(obj.axes[0], obj.axes[1], obj.axes[2]),
+      maxAxis: maxSemiAxisPc(obj),
     });
     const elementId = `lg-${obj.id}-label`;
     // Mint the SVG <text> element. innerHTML escape is unnecessary

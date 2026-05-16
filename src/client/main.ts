@@ -26,11 +26,15 @@ import { bindBrandModals } from './brand-modal';
 import { bindKeyboardShortcuts } from './keyboard-shortcuts';
 import { applyFromUrl, startUrlSync, type IdMaps } from './url-state';
 import { applyFirstLoadView } from './first-load';
-import { fmtDist } from './distance-util';
 import { setupDebug } from './debug';
 import { escapeHtml } from './dom-util';
-
-const HOVER_DELAY_MS = 280;
+import { createHoverEngine } from './hover/hover-engine';
+import { createStarHoverProvider } from './hover/star-hover-provider';
+import { createPlanetHoverProvider } from './hover/planet-hover-provider';
+import { createLocalGroupHoverProvider } from './hover/local-group-hover-provider';
+import { createHeliopauseHoverProvider } from './hover/heliopause-hover-provider';
+import { createCloudHoverProvider } from './hover/cloud-hover-provider';
+import type { HoverProvider } from './hover/hover-types';
 
 async function main() {
   const canvas = document.getElementById('scene') as HTMLCanvasElement;
@@ -196,7 +200,59 @@ async function main() {
       stellata,
     });
 
-    bindHoverTooltip(canvas, tooltip, stellata, describeStarDetailed);
+    // Hover-label engine (stellata-lo5). Star, planet, heliopause apex,
+    // and (when the catalog is present) Local Group providers register
+    // here. Every provider mirrors the renderer's "is this drawn?"
+    // predicate as its visibility gate — visibility ⇒ hoverable per
+    // stellata-lo5-hover-conventions Rule 2; no focus / mode gates.
+    // Provider order is irrelevant — the disambiguator picks the winner
+    // across all providers per the prime>fallback / closest-camera-wins
+    // rule.
+    const starHoverProvider = createStarHoverProvider({
+      stellata,
+      context: {
+        starLabels,
+        spectralMap,
+        positions: catalog.positions,
+        constellation: catalog.constellation,
+        constellations: catalog.constellations,
+        periodDays: catalog.periodDays,
+        amplitudeMag: catalog.amplitudeMag,
+      },
+    });
+    const planetHoverProvider = createPlanetHoverProvider({ stellata });
+    const heliopauseHoverProvider = createHeliopauseHoverProvider({ stellata });
+    const hoverProviders: HoverProvider[] = [
+      starHoverProvider,
+      planetHoverProvider,
+      heliopauseHoverProvider,
+    ];
+    // LG provider only registers when the build artifact loaded — fresh
+    // checkouts without `npm run build:local-group` leave stellata.localGroup
+    // null and the wireframes don't render; no provider in that case.
+    if (lgCatalog) {
+      hoverProviders.push(createLocalGroupHoverProvider({
+        stellata,
+        context: { objects: lgCatalog.objects },
+      }));
+    }
+    // Cloud provider registers iff the cloud layer is attached. The
+    // attach call is shelved at v1.0 (CLAUDE.md), so this branch is
+    // unreached in shipping builds — un-shelving (uncommenting the
+    // `attachClouds(cloudCatalog)` line above) auto-registers the
+    // provider with no further wiring. The formatter and provider class
+    // ship anyway so the un-shelve diff is one line, not a re-implement.
+    if (stellata.cloudLayer) {
+      hoverProviders.push(createCloudHoverProvider({
+        stellata,
+        context: { clouds: stellata.cloudLayer.clouds },
+      }));
+    }
+    createHoverEngine({
+      canvas,
+      tooltip,
+      initialProviders: hoverProviders,
+    });
 
     await new Promise((r) => requestAnimationFrame(r));
     loading.style.transition = 'opacity 0.4s ease';
@@ -213,91 +269,10 @@ async function main() {
       maybeShowInfoModal(catalog.count);
     }, 400);
 
-    // (describeCloud removed alongside the cloud-shelving cleanup. When
-    // re-enabling the cloud layer, restore it from git history and pass it
-    // back into bindHoverTooltip so cloud hovers surface a name+axes
-    // tooltip the same way star hovers do.)
-
-    // Detailed, multi-line form for the hover tooltip. Line 1 is the star
-    // name; subsequent lines progressively disclose: constellation +
-    // distance, full spectral classification (from the catalog, preserving
-    // composite/peculiar markers), and variability info if any.
-    function describeStarDetailed(idx: number): { name: string; lines: string[] } {
-      const name = starLabels.get(idx) ?? `Unnamed #${idx}`;
-      const conIdx = catalog.constellation[idx];
-      const con = conIdx !== 255 ? catalog.constellations[conIdx].name : '';
-      const p = catalog.positions;
-      const dist = Math.sqrt(
-        p[idx * 3] ** 2 + p[idx * 3 + 1] ** 2 + p[idx * 3 + 2] ** 2,
-      );
-      const lines: string[] = [];
-      const ctx = [con, fmtDist(dist)].filter(Boolean).join(' · ');
-      if (ctx) lines.push(ctx);
-      const spect = spectralMap.get(idx);
-      if (spect) lines.push(spect);
-      const period = catalog.periodDays[idx];
-      const amp = catalog.amplitudeMag[idx];
-      if (period > 0 && amp > 0) {
-        const periodStr = period >= 10
-          ? `${period.toFixed(0)}d`
-          : `${period.toFixed(2)}d`;
-        lines.push(`Variable · P=${periodStr}, Δ=${amp.toFixed(1)}mag`);
-      }
-      return { name, lines };
-    }
   } catch (err) {
     console.error(err);
     loadingStatus.textContent = `Error: ${(err as Error).message}`;
   }
-}
-
-function bindHoverTooltip(
-  canvas: HTMLCanvasElement,
-  tooltip: HTMLElement,
-  stellata: Stellata,
-  detailedStar: (i: number) => { name: string; lines: string[] },
-) {
-  let timer: number | undefined;
-  let dragging = false;
-  let lastX = 0;
-  let lastY = 0;
-
-  const hide = () => {
-    tooltip.hidden = true;
-    if (timer !== undefined) {
-      clearTimeout(timer);
-      timer = undefined;
-    }
-  };
-
-  canvas.addEventListener('pointerdown', () => { dragging = true; hide(); });
-  canvas.addEventListener('pointerup', () => { dragging = false; });
-  canvas.addEventListener('pointerleave', hide);
-
-  canvas.addEventListener('pointermove', (e) => {
-    if (dragging) return;
-    lastX = e.clientX;
-    lastY = e.clientY;
-    hide();
-    timer = window.setTimeout(() => {
-      // Stars are the only hover-tooltip target while the molecular cloud
-      // layer is shelved (CLAUDE.md). When clouds re-enable, fall back to
-      // pickCloud here for the cloud-name tooltip.
-      const starIdx = stellata.pickStar(lastX, lastY, 14);
-      const payload = starIdx >= 0 ? detailedStar(starIdx) : null;
-      if (!payload) return;
-      const { name, lines } = payload;
-      const subLines = lines
-        .map((l) => `<div class="tt-sub">${escapeHtml(l)}</div>`)
-        .join('');
-      tooltip.innerHTML = `<div class="tt-name">${escapeHtml(name)}</div>${subLines}`;
-      const maxLeft = window.innerWidth - 300;
-      const maxTop = window.innerHeight - 96;
-      tooltip.style.left = Math.min(lastX + 14, maxLeft) + 'px';
-      tooltip.style.top = Math.min(lastY + 14, maxTop) + 'px';
-      tooltip.hidden = false;
-    }, HOVER_DELAY_MS);
-  });
 }
 
 main();

@@ -77,6 +77,15 @@ export function peakAmplitudeFactor(amplitudeMag: number, periodDays: number): n
 // (Alula Australis A/B at the same x/y/z) still tiebreak by brightness.
 export const PICK_MAG_BIAS_PX_PER_MAG = 0.05;
 
+// Floor on the prime-disc hit radius for any layer that uses the two-tier
+// pick contract (stars, Sol planets, eventually clouds / LG wireframes).
+// Tiny chart-mode discs (down to 1–2 px) leave a sub-pixel target that
+// the cursor can easily miss even when visually right on top of the
+// object. Floor the disc-test radius to a value the cursor can
+// realistically land within. Hoisted here (away from stellata.ts) so the
+// star and planet pick paths share a single source.
+export const MIN_DISC_HIT_RADIUS_PX = 4;
+
 // Score for a star pick candidate. Lower is better. Used by pickStar
 // for both the prime tier (cursor inside a rendered disc) and the
 // proximity-fallback tier (no disc hit, nearest centre within a
@@ -108,45 +117,84 @@ export function pickScore(pxDist: number, appMag: number): number {
 // already accepted it. `hitRadius` is the prime-tier disc radius
 // (`max(pxSize/2, MIN_DISC_HIT_RADIUS_PX)`) — caller-computed because
 // it depends on rendered disc size. Pure-data shape so the reducer
-// below stays unit-testable without a Three.js scene.
+// below stays unit-testable without a Three.js scene. Non-star
+// providers (planets, Local Group, heliopause apex) extend this with
+// no extra fields and pass the default `pxDist` scorer.
 export type PickCandidate = {
   idx: number;
   pxDist: number;
   hitRadius: number;
-  appMag: number;
 };
 
-// Reduce a candidate list to the winning idx (or -1) under the two-tier
-// pickStar contract:
-//   prime  — `pxDist <= hitRadius` (cursor inside the rendered disc)
+// Star-specific candidate. Carries `appMag` so the sub-pixel
+// brightness bias in `pickScore` can tiebreak coincident catalog
+// rows (Alula Australis A/B in AT-HYG sharing x/y/z), and
+// `cameraDistancePc` so the hover path (`pickStarHit`) can ride the
+// distance through to its `HoverHit` without re-walking the projection
+// for the winner. The click path (`pickStar`) ignores the field.
+export type StarPickCandidate = PickCandidate & {
+  appMag: number;
+  cameraDistancePc: number;
+};
+
+// Winning candidate from `pickFromCandidates`, with the prime/fallback
+// classification carried alongside. Returning the candidate (rather
+// than just its idx) lets hover-tier callers (`pickStarHit`,
+// `LocalGroupLayer.pick`, `PlanetBodyField.pick`) read the winning
+// candidate's `pxDist`/`hitRadius`/extension fields without re-walking
+// the projection. `tier` mirrors the reducer's two-tier split so the
+// `HoverHit` tier field is keyed off the same comparison the reducer
+// already made — no separate caller-side classification.
+export type PickResult<T extends PickCandidate> = {
+  candidate: T;
+  tier: 'prime' | 'fallback';
+};
+
+// Reduce a candidate list to the winning candidate (or null) under the
+// two-tier pick contract:
+//   prime  — `pxDist <= hitRadius` (cursor inside the rendered disc /
+//            wireframe envelope)
 //   fallback — `pxDist <= pixelThreshold` (cursor near the centre, no
 //              disc hit). Only consulted when no prime hit exists.
-// Within each tier, lowest `pickScore` wins. Prime hits ALWAYS beat
+// Within each tier, lowest `scoreFn(c)` wins. Prime hits ALWAYS beat
 // fallback hits — a prime candidate just inside its hit radius beats
 // a fallback candidate one pixel from the cursor, regardless of score.
-export function pickFromCandidates(
-  candidates: Iterable<PickCandidate>,
+//
+// `scoreFn` defaults to "closest to cursor wins" (`c.pxDist`) — the
+// natural choice for layers without a brightness bias. The star caller
+// passes `pickScore` to retain the sub-pixel mag tiebreaker.
+//
+// Single source of truth across all layered pickers in stellata-lo5:
+// star (StarPickCandidate, pickScore), Local Group (PickCandidate +
+// cameraDistancePc, default scorer), planets (cross-host candidate with
+// hostStarIdx/planetIdx/cameraDistancePc, default scorer). Callers that
+// only need the winning idx unwrap with `result?.candidate.idx ?? -1`.
+export function pickFromCandidates<T extends PickCandidate>(
+  candidates: Iterable<T>,
   pixelThreshold: number,
-): number {
-  let primeIdx = -1;
+  scoreFn: (c: T) => number = (c) => c.pxDist,
+): PickResult<T> | null {
+  let prime: T | null = null;
   let primeBest = Infinity;
-  let fbIdx = -1;
+  let fb: T | null = null;
   let fbBest = Infinity;
   for (const c of candidates) {
-    const score = pickScore(c.pxDist, c.appMag);
+    const score = scoreFn(c);
     if (c.pxDist <= c.hitRadius) {
       if (score < primeBest) {
         primeBest = score;
-        primeIdx = c.idx;
+        prime = c;
       }
     } else if (c.pxDist <= pixelThreshold) {
       if (score < fbBest) {
         fbBest = score;
-        fbIdx = c.idx;
+        fb = c;
       }
     }
   }
-  return primeIdx !== -1 ? primeIdx : fbIdx;
+  if (prime !== null) return { candidate: prime, tier: 'prime' };
+  if (fb !== null) return { candidate: fb, tier: 'fallback' };
+  return null;
 }
 
 // Solve for camera distance `d` such that a star of radius `R_pc`

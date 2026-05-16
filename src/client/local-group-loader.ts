@@ -23,6 +23,20 @@ export interface LgCatalog {
   objects: LgObject[];
 }
 
+/** Longest of the three local-frame semi-axes — the conservative upper
+ *  bound on the object's projected silhouette radius regardless of
+ *  orientation. Used by the apparent-size label ranking in local-group.ts
+ *  and the hover pickbox in LocalGroupLayer.pick (stellata-lo5.5). */
+export function maxSemiAxisPc(obj: Pick<LgObject, 'axes'>): number {
+  return Math.max(obj.axes[0], obj.axes[1], obj.axes[2]);
+}
+
+/** Shortest of the three local-frame semi-axes — the lower bound used in
+ *  the "Size <major> × <minor>" hover summary. */
+export function minSemiAxisPc(obj: Pick<LgObject, 'axes'>): number {
+  return Math.min(obj.axes[0], obj.axes[1], obj.axes[2]);
+}
+
 interface RawObject {
   name: string;
   id: string;

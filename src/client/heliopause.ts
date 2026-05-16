@@ -73,6 +73,37 @@ const FRESNEL_POWER = 2.5;
 export const HELIOPAUSE_APEX_LOCAL_PC: Readonly<THREE.Vector3> =
   APEX_DIR_ICRS.clone().multiplyScalar(UPWIND_APEX_AU * AU_PC);
 
+/** Upwind apex distance from Sol in AU. The shell's upwind boundary
+ *  (Voyager 1 termination crossing, 2012-08-25). Surfaced for hover
+ *  labels so the readout is keyed off the same constant the geometry
+ *  is derived from rather than duplicated downstream. */
+export const HELIOPAUSE_UPWIND_APEX_AU = UPWIND_APEX_AU;
+
+/** DOM element id of the SVG `<text>` node that renders the apex label.
+ *  Exported so the hover picker can hit-test the label's bounding rect
+ *  via getElementById — single source so the id can't drift between
+ *  the label engine and the hover picker. */
+export const HELIOPAUSE_LABEL_ELEMENT_ID = 'heliopause-label';
+
+/** Visibility predicate for the apex SVG label. The label engine layers
+ *  an additional near-plane guard on top of this (any sample point behind
+ *  the camera near plane hides the label, since that means the camera
+ *  is geometrically inside the ellipsoid). Shared between
+ *  `createHeliopauseLabel` and the hover picker so the label eligibility
+ *  rule can't silently drift between them.
+ *
+ *  Predicate: a planet system is focused, chart mode is off, and at
+ *  least one orbit ring is currently drawn. In v1 the only attached
+ *  planet host is Sol, so "focused planet system" effectively means
+ *  "Sol focused"; once stellata-bk5 attaches exoplanet hosts the
+ *  apex visibility will need to additionally require Sol-host —
+ *  flag at that bead, don't pre-empt here. */
+export function isHeliopauseApexVisible(stellata: Stellata): boolean {
+  return stellata.getFocusedPlanetSystem() !== null
+    && !stellata.getMonochrome()
+    && stellata.anyOrbitRingVisible();
+}
+
 // Group quaternion that rotates +Z onto the antiapex direction in ICRS.
 // Same value the Heliopause instance applies to its group; precomputed
 // at module load so the label overlay can pre-rotate its sample points
@@ -150,25 +181,39 @@ export class Heliopause {
     this.group.visible = !this.hidden && !this.mono;
   }
 
+  /** Live shell-mesh visibility. Mirrors the actual rendered state
+   *  (`group.visible`) so the hover picker can gate without re-deriving
+   *  the Sol-focus + chart-mode + future-toggle conjunction. The right
+   *  single source of truth — any layer-level toggle added later (a
+   *  representational-layer settings switch, for example) AND's into
+   *  `group.visible` automatically. */
+  isVisible(): boolean {
+    return this.group.visible;
+  }
+
   dispose(): void {
     this.geometry.dispose();
     this.material.dispose();
   }
 }
 
-// Sample points distributed on the heliopause's ellipsoid surface,
-// pre-rotated through the group quaternion into the Sol-anchored
-// local frame. Projecting these to screen each frame gives a screen-
-// space bounding box that hugs the egg's silhouette tightly — within
-// the tessellation precision of the sample grid. Computed once at
-// module load; geometry is static.
-//
-// Surface points (not AABB corners) — points off the surface sit
-// further from the centre than the silhouette and produce a loose
-// bbox that reads as "label floating in space." For the (115, 115,
-// 161) AU ellipsoid the AABB corners sit at √(a² + a² + c²) ≈ 229 AU
-// from centre, ~40% beyond the actual silhouette extent.
-const SAMPLE_POINTS_LOCAL: readonly THREE.Vector3[] = (() => {
+/** Sample points distributed on the heliopause's ellipsoid surface,
+ *  pre-rotated through the group quaternion into the Sol-anchored
+ *  local frame. Projecting these to screen each frame gives a screen-
+ *  space bounding box that hugs the egg's silhouette tightly — within
+ *  the tessellation precision of the sample grid. Computed once at
+ *  module load; geometry is static.
+ *
+ *  Surface points (not AABB corners) — points off the surface sit
+ *  further from the centre than the silhouette and produce a loose
+ *  bbox that reads as "label floating in space." For the (115, 115,
+ *  161) AU ellipsoid the AABB corners sit at √(a² + a² + c²) ≈ 229 AU
+ *  from centre, ~40% beyond the actual silhouette extent.
+ *
+ *  Exported so the hover picker can hit-test the projected silhouette
+ *  bbox against the cursor — same 62 points, same near-plane guard,
+ *  so the hover surface stays in lockstep with the label engine. */
+export const HELIOPAUSE_SAMPLE_POINTS_LOCAL: readonly THREE.Vector3[] = (() => {
   const arr: THREE.Vector3[] = [];
   const cz = CENTRE_OFFSET_AU * AU_PC;
   const a = SEMI_EQUATORIAL_AU * AU_PC;
@@ -209,18 +254,15 @@ const SAMPLE_POINTS_LOCAL: readonly THREE.Vector3[] = (() => {
  *  planet label. */
 export function createHeliopauseLabel(stellata: Stellata): void {
   createDistanceGatedLabel(stellata, {
-    elementId: 'heliopause-label',
-    sampleCount: SAMPLE_POINTS_LOCAL.length,
-    // SAMPLE_POINTS_LOCAL is already in Sol-anchored local pc — which
+    elementId: HELIOPAUSE_LABEL_ELEMENT_ID,
+    sampleCount: HELIOPAUSE_SAMPLE_POINTS_LOCAL.length,
+    // HELIOPAUSE_SAMPLE_POINTS_LOCAL is already in Sol-anchored local pc — which
     // *is* world space whenever the heliopause label can show (the
     // predicate below requires a focused planet system, and Sol is the
     // only planet-bearing host in v1 so worldOffset == Sol's absolute
     // position). No worldOffset subtraction needed here.
-    getWorldSample: (i, out) => out.copy(SAMPLE_POINTS_LOCAL[i]),
-    visible: () =>
-      stellata.getFocusedPlanetSystem() !== null
-      && !stellata.getMonochrome()
-      && stellata.anyOrbitRingVisible(),
+    getWorldSample: (i, out) => out.copy(HELIOPAUSE_SAMPLE_POINTS_LOCAL[i]),
+    visible: () => isHeliopauseApexVisible(stellata),
     // Bottom-right diagonal (1, 1)/√2 in CSS y-down coords.
     labelDir: { x: Math.SQRT1_2, y: Math.SQRT1_2 },
     offsetPx: LABEL_OFFSET_PX,
