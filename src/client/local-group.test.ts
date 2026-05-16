@@ -3,7 +3,9 @@ import * as THREE from 'three';
 import {
   LocalGroupLayer,
   effectiveLabelThresholdPc,
-  SIZE_RELATIVE_LABEL_FACTOR,
+  DEFAULT_SIZE_RELATIVE_LABEL_FACTOR,
+  getSizeRelativeLabelFactor,
+  setSizeRelativeLabelFactor,
 } from './local-group';
 import type { LgCatalog, LgObject } from './local-group-loader';
 import { FADE_INNER_PC, FADE_OUTER_PC } from './galactic-fade';
@@ -115,9 +117,9 @@ describe('LocalGroupLayer', () => {
     expect(effectiveLabelThresholdPc(obj)).toBe(30_000);
   });
 
-  it('effectiveLabelThresholdPc: null falls back to N × max(axes)', () => {
+  it('effectiveLabelThresholdPc: null falls back to N × max(axes) at the default factor', () => {
     const obj = makeObject({ labelThresholdPc: null, axes: [50, 30, 30] });
-    expect(effectiveLabelThresholdPc(obj)).toBe(SIZE_RELATIVE_LABEL_FACTOR * 50);
+    expect(effectiveLabelThresholdPc(obj)).toBe(DEFAULT_SIZE_RELATIVE_LABEL_FACTOR * 50);
   });
 
   it('effectiveLabelThresholdPc: ultra-faint (50 pc) fallback ≈ 500 pc; classical-class (270 pc) fallback ≈ 2.7 kpc', () => {
@@ -127,6 +129,15 @@ describe('LocalGroupLayer', () => {
     expect(effectiveLabelThresholdPc(makeObject({
       labelThresholdPc: null, axes: [270, 180, 180],
     }))).toBe(2700);
+  });
+
+  it('setSizeRelativeLabelFactor updates the live threshold; reset restores default', () => {
+    const obj = makeObject({ labelThresholdPc: null, axes: [50, 30, 30] });
+    expect(getSizeRelativeLabelFactor()).toBe(DEFAULT_SIZE_RELATIVE_LABEL_FACTOR);
+    setSizeRelativeLabelFactor(100);
+    expect(getSizeRelativeLabelFactor()).toBe(100);
+    expect(effectiveLabelThresholdPc(obj)).toBe(100 * 50); // 5 kpc
+    setSizeRelativeLabelFactor(DEFAULT_SIZE_RELATIVE_LABEL_FACTOR); // reset so other tests see the default
   });
 
   it('shares a single material across all rings (per-frame opacity write hits one slot)', () => {

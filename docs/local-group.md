@@ -134,6 +134,14 @@ from `local-group.ts` for testability (the DOM-binding wrapper around
 canonical first-load park at Sol every LG object is tens of kpc away
 — **all hidden by design**; labels reveal as the camera flies in.
 
+The size-relative factor `N` (default 10) is mutable at runtime
+through the **Deep field** debug-panel section
+(`src/client/local-group-tuning.ts`). The predicate re-reads the live
+factor each frame, so slider tweaks apply without re-mounting the
+labels. `DEFAULT_SIZE_RELATIVE_LABEL_FACTOR` is the build-time
+constant tests pin against; `getSizeRelativeLabelFactor()` /
+`setSizeRelativeLabelFactor()` are the runtime accessors.
+
 SVG slots live in `index.html` next to the heliopause label:
 
 ```html

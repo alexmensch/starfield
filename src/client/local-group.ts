@@ -262,21 +262,31 @@ const LABEL_LERP = 0.25;
 // Size-relative-distance fallback for Local Group objects with a null
 // labelThresholdPc (ultra-faints + anything else that doesn't carry an
 // explicit hard-coded threshold). The label fades in once the camera
-// sits inside `SIZE_RELATIVE_LABEL_FACTOR × max(axes)` of the object's
-// centre — so a 50 pc Bootes II gets labelled within ~500 pc, a 270 pc
-// Sculptor-class within ~2.7 kpc, etc. N=10 picked at the middle of the
-// 8-12 range that gives both useful range (you discover small dwarfs
-// as you fly past) and avoids labelling sub-pixel objects too far away.
-export const SIZE_RELATIVE_LABEL_FACTOR = 10;
+// sits inside `factor × max(axes)` of the object's centre — so at the
+// default N = 10 a 50 pc Bootes II gets labelled within ~500 pc, a
+// 270 pc Sculptor-class within ~2.7 kpc, etc. Mutable at runtime via
+// the "Deep field" debug-panel section so visual iteration doesn't
+// require rebuilds; tests pin against DEFAULT_SIZE_RELATIVE_LABEL_FACTOR.
+export const DEFAULT_SIZE_RELATIVE_LABEL_FACTOR = 10;
+let sizeRelativeLabelFactor = DEFAULT_SIZE_RELATIVE_LABEL_FACTOR;
+
+export function getSizeRelativeLabelFactor(): number {
+  return sizeRelativeLabelFactor;
+}
+
+export function setSizeRelativeLabelFactor(n: number): void {
+  sizeRelativeLabelFactor = n;
+}
 
 /** Effective camera-to-object-centre label threshold for one LG object.
  *  Hard-coded threshold (override file or classical-dSph default) wins;
  *  null threshold falls back to size-relative so ultra-faints surface
- *  when the camera flies close. Extracted as a pure helper so the
- *  threshold policy is testable without the DOM-binding wrapper. */
+ *  when the camera flies close. Reads the live size-relative factor so
+ *  the debug-panel slider's writes apply per-frame without re-mounting
+ *  the label callbacks. */
 export function effectiveLabelThresholdPc(obj: LgObject): number {
   if (obj.labelThresholdPc !== null) return obj.labelThresholdPc;
-  return SIZE_RELATIVE_LABEL_FACTOR * Math.max(obj.axes[0], obj.axes[1], obj.axes[2]);
+  return sizeRelativeLabelFactor * Math.max(obj.axes[0], obj.axes[1], obj.axes[2]);
 }
 
 /** Mount the SVG "Milky Way" label and bind per-frame projection.
@@ -351,7 +361,6 @@ export function createLocalGroupLabels(
   const tmpCam = new THREE.Vector3();
   for (let i = 0; i < layer.objects.length; i++) {
     const obj = layer.objects[i];
-    const threshold = effectiveLabelThresholdPc(obj);
     const elementId = `lg-${obj.id}-label`;
     // Per-object close-approach predicate: label fires when the camera
     // sits *inside* the object's threshold, not outside. Asymmetric
@@ -361,6 +370,9 @@ export function createLocalGroupLabels(
     // identify the object". From the canonical first-load park at Sol,
     // every LG object is tens of kpc away — all hidden by design;
     // labels reveal as the camera approaches each object.
+    // Threshold is re-evaluated each frame so the Deep-field debug
+    // panel's slider tweaks apply to live predicates without
+    // re-mounting the labels.
     // Mint the SVG <text> element. innerHTML escape is unnecessary
     // since both id and name come from our own build-time output
     // (object names are real catalogue entries, no user input).
@@ -390,7 +402,7 @@ export function createLocalGroupLabels(
           c.y + w.y - obj.centerAbs.y,
           c.z + w.z - obj.centerAbs.z,
         );
-        return tmpCam.length() <= threshold;
+        return tmpCam.length() <= effectiveLabelThresholdPc(obj);
       },
       labelDir: LABEL_DIR,
       offsetPx: LABEL_OFFSET_PX,

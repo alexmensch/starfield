@@ -117,6 +117,7 @@ src/
     debug-panel.ts        chrome (drag-to-move, collapsible sections, slider/colour helpers)
     star-tuning.ts        debug section: star-disc profile knobs
     milkyway-tuning.ts    debug section: Milky Way layer tuning
+    local-group-tuning.ts debug section: 'Deep field' — live-tunable LG label knobs
     perf-hud.ts           debug section: FPS / per-section frame timing + always-callable mark/measure/frame
     pin-debug-hud.ts      debug section: focused-star pin diagnostics
     arrow-fade-debug-hud.ts  debug section: Sol/GC arrow draw state + fade telemetry
