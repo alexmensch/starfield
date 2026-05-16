@@ -77,7 +77,12 @@ import {
   perceptualDmEff,
   planetApparentMagnitude,
 } from './perceptual-magnitude';
-import { MIN_DISC_HIT_RADIUS_PX, physSizePx } from './star-geometry';
+import {
+  MIN_DISC_HIT_RADIUS_PX,
+  pickFromCandidates,
+  physSizePx,
+  type PickCandidate,
+} from './star-geometry';
 import type { HoverHit } from './hover/hover-types';
 import planetVert from './shaders/planet.vert.glsl?raw';
 import planetFrag from './shaders/planet.frag.glsl?raw';
@@ -172,14 +177,14 @@ interface AttachedHost {
   count: number;
 }
 
-// Per-candidate row in the cross-host pick reducer. Carries host idx so
-// the winning candidate's `(hostStarIdx, planetIdx)` identity rides
-// through to the returned HoverHit — `pickFromCandidates` in
-// star-geometry.ts can't be reused because it loses the host axis.
-type CrossHostCandidate = {
+// Per-candidate row in the cross-host pick reducer. Extends the shared
+// `PickCandidate` shape so `pickFromCandidates` in star-geometry.ts
+// reduces it under the same prime/fallback contract every layered
+// picker uses. `idx` is the planet-within-host index (decoded from the
+// winning candidate as `hostStarIdx + idx`); the host axis rides
+// through on `hostStarIdx`.
+type CrossHostCandidate = PickCandidate & {
   hostStarIdx: number;
-  planetIdx: number;
-  pxDist: number;
   cameraDistancePc: number;
 };
 
@@ -555,13 +560,15 @@ export class PlanetBodyField {
     const sizeKnee = this.magShared.uSizeKnee.value;
     const camPos = camera.position;
 
-    // Cross-host single-winner reduction: track the best prime + best
-    // fallback hit by closest cursor pxDist across every attached
-    // host's planets, then prime-beats-fallback at the end. Each
-    // candidate carries its host idx alongside the planet idx so the
-    // winner's host identity rides through to the formatter.
-    let primeBest: CrossHostCandidate | null = null;
-    let fbBest: CrossHostCandidate | null = null;
+    // Walk every host × planet and collect candidates that qualify for
+    // either tier. Cross-host reduction is delegated to the shared
+    // `pickFromCandidates` (closest-cursor wins within tier, prime
+    // beats fallback) — same reducer the star and Local Group pickers
+    // use, so the cross-layer disambiguator above sees consistent tier
+    // semantics from every layer. The candidate carries its
+    // `hostStarIdx` + `cameraDistancePc` straight through to the
+    // returned HoverHit; no post-reduce re-projection.
+    const candidates: CrossHostCandidate[] = [];
     const v = new THREE.Vector3();
     for (const host of this.hosts.values()) {
       for (let i = 0; i < host.count; i++) {
@@ -613,37 +620,24 @@ export class PlanetBodyField {
         const pxSize = Math.max(appSize, physSize);
         const hitRadius = Math.max(pxSize * 0.5, MIN_DISC_HIT_RADIUS_PX);
 
-        const inPrime = pxDist <= hitRadius;
-        const inFallback = pxDist <= pxThreshold;
-        if (!inPrime && !inFallback) continue;
-
-        if (inPrime) {
-          if (primeBest === null || pxDist < primeBest.pxDist) {
-            primeBest = {
-              hostStarIdx: host.hostStarIdx,
-              planetIdx: i,
-              pxDist,
-              cameraDistancePc: dVp,
-            };
-          }
-        } else if (fbBest === null || pxDist < fbBest.pxDist) {
-          fbBest = {
-            hostStarIdx: host.hostStarIdx,
-            planetIdx: i,
-            pxDist,
-            cameraDistancePc: dVp,
-          };
-        }
+        if (pxDist > hitRadius && pxDist > pxThreshold) continue;
+        candidates.push({
+          idx: i,
+          pxDist,
+          hitRadius,
+          hostStarIdx: host.hostStarIdx,
+          cameraDistancePc: dVp,
+        });
       }
     }
 
-    const winner = primeBest ?? fbBest;
-    if (!winner) return null;
+    const winner = pickFromCandidates(candidates, pxThreshold);
+    if (winner === null) return null;
     return {
-      idx: winner.planetIdx,
-      hostStarIdx: winner.hostStarIdx,
-      cameraDistancePc: winner.cameraDistancePc,
-      tier: primeBest !== null ? 'prime' : 'fallback',
+      idx: winner.candidate.idx,
+      hostStarIdx: winner.candidate.hostStarIdx,
+      cameraDistancePc: winner.candidate.cameraDistancePc,
+      tier: winner.tier,
     };
   }
 

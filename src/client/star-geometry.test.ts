@@ -197,19 +197,22 @@ describe('star-geometry / pickScore', () => {
 
 describe('star-geometry / pickFromCandidates', () => {
   // Synthetic candidate factory — keeps the per-test arrays readable.
+  // `cameraDistancePc` is irrelevant for the reducer's tier+score
+  // logic; pinned to 1 pc so the field is populated without
+  // distracting from the per-test inputs.
   const c = (
     idx: number,
     pxDist: number,
     hitRadius: number,
     appMag: number,
-  ): StarPickCandidate => ({ idx, pxDist, hitRadius, appMag });
+  ): StarPickCandidate => ({ idx, pxDist, hitRadius, appMag, cameraDistancePc: 1 });
 
   // Star scorer is passed explicitly now that pickFromCandidates is
   // generic; non-star providers default to closest-to-cursor.
   const starScore = (cand: StarPickCandidate) => pickScore(cand.pxDist, cand.appMag);
 
-  it('returns -1 when no candidates exist', () => {
-    expect(pickFromCandidates([], 16, starScore)).toBe(-1);
+  it('returns null when no candidates exist', () => {
+    expect(pickFromCandidates([], 16, starScore)).toBeNull();
   });
 
   it('prime-only: lowest pickScore wins among hits inside hitRadius', () => {
@@ -220,7 +223,9 @@ describe('star-geometry / pickFromCandidates', () => {
       c(11, 1, 5, 4.5), // score = 1 + 0.225 = 1.225 ← winner
       c(12, 4, 5, 3.0), // score = 4 + 0.15 = 4.15
     ];
-    expect(pickFromCandidates(cands, 16, starScore)).toBe(11);
+    const r = pickFromCandidates(cands, 16, starScore);
+    expect(r?.candidate.idx).toBe(11);
+    expect(r?.tier).toBe('prime');
   });
 
   it('fallback-only: nearest-to-cursor wins when no prime hits exist', () => {
@@ -231,7 +236,9 @@ describe('star-geometry / pickFromCandidates', () => {
       c(21, 6, 2, 5.5), // fallback; score = 6.275 ← winner
       c(22, 14, 2, 4.0), // fallback; score = 14.20
     ];
-    expect(pickFromCandidates(cands, 16, starScore)).toBe(21);
+    const r = pickFromCandidates(cands, 16, starScore);
+    expect(r?.candidate.idx).toBe(21);
+    expect(r?.tier).toBe('fallback');
   });
 
   it('mixed prime + fallback: any prime hit beats the best fallback', () => {
@@ -242,7 +249,9 @@ describe('star-geometry / pickFromCandidates', () => {
       c(30, 4.5, 5, 4.0), // prime; score ≈ 4.7
       c(31, 1.0, 0.5, 3.0), // fallback (pxDist > hitRadius); score ≈ 1.15
     ];
-    expect(pickFromCandidates(cands, 16, starScore)).toBe(30);
+    const r = pickFromCandidates(cands, 16, starScore);
+    expect(r?.candidate.idx).toBe(30);
+    expect(r?.tier).toBe('prime');
   });
 
   it('prime tier with tied score (Alula Australis): brighter component wins', () => {
@@ -252,7 +261,7 @@ describe('star-geometry / pickFromCandidates', () => {
       c(40, 0, 5, 4.33), // Alula A
       c(41, 0, 5, 4.80), // Alula B
     ];
-    expect(pickFromCandidates(cands, 16, starScore)).toBe(40);
+    expect(pickFromCandidates(cands, 16, starScore)?.candidate.idx).toBe(40);
   });
 
   it('prime hit inside hitRadius beats fallback hit just under pixelThreshold', () => {
@@ -263,7 +272,9 @@ describe('star-geometry / pickFromCandidates', () => {
       c(50, 4.99, 5, 6.0), // prime (just inside); score ≈ 5.29
       c(51, 15.99, 0.5, 0.0), // fallback (just inside); score ≈ 15.99
     ];
-    expect(pickFromCandidates(cands, 16, starScore)).toBe(50);
+    const r = pickFromCandidates(cands, 16, starScore);
+    expect(r?.candidate.idx).toBe(50);
+    expect(r?.tier).toBe('prime');
   });
 
   it('candidates outside both tiers (pxDist > pixelThreshold and > hitRadius) are ignored', () => {
@@ -273,7 +284,7 @@ describe('star-geometry / pickFromCandidates', () => {
       c(60, 100, 5, 0.0), // way out; ignored
       c(61, 50, 5, 1.0), // also out
     ];
-    expect(pickFromCandidates(cands, 16, starScore)).toBe(-1);
+    expect(pickFromCandidates(cands, 16, starScore)).toBeNull();
   });
 
   it('default scorer (pxDist) — closest-to-cursor wins when no scorer is passed', () => {
@@ -281,10 +292,27 @@ describe('star-geometry / pickFromCandidates', () => {
     // the default scoreFn = c.pxDist. No magnitude axis, no sub-pixel
     // bias — purely closest centroid wins.
     const cands: StarPickCandidate[] = [
-      { idx: 70, pxDist: 8, hitRadius: 2, appMag: 0 },
-      { idx: 71, pxDist: 4, hitRadius: 2, appMag: 0 }, // winner
-      { idx: 72, pxDist: 6, hitRadius: 2, appMag: 0 },
+      { idx: 70, pxDist: 8, hitRadius: 2, appMag: 0, cameraDistancePc: 1 },
+      { idx: 71, pxDist: 4, hitRadius: 2, appMag: 0, cameraDistancePc: 1 }, // winner
+      { idx: 72, pxDist: 6, hitRadius: 2, appMag: 0, cameraDistancePc: 1 },
     ];
-    expect(pickFromCandidates(cands, 16)).toBe(71);
+    const r = pickFromCandidates(cands, 16);
+    expect(r?.candidate.idx).toBe(71);
+    expect(r?.tier).toBe('fallback');
+  });
+
+  it('returns the original candidate object — extension fields ride through', () => {
+    // Caller-extended candidates (LG carries cameraDistancePc; planet
+    // picker carries hostStarIdx + planetIdx) must come back intact so
+    // the caller doesn't re-walk projection state to recover them.
+    type LgCand = { idx: number; pxDist: number; hitRadius: number; cameraDistancePc: number };
+    const cands: LgCand[] = [
+      { idx: 80, pxDist: 3, hitRadius: 10, cameraDistancePc: 1_500_000 },
+      { idx: 81, pxDist: 1, hitRadius: 10, cameraDistancePc: 50_000 }, // winner
+    ];
+    const r = pickFromCandidates(cands, 16);
+    expect(r?.candidate.idx).toBe(81);
+    expect(r?.candidate.cameraDistancePc).toBe(50_000);
+    expect(r?.tier).toBe('prime');
   });
 });

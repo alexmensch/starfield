@@ -44,6 +44,11 @@ import {
 } from './star-geometry';
 import type { HoverHit } from './hover/hover-types';
 
+// LG-specific pick candidate. Carries `cameraDistancePc` so the
+// winning candidate rides distance through to the `HoverHit` without
+// the picker re-projecting after the reducer runs.
+type LgPickCandidate = PickCandidate & { cameraDistancePc: number };
+
 const RING_SEGMENTS = 64;
 
 // Sample grid for the silhouette projection that drives label placement.
@@ -159,10 +164,9 @@ export class LocalGroupLayer {
    *
    *  Within-tier scoring is closest-cursor-wins via the default
    *  `pickFromCandidates` scorer (no brightness bias — LG wireframes
-   *  have no apparent-magnitude axis). The winning idx is re-projected
-   *  once so the returned `HoverHit` carries the live `cameraDistancePc`
-   *  + tier; cost is one extra `Vector3.project` per hover tick,
-   *  negligible at the 280 ms hover delay against ~30 LG objects.
+   *  have no apparent-magnitude axis). Each candidate carries its
+   *  `cameraDistancePc` so the winning candidate hands `tier` +
+   *  distance straight to the returned `HoverHit` — no re-projection.
    */
   pick(
     camera: THREE.PerspectiveCamera,
@@ -182,7 +186,7 @@ export class LocalGroupLayer {
     const pxPerRad = viewportH / fovYRad;
     const camPos = camera.position;
     const v = new THREE.Vector3();
-    const candidates: PickCandidate[] = [];
+    const candidates: LgPickCandidate[] = [];
 
     for (let i = 0; i < this.objects.length; i++) {
       const obj = this.objects[i];
@@ -196,40 +200,26 @@ export class LocalGroupLayer {
       const dx = lx - camPos.x;
       const dy = ly - camPos.y;
       const dz = lz - camPos.z;
-      const camToObjPc = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      const cameraDistancePc = Math.sqrt(dx * dx + dy * dy + dz * dz);
 
       const screenX = (v.x + 1) * 0.5 * viewportW;
       const screenY = (1 - v.y) * 0.5 * viewportH;
       const pxDist = Math.hypot(cursorX - screenX, cursorY - screenY);
 
-      const pxSize = 2 * Math.atan(maxSemiAxisPc(obj) / Math.max(camToObjPc, 1)) * pxPerRad;
+      const pxSize = 2 * Math.atan(maxSemiAxisPc(obj) / Math.max(cameraDistancePc, 1)) * pxPerRad;
       const hitRadius = Math.max(pxSize * 0.5, MIN_DISC_HIT_RADIUS_PX);
 
       if (pxDist > hitRadius && pxDist > pixelThreshold) continue;
-      candidates.push({ idx: i, pxDist, hitRadius });
+      candidates.push({ idx: i, pxDist, hitRadius, cameraDistancePc });
     }
 
-    const winnerIdx = pickFromCandidates(candidates, pixelThreshold);
-    if (winnerIdx < 0) return null;
-
-    const obj = this.objects[winnerIdx];
-    const lx = obj.centerAbs.x - worldOffset.x;
-    const ly = obj.centerAbs.y - worldOffset.y;
-    const lz = obj.centerAbs.z - worldOffset.z;
-    const dx = lx - camPos.x;
-    const dy = ly - camPos.y;
-    const dz = lz - camPos.z;
-    const cameraDistancePc = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    v.set(lx, ly, lz).project(camera);
-    const screenX = (v.x + 1) * 0.5 * viewportW;
-    const screenY = (1 - v.y) * 0.5 * viewportH;
-    const pxDist = Math.hypot(cursorX - screenX, cursorY - screenY);
-    const pxSize =
-      2 * Math.atan(maxSemiAxisPc(obj) / Math.max(cameraDistancePc, 1)) * pxPerRad;
-    const hitRadius = Math.max(pxSize * 0.5, MIN_DISC_HIT_RADIUS_PX);
-    const tier: 'prime' | 'fallback' = pxDist <= hitRadius ? 'prime' : 'fallback';
-
-    return { idx: winnerIdx, cameraDistancePc, tier };
+    const winner = pickFromCandidates(candidates, pixelThreshold);
+    if (winner === null) return null;
+    return {
+      idx: winner.candidate.idx,
+      cameraDistancePc: winner.candidate.cameraDistancePc,
+      tier: winner.tier,
+    };
   }
 
   dispose(): void {

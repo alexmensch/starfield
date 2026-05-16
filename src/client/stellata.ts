@@ -32,6 +32,7 @@ import {
   physSizePx,
   pickFromCandidates,
   pickScore,
+  type PickResult,
   type StarPickCandidate,
   varEffectiveAmplitude,
   distAtFillFraction,
@@ -3324,6 +3325,47 @@ export class Stellata {
   }
 
   pickStar(clientX: number, clientY: number, pixelThreshold = 16): number {
+    return this.pickStarResult(clientX, clientY, pixelThreshold)?.candidate.idx ?? -1;
+  }
+
+  // Hover-engine entry point for the star layer (stellata-lo5). Shares
+  // the candidate-building work with `pickStar` via `pickStarResult` —
+  // tier + cameraDistancePc ride through on the winning candidate so no
+  // re-projection is needed.
+  pickStarHit(clientX: number, clientY: number, pixelThreshold = 14): HoverHit | null {
+    const r = this.pickStarResult(clientX, clientY, pixelThreshold);
+    if (r === null) return null;
+    return {
+      idx: r.candidate.idx,
+      cameraDistancePc: r.candidate.cameraDistancePc,
+      tier: r.tier,
+    };
+  }
+
+  // Two-tier star pick (project + filter + collect; reducer in
+  // star-geometry.ts):
+  //   1. Cursor inside a star's rendered disc → prime candidate. Among
+  //      prime hits, the cursor's screen-pixel distance to the disc
+  //      centre wins (`pickScore`), so visually-resolved pairs whose
+  //      hitboxes overlap stay independently clickable — the Double
+  //      Double (ε¹/ε² Lyr) is the canonical case. Sub-pixel mag bias
+  //      tiebreaks coincident catalog companions sharing x/y/z, e.g.
+  //      Alula Australis A/B (Gl 423A/B). Camera distance is
+  //      deliberately ignored: a faint background star whose centre
+  //      projects ≥ 1 px closer to the cursor wins over a bright
+  //      foreground disc that contains the cursor. See pickScore.
+  //   2. Otherwise proximity within pixelThreshold, same scoring.
+  //      Prime hits always beat fallback hits.
+  //
+  // Returns the winning candidate alongside its tier so callers can
+  // either extract `.idx` (click path, `pickStar`) or carry the whole
+  // candidate through to a HoverHit (hover path, `pickStarHit`)
+  // without re-walking the projection.
+  private pickStarResult(
+    clientX: number,
+    clientY: number,
+    pixelThreshold: number,
+  ): PickResult<StarPickCandidate> | null {
     const rect = this.renderer.domElement.getBoundingClientRect();
     const viewportW = rect.width;
     const viewportH = rect.height;
@@ -3347,20 +3389,6 @@ export class Stellata {
     const sortedIdx = this.sortedByDistFromSol;
     const { start, end } = sortedDistRange(this.sortedDistFromSol, f.minDistSol, f.maxDistSol);
 
-    // Two-tier picking (project + filter + collect; reducer in
-    // star-geometry.ts):
-    //   1. Cursor inside a star's rendered disc → prime candidate. Among
-    //      prime hits, the cursor's screen-pixel distance to the disc
-    //      centre wins (`pickScore`), so visually-resolved pairs whose
-    //      hitboxes overlap stay independently clickable — the Double
-    //      Double (ε¹/ε² Lyr) is the canonical case. Sub-pixel mag bias
-    //      tiebreaks coincident catalog companions sharing x/y/z, e.g.
-    //      Alula Australis A/B (Gl 423A/B). Camera distance is
-    //      deliberately ignored: a faint background star whose centre
-    //      projects ≥ 1 px closer to the cursor wins over a bright
-    //      foreground disc that contains the cursor. See pickScore.
-    //   2. Otherwise proximity within pixelThreshold, same scoring.
-    //      Prime hits always beat fallback hits.
     const candidates: StarPickCandidate[] = [];
     for (let k = start; k < end; k++) {
       const i = sortedIdx[k];
@@ -3393,46 +3421,13 @@ export class Stellata {
       // Prune to candidates that could win in either tier; the reducer
       // re-checks tier eligibility, this is just to keep the array tiny.
       if (pxDist > hitRadius && pxDist > pixelThreshold) continue;
-      candidates.push({ idx: i, pxDist, hitRadius, appMag });
+      candidates.push({ idx: i, pxDist, hitRadius, appMag, cameraDistancePc: dCam });
     }
     return pickFromCandidates(
       candidates,
       pixelThreshold,
       (c) => pickScore(c.pxDist, c.appMag),
     );
-  }
-
-  // Hover-engine entry point for the star layer (stellata-lo5).
-  // Wraps `pickStar` and converts the winning idx into a HoverHit by
-  // re-projecting the one winning star — one extra projection, well
-  // below any perf threshold a 280 ms-delayed hover tick cares about.
-  // Tier is `prime` when the cursor sits inside the rendered disc,
-  // `fallback` otherwise (matches the tier the reducer already chose).
-  pickStarHit(clientX: number, clientY: number, pixelThreshold = 14): HoverHit | null {
-    const idx = this.pickStar(clientX, clientY, pixelThreshold);
-    if (idx < 0) return null;
-    const rect = this.renderer.domElement.getBoundingClientRect();
-    const cursorX = clientX - rect.left;
-    const cursorY = clientY - rect.top;
-    const locPos = this._localPositions;
-    const cam = this.camera.position;
-    const x = locPos[idx * 3 + 0];
-    const y = locPos[idx * 3 + 1];
-    const z = locPos[idx * 3 + 2];
-    const dx = x - cam.x;
-    const dy = y - cam.y;
-    const dz = z - cam.z;
-    const cameraDistancePc = Math.max(
-      Math.sqrt(dx * dx + dy * dy + dz * dz),
-      DCAM_LOG_FLOOR_PC,
-    );
-    const v = new THREE.Vector3(x, y, z).project(this.camera);
-    const screenX = (v.x + 1) * 0.5 * rect.width;
-    const screenY = (1 - v.y) * 0.5 * rect.height;
-    const pxDist = Math.hypot(cursorX - screenX, cursorY - screenY);
-    const hitRadius = Math.max(this.renderedSizePx(idx) * 0.5, MIN_DISC_HIT_RADIUS_PX);
-    const tier: 'prime' | 'fallback' = pxDist <= hitRadius ? 'prime' : 'fallback';
-    return { idx, cameraDistancePc, tier };
   }
 
   // Hover-engine entry point for the planet layer (stellata-lo5.4).
