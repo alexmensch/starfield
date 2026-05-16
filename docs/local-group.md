@@ -119,7 +119,7 @@ label helper from heliopause` commit). Each label binds to:
 
 One universal rule: each frame, rank every candidate (MW + every LG
 object) by apparent pixel size on screen and reveal the top N (default
-5), with a sub-pixel floor (default 6 px) so we don't label objects
+8), with a sub-pixel floor (default 2 px) so we don't label objects
 the user can't see. The only exception is the **inside-MW guard**:
 when the camera sits inside the disc (`||cam − GC|| <
 mwInsideDiscPc`), every label is suppressed (you can't usefully label
@@ -148,8 +148,8 @@ section (`src/client/local-group-tuning.ts`):
 
 | Knob              | Default     | What it does |
 | ----------------- | ----------- | ------------ |
-| `topN`            | 5           | Max labels visible at once. |
-| `minPixelSize`    | 6 px        | Apparent-size floor; sub-pixel candidates can't earn a label. |
+| `topN`            | 8           | Max labels visible at once. |
+| `minPixelSize`    | 2.0 px      | Apparent-size floor; sub-pixel candidates can't earn a label. |
 | `mwInsideDiscPc`  | 10 kpc      | Camera-to-GC distance below which **every** label is suppressed. 0 disables the guard entirely (label-from-anywhere). |
 
 From the canonical first-load park at Sol (`||cam − GC|| ≈ 8 kpc`), the

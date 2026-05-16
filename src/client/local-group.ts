@@ -296,8 +296,8 @@ export interface RankingParams {
 // Tunable runtime state. The default values match the v1 visual; the
 // Deep-field debug panel exposes setters that mutate these and the
 // per-frame ranking handler re-reads them each frame.
-export const DEFAULT_TOP_N = 5;
-export const DEFAULT_MIN_PIXEL_SIZE_PX = 6;
+export const DEFAULT_TOP_N = 8;
+export const DEFAULT_MIN_PIXEL_SIZE_PX = 2.0;
 export const DEFAULT_MW_INSIDE_DISC_PC = 10_000;
 
 let topN = DEFAULT_TOP_N;

@@ -172,9 +172,9 @@ function makeParams(
     fovDeg: REFERENCE_FOV_DEG,
     viewportWidthPx: REFERENCE_VIEWPORT_W,
     viewportHeightPx: REFERENCE_VIEWPORT_H,
-    topN: 5,
-    minPixelSize: 6,
-    mwInsideDiscPc: 10_000,
+    topN: DEFAULT_TOP_N,
+    minPixelSize: DEFAULT_MIN_PIXEL_SIZE_PX,
+    mwInsideDiscPc: DEFAULT_MW_INSIDE_DISC_PC,
     ...overrides,
   };
 }
