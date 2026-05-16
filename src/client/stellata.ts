@@ -3561,6 +3561,45 @@ export class Stellata {
     return { idx: 0, cameraDistancePc, tier: 'fallback' };
   }
 
+  // Hover-engine entry point for the molecular-cloud layer
+  // (stellata-lo5.7). Fallback-only tier — clouds are extended
+  // visible objects (Rule 3); the disambiguator's prime>fallback rule
+  // means any star or planet visually atop the cloud still wins its own
+  // prime hover, so clouds never block see-through picks.
+  //
+  // The pick path reuses `MolecularClouds.raycast` verbatim — the
+  // Three.js raycaster intersects the rendered ellipsoid meshes, so the
+  // hit surface naturally spans the whole projected silhouette (front
+  // face) without needing a separate sample-AABB.
+  //
+  // Visibility gate: cloud layer attached AND `group.visible`. The
+  // group is hidden by `MolecularClouds.update(_, visible=false)`
+  // whenever the renderer wouldn't draw the layer (currently never
+  // toggled at v1.0 because the un-shelve `attachClouds` call is
+  // commented out, so `this.clouds` is null and the gate short-circuits
+  // here). Decoupled from warp state per the visibility-only Rule 2 —
+  // the click-focus `pickCloud` keeps its `warpState` gate; hover
+  // doesn't need one.
+  pickCloudHit(clientX: number, clientY: number, _pixelThreshold = 14): HoverHit | null {
+    if (!this.clouds || !this.clouds.group.visible) return null;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const ndc = this.tmpNdc.set(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -(((clientY - rect.top) / rect.height) * 2 - 1),
+    );
+    this.cloudRaycaster.setFromCamera(ndc, this.camera);
+    const idx = this.clouds.raycast(this.cloudRaycaster);
+    if (idx === null) return null;
+
+    const cloud = this.clouds.clouds[idx];
+    const cam = this.camera.position;
+    const cx = cloud.centerAbs.x - this.worldOffset.x - cam.x;
+    const cy = cloud.centerAbs.y - this.worldOffset.y - cam.y;
+    const cz = cloud.centerAbs.z - this.worldOffset.z - cam.z;
+    const cameraDistancePc = Math.sqrt(cx * cx + cy * cy + cz * cz);
+    return { idx, cameraDistancePc, tier: 'fallback' };
+  }
+
   /** Cached PlanetSystem for an attached host, or null if the host
    *  isn't attached. Used by the planet hover formatter to resolve
    *  `(hostStarIdx, planetIdx)` from a pick back to a Planet record

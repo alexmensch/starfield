@@ -33,6 +33,7 @@ import { createStarHoverProvider } from './hover/star-hover-provider';
 import { createPlanetHoverProvider } from './hover/planet-hover-provider';
 import { createLocalGroupHoverProvider } from './hover/local-group-hover-provider';
 import { createHeliopauseHoverProvider } from './hover/heliopause-hover-provider';
+import { createCloudHoverProvider } from './hover/cloud-hover-provider';
 import type { HoverProvider } from './hover/hover-types';
 
 async function main() {
@@ -235,6 +236,18 @@ async function main() {
         context: { objects: lgCatalog.objects },
       }));
     }
+    // Cloud provider registers iff the cloud layer is attached. The
+    // attach call is shelved at v1.0 (CLAUDE.md), so this branch is
+    // unreached in shipping builds — un-shelving (uncommenting the
+    // `attachClouds(cloudCatalog)` line above) auto-registers the
+    // provider with no further wiring. The formatter and provider class
+    // ship anyway so the un-shelve diff is one line, not a re-implement.
+    if (stellata.cloudLayer) {
+      hoverProviders.push(createCloudHoverProvider({
+        stellata,
+        context: { clouds: stellata.cloudLayer.clouds },
+      }));
+    }
     createHoverEngine({
       canvas,
       tooltip,
@@ -256,11 +269,6 @@ async function main() {
       maybeShowInfoModal(catalog.count);
     }, 400);
 
-    // (describeCloud removed alongside the cloud-shelving cleanup. When
-    // re-enabling the cloud layer, build a CloudHoverProvider per the
-    // lo5 engine contract — the cloud formatter exists already as part
-    // of lo5.7 but its provider is unregistered while the layer is
-    // shelved.)
   } catch (err) {
     console.error(err);
     loadingStatus.textContent = `Error: ${(err as Error).message}`;
