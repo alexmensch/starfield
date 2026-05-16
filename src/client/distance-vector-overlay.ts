@@ -6,14 +6,18 @@ import {
   ARROW_HEAD_DEPTH_PX,
   ARROW_LABEL_OFFSET_PX,
   ARROW_LABEL_PADDING_PX,
+  RING_HALO_GAP_PX,
 } from './arrow-path';
 import { applyFade, emptyFadeState, setNumAttr, setStrAttr, setStyle, setText } from './dirty-attr';
 import { focusedArrowFadeAlpha } from './arrow-fade';
+import { FOCUS_RING_RADIUS_PX } from './focus-ring-overlay';
 
-// Source-end offset — shaft starts past the focus ring (radius 24 px) so it
-// doesn't crowd the focused star's disc. Matches the Sol/GC arrow start
-// offset for visual consistency across all reference arrows.
-const SOURCE_OFFSET_PX = 28;
+// Source-end offset — shaft starts FOCUS_RING_RADIUS_PX + RING_HALO_GAP_PX
+// past the focused star so it doesn't crowd the disc. Same derivation the
+// HUD's Sol/GC arrows use for their navigate-mode shaft start, so any
+// future change to the focus-ring radius or the universal halo gap
+// propagates here automatically.
+const SOURCE_OFFSET_PX = FOCUS_RING_RADIUS_PX + RING_HALO_GAP_PX;
 // Cap how far past the viewport the clipped "off-screen" endpoint can extend,
 // so the generated SVG path doesn't contain absurd coordinates.
 const MAX_OFFSCREEN_FACTOR = 1.5;
@@ -216,7 +220,7 @@ export function createDistanceVectorOverlay(
     // Drawn-shaft length is the distance from shaftStart to tip (with
     // SOURCE_OFFSET_PX inset at the source end and the destination's
     // rendered silhouette inset at the tip end) — i.e., the visible line.
-    const discRadiusPx = fromStar !== null ? stellata.getFocusedStarPeakDiscPx() * 0.5 : 0;
+    const discRadiusPx = fromStar !== null ? stellata.getFocusedStarPeakDiscRadiusPx() : 0;
     const shaftDrawnLenPx = Math.hypot(tipX - shaftStartX, tipY - shaftStartY);
     const arrowAlpha = focusedArrowFadeAlpha(
       stellata.getCameraMode(),

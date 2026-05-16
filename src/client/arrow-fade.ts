@@ -13,12 +13,10 @@ export const COVERAGE_FADE_END = 0.75;
  * grows past its shaft start. Returns 1 when the disc hasn't reached the
  * shaft start, 0 once the disc covers ≥ 75 % of the shaft length.
  *
- * The Sol/GC chevrons share one alpha keyed on max(solLen, gcLen) so the
- * pair fades together. The distance-vector arrow computes its own alpha
- * against its own drawn length so a long pointer-to-destination chevron
- * outlasts the short Sol/GC chevrons by design — its disc has to grow
- * proportionally larger before the distance-vector fades. (Option B from
- * the ml8 bead.)
+ * Policy-agnostic: takes one shaft length, returns one alpha. Each caller
+ * decides what shaft length to feed (a shared `max(sibling, …)` for a
+ * paired group, or its own drawn length for a per-arrow fade). See
+ * `focusedArrowFadeAlpha` for the policy wrapper.
  *
  * - shaftLengthPx ≤ 0 → returns 1. No drawn shaft to fade; the consumer
  *   will hide the arrow on geometry grounds. Guards against a zero-length
@@ -42,6 +40,12 @@ export function discCoverageAlpha(
  * coverage smoothstep so both consumers (HUD Sol/GC arrows, distance-
  * vector overlay) make the same decision from the same inputs within a
  * frame.
+ *
+ * Per-arrow vs. shared shaft length is the caller's choice (option B from
+ * the ml8 bead): the HUD Sol/GC chevrons feed `max(solLen, gcLen)` so the
+ * pair fades together, while the distance-vector overlay feeds its own
+ * drawn shaft length so a long focal-star → destination arrow outlasts
+ * the shorter Sol/GC chevrons by design.
  *
  * Gate semantics:
  * - During an observe transition: only the 'enter' kind fades — the

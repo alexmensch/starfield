@@ -3166,15 +3166,14 @@ export class Stellata {
   /** Public access to the HUD overlay — for the arrow-fade debug HUD only. */
   get hud(): HudOverlay { return this.hudOverlay; }
 
-  /** Peak-amplitude rendered disc diameter in CSS pixels for the focused
-   *  star, or 0 when no star is focused. Diameter, not radius. Used by
-   *  HudOverlay (Sol/GC fade) and DistanceVectorOverlay (per-arrow fade)
-   *  so both reference-arrow fades key on the same phase-stable disc
-   *  envelope — a high-amplitude variable's pulsation doesn't oscillate
-   *  the alpha across its variability cycle. Also surfaced for the
-   *  arrow-fade debug HUD. */
-  getFocusedStarPeakDiscPx(): number {
-    return this.focusedStar !== null ? this.renderedDiscPxAtPeak(this.focusedStar) : 0;
+  /** Peak-amplitude rendered disc *radius* in CSS pixels for the focused
+   *  star, or 0 when no star is focused. Used by HudOverlay (Sol/GC fade)
+   *  and DistanceVectorOverlay (per-arrow fade) so both reference-arrow
+   *  fades key on the same phase-stable disc envelope — a high-amplitude
+   *  variable's pulsation doesn't oscillate the alpha across its
+   *  variability cycle. Also surfaced for the arrow-fade debug HUD. */
+  getFocusedStarPeakDiscRadiusPx(): number {
+    return this.focusedStar !== null ? this.renderedDiscPxAtPeak(this.focusedStar) * 0.5 : 0;
   }
 
   // Smaller of the camera's vertical and horizontal FOV in radians. The
@@ -3681,7 +3680,7 @@ export class Stellata {
       sizeMaxPx: this.filter.sizeMax,
       cameraMode: this.cameraMode,
       transition: this.getObserveTransitionProgress(),
-      focusedDiscPx: this.getFocusedStarPeakDiscPx(),
+      focusedDiscRadiusPx: this.getFocusedStarPeakDiscRadiusPx(),
       w: window.innerWidth,
       h: window.innerHeight,
     });

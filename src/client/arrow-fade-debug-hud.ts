@@ -93,7 +93,7 @@ export function buildArrowSection(stellata: Stellata): ArrowSection {
     // here — open `debug.distVec()` if a future section is needed.
     const alpha = stellata.hud.getCurrentFadeAlpha();
     const focused = stellata.getFocusedStar();
-    const discRadius = stellata.getFocusedStarPeakDiscPx() * 0.5;
+    const discRadius = stellata.getFocusedStarPeakDiscRadiusPx();
     const refLen = Math.max(lengths.sol, lengths.gc);
     const coverage = refLen > 0 ? Math.max(0, discRadius - shaftStart) / refLen : 0;
 
