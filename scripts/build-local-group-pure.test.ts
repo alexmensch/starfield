@@ -327,18 +327,28 @@ describe('displayName overrides + default type suffix', () => {
   });
   it('explicitly overrides the named non-dSph dwarfs that the regex misses', () => {
     expect(displayName('Leo A')).toBe('Leo A');
+    expect(displayName('Leo P')).toBe('Leo P');           // dIrr per Giovanelli 2013
     expect(displayName('WLM')).toBe('WLM');
     expect(displayName('Phoenix')).toBe('Phoenix Dwarf');
     expect(displayName('Pegasus dIrr')).toBe('Pegasus Dwarf Irregular');
     expect(displayName('Sextans A')).toBe('Sextans A');
     expect(displayName('Sextans B')).toBe('Sextans B');
     expect(displayName('Sagittarius dIrr')).toBe('Sagittarius Dwarf Irregular');
+    expect(displayName('Aquarius')).toBe('Aquarius Dwarf');     // DDO 210, dTr
+    expect(displayName('Antlia B')).toBe('Antlia B Dwarf');     // dTr per Hargis 2020
+  });
+  it('Aquarius II / III remain dSph — only the bare "Aquarius" (DDO 210) is overridden', () => {
+    expect(displayName('Aquarius II')).toBe('Aquarius II Dwarf Spheroidal');
+    expect(displayName('Aquarius III')).toBe('Aquarius III Dwarf Spheroidal');
   });
   it('exports the override map for callers that need to enumerate it', () => {
     expect(Object.keys(DISPLAY_NAME_OVERRIDES).sort()).toEqual([
+      'Antlia B',
+      'Aquarius',
       'LGS 3',
       'LMC',
       'Leo A',
+      'Leo P',
       'Pegasus W',
       'Pegasus dIrr',
       'Phoenix',
@@ -388,6 +398,7 @@ describe('isCatalogDesignation', () => {
     expect(isCatalogDesignation('UGC 4879')).toBe(true);
     expect(isCatalogDesignation('UGCA 292')).toBe(true);
     expect(isCatalogDesignation('DDO 82')).toBe(true);
+    expect(isCatalogDesignation('ESO 410-G005')).toBe(true);
     expect(isCatalogDesignation('KKH 37')).toBe(true);
     expect(isCatalogDesignation('PGC 41210')).toBe(true);
   });

@@ -7,8 +7,18 @@
  *  canonical Local Group: M31 + M33 + their satellite subgroup, plus
  *  Sextans A/B and a handful of outer-band dwarfs that bleed past the
  *  ~1.5 Mpc IAU-style boundary. Beyond 2 Mpc we'd be picking up the
- *  IC 342 / Maffei groups — a separate decision. */
+ *  IC 342 / Maffei groups — a separate decision.
+ *
+ *  Single source of truth — the runtime camera envelope in
+ *  `src/client/stellata.ts` imports this and derives `CAMERA_FAR_PC`
+ *  from it, so the build filter and the camera can never drift. */
 export const MAX_DISTANCE_PC = 2_000_000;
+
+/** Far plane for the runtime camera, paired with `MAX_DISTANCE_PC`.
+ *  Sits 1 Mpc past `controls.maxDistance` (= `MAX_DISTANCE_PC`) so M31 /
+ *  M33 + outer dwarfs render with comfort headroom when the camera
+ *  reaches the maxDistance shell. */
+export const CAMERA_FAR_PC = MAX_DISTANCE_PC + 1_000_000;
 
 export type LgKind = 'disc' | 'ellipsoid';
 
@@ -306,6 +316,7 @@ export const DISPLAY_NAME_OVERRIDES: Record<string, string> = {
   LMC: 'Large Magellanic Cloud',
   SMC: 'Small Magellanic Cloud',
   'Leo A': 'Leo A',
+  'Leo P': 'Leo P',
   WLM: 'WLM',
   Phoenix: 'Phoenix Dwarf',
   'LGS 3': 'LGS 3',
@@ -314,6 +325,11 @@ export const DISPLAY_NAME_OVERRIDES: Record<string, string> = {
   'Sextans A': 'Sextans A',
   'Sextans B': 'Sextans B',
   'Sagittarius dIrr': 'Sagittarius Dwarf Irregular',
+  // LVDB "Aquarius" is DDO 210 (dTr / dIrr per McConnachie 2012),
+  // distinct from the Aquarius II / III dSphs which keep the default
+  // suffix. "Antlia B" is a transition dwarf per Hargis 2020.
+  Aquarius: 'Aquarius Dwarf',
+  'Antlia B': 'Antlia B Dwarf',
 };
 
 /** Default type suffix appended to LVDB names that aren't in the
@@ -324,12 +340,12 @@ export const DISPLAY_NAME_OVERRIDES: Record<string, string> = {
 export const DEFAULT_TYPE_SUFFIX = 'Dwarf Spheroidal';
 
 /** True if the name reads as a galaxy-catalog designation — a recognised
- *  prefix (NGC, IC, UGC, UGCA, DDO, M, AGC, KK, KKR, KKH, KDG, PGC,
+ *  prefix (NGC, IC, UGC, UGCA, DDO, ESO, M, AGC, KK, KKR, KKH, KDG, PGC,
  *  HIPASS) followed by a digit, with optional whitespace. Catalog
  *  designations already self-identify and don't need a type suffix
  *  ("NGC 205" reads cleaner than "NGC 205 Dwarf Spheroidal"). */
 export function isCatalogDesignation(name: string): boolean {
-  return /^(NGC|IC|UGC|UGCA|DDO|M|AGC|KKR|KKH|KK|KDG|PGC|HIPASS)\s*\d/i.test(
+  return /^(NGC|IC|UGC|UGCA|DDO|ESO|M|AGC|KKR|KKH|KK|KDG|PGC|HIPASS)\s*\d/i.test(
     name,
   );
 }
@@ -363,6 +379,37 @@ export function buildLvdbDefault(row: LvdbRow): {
   };
 }
 
+/** Assemble an LgObject from already-resolved fields. Both call sites
+ *  (`mergeRowAndOverride` and `buildStandaloneOverride`) arrive at the
+ *  same shape after they decide where axes/orient/position come from;
+ *  the trailing `kind` derivation, ICRS conversion, quaternion build,
+ *  and display-name / slug routing is identical. Centralised here so
+ *  the two paths can never drift on rendering semantics. */
+function buildLgObjectFromOrient(
+  nameKey: string,
+  idKey: string,
+  raDeg: number,
+  decDeg: number,
+  distancePc: number,
+  axes: [number, number, number],
+  orient: Orientation,
+  source: 'LVDB' | 'OVERRIDE',
+): LgObject {
+  const kind: LgKind = orient.kind === 'disc' ? 'disc' : 'ellipsoid';
+  const center = raDecDistanceToIcrs(raDeg, decDeg, distancePc);
+  const quat = buildOrientationQuat(raDeg, decDeg, orient);
+  return {
+    name: displayName(nameKey),
+    id: slugify(idKey),
+    center,
+    kind,
+    axes,
+    quat,
+    source,
+    distance: distancePc,
+  };
+}
+
 /** Merge an LVDB row with an optional override into a fully-shaped
  *  LgObject. Override (when present) replaces axes + orient; LVDB
  *  always provides the position. Returns null when the row has no
@@ -372,38 +419,31 @@ export function mergeRowAndOverride(
   row: LvdbRow,
   override: OverrideRow | undefined,
 ): LgObject | null {
-  let kind: LgKind;
   let axes: [number, number, number];
   let orient: Orientation;
   let source: 'LVDB' | 'OVERRIDE';
   if (override) {
-    // Override wins on structure. Kind is inferred from orient shape:
-    // 'disc' orient → disc; anything else → ellipsoid.
+    // Override wins on structure.
     orient = parseOrient(override.orient);
-    kind = orient.kind === 'disc' ? 'disc' : 'ellipsoid';
     axes = override.axes;
     source = 'OVERRIDE';
   } else {
     const lvdb = buildLvdbDefault(row);
     if (!lvdb) return null;
-    kind = lvdb.kind;
     axes = lvdb.axes;
     orient = lvdb.orient;
     source = 'LVDB';
   }
-  const distancePc = row.distanceKpc * 1000;
-  const center = raDecDistanceToIcrs(row.ra, row.dec, distancePc);
-  const quat = buildOrientationQuat(row.ra, row.dec, orient);
-  return {
-    name: displayName(row.name),
-    id: slugify(row.key),
-    center,
-    kind,
+  return buildLgObjectFromOrient(
+    row.name,
+    row.key,
+    row.ra,
+    row.dec,
+    row.distanceKpc * 1000,
     axes,
-    quat,
+    orient,
     source,
-    distance: distancePc,
-  };
+  );
 }
 
 /** Build a full LgObject from an override row that carries its own
@@ -421,20 +461,16 @@ export function buildStandaloneOverride(ov: OverrideRow): LgObject | null {
   const distancePc = ov.distanceKpc * 1000;
   if (!Number.isFinite(distancePc) || distancePc <= 0) return null;
   if (distancePc > MAX_DISTANCE_PC) return null;
-  const orient = parseOrient(ov.orient);
-  const kind: LgKind = orient.kind === 'disc' ? 'disc' : 'ellipsoid';
-  const center = raDecDistanceToIcrs(ov.raDeg, ov.decDeg, distancePc);
-  const quat = buildOrientationQuat(ov.raDeg, ov.decDeg, orient);
-  return {
-    name: displayName(ov.name),
-    id: slugify(ov.name),
-    center,
-    kind,
-    axes: ov.axes,
-    quat,
-    source: 'OVERRIDE',
-    distance: distancePc,
-  };
+  return buildLgObjectFromOrient(
+    ov.name,
+    ov.name,
+    ov.raDeg,
+    ov.decDeg,
+    distancePc,
+    ov.axes,
+    parseOrient(ov.orient),
+    'OVERRIDE',
+  );
 }
 
 /** Round a number to N decimal places. Strips JS float noise from
