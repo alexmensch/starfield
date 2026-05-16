@@ -3964,6 +3964,22 @@ export class Stellata {
     this.camera.position.y -= t.y;
     this.camera.position.z -= t.z;
     t.set(0, 0, 0);
+    // Same float32-residual class lives in the cached waypoints. After the
+    // shifts above, `state.pEnd` and `state.flyArrival.target.center` and
+    // `state.flyArrival.pEnd` carry `(true_B − rounded_B)`-scale residuals
+    // (per-axis up to ~|B|·2^-23 — for a 950 pc warp, ~23 AU max). Those
+    // residuals propagate into the per-frame `target.center + dir · d(u)`
+    // and the bit-exact `u ≥ 1` snap to `pEnd`, leaving the camera landing
+    // 1-3 AU off the destination axis. Reconstruct the canonical
+    // dest-local geometry from `dirBack` (a unit vector — ULP ~|1|·2^-23,
+    // multiplied by `endOffset` of ~5e-6 pc yields ~5e-13 pc residual,
+    // well below any visual threshold). `state.flyArrival.dir` was cached
+    // from the `pStart − target.center` difference at newArrival time —
+    // that difference is translation-invariant under the shift, so `dir`
+    // is still correct without re-derivation.
+    state.flyArrival.target.center.set(0, 0, 0);
+    state.flyArrival.pEnd.copy(state.dirBack).multiplyScalar(state.endOffset);
+    state.pEnd.copy(state.dirBack).multiplyScalar(state.endOffset);
     state.dest.applyFocus();
     state.recenteredToDest = true;
   }
