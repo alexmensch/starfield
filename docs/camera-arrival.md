@@ -249,13 +249,12 @@ arguably unnecessary because cubic-Hermite's tail naturally
 decelerates across the last few decades. That conclusion has since
 been revisited.
 
-Smoke testing the log-d cubic-Hermite (and the trapezoidal-in-log-d
-alternative) revealed a different problem: linear velocity collapses
-geometrically across any log-d profile, so background-star parallax
-reads as decelerating from very early in the warp regardless of the
-curve's `f(u)` shape. The resolution shipped in 1.12.0 is the
-**hybrid two-regime design** — see § Profile above. The hybrid IS a
-two-region split, but with different math:
+Smoke testing the log-d cubic-Hermite revealed a different problem:
+linear velocity collapses geometrically across any log-d profile, so
+background-star parallax reads as decelerating from very early in the
+warp regardless of the curve's `f(u)` shape. The resolution shipped in
+1.12.0 is the **hybrid two-regime design** — see § Profile above. The
+hybrid IS a two-region split, but with different math:
 
 - Outer uses **linear-d** piecewise-quad (not smoothstep on linear-d).
   Different shape, different endpoint behaviour.
@@ -363,9 +362,11 @@ export interface ArrivalState {
   target: ArrivalTarget;
   startMs: number;
   durationMs: number;
-  // Cached at construction for the log-d profile:
-  d0: number;     // |pStart − target.center|
-  dEnd: number;   // |pEnd − target.center| (= target.parkDist for the three helper sites)
+  // Cached at construction:
+  d0: number;             // |pStart − target.center|
+  dEnd: number;           // |pEnd − target.center| (= target.parkDist for the three helper sites)
+  dir: THREE.Vector3;     // unit ray from target.center toward pStart
+  easeUFn: (u: number) => number;  // eased-u curve; defaults to cubicHermite when omitted
 }
 
 export function newArrival(...): ArrivalState;

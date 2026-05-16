@@ -214,16 +214,20 @@ interface FocusTarget {
   parkRadius(): number;                     // camera-to-anchor at parked pose
   applyFocus(): void;                       // per-kind state mutation, no events
   emitFocusEvents(): void;                  // deferred event family fire
+  physicalRadius(): number | null;          // geometric radius (pc) or null when undefined
+  chartPlateauDistance(magBright: number): number | null;  // chart-mode disc plateau distance
 }
 ```
 
 | Method | Role |
 |---|---|
 | `anchorInto` | Input to `recenterOrigin`. The floating origin lands here when the object is focused. |
-| `localPositionInto` | Per-frame `camera.lookAt(...)` source during warp Fly. Also used by overlays that project the object's position. |
+| `localPositionInto` | Per-frame `camera.lookAt(...)` source during warp Fly. Also used by overlays that project the object's position, and as the warp's source-`A` derivation in `warpTo` / `warpToCloud`. |
 | `parkRadius` | The warp computes `pStart` / `pEnd` as `anchor − travelDir · parkRadius()` for source and destination respectively — symmetric across both endpoints. |
 | `applyFocus` | Sets the per-kind `focusedStar` / `focusedCloud` / etc. field, updates derived state (`minDistance`, planet system attach), clears whichever sibling-kind focus was set. **No events fire.** |
 | `emitFocusEvents` | Fires the deferred event family — typically `'focus'` / `'cloudFocus'` (plus a sibling-clearing `null` emit when the previously-focused object was a different kind), then `'state'`. Called from `finishWarp` after the camera lands. |
+| `physicalRadius` | Geometric radius in parsecs, or `null` when the kind has no single radius (clouds — ellipsoid axes don't reduce to one). Consumed by arrival curves that need angular size — the hybrid curve's inner regime uses `θ = R/d` for the close-approach smoothstep. Kinds returning `null` silently fall back to a log-d profile. |
+| `chartPlateauDistance` | Camera-to-anchor distance at which the chart-mode disc plateaus at `uChartDiscMaxPx`, given the current `uChartMagBright` threshold. Returns `null` when the chart-mode treatment isn't a magnitude-driven disc (clouds → isobar contour). Used by `updateWarp` to pivot Fly → phase 3 early when chart mode is active and the destination disc would stop growing perceptibly. |
 
 The applyFocus/emitFocusEvents split is what lets the mid-Fly recentre
 (stellata-2br.5) mutate focus state at the trajectory midpoint

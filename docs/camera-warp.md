@@ -73,14 +73,20 @@ on whether the warp re-enters OBSERVE on arrival:
    the per-frame `lookAt(B)` becomes `lookAt(local origin)` —
    geometrically equivalent, numerically clean.
 
-   Why this exists: under the cubic-Hermite log-d Fly profile the
-   camera spends the last ~19% of Fly inside `|B − camera| <
-   ULP(|B|)` for long-range arrivals (e.g. Betelgeuse → Sol). In
-   that zone `B − camera.position` loses all Float32 precision and
+   Why this exists: any log-d Fly profile (cubic-Hermite fallback for
+   clouds + outbound, and the hybrid curve's inner regime on θ for
+   stars) parks the camera inside `|B − camera| < ULP(|B|)` for some
+   non-trivial window of long-range arrivals (e.g. Betelgeuse → Sol).
+   In that zone `B − camera.position` loses all Float32 precision and
    the `lookAt` quaternion jitters across representable values, so
    the destination renders off-screen for several frames before
    `finishWarp` recentres and snaps it to NDC origin. Recentring
-   mid-Fly eliminates the chaos zone entirely (stellata-2br.5).
+   mid-Fly eliminates the chaos zone entirely (stellata-2br.5). The
+   issue was first surfaced under the cubic-Hermite log-d profile,
+   which sat inside that zone for the last ~19 % of Fly; the hybrid
+   curve's angular-size inner regime is geometrically cleaner but
+   still terminates close enough to the destination that the same
+   recentre is the right answer.
 
    Kind-agnostic via the `FocusTarget` contract — works for any
    focusable kind that implements `anchorInto` and `applyFocus`.
@@ -95,13 +101,14 @@ on whether the warp re-enters OBSERVE on arrival:
    `chartT = clamp((appMag − magBright)/(maxAppMag − magBright), 0, 1)`
    — see `docs/chart-mode.md` §Star disc sizing). Once the camera is
    close enough that `appMag ≤ uChartMagBright`, `chartT` floors to 0
-   and the disc plateaus at `uChartDiscMaxPx`. Under the cubic-Hermite
-   log-d Fly profile, the camera spends much longer in the close-
-   approach window than under the legacy piecewise profile — so the
-   user can sit for hundreds of milliseconds inside the plateau zone
-   watching a disc that doesn't grow, with no perceptual progress
-   signal. Pivot to phase 3 early instead: when chart mode is active
-   (observe-only) at warp start, cache the plateau distance via
+   and the disc plateaus at `uChartDiscMaxPx`. Under both the hybrid
+   inner regime and the cubic-Hermite fallback, the camera spends much
+   longer in the close-approach window than under the legacy piecewise
+   profile — so the user can sit for hundreds of milliseconds inside
+   the plateau zone watching a disc that doesn't grow, with no
+   perceptual progress signal. Pivot to phase 3 early instead: when
+   chart mode is active (observe-only) at warp start, cache the
+   plateau distance via
    `dest.chartPlateauDistance(uChartMagBright)` (`chart-disc-pure.ts`
    solves the distance-modulus identity for the threshold magnitude:
    `d = 10^((magBright − absMag + 5)/5)` pc — Sol's default plateau
