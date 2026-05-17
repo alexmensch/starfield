@@ -137,6 +137,10 @@ src/
                           galactic-coords (+ tests). Disc outline / b-l grid /
                           GALACTIC_CENTRE_PC / shared fade smoothstep
     molecular-clouds/     molecular-clouds, cloud-loader (+ tests). Shelved for v1
+    dust/                 dust-particle-layer (+ tests). Instanced additive
+                          billboards; shelved for v1 (strength=0 → mesh hidden
+                          → zero per-frame cost). DustField + dust-loader stay
+                          in loaders/. Extracted from stellata.ts in 9mm.194/70.
     chart-mode/           chart-mode, chart-labels, chart-disc-pure (+ tests).
                           Observe-only paper aesthetic
     hover/                hover-engine, hover-types, hover-pick-disambiguator,
