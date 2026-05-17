@@ -103,6 +103,39 @@ target), so `aimAtConstellation` instead routes the centroid through
 `aimAt(c)`, which slerps the camera quaternion in place — same code
 path Sol/GC label clicks use.
 
+## Aim controller (`camera/aim-controller.ts`)
+
+`AimController` owns the two aim-slerp state machines extracted from
+`stellata.ts` in stellata-9mm.194.4:
+
+- **navigate slot** — orbits the camera around `controls.target` at
+  constant radius, slerping two quaternions that rotate `WARP_BASE_DIR`
+  to the start / end radial directions. Disables TrackballControls for
+  the duration so its damping doesn't fight the slerp.
+- **observe slot** — camera position is fixed at the focal star's local
+  origin; only the camera quaternion changes, slerping the live pose
+  toward a `lookAt(point)` target. Disables `ObserveControls` so a stray
+  drag doesn't fight the slerp.
+
+Both branches share `aimDurationMs`: a linear ramp from `AIM_T_MIN_MS`
+(floor for trivial nudges) to `AIM_T_MAX_MS` (cap for a half-circle
+swing). The observe branch's swing angle uses the geodesic quaternion
+formula `2·acos(|q0·q1|)`; the navigate branch uses the planar
+`acos(dir0·dir1)` between unit direction vectors.
+
+Composition split — `Stellata.aimAt(pointLocal)` is the dispatcher that
+owns the cross-controller busy gates (`warpState`, `cancelUnfocusLerp`,
+`cancelFocusLerp`, `isObserveTransitionActive`) before delegating to
+`this.aim.aimAt(pointLocal)`. The controller knows only the mode it
+runs in and its own slot state.
+
+Cancellation contract — `aim.cancel()` drops both slot states but does
+**not** touch `controls.enabled` or call `observeControls.enable()`.
+That re-enable only happens on natural completion of the slerp.
+Cancellation sites (warp start, observe-exit, focus change while in
+observe) are moving control elsewhere and own the next input-handler
+transition themselves.
+
 ## Floating origin (large-world precision)
 
 Close-range orbit of a star far from Sol used to jitter visibly because

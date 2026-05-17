@@ -35,6 +35,7 @@ import {
   peakAmplitudeFactor,
 } from './camera/star-geometry';
 import { Picker } from './camera/picker';
+import { AimController } from './camera/aim-controller';
 import { getPlanetSystem, hasPlanets, type PlanetSystem } from './solar-system/planet-system';
 import { OrbitRingsLayer } from './solar-system/orbit-rings-layer';
 import { PlanetBodyField } from './solar-system/planet-body-field';
@@ -54,9 +55,9 @@ import { chartPlateauDistancePc } from './chart-mode/chart-disc-pure';
 // The other warp-timing constants are re-exported below for any
 // external import path that points at './stellata' instead of
 // './camera/timing', without bringing unused names into local scope.
+// AIM_T_MIN_MS / AIM_T_MAX_MS moved off the local set in 9mm.194.4
+// when AimController claimed the aim-duration ramp.
 import {
-  AIM_T_MAX_MS,
-  AIM_T_MIN_MS,
   DCAM_LOG_FLOOR_PC,
   FOCUS_LERP_MS,
   OBSERVE_TRANSITION_MS,
@@ -356,25 +357,6 @@ interface ObserveTransitionState {
   arrival?: ArrivalState;
 }
 
-interface AimState {
-  startTimeMs: number;
-  durationMs: number;
-  q0: THREE.Quaternion;       // rotates WARP_BASE_DIR to the start radial dir
-  q1: THREE.Quaternion;       // rotates WARP_BASE_DIR to the end radial dir
-  radius: number;             // |camera - target| at click; held constant
-  pivot: THREE.Vector3;       // controls.target snapshot, in local frame
-}
-
-// OBSERVE-mode aim. Camera position is fixed; only the camera's orientation
-// changes. Slerping the live camera quaternion from `q0` to `q1` rotates
-// the view in place to face `pointLocal`.
-interface ObserveAimState {
-  startTimeMs: number;
-  durationMs: number;
-  q0: THREE.Quaternion;
-  q1: THREE.Quaternion;
-}
-
 interface WarpState {
   startTimeMs: number;
   reorientMs: number;
@@ -659,18 +641,15 @@ export class Stellata {
   private vectorToCloud: number | null = null;
   private monochrome = false;
   private warpState: WarpState | null = null;
-  private aimState: AimState | null = null;
   // Smooth focus-park lerp (stellata-r9q.2): glides the camera from the
   // current pose to parkDistForStar(idx) when the user focuses a star they
   // aren't already inside. Branching + animate-loop dispatch live in
   // focusStar / updateFocusLerp.
   private focusLerpState: FocusLerpState | null = null;
-  // Scratch quaternion + direction reused by updateAim each frame so the
-  // animation never allocates.
-  private aimQ = new THREE.Quaternion();
-  private aimTmpDir = new THREE.Vector3();
-  private observeAimState: ObserveAimState | null = null;
-  private observeAimQ = new THREE.Quaternion();
+  // Aim slerps (stellata-9mm.194.4): navigate-mode orbit-pivot rotation and
+  // observe-mode quaternion-in-place. Composed below in the constructor;
+  // see camera/aim-controller.ts for the two state machines.
+  private aim!: AimController;
 
   // OBSERVE-mode "points of interest". Single-click on a star pins it.
   // Cleared on every observe → navigate transition (registered in the
@@ -1065,6 +1044,16 @@ export class Stellata {
       fovYRadRef: this.material.uniforms.uFovYRad as { value: number },
       viewportRef: this.material.uniforms.uViewport as { value: THREE.Vector2 },
     });
+    // Aim slerps (stellata-9mm.194.4) — mode-aware orbit-pivot / in-place
+    // quaternion rotation. The warp / focus-lerp / observe-transition
+    // busy checks stay on stellata's `aimAt` dispatcher because they
+    // gate behaviour the controller doesn't know about.
+    this.aim = new AimController({
+      camera: this.camera,
+      controls: this.controls,
+      observeControls: this.observeControls,
+      getCameraMode: () => this.cameraMode,
+    });
     // Build/teardown orbit rings + heliopause whenever the focused
     // star's planet data changes. Both are representational layers
     // gated on host-focused (stellata-3re.15). Planet bodies live in
@@ -1341,7 +1330,7 @@ export class Stellata {
    *  cosmetic cloud picking is suppressed during warp only, etc. */
   isCameraBusy(): boolean {
     return this.warpState !== null
-      || this.aimState !== null
+      || this.aim.isActive()
       || this.focusLerpState !== null
       || this.isObserveTransitionActive();
   }
@@ -1408,13 +1397,13 @@ export class Stellata {
       this.focusedStar !== null &&
       this.cameraMode === 'navigate' &&
       (!this.warpState || this.warpState.recenteredToDest) &&
-      !this.aimState && !this.focusLerpState &&
+      !this.aim.isActive() && !this.focusLerpState &&
       this.controls.target.lengthSq() < PIN_ENGAGE_THRESHOLD_SQ_PC
     );
   }
   /** True while an aim animation is in flight. Mirror of getWarpActive
    *  for the camera's other interpolated transition. */
-  isAimActive(): boolean { return this.aimState !== null; }
+  isAimActive(): boolean { return this.aim.isActive(); }
 
   // Eased progress of the in-flight observe-mode camera translate, or null
   // if no transition is active. `f` matches the easing inside
@@ -1575,7 +1564,7 @@ export class Stellata {
     this.observeControls.disable();
     // Cancel any in-flight observe aim — its post-flight re-enable would
     // fight the upcoming exit transition / TrackballControls handover.
-    this.observeAimState = null;
+    this.aim.cancel();
 
     if (!opts.animate || this.focusedStar === null) {
       // Hard switch. controls.target snaps back to the focal star's local
@@ -1626,7 +1615,7 @@ export class Stellata {
     // anchor to mean anything.
     if (this.cameraMode === 'observe') {
       this.observeTransition = null;
-      this.observeAimState = null;
+      this.aim.cancel();
       this.cameraMode = 'navigate';
       this.material.uniforms.uHideFocusIdx.value = -1;
       this.observeControls.disable();
@@ -2096,7 +2085,7 @@ export class Stellata {
       this.cameraMode = 'navigate';
       this.material.uniforms.uHideFocusIdx.value = -1;
       this.observeControls.disable();
-      this.observeAimState = null;
+      this.aim.cancel();
 
       // Clear the star focus; search box clears via the 'focus' event
       // handler. cameraMode is already 'navigate' so the observe-cleanup
@@ -2706,13 +2695,12 @@ export class Stellata {
     // observe semantics).
     let returnToObserve = false;
     if (this.cameraMode === 'observe') {
-      this.observeAimState = null;
       this.observeControls.disable();
       returnToObserve = dest.kind === 'star';
     }
-    // An in-flight aim animation is superseded by warp — drop the state so
-    // updateAim doesn't run after warp completes against now-stale pivot.
-    this.aimState = null;
+    // Aim is superseded by warp — drop both slot states so the controller's
+    // tick doesn't run after warp completes against a now-stale pivot.
+    this.aim.cancel();
     const endOffset = dest.parkRadius();
     const AB = new THREE.Vector3().subVectors(B, A);
     const distPc = AB.length();
@@ -3131,118 +3119,25 @@ export class Stellata {
   }
 
   /**
-   * Smoothly rotate the camera around `controls.target` so that
-   * `pointLocal` (a world point in the renderer's local frame) ends up at
-   * the centre of the view. Orbit radius is preserved; orbit pivot
-   * doesn't move. Called by the Sol / GC label click handlers.
+   * Smoothly rotate the camera so that `pointLocal` (a world point in
+   * the renderer's local frame) ends up at the centre of the view.
+   * Mode-aware: in navigate the orbit-pivot is held and the camera
+   * sweeps around it; in observe the camera position is held and only
+   * the quaternion rotates. Called by the Sol / GC label click handlers,
+   * the constellation picker, the POI overlay, and the observe-mode
+   * double-click.
    *
-   * No-ops during warp, mid-aim, or when the camera is already aimed at
-   * the point. Disables TrackballControls for the duration so its damping
-   * doesn't fight the slerp.
+   * No-ops during warp, mid-aim, focus-lerp, or observe-transition. The
+   * actual slerp + controls.enabled / observeControls handoff lives in
+   * `AimController`; this dispatcher owns the composition-layer busy
+   * gates the controller doesn't see.
    */
   aimAt(pointLocal: THREE.Vector3) {
-    if (this.warpState || this.aimState) return;
+    if (this.warpState || this.aim.isActive()) return;
     this.cancelUnfocusLerp();
     this.cancelFocusLerp();
     if (this.isObserveTransitionActive()) return;
-    if (this.cameraMode === 'observe') {
-      if (this.observeAimState) return;
-      // Camera is fixed at the focal star; orientation changes only. Build
-      // the target quaternion from a lookAt towards `pointLocal` and slerp
-      // the live camera quaternion across the transition. controls.target
-      // is regenerated from the quaternion each frame by observeUpdateTarget,
-      // so we only animate the rotation.
-      const aimDx = pointLocal.x - this.camera.position.x;
-      const aimDy = pointLocal.y - this.camera.position.y;
-      const aimDz = pointLocal.z - this.camera.position.z;
-      if (aimDx * aimDx + aimDy * aimDy + aimDz * aimDz < 1e-6) return;
-
-      const lookMat = new THREE.Matrix4().lookAt(
-        this.camera.position,
-        pointLocal,
-        this.camera.up,
-      );
-      const q1 = new THREE.Quaternion().setFromRotationMatrix(lookMat);
-      const q0 = this.camera.quaternion.clone();
-      const dot = Math.min(1, Math.abs(q0.dot(q1)));
-      if (dot > 0.99999) return;
-      // Geodesic angle between two unit quaternions is 2·acos(|q0·q1|).
-      const angle = 2 * Math.acos(dot);
-      const durationMs = Math.max(
-        AIM_T_MIN_MS,
-        Math.min(AIM_T_MAX_MS, (angle / Math.PI) * AIM_T_MAX_MS),
-      );
-
-      this.observeControls.disable();
-      this.observeAimState = {
-        startTimeMs: performance.now(),
-        durationMs,
-        q0,
-        q1,
-      };
-      return;
-    }
-
-    const pivot = this.controls.target;
-    const offsetX = this.camera.position.x - pivot.x;
-    const offsetY = this.camera.position.y - pivot.y;
-    const offsetZ = this.camera.position.z - pivot.z;
-    const r = Math.sqrt(offsetX * offsetX + offsetY * offsetY + offsetZ * offsetZ);
-    if (r < 1e-6) return; // camera coincident with pivot — no orbit to rotate
-
-    const aimX = pointLocal.x - pivot.x;
-    const aimY = pointLocal.y - pivot.y;
-    const aimZ = pointLocal.z - pivot.z;
-    const aimLen = Math.sqrt(aimX * aimX + aimY * aimY + aimZ * aimZ);
-    if (aimLen < 1e-6) return; // target coincides with pivot
-
-    // Start radial direction = camera - pivot, normalised.
-    const dir0 = new THREE.Vector3(offsetX / r, offsetY / r, offsetZ / r);
-    // End radial direction = -(point - pivot) normalised. Putting the
-    // camera on the opposite side of pivot from the target makes the
-    // forward vector (pivot - camera) point toward the target.
-    const dir1 = new THREE.Vector3(-aimX / aimLen, -aimY / aimLen, -aimZ / aimLen);
-
-    const dot = Math.max(-1, Math.min(1, dir0.dot(dir1)));
-    if (dot > 0.99999) return; // already aimed
-
-    const angle = Math.acos(dot);
-    const durationMs = Math.max(
-      AIM_T_MIN_MS,
-      Math.min(AIM_T_MAX_MS, (angle / Math.PI) * AIM_T_MAX_MS),
-    );
-
-    const q0 = new THREE.Quaternion().setFromUnitVectors(WARP_BASE_DIR, dir0);
-    const q1 = new THREE.Quaternion().setFromUnitVectors(WARP_BASE_DIR, dir1);
-
-    this.controls.enabled = false;
-    this.aimState = {
-      startTimeMs: performance.now(),
-      durationMs,
-      q0,
-      q1,
-      radius: r,
-      pivot: pivot.clone(),
-    };
-  }
-
-  private updateAim() {
-    const state = this.aimState;
-    if (!state) return;
-    const elapsed = performance.now() - state.startTimeMs;
-    const u = Math.min(1, elapsed / state.durationMs);
-    const f = u * u * (3 - 2 * u);
-    this.aimQ.copy(state.q0).slerp(state.q1, f);
-    this.aimTmpDir.copy(WARP_BASE_DIR).applyQuaternion(this.aimQ);
-    this.camera.position
-      .copy(state.pivot)
-      .addScaledVector(this.aimTmpDir, state.radius);
-    this.camera.lookAt(state.pivot);
-    if (u >= 1) {
-      this.aimState = null;
-      this.controls.enabled = true;
-      this.controls.update();
-    }
+    this.aim.aimAt(pointLocal);
   }
 
   // Tick the focus-park lerp (r9q.2). controls.enabled is left true
@@ -3257,23 +3152,6 @@ export class Stellata {
     if (!stillActive) {
       this.endFocusLerp();
       this.controls.update();
-    }
-  }
-
-  // OBSERVE-mode aim. Slerps the camera's quaternion from start to target
-  // orientation while leaving its position alone, then re-enables the
-  // observe input controller on completion.
-  private updateObserveAim() {
-    const state = this.observeAimState;
-    if (!state) return;
-    const elapsed = performance.now() - state.startTimeMs;
-    const u = Math.min(1, elapsed / state.durationMs);
-    const f = u * u * (3 - 2 * u);
-    this.observeAimQ.copy(state.q0).slerp(state.q1, f);
-    this.camera.quaternion.copy(this.observeAimQ);
-    if (u >= 1) {
-      this.observeAimState = null;
-      this.observeControls.enable();
     }
   }
 
@@ -3622,7 +3500,7 @@ export class Stellata {
     const down = this.pointerDownAt;
     this.pointerDownAt = null;
     if (!down) return;
-    if (this.warpState || this.aimState) return;
+    if (this.warpState || this.aim.isActive()) return;
     this.cancelUnfocusLerp();
     this.cancelFocusLerp();
     if (this.isObserveTransitionActive()) return;
@@ -3889,12 +3767,12 @@ export class Stellata {
     perfMark('controls.update');
     if (this.warpState) {
       this.updateWarp();
-    } else if (this.aimState) {
-      this.updateAim();
+    } else if (this.aim.isActive()) {
+      this.aim.tick(performance.now());
     } else if (this.focusLerpState) {
       this.updateFocusLerp();
-    } else if (this.observeAimState) {
-      this.updateObserveAim();
+    } else if (this.aim.isObserveAimActive()) {
+      this.aim.tickObserve(performance.now());
       // Observe-mode aim slerps the camera quaternion in place. The
       // controls.target still needs the per-frame re-pin so URL state stays
       // truthful mid-flight.
@@ -4408,6 +4286,7 @@ export class Stellata {
     // observeControls owns its own pointer + wheel listeners; disable() is
     // idempotent so it's safe regardless of current mode.
     this.observeControls.disable();
+    this.aim.dispose();
     this.hudOverlay.dispose();
     this.controls.dispose();
     // Star pipeline: one shared InstancedBufferGeometry feeds the disc, glow,

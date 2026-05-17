@@ -149,7 +149,7 @@ src/
     camera/               controls, observe-controls, focus-transition,
                           focus-target, arrival-curves, camera-motion, warp-pure,
                           warp-button, warp-tuning, mode-toggle, star-geometry,
-                          camera-up-align, picker (+ tests).
+                          camera-up-align, picker, aim-controller (+ tests).
                           timing.ts — CAMERA_LERP_MS / WARP_*_MS /
                           AIM_*_MS / OBSERVE_TRANSITION_MS / DCAM_LOG_FLOOR_PC /
                           WARP_BASE_DIR (canonical camera-wide constants;
@@ -157,6 +157,10 @@ src/
                           picker.ts — pure target resolver; click + hover
                           pick paths for stars / clouds / planets / Local Group /
                           heliopause (extracted from stellata.ts in 9mm.194.3)
+                          aim-controller.ts — mode-aware aim slerps (navigate
+                          orbit-pivot + observe quaternion-in-place), shared
+                          `aimDurationMs` ramp (extracted from stellata.ts in
+                          9mm.194.4)
     loaders/              catalog-loader, dust-loader (+ tests). cloud-loader
                           lives under molecular-clouds/; local-group-loader
                           under local-group/
