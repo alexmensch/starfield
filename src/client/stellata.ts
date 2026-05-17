@@ -5,8 +5,10 @@ import type { DustField, DustParticleData } from './loaders/dust-loader';
 import vertexShader from './shaders/star.vert.glsl?raw';
 import fragmentShader from './shaders/star.frag.glsl?raw';
 import perceptualDiscChunk from './shaders/perceptual-disc.glsl?raw';
-import dustParticleVert from './shaders/dust-particle.vert.glsl?raw';
-import dustParticleFrag from './shaders/dust-particle.frag.glsl?raw';
+import {
+  DustParticleLayer,
+  type DustParticleSharedUniforms,
+} from './dust/dust-particle-layer';
 
 // Register the perceptual-disc chunk so star.{vert,frag} (and any
 // future point-source layer) can `#include <stellata_perceptual_disc>`
@@ -281,11 +283,9 @@ export class Stellata implements FrameAnchor {
   // Visibility gated each frame on (focusedStar || warping) so the draw
   // call is skipped entirely when no star can be in the disc pass.
   private coreMaskMesh: THREE.Mesh;
-  // Dust particles — null until attachDustParticles() builds the geometry.
-  // Rendered as instanced additive billboards over the star scene; off by
-  // default (uParticleStrength = 0) for the realism-first opening view.
-  private particleMesh: THREE.Mesh | null = null;
-  private particleMaterial: THREE.ShaderMaterial | null = null;
+  // Dust-particle render layer. Shelved for v1.0 — see
+  // docs/rendering.md § "Dust extinction + the shelved particle layer".
+  private dustParticles!: DustParticleLayer;
   // Shared uniforms object so changing uMaxAppMag/uSpectMask/etc. affects
   // both passes. The per-pass uRenderMode differs; we split into two
   // materials but give them the same uniforms map (minus uRenderMode).
@@ -681,6 +681,14 @@ export class Stellata implements FrameAnchor {
     this.glowMesh.frustumCulled = false;
     this.glowMesh.renderOrder = 1;
     this.scene.add(this.glowMesh);
+
+    // Star-material uniforms passed by reference so floating-origin
+    // recenters, resize updates, and dust loads propagate to the
+    // particle pass automatically.
+    this.dustParticles = new DustParticleLayer(
+      this.scene,
+      this.material.uniforms as unknown as DustParticleSharedUniforms,
+    );
 
     // Galactic reference layers — disc is always added; grid hides itself
     // until enabled. The HUD (ring + Sol/GC arrows) is pure SVG inside the
@@ -1274,87 +1282,18 @@ export class Stellata implements FrameAnchor {
 
   private tmpVec3b = new THREE.Vector3();
 
-  // Release the particle mesh's geometry + material. Two callers — the
-  // attachDustParticles rebuild path (which also pulls the mesh out of
-  // the scene before re-creating it) and Stellata.dispose() (which lets
-  // the scene get garbage-collected wholesale, so removeFromScene is
-  // false). One owner means a third resource added to the particle layer
-  // can't be forgotten in one of the two cleanup paths.
-  private disposeParticles(opts: { removeFromScene: boolean }) {
-    if (!this.particleMesh) return;
-    if (opts.removeFromScene) this.scene.remove(this.particleMesh);
-    this.particleMesh.geometry.dispose();
-    this.particleMaterial?.dispose();
-  }
-
-  /** Build the dust-particle mesh from the loaded particle data. Called
-   *  once after the network fetch resolves; the mesh stays in the scene
-   *  and gates on uParticleStrength + uDustEnabled. Idempotent — calling
-   *  with the same data is a no-op; calling again replaces the mesh.
-   *
-   *  STATUS (2026-04): the particle visualisation layer is "dark code" —
-   *  loaded but disabled (uParticleStrength = 0 → mesh.visible = false →
-   *  zero per-frame cost). It works but the visual balance between
-   *  "individual particle visible" vs "smooth fog from overlap" needs
-   *  more iteration before promoting to a user-facing toggle. Kept in
-   *  the codebase so future sessions can pick up where this left off
-   *  without re-deriving the preprocessor/loader/shader plumbing. See
-   *  NEXT_STEPS.md "Revisit dust particles" for the open questions. */
+  /** Build the dust-particle mesh from loaded data. See bd issue
+   *  stellata-zq3 + docs/rendering.md § "Dust extinction + the shelved
+   *  particle layer" for the open questions before re-enabling. */
   attachDustParticles(data: DustParticleData) {
-    this.disposeParticles({ removeFromScene: true });
-
-    const geom = new THREE.InstancedBufferGeometry();
-    geom.setAttribute(
-      'aCorner',
-      new THREE.BufferAttribute(
-        new Float32Array([-0.5, -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, 0.5]),
-        2,
-      ),
-    );
-    geom.setIndex([0, 1, 2, 1, 3, 2]);
-    geom.setAttribute('iPosition', new THREE.InstancedBufferAttribute(data.positions, 3));
-    geom.setAttribute('iDensity', new THREE.InstancedBufferAttribute(data.densities, 1));
-    geom.instanceCount = data.count;
-    geom.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 60_000);
-
-    const u = this.material.uniforms;
-    this.particleMaterial = new THREE.ShaderMaterial({
-      glslVersion: THREE.GLSL3,
-      uniforms: {
-        // Share the same wrapper objects as the star material so a single
-        // attachDust() / floating-origin recenter / resize update propagates
-        // here too. uParticleStrength is particle-only.
-        uPixelRatio: u.uPixelRatio,
-        uViewport: u.uViewport,
-        uWorldOffset: u.uWorldOffset,
-        uDustEnabled: u.uDustEnabled,
-        uDustDensityMin: u.uDustDensityMin,
-        uDustLogRatio: u.uDustLogRatio,
-        uParticleStrength: { value: 0.0 },
-      },
-      vertexShader: dustParticleVert,
-      fragmentShader: dustParticleFrag,
-      transparent: true,
-      depthWrite: false,
-      depthTest: true,
-      blending: THREE.AdditiveBlending,
-    });
-    this.particleMesh = new THREE.Mesh(geom, this.particleMaterial);
-    this.particleMesh.frustumCulled = false;
-    this.particleMesh.renderOrder = 2; // after disc + glow passes
-    this.particleMesh.visible = false;  // hidden until strength > 0
-    this.scene.add(this.particleMesh);
+    this.dustParticles.attach(data);
   }
 
-  /** User-facing dust-particle visibility. 0 = hidden (default). 1 = a
-   *  visible cloud where individual particles are clearly resolvable in
-   *  diffuse regions and bright clusters mark dense cores. The mesh is
-   *  hidden entirely at strength 0 so the GPU draw call is skipped. */
+  /** User-facing dust-particle visibility (`stellata.setParticleStrength`
+   *  console knob). 0 = hidden (default); higher = stronger additive
+   *  contribution. */
   setParticleStrength(x: number) {
-    if (!this.particleMaterial || !this.particleMesh) return;
-    const v = Math.max(0, x);
-    this.particleMaterial.uniforms.uParticleStrength.value = v;
-    this.particleMesh.visible = v > 0;
+    this.dustParticles.setStrength(x);
   }
 
 
@@ -2425,7 +2364,7 @@ export class Stellata implements FrameAnchor {
     this.material.dispose();
     this.glowMaterial.dispose();
     this.coreMaskMaterial.dispose();
-    this.disposeParticles({ removeFromScene: false });
+    this.dustParticles.dispose();
     this.clouds?.dispose();
     this.localGroupLayer?.dispose();
     this.galacticDisc.dispose();

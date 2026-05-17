@@ -449,14 +449,15 @@ actually see.
 
 The `dust-particle.{vert,frag}.glsl` shaders, `attachDustParticles()`
 method, and `setParticleStrength()` API render the same dust as discrete
-additive billboards for direct visualisation. **Currently shelved** —
+additive billboards for direct visualisation, encapsulated in the
+`DustParticleLayer` class under `src/client/dust/`. **Currently shelved** —
 loaded but disabled (default strength = 0; mesh.visible = false → zero
 draw cost). The visual balance between "individual particles distinct"
 and "smooth additive fog from overlap" needs more iteration before
 promoting to a user-facing feature. There's also a deeper question:
 real interstellar dust is *dark*, not luminous, so additive rendering
-is artistically pretty but inverts physical reality. See
-NEXT_STEPS.md "Revisit dust visualisation" for the open questions.
+is artistically pretty but inverts physical reality. See bd issue
+`stellata-zq3` for the open questions.
 
 The data plumbing (preprocessor, manifest, LFS, loader, mesh) is fully
 wired so revisit work is purely render-tuning, not infrastructure.
