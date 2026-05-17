@@ -2,18 +2,19 @@
 
 *Explore the universe.*
 
-An observational 3D model of our galaxy at every scale we've measured
-it — from individual stars and their planets, through the local
-interstellar medium, out to the structure of the galactic disc — and
-extending outward as observation does.
+A physically accurate 3D model of our local corner of the universe at every
+scale astronomy has measured it. Experience what it would actually look
+like to *be there*: from individual stars and their planets, through the local
+interstellar medium, out to the structure of the galactic disc, and
+beyond into the intergalactic void.
 
 Every object in Stellata comes from a published observational
-catalogue or direct in-situ measurement: if we've measured it, it's
-here. Theoretical predictions and conjectured structures (the Oort
-cloud, anything beyond Gaia's reach) aren't. The model's scope is
-bounded only by what observation has touched, and grows with it.
+catalogue and direct measurement: if we've measured it, it's
+here. Theoretical predictions and conjectured structures are excluded. The
+model's scope is bounded by what has been observed, currently enclosing
+a volume up to 6.5 million light years from our solar system.
 
-Try it at **[stellata.xyz](https://stellata.xyz)**.
+Try it at **[https://stellata.xyz](https://stellata.xyz)**.
 
 <!-- TODO: hero screenshot — recommended: a few hundred pc out from
      Sol, looking back through the Milky Way band, constellation lines
@@ -22,14 +23,14 @@ Try it at **[stellata.xyz](https://stellata.xyz)**.
 
 ![Stellata — hero view](docs/screenshots/hero.png)
 
-## What's interesting about it
+## Highlights
 
-- **Everything is rendered live, from where you are.** Stars (all
+- **Everything is rendered live, from where you are.** Stars (more than
   313,000 in the catalogue), planets, the volumetric Milky Way, the
-  Local Group dwarf galaxies, the 3D dust between them — every
-  object recomputes against the current camera each frame. Fly
-  halfway to Sirius and the sky genuinely changes: parallax,
-  reddening, occlusion are all real, not painted.
+  Local Group dwarf galaxies, and the 3D dust between them: every
+  object continually re-renders against the current camera each frame.
+  Fly halfway to Sirius and the sky changes: parallax, reddening, and 
+  occlusion are all real, not fabricated.
 
 - **Close-up stars resolve as physical objects.** Approach a star and
   it stops being a dot: its disc grows to its actual radius (from
@@ -40,11 +41,11 @@ Try it at **[stellata.xyz](https://stellata.xyz)**.
 - **Interstellar dust dims and reddens stars correctly.** The vertex
   shader raymarches the Edenhofer 2023 3D dust map from camera to
   star at run time, so stars behind dense ISM look fainter and
-  redder — exactly as you would see them.
+  redder, exactly as you would see them.
 
 - **Variable stars pulsate.** ~3,700 stars cross-matched with GCVS
   pulse on time-compressed cycles: Cepheids in seconds, Miras in a
-  minute, Betelgeuse in ~8 minutes — visible both as brightness
+  minute, Betelgeuse in ~8 minutes. Visible both as brightness
   swing and as physical disc-radius change at close range.
 
 - **The solar system at live planetary positions.** Around Sol, the
@@ -52,17 +53,17 @@ Try it at **[stellata.xyz](https://stellata.xyz)**.
   positions (JPL Standish ephemerides, sub-arcminute accurate
   3000 BC – 3000 AD), inside the asymmetric heliopause shell
   measured by Voyager and IBEX. A small clock in the corner shows
-  the UTC moment the positions correspond to.
+  the UTC time the positions correspond to.
 
 - **The Milky Way is volumetric, not a skybox.** A bounded raymarch
   through galactic-scale density meshes produces the surface-
-  brightness band — fly past the galactic centre and it reorients
+  brightness band. Fly past the galactic centre and it reorients
   with proper parallax. Analytical mid-plane dust means the dark
   lane reads correctly.
 
 - **A paper-chart mode for when you want to read the sky like a
-  star atlas.** A second visual mode inspired by Sky Atlas 2000.0 —
-  flat hard-edged discs sized linearly by magnitude, full
+  star atlas.** A second visual mode is inspired by Sky Atlas 2000.0:
+  flat hard-edged discs sized by apparent magnitude, full
   Bayer/Flamsteed labels, constellation names, double-star wings,
   variable-star rings.
 
@@ -75,13 +76,12 @@ Try it at **[stellata.xyz](https://stellata.xyz)**.
 ![Stellata — chart mode](docs/screenshots/chart-mode.png)
 
 - **Navigate, observe, warp.** Orbit any star (navigate), or land on
-  it and look around from its surface (observe). Pick a second star
-  to measure the distance, then warp — an animated camera flight
-  between the two with full physical scaling.
+  it and look at the sky from its location (observe). Pick a second star
+  to measure the distance, then warp: an animated camera flight
+  between the two stars with full physical scaling.
 
-- **Shareable views.** All settings plus camera pose pack into a
-  single opaque `?v=…` query param, so any view bookmarks and shares
-  in 25–40 characters.
+- **Shareable views.** All settings plus camera pose pack into the
+  current URL, so any view can be bookmarked and shared.
 
 ## Grounded in published science
 
@@ -94,15 +94,15 @@ structural detail for the LMC, SMC, M31, M33, and Sagittarius dSph
 from the primary literature.
 
 The full record of sources, formulas, and deliberate modelling
-simplifications lives in **[SCIENCE.md](./SCIENCE.md)** — read that
-for citations, DOIs, and what is and isn't observationally grounded.
+simplifications lives in **[SCIENCE.md](./SCIENCE.md)**. Read for
+citations, DOIs, and what is and isn't observationally grounded.
 
 ## Browser support
 
 - **WebGL2** required (any browser from 2018 onward — Safari 15+,
   Chrome 56+, Firefox 51+).
-- Works on desktop and mobile. On narrow viewports the settings
-  panel collapses by default and floats above the scene.
+- Loads and renders on any device, but the user interface for mobile
+  devices / small viewports is currently pending a future update.
 
 ## Gestures
 
@@ -122,9 +122,10 @@ navigation (orbit, zoom, pan) works the same everywhere.
 
 ## Known limitations
 
-- **No proper motion over time.** Stars are rendered at their
-  catalog positions; they don't move as you would see over
-  astronomical timescales.
+- **Proper motion is not accounted for.** Stars are rendered at their
+  catalog Julian 2000.0 positions; they don't move as you would see over
+  astronomical timescales. A future update will account for this to
+  render present time positions.
 - **Variable-star pulsation uses a constant-temperature model.**
   Real pulsating variables (Miras, Cepheids) split their brightness
   change between radius and temperature; we attribute the whole
@@ -134,24 +135,24 @@ navigation (orbit, zoom, pan) works the same everywhere.
   between AT-HYG (via HIP or HD) and GCVS. Variables without a
   HIP/HD cross-reference, or whose GCVS entry lacks a parseable
   period, render as non-variable.
-- **Most secondaries aren't separately positioned.** ~13k primaries
+- **Most secondaries aren't separately positioned yet.** ~13k primaries
   are flagged as visual doubles via the CCDM cross-match (Sirius,
   Mizar, Castor, Albireo, γ And, ε Lyr, Algol, …) and carry the
   chart-mode binary glyph, but AT-HYG only stores the primary's
-  position for most of them — so apart from α Cen-style cases
+  position for most of them. Apart from α Cen-style cases
   caught by the geometric pass, the secondary doesn't render as its
   own disc.
 - **Spectral-class colouring is provisional.** The current B–V →
   RGB mapping is a placeholder pending a perceptually-calibrated
   pass.
 - **No nebulae or dark clouds yet.** Molecular-cloud ellipsoids
-  (Zucker 2020/2021) are committed but shelved for v1.0 while the
-  visual treatment is refined. Diffuse and emission nebulae are not
-  modelled.
+  (Zucker 2020/2021) are committed but shelved while the visual
+  treatment is refined. Diffuse and emission nebulae are not
+  currently modelled.
 
 ## For developers
 
-Most users won't need this section — the deployed site at
+Most users won't need this section: the deployed site at
 [stellata.xyz](https://stellata.xyz) is the whole product. This is
 how to run it locally.
 
@@ -171,10 +172,9 @@ cd stellata
 npm install
 ```
 
-All catalogue source files are included in the repo — no manual
+All catalogue source files are included in the repo, no manual
 downloads needed. The dust voxel chunks (~120 MiB total) and stellar
-catalogue ride on Git LFS, so make sure that's installed before
-cloning.
+catalogue ride on Git LFS.
 
 ### Running
 
@@ -199,20 +199,6 @@ source CSV has changed) and starts Vite on
 | `npm run test:coverage`   | Vitest run with v8 coverage report                     |
 | `npm run deploy`          | `wrangler deploy` (requires Cloudflare auth)           |
 
-### Deploying to Cloudflare Workers
-
-`wrangler.toml` is configured to serve `dist/` via the Workers
-static-assets binding. After authenticating wrangler:
-
-```bash
-npm run build
-npm run deploy
-```
-
-No additional services (R2, KV, D1) are used — the ~13 MB catalog
-binary and the ~13 MB JSON search index ship as static assets
-alongside the HTML/JS. Both compress well (~2 MB each gzipped).
-
 ### Project documentation
 
 - **[CLAUDE.md](./CLAUDE.md)** — project conventions, folder layout,
@@ -233,7 +219,7 @@ warmly welcomed.
 
 ## Contributing
 
-The issue tracker is open — bug reports and enhancement suggestions
+The issue tracker is open. Bug reports and enhancement suggestions
 are welcome. External pull requests are not currently accepted; see
 [`.github/CONTRIBUTING.md`](.github/CONTRIBUTING.md) for the full
 rationale and how to write a useful bug report or feature request.

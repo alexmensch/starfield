@@ -7,12 +7,12 @@ licensing posture for the project.
 ## TL;DR
 
 - **Issues: yes, please.** Bug reports and enhancement suggestions
-  are genuinely appreciated.
+  are very much appreciated.
 - **Pull requests: not currently accepted from outside contributors.**
   GitHub's "Collaborators only" PR setting is enabled, so the PR
   button is hidden for non-collaborators. If you have a fix or a
-  patch in mind, file an issue — code snippets and proposed patches
-  inside an issue are completely welcome (see below).
+  patch in mind, file an issue. Code snippets and proposed patches
+  inside an issue are welcome (see below).
 
 ## Why no external PRs?
 
@@ -20,9 +20,9 @@ Stellata is a solo, design-led project. The code is small enough,
 and the visual / physical-modelling decisions interlock enough, that
 reviewing and integrating external patches takes longer than just
 implementing the fix myself once the problem is well-described. The
-no-PR policy keeps expectations clear on both sides — it's not
+no-PR policy keeps expectations clear on both sides: it's not
 that contributions aren't valued, it's that the bottleneck is
-design alignment, not typing speed.
+design alignment.
 
 This may change as the project grows. The current setting is
 deliberate and revisited periodically.
@@ -45,7 +45,7 @@ Beyond the URL, what matters most is:
 Optional but welcome:
 
 - **A proposed fix or code snippet.** If you've already dug into the
-  cause and have an idea, please share it in the issue body — I'd
+  cause and have an idea, please share it in the issue body, I'd
   much rather read your analysis than guess.
 - Browser + OS, especially for rendering, gesture, or layout bugs.
 - Console errors, if any.
@@ -62,7 +62,7 @@ For enhancement requests, the more concrete the better:
 - **What data set or source you're proposing**, if the feature
   involves new astronomical data. Stellata's data-fidelity
   principle (see [SCIENCE.md](../SCIENCE.md)) means every new
-  object class needs a published, observational source — please
+  object class needs a published, observational source. Please
   identify the catalogue, paper, or DOI you have in mind.
 - **Why it would be valuable.** This isn't a gate, but it helps
   prioritise.
@@ -77,7 +77,7 @@ The current contribution posture is:
   you license that code under AGPL-3.0-or-later, per [GitHub's
   Terms of Service section D.6](https://docs.github.com/en/site-policy/github-terms/github-terms-of-service#6-contributions-under-repository-license).
 - **Provenance.** Please don't paste code you don't have the right
-  to license — code copied from a non-AGPL-compatible source, or
+  to license. Code copied from a non-AGPL-compatible source, or
   from your employer's codebase without permission, can't be
   accepted into the project even via an issue paste.
 - **Future relicensing.** The maintainer reserves the right to

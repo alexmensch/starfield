@@ -9,7 +9,7 @@ body:
       value: |
         Thanks for the suggestion. The more concrete and specific the request, the more likely it is to actually land.
 
-        Stellata's data-fidelity principle means every new astronomical object class needs a published, observational source — if your suggestion involves new data, please name the catalogue, paper, or DOI in the relevant field below. See [SCIENCE.md](../SCIENCE.md) for context.
+        Stellata's data-fidelity principle means every new astronomical object class needs a published, observational source. If your suggestion involves new data, please name the catalogue, paper, or DOI in the relevant field below. See [SCIENCE.md](../SCIENCE.md) for context.
 
   - type: textarea
     id: what
@@ -37,7 +37,7 @@ body:
     id: why
     attributes:
       label: Why it would be valuable
-      description: What does this enable that the current version doesn't? Helps with prioritisation; doesn't gate the request.
+      description: What does this enable that the current version doesn't? Helps me with prioritisation, doesn't gate the request.
       placeholder: ...
     validations:
       required: false
@@ -46,6 +46,6 @@ body:
     id: anything-else
     attributes:
       label: Anything else
-      description: Mockups, related issues, prior art in other tools, references.
+      description: Mockups, related issues, prior art in other tools, references, etc.
     validations:
       required: false
