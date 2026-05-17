@@ -316,6 +316,54 @@ If the CCDM file is absent the build logs and continues — the
 geometric pass still runs and chart mode still works, just with the
 ~14-pair coverage.
 
+## Reference epoch and proper motion
+
+Every stellar layer is a J2000.0 snapshot. The solar system is the
+only "now" layer in the scene. The two share a frame orientation
+(ICRS axes coincide with the J2000.0 equinox) but not a time.
+
+### Per-layer epoch
+
+| Layer | Epoch | How |
+|---|---|---|
+| Stars (`x0/y0/z0`) | J2000.0 (epoch + equinox) | AT-HYG's upstream README tags `ra`/`dec` as "epoch + equinox 2000.0". AT-HYG is a merge of Tycho-2, Hipparcos, and Gaia DR3 — Gaia DR3 is natively at J2016.0, so AT-HYG back-propagates Gaia rows to J2000.0 using their PM before tabulating. The catalog binary inherits whatever AT-HYG emitted. |
+| GCVS variables | n/a (period + amplitude only) | We never consume GCVS positions; the variable rides on its AT-HYG row via the HIP/HD cross-match, so position inherits J2000.0 transitively. |
+| Hipparcos CCDM | n/a (flag-only) | We consume `MultFlag` only, never position. |
+| Constellation stick figures | n/a (HIP-indexed) | Stellarium's polylines reference HIP IDs; geometry deforms to wherever AT-HYG places the figure stars, so the line endpoints inherit J2000.0 transitively. |
+| Local Group dwarfs | J2000.0 | Pace 2024 LVDB's `ra`/`dec` are J2000.0; the hand-curated overrides (LMC, SMC, M31, M33, Sgr dSph) likewise. Extragalactic distances are large enough that arcsecond-scale tangential drift over decades is invisible. |
+| Edenhofer 2023 dust | n/a (spatial grid in ICRS) | The voxel grid is ICRS-axis-aligned, so it shares orientation with everything else. Dust drift over decades is sub-pixel at the grid's 1.25 kpc / 512³ resolution. |
+| Solar system | Live UTC each frame | JPL Standish 1992 Keplerian elements evaluated at the current Julian Date; see `docs/solar-system.md` § Time `t` and the readout. |
+
+### `pm_*` columns are loaded into nothing
+
+The AT-HYG CSV carries `pm_ra`, `pm_dec`, and `pm_src` columns.
+`scripts/build-catalog.ts` and `scripts/catalog-pure.ts` never read
+them — `grep -n 'pm_ra\|pm_dec' scripts/` returns zero hits. The
+preprocessor reads only the precomputed Cartesian `x0/y0/z0` triple
+and ignores proper-motion data entirely. This is deliberate: no
+T-axis animation is currently supported (see SCIENCE.md §
+Modelling decisions deliberately not made).
+
+### Staleness consequence
+
+The J2000.0 snapshot is now ~26 years old. For the vast majority of
+stars (PM < ~100 mas/yr), the offset between catalog position and
+true present-day position is sub-arcsec to a few arcseconds —
+invisible at any reasonable FOV. A handful of high-PM neighbours
+have visibly drifted, however:
+
+| Star | PM (″/yr) | Offset at J2000 + 26.4 yr |
+|---|---|---|
+| Barnard's Star | ~10.36 | ~273 ″ ≈ 4.6 arcmin |
+| Kapteyn's Star | ~8.67 | ~229 ″ ≈ 3.8 arcmin |
+| Groombridge 1830 | ~7.05 | ~186 ″ ≈ 3.1 arcmin |
+| Lacaille 9352 | ~6.90 | ~182 ″ ≈ 3.0 arcmin |
+| 61 Cygni A | ~5.28 | ~139 ″ ≈ 2.3 arcmin |
+
+At constellation-scale FOV (10–30°) these are tiny but technically
+wrong; at close approach or in OBSERVE mode the highest-PM stars
+are visibly mis-located.
+
 ## Preprocessor idempotency
 
 `scripts/build-catalog.ts isUpToDate` skips rebuild if `catalog.bin`,

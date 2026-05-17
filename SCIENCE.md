@@ -563,9 +563,14 @@ science it relates to.
 - **IAU constellation boundary datasets.** Only the asterism lines are
   included — boundaries would be a separate Stellarium dataset and
   carry no visual benefit at the camera scales the app operates in.
-- **Time-series proper motion.** Positions are snapshot-only, with no
-  T-axis animation. AT-HYG carries proper-motion columns but we don't
-  use them.
+- **Time-series proper motion.** Positions are a J2000.0 snapshot,
+  no T-axis animation. AT-HYG carries `pm_ra`/`pm_dec` but the
+  preprocessor never reads them. ~26 years past J2000.0, the highest-PM
+  neighbours (Barnard's, Kapteyn's, Groombridge 1830, Lacaille 9352,
+  61 Cyg A) are visibly off by 2–5 arcmin from their current sky
+  positions; the rest of the catalog is well below an arcminute. Per-
+  layer epoch table and the staleness audit live in
+  `docs/build-and-data.md` § Reference epoch and proper motion.
 - **Spiral-arm overdensities** in the Milky Way volumetric background.
   The Reid et al. masers offer a maser-anchored spiral model that could
   ride atop the smooth disc profile, but the smooth band reads
