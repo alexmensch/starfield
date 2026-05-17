@@ -1,28 +1,10 @@
-// Heliopause boundary (stellata-3re.5).
+// Heliopause asymmetric-ellipsoid wireframe. Boundary dimensions and
+// apex orientation come from SCIENCE.md § Heliopause; construction
+// details in docs/solar-system.md § Heliopause boundary.
 //
-// Asymmetric ellipsoid wireframe centred on Sol — upwind boundary at
-// 122 AU (Voyager 1 crossing 2012-08-25), flanks at 115 AU (Voyager 2
-// crossing 2018-11-05), heliotail at 200 AU (IBEX/Cassini ENA estimate).
-// Apex direction: solar apex of motion through the local interstellar
-// medium, ICRS RA 17h53m, Dec +27.4° per Frisch & Slavin (2013).
-//
-// Construction: unit sphere → ShaderMaterial with Fresnel limb
-// darkening (alpha peaks at the silhouette where the view ray grazes
-// the surface, drops toward `FACE_ON_FLOOR` at the apex) → scale to
-// (115, 115, 161) AU → translate centre by 39 AU toward antiapex →
-// rotate +Z onto antiapex in ICRS. Result: upwind apex lands at
-// +122 AU along apex; downwind at -200 AU along apex.
-//
-// Front-side rendering: the camera sees the near hemisphere's front
-// faces from outside, and back-face culling hides the entire shell
-// when the camera sits inside (Sol focus, zoomed in). The shell only
-// reads as a 3D volume from the outside — by design, since from
-// inside there's nothing geometrically informative to show anyway.
-//
-// Static geometry — no `t` dependence on human timescales. Visibility
-// gated on focused star = Sol (the only planet-bearing host in v1).
-// Mesh + apex label live here; main.ts wires the SVG label via
-// `createHeliopauseLabel`.
+// Back-face culling hides the shell when the camera is inside — by
+// design. Mesh + apex label live here; main.ts wires the SVG label
+// via createHeliopauseLabel.
 
 import * as THREE from 'three';
 import type { Stellata } from '../stellata';
@@ -55,7 +37,7 @@ const UPWIND_APEX_AU = SEMI_MAJOR_AU - CENTRE_OFFSET_AU; // 122
 const SPHERE_W_SEGMENTS = 64;
 const SPHERE_H_SEGMENTS = 32;
 
-// Same dim chrome family as the per-planet orbit rings (3re.7) so the
+// Same dim chrome family as the per-planet orbit rings so the
 // solar-system layer reads as a single coherent visual layer. Limb
 // (silhouette) alpha is the peak; face-on geometry receives only a
 // small fraction of it so the upwind apex region doesn't paint the
@@ -95,7 +77,7 @@ export const HELIOPAUSE_LABEL_ELEMENT_ID = 'heliopause-label';
  *  Predicate: a planet system is focused, chart mode is off, and at
  *  least one orbit ring is currently drawn. In v1 the only attached
  *  planet host is Sol, so "focused planet system" effectively means
- *  "Sol focused"; once stellata-bk5 attaches exoplanet hosts the
+ *  "Sol focused"; once the exoplanet epic attaches exoplanet hosts the
  *  apex visibility will need to additionally require Sol-host —
  *  flag at that bead, don't pre-empt here. */
 export function isHeliopauseApexVisible(stellata: Stellata): boolean {
@@ -174,7 +156,7 @@ export class Heliopause {
   }
 
   /** Chart (mono / paper) mode hides the heliopause — chart-mode renders
-   *  its own paper-aesthetic visualisation if/when stellata-m40 cares to
+   *  its own paper-aesthetic visualisation if/when chart-mode cares to
    *  cover this layer (currently it does not). */
   setMonochrome(on: boolean): void {
     this.mono = on;

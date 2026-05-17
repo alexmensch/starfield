@@ -80,8 +80,8 @@ threshold gate. Lines paint on top in these cases:
    worth a cutout. Threshold: `DISC_THRESHOLD_PX` in `disc-mask.ts`.
 2. **Close-disc star that has never been focused and is not a vertex of
    the highlighted constellation** (e.g. drifting past a bright star
-   post-warp). Tracked as `stellata-9mm.182` (deferred); requires a
-   spatial scan over close stars rather than the catalog at large.
+   post-warp). Requires a spatial scan over close stars rather than the
+   catalog at large — deferred.
 3. **Renderable-mag gate hides the disc but the mask still cuts** — the
    mask circle uses `renderedSizePx`, which mirrors shader math. If the
    disc is magnitude-gated out, the cutout still appears but reveals an

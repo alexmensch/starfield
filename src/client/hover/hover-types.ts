@@ -1,4 +1,4 @@
-// Shared types for the hover-label engine (stellata-lo5).
+// Shared types for the hover-label engine.
 //
 // One engine, many providers. Each renderable layer (stars, Sol planets,
 // Local Group wireframes, heliopause apex, …) implements `HoverProvider`
@@ -18,7 +18,7 @@
 // `hostStarIdx` is an optional sub-layer identity slot used by providers
 // whose `idx` alone doesn't pin a unique object — currently the planet
 // provider (a planet is identified by `(hostStarIdx, planetIdx)`,
-// future-ready for stellata-bk5 multi-host). Layers whose `idx` is
+// future-ready for the exoplanet epic multi-host). Layers whose `idx` is
 // already a unique catalog row (stars, Local Group, clouds, the lone
 // heliopause apex) leave it `undefined`; the engine doesn't read it,
 // only the originating provider's `format` does.
@@ -31,7 +31,7 @@ export type HoverHit = {
 
 // What the engine renders into the tooltip. Same shape star hover has
 // today (name + sub-lines); every class formats to this contract.
-// Keep lines short (≤ 5 entries per stellata-lo5 design gate).
+// Keep lines short (≤ 5 entries).
 export type HoverPayload = {
   name: string;
   lines: string[];

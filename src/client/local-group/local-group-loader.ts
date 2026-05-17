@@ -26,7 +26,7 @@ export interface LgCatalog {
 /** Longest of the three local-frame semi-axes — the conservative upper
  *  bound on the object's projected silhouette radius regardless of
  *  orientation. Used by the apparent-size label ranking in local-group.ts
- *  and the hover pickbox in LocalGroupLayer.pick (stellata-lo5.5). */
+ *  and the hover pickbox in LocalGroupLayer.pick. */
 export function maxSemiAxisPc(obj: Pick<LgObject, 'axes'>): number {
   return Math.max(obj.axes[0], obj.axes[1], obj.axes[2]);
 }

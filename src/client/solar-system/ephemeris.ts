@@ -7,15 +7,14 @@
 // Why JPL Standish over the full VSOP87 series: VSOP87 gives sub-arcsec
 // accuracy ±4000 years, but planets in stellata render as billboarded
 // discs at a pixel-size floor — sub-arcminute precision is invisible at
-// any zoom we afford. Standish gives us the same visual fidelity at zero
+// any zoom we afford. Standish gives the same visual fidelity at zero
 // dependency cost (~50 lines + an 8-row element table) over a slightly
-// narrower validity window. Deep-time follow-up: stellata-1gh.
+// narrower validity window.
 //
 // Returned positions are heliocentric **ecliptic** parsecs, NOT ICRS —
-// the rotation onto ICRS happens in the caller (planet-body-field.ts) via the
-// per-host orbital-plane orientation quaternion, so Sol naturally lands
-// in the ecliptic and other hosts (stellata-bk5 exoplanets) land in the
-// galactic plane per stellata-3re.8.
+// the rotation onto ICRS happens in the caller (planet-body-field.ts)
+// via the per-host orbital-plane orientation quaternion (Sol lands in
+// the ecliptic; exoplanet hosts default to the galactic plane).
 
 import { AU_PC } from './astronomy-constants';
 import { tToJDE } from './time';
@@ -26,7 +25,7 @@ const J2000_JD = 2451545.0;
 // Cache granularity for per-`t` recompute. Sub-minute planet motion at the
 // billboarded-disc pixel scale is invisible (Mercury moves ~3e-5 rad as
 // seen from Earth in 60s — ~8 arcsec, well below pixel resolution at any
-// zoom). Future animated time scrubbers (stellata-nmu) that want smoother
+// zoom). Future animated time scrubbers that want smoother
 // motion can reduce this; the caller checks the bucket before uploading
 // to the GPU.
 const CACHE_GRANULARITY_SEC = 60;

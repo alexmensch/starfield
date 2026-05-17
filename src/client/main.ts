@@ -69,7 +69,7 @@ async function main() {
       // a few hundred KB; null if the artifact is missing (fresh checkout
       // without `npm run build:clouds`).
       loadClouds(`${import.meta.env.BASE_URL}clouds.json`),
-      // Local Group wireframes (stellata-38m). ~20 KB JSON; null if
+      // Local Group wireframes. ~20 KB JSON; null if
       // the artifact is missing (fresh checkout without
       // `npm run build:local-group`). No-op layer in that case —
       // outlines simply don't render.
@@ -179,7 +179,7 @@ async function main() {
     // Apply any URL state before starting the URL writer so we don't echo
     // the same params back into history on load. With no `?v=`, fall back
     // to the canonical first-load view (Sol focus, parked at 5 AU aimed at
-    // the galactic centre, HUD on, no constellation highlight) — stellata-vjm.
+    // the galactic centre, HUD on, no constellation highlight).
     if (!applyFromUrl(stellata, idMaps)) {
       applyFirstLoadView(stellata, idMaps);
     }
@@ -200,14 +200,9 @@ async function main() {
       stellata,
     });
 
-    // Hover-label engine (stellata-lo5). Star, planet, heliopause apex,
-    // and (when the catalog is present) Local Group providers register
-    // here. Every provider mirrors the renderer's "is this drawn?"
-    // predicate as its visibility gate — visibility ⇒ hoverable per
-    // stellata-lo5-hover-conventions Rule 2; no focus / mode gates.
-    // Provider order is irrelevant — the disambiguator picks the winner
-    // across all providers per the prime>fallback / closest-camera-wins
-    // rule.
+    // Each hover provider mirrors the renderer's "is this drawn?"
+    // predicate as its visibility gate — visibility ⇒ hoverable; no
+    // focus / mode gates. Provider order is irrelevant.
     const starHoverProvider = createStarHoverProvider({
       stellata,
       context: {

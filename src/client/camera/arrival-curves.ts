@@ -1,45 +1,9 @@
-// Hybrid arrival profile consumed by `camera-motion.ts`'s `tickArrival`
-// log-distance formula `d(u) = d0 · (dEnd/d0)^f(u)`. `f(u)` is built
-// in REAL DISTANCE SPACE from a two-regime trajectory then returned as
-// the log-d equivalent, so the consumer line is unchanged.
-//
-// Two regimes:
-//
-//   • Outer (u ∈ [0, u_seam]):  piecewise-quadratic on LINEAR distance
-//     from d0 to d_seam.  Matches the pre-2br.3 main-branch
-//     "rocket impulse" feel — constant linear acceleration to τ = 0.5,
-//     constant linear deceleration after.  Visual cue is background-
-//     star parallax sweep.
-//
-//   • Inner (u ∈ [u_seam, 1]):  quintic smootherstep on ANGULAR SIZE
-//     θ = R/d from θ_seam = R/d_seam to θ_end = R/d_end.
-//     S′(0) = S′(1) = 0 and S″(0) = S″(1) = 0, so the regime arrives
-//     with zero velocity AND zero acceleration — clean perceptual
-//     standstill.  Visual cue is destination disc growth.
-//
-// Both regimes arrive at the seam at v = 0, so the handoff is
-// velocity-continuous without the "match non-zero velocities at a
-// dWindow" constraint that killed the previously-rejected dWindow
-// split design (see `docs/camera-arrival.md`).
-//
-// `seam_k = d_seam / d_end` is the only user-tunable knob.  Default
-// 100, slider range 0–2000.  seam_k ≤ 1 (d_seam at or inside park)
-// degenerates to pure outer — useful as a comparison baseline (matches
-// the legacy main-branch warp's piecewise-quad on linear-d).
-//
-// Fallback: cubic-Hermite smoothstep on log-d.  Fires when
-// `targetRadius` is null (clouds — no single geometric radius),
-// when the trajectory is outbound (d_end > d0, e.g., unfocus), or
-// when no context is supplied at resolve time.
+// Hybrid arrival profile consumed by camera-motion.ts's tickArrival
+// log-d formula. See docs/camera-arrival.md § Profile for the
+// two-regime construction (linear-d outer + angular-size inner) and
+// the seam_k knob. Falls back to cubic-Hermite log-d for outbound
+// trajectories, null targetRadius, or no resolved context.
 
-/** Per-warp context the hybrid curve needs in order to resolve its
- *  trajectory.
- *
- *  `targetRadius == null` for kinds without a single geometric radius
- *  (clouds, future opaque ensembles); the hybrid then silently falls
- *  back to cubic-Hermite log-d.  Same effect when the trajectory is
- *  outbound (`dEnd > d0`) — the seam concept only makes sense for an
- *  approach. */
 export interface ArrivalCurveContext {
   d0: number;
   dEnd: number;
@@ -65,19 +29,9 @@ export function cubicHermite(u: number): number {
   return u * u * (3 - 2 * u);
 }
 
-/** The u-value at which the outer→inner handoff fires.
- *
- *  Sentinel return values:
- *    `1` — pure-outer regime (seam_k ≤ 1, no meaningful inner).
- *    `0` — pure-inner regime (d_seam ≥ d0, no meaningful outer).
- *   `-1` — hybrid falls back to cubic-Hermite (no regime split applies).
- *
- *  Otherwise returns a value in `[HYBRID_U_SEAM_MIN, HYBRID_U_SEAM_MAX]`.
- *
- *  Consumers use this for two things: live debug indicators (which
- *  regime is the camera in right now?) and the eased-u dispatch inside
- *  `easeHybrid`.  Exported so the warp panel readout can compute the
- *  same value `easeHybrid` does without re-deriving the formula. */
+/** Outer→inner handoff u-value. Sentinels: `1` pure-outer, `0`
+ *  pure-inner, `-1` cubic-Hermite fallback. Otherwise in
+ *  [HYBRID_U_SEAM_MIN, HYBRID_U_SEAM_MAX]. */
 export function hybridUSeam(
   d0: number,
   dEnd: number,
@@ -89,7 +43,7 @@ export function hybridUSeam(
   const dSeamRaw = seamK * dEnd;
   // seam_k ≤ 1 puts d_seam at or inside parkDist — there's no
   // meaningful inner regime.  Run pure linear-d piecewise-quad across
-  // the full warp (degenerates to the pre-2br.3 main-branch behaviour,
+ // the full warp (degenerates to the pre- main-branch behaviour,
   // a useful comparison baseline).
   if (dSeamRaw <= dEnd) return 1;
   // d_seam ≥ d0 — already inside the seam radius at warp start.  Skip
@@ -99,14 +53,9 @@ export function hybridUSeam(
   return Math.min(Math.max(uSeamRaw, HYBRID_U_SEAM_MIN), HYBRID_U_SEAM_MAX);
 }
 
-/** Hybrid two-regime arrival profile.  See module docstring for the
- *  geometry and `docs/camera-arrival.md` § Profile for the design
- *  rationale and the worked numerical examples.
- *
- *  Returns the log-d-equivalent eased-u value:
- *      `f(u) = log(d_target(u) / d0) / log(d_end / d0)`
- *  so the consumer (`tickArrival`'s `d(u) = d0 · (d_end/d0)^f(u)` line)
- *  stays unchanged. */
+/** Hybrid two-regime arrival profile — returns log-d-equivalent
+ *  eased-u so the tickArrival consumer line is unchanged. See
+ *  docs/camera-arrival.md § Profile. */
 export function easeHybrid(
   u: number,
   d0: number,

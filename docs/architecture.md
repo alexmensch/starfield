@@ -105,8 +105,7 @@ path Sol/GC label clicks use.
 
 ## Warp controller (`camera/warp-controller.ts`)
 
-`WarpController` owns the 3-phase warp FSM extracted from `stellata.ts`
-in stellata-9mm.194.5:
+`WarpController` owns the 3-phase warp FSM:
 
 1. **Reorient** — quaternion slerp + radial easing around the source
    anchor, ending with the camera on the A→B line outside the source's
@@ -154,8 +153,7 @@ for the shared Fly arrival profile.
 
 ## Aim controller (`camera/aim-controller.ts`)
 
-`AimController` owns the two aim-slerp state machines extracted from
-`stellata.ts` in stellata-9mm.194.4:
+`AimController` owns the two aim-slerp state machines:
 
 - **navigate slot** — orbits the camera around `controls.target` at
   constant radius, slerping two quaternions that rotate `WARP_BASE_DIR`
@@ -187,8 +185,7 @@ transition themselves.
 
 ## ObserveTransition (`camera/observe-transition.ts`)
 
-`ObserveTransition` owns the navigate↔observe mode-switch orchestrator
-extracted from `stellata.ts` in stellata-9mm.194.6:
+`ObserveTransition` owns the navigate↔observe mode-switch orchestrator:
 
 - **`enter` kind** — animated navigate → observe entry. Lerps
   `camera.position` from its current pose to the focal-star local origin
@@ -254,8 +251,7 @@ controller honours.
 
 ## FocusController (`camera/focus-controller.ts`)
 
-`FocusController` owns the focus FSM and the focus-park lerp,
-extracted from `stellata.ts` in stellata-9mm.194.8:
+`FocusController` owns the focus FSM and the focus-park lerp:
 
 - **Focus state** — `focusedStar`, `focusedCloud`, `focusedPlanetSystem`,
   `planetSystemToken`. Mutually exclusive (star ↔ cloud); the second

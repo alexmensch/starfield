@@ -1,7 +1,5 @@
-// Pure helpers for the typeahead dropdowns (the star/cloud picker in
-// `search.ts` and the constellation picker in
-// `constellation-typeahead.ts`). The DOM glue itself lives in
-// `typeahead.ts` (the unified `Typeahead<T>` class — stellata-xbj).
+// Pure helpers for the typeahead dropdowns. DOM glue lives in
+// `typeahead.ts` (the unified `Typeahead<T>` class).
 
 // Sized so the wraparound point matches what the 320px max-height +
 // ~30px row height actually shows on screen, so users don't arrow-nav

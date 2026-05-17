@@ -1,60 +1,12 @@
-// Global planet-body field (stellata-3re.15 / 3re.16 / bk5 prep).
+// Global planet-body field: one InstancedBufferGeometry holds every
+// attached host's planet bodies (host-agnostic so per-host cost stays
+// bounded). Bodies are physical objects rendered regardless of focus;
+// gating is per-planet apparent magnitude + a per-host distance cull.
 //
-// One instanced mesh holding every attached host's planet bodies. v1
-// attaches Sol once at startup; the exoplanet epic (stellata-bk5)
-// will iterate through additional hosts as their per-star
-// PlanetSystem shards land.
-//
-// # Why a global field instead of per-host instances
-//
-// Bodies are PHYSICAL objects — they exist whether or not the camera
-// is focused on their host. Per the unfocus-split rule (3re.15) we
-// keep them rendering when the host loses focus, gated only by:
-//   • per-planet apparent-magnitude visibility (3re.16);
-//   • a per-host distance cull (CPU-side optimisation that skips the
-//     ephemeris + buffer upload for hosts whose brightest planet is
-//     already below the slider cutoff at the current camera distance).
-//
-// At bk5 scale (potentially hundreds of attached hosts) we cannot
-// afford per-host THREE.Mesh instances. One InstancedBufferGeometry
-// holds all of them; the per-host distance cull handles the bulk
-// rejection.
-//
-// # Render passes
-//
-// Five materials share the geometry. Three mirror the star pipeline
-// (core / disc / glow) — same uRenderMode 2/1/0, same gates, same
-// halo-depth trick. The other two are a corrupt+restore pair around
-// the orbit ring layer (planet-only, stellata-3re.19):
-//   • disc    — per-channel-max, depth-write on (close-range resolved)
-//   • glow    — additive, depth-test on (distant point glow)
-//   • core    — depth-only mask at -4, colorWrite off (occludes
-//               background layers behind close planet cores)
-//   • corrupt — depth-only at 1.5; writes gl_FragDepth = 0.0 across the
-//               planet's core region (glow >= uCoreThreshold). Forces
-//               the orbit ring at renderOrder 2 to depth-fail regardless
-//               of its 3D position — so near-side ring segments that
-//               would otherwise pass the depth test are hidden too.
-//   • restore — depth-only at 2.5; writes the planet's actual depth
-//               (gl_FragCoord.z) back across the same core region so
-//               disc / glow at 3 / 4 still depth-test correctly against
-//               other planets and stars. depthFunc: AlwaysDepth so it
-//               can overwrite the 0.0 the corrupt pass wrote.
-//
-// Why planets diverge from the star pipeline's 3-pass shape: the
-// planet's orbit ring physically passes through the planet's body at
-// the planet's current position, and the user wants the planet to
-// read as a solid 2D blob bisecting the ring — from any angle, not
-// just behind. Pure depth-test occlusion can't express that (near-side
-// rings legitimately have smaller depth), hence the corrupt+restore
-// trick. Stars don't have any layer that obviously wants this; the
-// equivalent question for stars (galactic gridlines / distance-vector
-// chevrons through a foreground star's halo) is filed as
-// stellata-9mm.180.
-//
-// uRenderMode is the only divergent uniform. Everything else
-// (apparent-mag math, view-space distances, perceptual-disc shaping)
-// is computed once per quad regardless of which pass is drawing it.
+// Five materials share the geometry — three mirror the star pipeline
+// (core / disc / glow) and two are the planet-only corrupt+restore
+// pair around the orbit ring layer. See docs/solar-system.md § orbit
+// ring corrupt+restore and docs/rendering.md § render-order table.
 
 import * as THREE from 'three';
 import type { PlanetSystem } from './planet-system';
@@ -548,9 +500,9 @@ export class PlanetBodyField {
   }
 
   /**
-   * Hover-engine pick path for the planet layer (stellata-lo5.4). Walks
+   * Hover-engine pick path for the planet layer. Walks
    * EVERY attached host's planets — the rule per
-   * [[stellata-lo5-hover-conventions]] is "visibility ⇒ hoverable", so
+   * the hover conventions is "visibility ⇒ hoverable", so
    * focus state plays no part in the gate. v1 only attaches Sol, so the
    * loop has one host to traverse; bk5 will iterate any registered
    * exoplanet host that has live `iLocalRel` data.

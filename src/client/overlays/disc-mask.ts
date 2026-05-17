@@ -5,32 +5,14 @@ import { projectToScreen } from './overlay-project';
 import { selectMaskCandidates } from './disc-mask-pure';
 import { setNumAttr } from './dirty-attr';
 
-// Per-frame SVG mask updater. Overlays that should appear BEHIND any close
-// rendered-disc star apply `mask="url(#disc-occlude-mask)"`. This module
-// keeps the mask's cutout circles aligned with the currently visible discs.
+// Per-frame SVG mask updater. Overlays using mask="url(#disc-occlude-mask)"
+// render BEHIND close rendered-disc stars. Cutouts are placed for the
+// most-recently-focused star + its binary companion (lastFocused, not
+// current, so Esc-unfocus doesn't drop the mask while the disc is still
+// visible — placeSlot self-evicts when the disc shrinks) plus every
+// highlighted-constellation vertex whose disc exceeds the threshold.
 //
-// Cutouts are placed for:
-//   1. The most-recently-focused star + its binary companion. We track the
-//      last focused index rather than the *current* focused index so that
-//      Esc-unfocusing doesn't drop the mask while the camera is still close
-//      enough to render the disc — the bug stellata-rmo reports. The stale
-//      entry self-evicts naturally: placeSlot returns false once the disc
-//      shrinks below the threshold, so as the camera pulls away the mask
-//      circle quietly goes to r=0.
-//   2. Every vertex star in the highlighted constellation whose disc still
-//      exceeds the threshold. Catches close vertices that were never the
-//      focal star (e.g. binaries where the user focused the secondary).
-//      Iterating the highlighted constellation (rather than scanning the
-//      full catalog) bounds work to the dozens of vertex stars per
-//      constellation, since only a star at a line endpoint can intersect
-//      the painted segments.
-//
-// Not covered: a close-disc star that has never been focused and is not a
-// vertex of the highlighted constellation — e.g. drifting past a bright
-// star post-warp without focusing it. Closing that class requires a
-// spatial scan over close stars rather than the catalog at large; tracked
-// as stellata-9mm.182 (deferred). The index-selection contract is
-// unit-tested in disc-mask-pure.test.ts.
+// Selection contract pinned in disc-mask-pure.test.ts.
 const DISC_THRESHOLD_PX = 48;
 // Soft cap on the cutout pool. Today's ceiling is the largest Stellarium
 // asterism (~40 vertices) + 2 for focal + companion; 64 leaves headroom

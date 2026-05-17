@@ -1,39 +1,9 @@
-// FocusController — extracted from stellata.ts (stellata-9mm.194.8).
-// Owns the focus FSM (focusedStar / focusedCloud / focusedPlanetSystem),
-// the focus-park lerp slot, pin-engage geometry, and the per-kind
-// FocusTarget factories. Absorbs the FocusOps shim WarpController has
-// been carrying since 9mm.194.5; one import line update each on
-// WarpController and ObserveTransition.
+// Focus FSM + focus-park lerp + pin-engage geometry. Cross-controller
+// coupling: WarpController and ObserveTransition consume `FocusOps`.
+// The frame-anchor primitive (recenterOrigin / worldOffset /
+// starLocalPosition) stays on Stellata via `FrameAnchor`.
 //
-// Public entry points map 1:1 to the prior Stellata methods:
-//
-//   setFocus(idx)                  — star focus FSM (clears cloud first)
-//   setFocusedCloud(idx)           — cloud "soft focus"
-//   focusStar(idx, opts)           — click/select-driven focus + park lerp
-//   flyToCloud(idx, opts)          — cloud-side analogue of focusStar
-//   setOrbitTarget(idx)            — orbit pivot + focus, camera stays put
-//   setOrbitTargetCloud(idx)       — cloud-side analogue
-//   unfocus(opts)                  — animated zoom-out + clear focus
-//   recenterFocusToStar(idx)       — floating-origin pivot to a star
-//   tick(nowMs)                    — drives the focus-park lerp
-//
-// Cross-controller coupling lives behind the `FocusOps` interface — the
-// canonical home is now this module; warp-controller.ts and
-// observe-transition.ts import it from here. The frame-anchor primitive
-// (`recenterOrigin`, `worldOffset`, `starLocalPosition`) stays on
-// Stellata, threaded in through the `FrameAnchor` dep — cleaner
-// extraction is coupled to the StarPipeline extract (9mm.43) and
-// deferred until then.
-//
-// Bus events emitted from here:
-//   'focus' (number | null), 'cloudFocus' (number | null),
-//   'planetSystem' (PlanetSystem | null), 'focusLerp' (boolean),
-//   'cameraMode' (CameraMode — from setFocus's observe-cleanup branch),
-//   'state' (at every focus mutation + the focus-lerp edges).
-//
-// Docs: docs/architecture.md (FocusTarget contract, pin-to-center,
-// floating origin), docs/camera-warp.md (warp callers), docs/camera-
-// observe.md (observe callers).
+// See docs/architecture.md § FocusTarget contract.
 
 import * as THREE from 'three';
 import type { TrackballControls } from 'three/examples/jsm/controls/TrackballControls.js';
@@ -84,14 +54,14 @@ export const PIN_ENGAGE_THRESHOLD_SQ_PC = 1e-12;
 /** Floor on a catalog `physicalRadius[idx]` (in solar radii) before
  *  converting to parsecs (`* R_SUN_PC`). Keeps R > 0 in geometric
  *  formulas. Six pre-existing sites floor the same quantity at 1e-9 or
- *  1e-6 inconsistently (stellata-9mm.195); migrate them off the literals
+ *  1e-6 inconsistently; migrate them off the literals
  *  as part of that bead, not here. */
 const MIN_PHYSICAL_RADIUS_R_SUN = 1e-9;
 
 /** Floating-origin primitive — stays on the integration shell so the
  *  star-pipeline buffer rewrite + `iPositionAttr.needsUpdate` happen
  *  next to the resources they touch. Cleaner extraction is coupled to
- *  the StarPipeline extract (9mm.43). */
+ * the StarPipeline extract. */
 export interface FrameAnchor {
   recenterOrigin(newOrigin: THREE.Vector3): THREE.Vector3 | null;
   getWorldOffset(): Readonly<THREE.Vector3>;
@@ -214,7 +184,7 @@ export class FocusController implements FocusOps {
    *  live state.
    *
    *  The warp guard releases when `warp.isRecenteredToDest()` is true:
-   *  after the mid-Fly recentre (stellata-2br.5) the destination is at
+   *  after the mid-Fly recentre the destination is at
    *  local (0,0,0) and the camera is doing `lookAt(local origin)` per
    *  frame. focus-park lerp stays guarded — that path slerps through a
    *  non-lookAt arc where pin-to-centre would snap the focal star to
@@ -296,7 +266,7 @@ export class FocusController implements FocusOps {
     // worldOffset alone — the camera is wherever it was, and continuing
     // to render in the (former focal star's) local frame keeps every
     // close-orbit precision invariant intact across the focus → unfocus
-    // transition (stellata-a7d.2.11).
+    // transition.
     if (idx !== null) {
       this.recenterFocusToStar(idx);
       // After recenterOrigin, the focused star is at local (0,0,0). Snap
@@ -363,7 +333,7 @@ export class FocusController implements FocusOps {
   // Reload the focused star's planet system. Called from every code path
   // that mutates focusedStar (setFocus + makeStarFocusTarget.applyFocus).
   // The token guard drops a previous in-flight load if the focus changes
-  // again before the Promise resolves — relevant once stellata-bk5
+  // again before the Promise resolves — relevant once the exoplanet epic
   // introduces truly async fetches; for Sol the resolve happens on the
   // next microtask, ahead of the next animation frame.
   private refreshPlanetSystem(idx: number | null): void {
@@ -529,7 +499,7 @@ export class FocusController implements FocusOps {
    *  click-vector-tip. Routes through the same focus-park primitives
    *  (r9q.3) so the lerp-or-noop UX matches stars. `animate: false`
    *  (URL restore) snaps without a transition. setFocus(null) below
-   *  leaves worldOffset alone (a7d.2.11), so no frame-shift handling
+ * leaves worldOffset alone, so no frame-shift handling
    *  is needed here — target is `cloud.centerAbs - worldOffset` in the
    *  current local frame both before and after the focus clear. */
   flyToCloud(idx: number, opts: { animate?: boolean } = {}): void {
@@ -600,11 +570,10 @@ export class FocusController implements FocusOps {
     if (!clouds) return;
     const cloud = clouds.clouds[cloudIdx];
     if (!cloud) return;
-    // setFocusedCloud clears any star focus first. Since a7d.2.11,
-    // that doesn't recentre worldOffset back to Sol — the floating
-    // origin stays at the former focal star — so subtract worldOffset
-    // to translate the cloud's absolute centroid into the current
-    // local frame before assigning it as controls.target.
+    // setFocusedCloud clears any star focus first; that doesn't
+    // recentre worldOffset back to Sol — the floating origin stays at
+    // the former focal star — so subtract worldOffset to translate
+    // the cloud's absolute centroid into the current local frame.
     this.setFocusedCloud(cloudIdx);
     this.deps.controls.target.copy(cloud.centerAbs).sub(this.deps.frameAnchor.getWorldOffset());
     this.deps.controls.update();
@@ -636,7 +605,7 @@ export class FocusController implements FocusOps {
     // skips), and builds the 'exit' transition; setFocus(null)
     // afterwards clamps controls.minDistance and emits 'focus' so the
     // search box / overlays settle within the same frame. Since
-    // a7d.2.11 setFocus(null) doesn't recentre, so the animation runs
+ // setFocus(null) doesn't recentre, so the animation runs
     // in the (former focal star's) local frame.
     if (animate && this.deps.getCameraMode() === 'observe' && this.focusedStar !== null) {
       this.deps.getObserve().startExit({ animate: true, clearFocusOnExit: false });
@@ -645,7 +614,7 @@ export class FocusController implements FocusOps {
     }
     // Navigate-mode close-zoom unfocus: animate the camera back to the
     // former focal star's parking distance instead of teleporting
-    // (a7d.2.6). Skip when the camera is already further out than
+ //. Skip when the camera is already further out than
     // parkDistForStar (the acceptance "no-op when at or beyond the
     // floor" criterion), or when there's no focused star to anchor on.
     if (

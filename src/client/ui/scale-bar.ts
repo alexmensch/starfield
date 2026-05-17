@@ -147,7 +147,7 @@ export function createScaleBar(
     //                   camera has passed A. "Past A" is defined as
     //                   (camera − A) · normalize(B − A) > 0 — purely
     //                   trajectory-relative, so it stays stable under
-    //                   future curved-warp paths (a7d.2.9) that swing
+ // future curved-warp paths that swing
     //                   the camera attitude around without moving along
     //                   the axis.
     const display = pickDisplayTarget(stellata, starLabels);

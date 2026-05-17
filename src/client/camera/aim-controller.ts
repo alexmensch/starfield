@@ -1,28 +1,11 @@
-// AimController — extracted from stellata.ts (stellata-9mm.194.4).
-// Owns the two aim-slerp state machines that rotate the camera so a
-// chosen world point lands at view centre.
+// Aim-slerp state machines: rotate camera so a world point lands at
+// view centre. Navigate orbits around controls.target at constant
+// radius; observe holds camera position and slerps quaternion in place.
 //
-// Two branches, picked by the live camera-mode getter:
-//   - navigate: orbit around `controls.target` at constant radius. Slerps
-//     between two unit quaternions that map `WARP_BASE_DIR` to the start
-//     and end radial directions. TrackballControls is disabled for the
-//     duration so its damping doesn't fight the slerp; re-enabled on
-//     natural completion (NOT on `cancel()` — see below).
-//   - observe: camera position is fixed at the focal star's local origin.
-//     Slerps the live camera quaternion from its current pose to a
-//     lookAt-derived target. ObserveControls input is disabled for the
-//     duration so a stray drag doesn't fight the slerp; re-enabled on
-//     natural completion.
-//
-// Both branches share `aimDurationMs`: a linear ramp from `AIM_T_MIN_MS`
-// at trivial nudges to `AIM_T_MAX_MS` at a half-circle swing.
-//
-// `cancel()` is the supersession path used by warp.start and observe-exit:
-// it nullifies state but does NOT touch controls.enabled or call
-// observeControls.enable, because the caller is moving control elsewhere
-// (warp claims the camera; observe-exit hands the canvas back to
-// TrackballControls). Natural completion is the only path that re-enables
-// the surrendered input controller.
+// Each branch disables its host input controller for the duration and
+// re-enables on natural completion. `cancel()` is the supersession path
+// (warp.start / observe-exit): nullifies state but does NOT re-enable,
+// because the caller is moving control elsewhere.
 
 import * as THREE from 'three';
 import type { TrackballControls } from 'three/examples/jsm/controls/TrackballControls.js';

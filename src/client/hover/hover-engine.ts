@@ -1,4 +1,4 @@
-// Hover-label engine (stellata-lo5). Owns the canvas pointer listener,
+// Hover-label engine. Owns the canvas pointer listener,
 // the hover-delay timer, the provider registry, and the #tooltip render.
 //
 // Behaviour is byte-identical to the prior `bindHoverTooltip` for stars

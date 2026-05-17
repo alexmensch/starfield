@@ -4,37 +4,15 @@ import {
   resolveHybridCurve,
 } from './arrival-curves';
 
-// Warp-curve tuning section for the unified debug panel (mounted from
-// debug.ts). Exposes two surfaces:
+// Warp-curve tuning section for the unified debug panel. Module-level
+// mutable knobs read at startWarp time (changes take effect on the
+// next warp, not retroactively — captured behaviour stays
+// frame-coherent). Defaults match the shipped constants so until the
+// user drags a slider, behaviour is identical to a build without this
+// module loaded.
 //
-//   1. Module-level mutable knobs read by `startWarp` / `tryMidFlyRecentre`
-//      / the chart-mode plateau-trigger at warp start. Defaults match the
-//      shipped constants exported from `stellata.ts` — until the user
-//      drags a slider, behaviour is identical to a build without this
-//      module loaded.
-//
-//   2. Live readouts (current phase, elapsed, u, distances, recentre /
-//      plateau flags, last-warp summary) gated by section visibility.
-//      The per-frame `'frame'` subscription early-returns when the
-//      section is collapsed, so the cost when hidden is one boolean
-//      check per frame — no latch updates, no DOM writes, no allocations.
-//      Disposing the section unsubscribes from `'frame'` entirely; closing
-//      the panel is fully dark for this section.
-//
-// Workflow: open the panel via `debug.panel()` in the dev console, expand
-// the "Warp" section, drag sliders / pick a curve, run a warp. Knob reads
-// happen at `startWarp` time, so changes take effect on the next warp
-// (not retroactively on the in-flight one — captured behaviour stays
-// frame-coherent). When a knob set feels right, copy the displayed values
-// at the bottom of the section into the shipped constants in
-// `stellata.ts`.
-//
-// Audit note: deliberately avoids the "session-wide install" pattern in
-// `perf-hud.ts` (which keeps real `mark/measure/frame` running after
-// dispose) — see `stellata-9mm.190.1`. The dispose path here fully
-// detaches the per-frame subscription; the knobs retain their last set
-// values so reopening the panel resumes tuning, but no compute survives
-// dispose.
+// Per-frame readouts early-return when the section is collapsed, and
+// dispose fully detaches the subscription — no compute survives close.
 
 import {
   WARP_REORIENT_MS,
@@ -57,7 +35,7 @@ export const DEFAULT_CHART_PHASE3_ALPHA = 0.2;
 // The hybrid switches from a linear-d piecewise-quad outer regime to
 // a quintic-smootherstep on θ inner regime at d_seam from the
 // destination. seam_k ≤ 1 degenerates to pure outer (matches the
-// pre-2br.3 main-branch warp's piecewise-quad on linear-d) — useful
+// pre- main-branch warp's piecewise-quad on linear-d) — useful
 // at the low end of the slider for direct comparison.
 export const DEFAULT_ARRIVAL_HYBRID_SEAM_K = 100;
 
@@ -228,7 +206,7 @@ export function buildWarpSection(stellata: Stellata): WarpTuningSection {
 
   // Hybrid-curve seam distance multiplier: d_seam = seam_k · parkDist.
   // Default 100. Range starts at 0 — values ≤ 1 degenerate to pure
-  // linear-d piecewise-quad (matches the pre-2br.3 main-branch warp
+ // linear-d piecewise-quad (matches the pre- main-branch warp
   // exactly) and are useful for direct A/B comparison. Step 10 keeps
   // the slider granular at the low end where the perceptual difference
   // is largest.

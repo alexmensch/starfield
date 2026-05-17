@@ -1,39 +1,9 @@
-// ObserveTransition — extracted from stellata.ts (stellata-9mm.194.6).
-// Owns the navigate↔observe mode-switch orchestrator: the
-// ObserveTransitionState slot, the four animated kinds ('enter', 'exit',
-// 'unfocus' — plus 'exit' with clearFocusOnExit for the search-X path),
-// and the camera-mode FSM that ties them together.
+// Navigate↔observe mode-switch orchestrator. The 'unfocus' kind is
+// the navigate-mode close-zoom outbound lerp — shares state shape with
+// enter/exit but isn't an observe transition, so isActive / getProgress
+// exclude it; isAnyActive is the union used by Stellata.isCameraBusy().
 //
-// Public entry points map 1:1 to the prior Stellata methods:
-//
-//   setMode(mode, opts)                 — was setCameraMode
-//   startExit(opts)                     — was startObserveExit
-//   startUnfocusLerp(from, to, minDist) — was the inline observeTransition
-//                                         write inside Stellata.unfocus()
-//                                         (navigate-mode close-zoom)
-//   tick(nowMs)                         — was updateObserveTransition
-//
-// The 'unfocus' kind is reused for the navigate-mode close-zoom outbound
-// lerp (a7d.2.6). It shares state shape with 'enter'/'exit' but isn't an
-// observe transition — `isActive` / `getProgress` exclude it so overlays
-// that gate on observe visibility stay steady-state-navigate during it.
-// `isAnyActive` is the union, used by Stellata.isCameraBusy() so a new
-// camera-driving action can't fire while a close-zoom is mid-flight.
-//
-// Bus events emitted from here:
-//   'cameraMode': CameraMode — at every successful setMode + startExit
-//                              entry, in lock-step with the field write.
-//   'state'      — at every cameraMode emit, plus at startUnfocusLerp
-//                  + finishExit / finishEnter / finishUnfocus.
-//
-// Cross-controller coupling lives behind the `ObserveFocusOps` interface
-// — read-only focus inspection, the per-kind setFocus / setVector slots
-// the transition needs to nudge, plus parkDistForStar (the focal star's
-// effective minDistance, consumed by the 'exit' kind's toPos). 9mm.194.8
-// will hand the seam to FocusController in one import line.
-//
-// Docs: docs/camera-observe.md (the inherited contract); the inline
-// docblocks on each method are the canonical per-path notes.
+// See docs/camera-observe.md.
 
 import * as THREE from 'three';
 import type { TrackballControls } from 'three/examples/jsm/controls/TrackballControls.js';
@@ -51,7 +21,7 @@ import { warpArrivalEaseFn } from './warp-tuning';
 import { alignCameraUpToQuaternion } from './up-align-pure';
 
 /** Cross-controller seam consumed by ObserveTransition. Stellata
- *  implements this in 194.6; in 194.8 it migrates to FocusController and
+ * implements this in 194.6; in 194.8 it migrates to FocusController and
  *  the controller's import seam updates in one line. */
 export interface ObserveFocusOps {
   getFocusedStar(): number | null;
@@ -84,7 +54,7 @@ interface ObserveTransitionState {
   // minDistance along the camera's current backward direction; on
   // completion controls.target snaps to the focal star and
   // TrackballControls re-enables. 'unfocus' is the navigate-mode
-  // close-zoom outbound lerp (a7d.2.6): focus has already been cleared
+ // close-zoom outbound lerp: focus has already been cleared
   // when the lerp starts, the camera lerps from its close-orbit position
   // outward to the former focal star's parking distance, and on
   // completion controls.minDistance is tightened to that parking
@@ -104,7 +74,7 @@ interface ObserveTransitionState {
   // Park-arrival state for 'unfocus' (the outbound zoom from inside
   // parkDist back to the former focal star's park distance). Set only on
   // the unfocus path; tick() delegates that branch to tickArrival so
-  // 2br.3's log-distance profile can be swapped in by touching the
+ // 's log-distance profile can be swapped in by touching the
   // helper alone. enter/exit aren't park-arrivals (see
   // docs/camera-arrival.md § Inventory) and keep their inline
   // time-smoothstep.
@@ -285,7 +255,7 @@ export class ObserveTransition {
     this.deps.bus.emit('state');
   }
 
-  /** Navigate-mode close-zoom outbound lerp (a7d.2.6). The user has
+ /** Navigate-mode close-zoom outbound lerp. The user has
    *  unfocused from inside the focal star's park distance; instead of
    *  teleporting them outward to parkDist, lerp the camera position from
    *  `fromPos` (close-orbit pose) to `toPos` (along the camera→target
@@ -334,7 +304,7 @@ export class ObserveTransition {
     this.deps.bus.emit('state');
   }
 
-  /** Cancel an in-flight 'unfocus' lerp (a7d.2.6) so a new
+ /** Cancel an in-flight 'unfocus' lerp so a new
    *  camera-changing action (focus, warp, aim, click) can proceed without
    *  the lerp's next tick lerping the camera away from the action's
    *  destination. No-op for observe enter/exit transitions and when no
@@ -368,7 +338,7 @@ export class ObserveTransition {
    *
    *  'unfocus' is the navigate-mode outbound park-arrival; it shares the
    *  deceleration shape with focus-park and warp Fly via tickArrival so
-   *  2br.3's log-distance swap lands in one place. 'enter' / 'exit' are
+ * 's log-distance swap lands in one place. 'enter' / 'exit' are
    *  observe-mode handovers — endpoints are AT or near the focal star,
    *  not at parkDist — so they keep the inline time-smoothstep (see
    *  docs/camera-arrival.md § Inventory). */
@@ -431,13 +401,10 @@ export class ObserveTransition {
       // orientation and gives the user a sensible orbit pivot (the star
       // they just left) for any subsequent drag.
       //
-      // Origin frame at this point: since a7d.2.11, both branches
-      // (focus-retained exit and unfocus exit) leave worldOffset on the
-      // (former) focal star — setFocus(null) no longer recentres — so
-      // fromPos is the captured camera position in *that* local frame
-      // regardless of which path the user took. Setting target = (0,0,0)
-      // would point at the focal star's local origin and lookAt(target)
-      // would whip the camera around to face it; setting
+      // Both exit branches (focus-retained / unfocus) leave worldOffset
+      // on the former focal star — setFocus(null) doesn't recentre — so
+      // fromPos is the captured camera position in that local frame.
+      // target = (0,0,0) would whip the camera onto the focal star;
       // target = fromPos keeps lookAt a no-op.
       this.deps.controls.target.copy(state.fromPos);
       alignCameraUpToQuaternion(this.deps.camera);

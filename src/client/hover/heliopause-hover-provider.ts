@@ -1,8 +1,8 @@
-// Heliopause apex hover provider (stellata-lo5.6). Sibling of the
+// Heliopause apex hover provider. Sibling of the
 // star / planet / Local Group providers for the heliopause apex
 // marker.
 //
-// Visibility ⇒ hoverable per stellata-lo5-hover-conventions Rule 2:
+// Visibility ⇒ hoverable per hover Rule 2:
 // the provider does NOT gate on focused-host / mode state directly.
 // `Picker.pickHeliopauseHit` mirrors the renderer's "is the apex
 // label drawn?" predicate via the shared `isHeliopauseApexVisible`

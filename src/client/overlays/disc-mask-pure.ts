@@ -2,7 +2,7 @@
 // alongside the DOM-touching factory in disc-mask.ts; isolating the
 // dedup + ordering rules here keeps them vitest-covered so a regression
 // in the fan-in across focal/companion/constellation iteration can't
-// silently drop or double-count stars (stellata-9mm.107).
+// silently drop or double-count stars.
 
 export interface ConstellationLike {
   lines?: ReadonlyArray<ReadonlyArray<number>>;

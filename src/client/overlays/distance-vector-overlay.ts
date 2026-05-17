@@ -315,7 +315,7 @@ export function projectWithNearClip(
  * different pixel width, so the cache must be invalidated when the
  * webfonts settle — see attachFontsReadyInvalidation. Without that, the
  * right-edge clamp + warp affordance stay pinned to the fallback-font
- * measurement for the lifetime of the page (the 9mm.149 bug).
+ * measurement for the lifetime of the page (this bug).
  */
 export interface LabelWidthCache {
   text: string;

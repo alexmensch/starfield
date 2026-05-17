@@ -1,26 +1,7 @@
-// Lightweight always-callable instrumentation API. `mark`/`measure`/`frame`
-// are no-ops until `buildPerfSection()` runs once, so call sites can stay
-// unconditional. Install and teardown are symmetric: `buildPerfSection()`
-// rewires the exported functions to their real implementations; the
-// returned `dispose()` restores them to no-ops and clears all session
-// state (ring buffers, starts map, frame counter). Re-opening the panel
-// is a cold start — the previous session's history is gone. The cost
-// of perf instrumentation outside of an active tuning session needs to
-// be zero, and an always-on histogram-history mode is not worth the
-// per-tick Map ops + section-GC walk it incurs in `realFrame`.
-//
-// The visible HUD is opt-in via `debug.panel()` from the dev console —
-// deliberately not on a URL param or keyboard shortcut so
-// end users can't enable it by accident. Updates the DOM at ~5Hz so style
-// invalidation from the panel itself doesn't dominate measurements.
-//
-// DOM strategy: build the chrome (headline, table-header, row pool,
-// histogram bars) once at section-build time, then per tick only mutate
-// textContent and style on the existing nodes. The earlier
-// `panelEl.innerHTML = ...` rebuild reparsed every span (60 histogram
-// bars + N rows) every 200 ms even when values were unchanged — the
-// instrumentation panel itself was sometimes the most expensive section
-// it was measuring.
+// Always-callable instrumentation. mark / measure / frame are no-ops
+// until buildPerfSection() runs once; dispose() restores them to
+// no-ops and clears all session state. Re-opening the panel is a cold
+// start — out-of-session cost must be zero. See docs/performance.md.
 
 const RING_SIZE = 60;
 const DOM_UPDATE_MS = 200;

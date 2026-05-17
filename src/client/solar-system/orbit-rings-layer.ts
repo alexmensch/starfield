@@ -1,29 +1,11 @@
-// Per-planet orbit-rings layer (stellata-3re.7).
+// Per-planet orbit-rings — Keplerian ellipses for the focused host's
+// planet system, oriented by orbitalPlaneNormalFor (Sol = ecliptic,
+// everything else = galactic plane). One pixel-gap heuristic
+// suppresses inner rings when they pile up at far framings.
 //
-// Renders the focused host star's planet system as a set of Keplerian
-// ellipses, with the host at one focus and each ring oriented through
-// the per-host orbital-plane rule (Sol = ecliptic; everything else =
-// galactic plane, per stellata-3re.8). One pixel-gap visibility
-// heuristic suppresses inner rings when they pile up at far framings.
-//
-// Sol is the only host with planet data populated in v1, but the layer
-// is intentionally host-agnostic: stellata-bk5 will plug exoplanet
-// systems through the same Stellata 'planetSystem' event without
-// requiring any change in this file. The orbital plane normal is
-// resolved per-host via orbitalPlaneNormalFor().
-//
-// Sibling Sol-only decorations (heliopause shell, etc.) live in their
-// own layers; this file stays generic so it works for any planet-
-// bearing host.
-//
-// # Body rendering split
-//
-// Planet bodies do NOT live here — they're physical objects, rendered
-// by the global PlanetBodyField regardless of which host the camera
-// is focused on, gated only by per-planet apparent-magnitude (3re.16)
-// and per-host distance cull. The orbit rings, by contrast, are a
-// representational layer: they only render when their host is
-// focused (stellata-3re.15 / unfocus-split rule).
+// Host-agnostic — orbit rings are representational (only render on
+// host focus); planet bodies are physical and live in PlanetBodyField.
+// See docs/solar-system.md.
 
 import * as THREE from 'three';
 import type { PlanetSystem, Planet, PlanetType } from './planet-system';
@@ -38,7 +20,7 @@ const J2000_OBLIQUITY_RAD = (23.4392911 * Math.PI) / 180;
 
 /**
  * North ecliptic pole expressed in ICRS — the normal to Sol's orbital
- * plane. Per stellata-3re.8: `(0, sinε, cosε)`. Consumers receive a
+ * plane. Per the solar-system contract: `(0, sinε, cosε)`. Consumers receive a
  * cloned vector (the exported one is shared) — never mutate this in
  * place.
  */
@@ -81,7 +63,7 @@ interface PlanetRing {
 /**
  * Resolve the orbital plane normal for a host star. Sol's planets ride
  * the ecliptic (J2000 obliquity tilt against ICRS); every other host
- * defaults to the galactic plane (per stellata-3re.8).
+ * defaults to the galactic plane.
  *
  * `solIndex` is passed in rather than reading the catalog so this function
  * stays pure — easy to test, reusable from any layer that needs the
@@ -230,7 +212,7 @@ export class OrbitRingsLayer {
     this.group = new THREE.Group();
     // renderOrder = 2: sits between the planet CORRUPT pass (1.5) and
     // the RESTORE pass (2.5) — load-bearing, that's how near-side ring
-    // segments are masked by the planet body (stellata-3re.19). See
+    // segments are masked by the planet body. See
     // docs/rendering.md §RenderOrder ladder for the full cross-layer
     // hierarchy.
     this.group.renderOrder = 2;
@@ -308,7 +290,7 @@ export class OrbitRingsLayer {
   /**
    * Per-frame visibility update. The host always sits at the local
    * origin under the floating-origin recenter from setFocus(idx) (see
-   * stellata-3re.15 / unfocus-split: orbit rings only render when the
+   * the solar-system contract / unfocus-split: orbit rings only render when the
    * host is the focused star, by which point worldOffset = host's
    * absolute position).
    */
@@ -373,7 +355,7 @@ export class OrbitRingsLayer {
   /**
    * Chart (mono / paper) mode hides the rings — flat hard-edged orbital
    * ellipses are a chart-mode rendering decision tracked in
-   * stellata-m40.3, not this generic layer.
+   * chart-mode, not this generic layer.
    */
   setMonochrome(on: boolean): void {
     this.mono = on;

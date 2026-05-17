@@ -1,44 +1,13 @@
-// Per-planet phase functions for reflected-light apparent magnitude.
-//
-// Stellata's planet brightness model (3re.16) multiplies host-star
-// flux at the planet by `albedo · (R/d_vp)² · (d_vh/d_hp)² · φ(α)`,
-// where `φ(α)` is the dimensionless phase factor that captures how
-// brightness varies with phase angle α = ∠(viewer–planet–host).
-//
-// Two implementations:
-//
-//   • `lambertianPhaseFactor(α)` — `(sin α + (π − α)·cos α)/π`, the
-//     diffuse-sphere idealization. φ(0)=1, φ(π)=0. This is the
-//     default fallback for any planet without measured phase data,
-//     including every exoplanet (stellata-bk5) since their phase
-//     curves are not observable at the precision Mallama publishes.
-//
-//   • `mallamaPhaseFactor(coefs, α)` — empirical polynomial in α
-//     (degrees) from Mallama, Krobusek, Pavlov 2018 (Icarus 282).
-//     A per-planet `ΔV(α)` magnitude offset is converted to a flux
-//     factor via `10^(−ΔV/2.5)`. Each fit is valid only over the
-//     `alphaMaxDeg` range observed in the source data; outside that
-//     range the function falls back to Lambert.
-//
-// The vertex shader (`planet.vert.glsl`) mirrors this exactly via two
-// per-instance vec4 attributes; tests pin the TS implementation
-// against published values so a shader-side regression caught on the
-// CPU side surfaces too.
+// Per-planet phase functions φ(α) for reflected-light apparent
+// magnitude — Lambertian default + Mallama 2018 empirical polynomials
+// for the planets with published fits. See SCIENCE.md § Planet phase
+// functions. The vertex shader (planet.vert.glsl) mirrors this
+// exactly via two per-instance vec4 attributes; tests pin the TS path
+// against published values.
 
-/** Per-planet polynomial form for Mallama 2018 ΔV(α). Evaluated as
- *
- *    ΔV(α°) = c0 + c1·α + c2·α² + c3·α³ + c4·α⁴ + c5·α⁵ + c6·α⁶
- *
- *  with α in degrees. ΔV is in V-band magnitudes; convert to a flux
- *  factor via 10^(−ΔV/2.5).
- *
- *  By convention, ΔV(0) = c0; almost every planet has c0 = 0 so that
- *  φ(0) = 1 (matching Lambert's α = 0 normalisation, where `albedo`
- *  alone determines the body's α = 0 reflectance). Saturn is the
- *  lone exception — its ring contribution adds a static brightness
- *  boost baked into c0 < 0, a time-averaged approximation of the
- *  published ring-tilt term since planetary obliquity is not modelled
- *  in v1. */
+/** Mallama 2018 ΔV(α°) = c0 + c1·α + … + c6·α⁶. c0 = 0 for every
+ *  planet except Saturn, which absorbs a static ring-tilt brightness
+ *  boost via c0 < 0. */
 export interface PhaseCoefficients {
   readonly c0: number;
   readonly c1: number;
@@ -47,14 +16,9 @@ export interface PhaseCoefficients {
   readonly c4: number;
   readonly c5: number;
   readonly c6: number;
-  /** Upper validity bound of the published Mallama fit, in degrees.
-   *  Beyond this α, callers fall back to the Lambertian phase
-   *  function — extrapolating a fit beyond its source-data range
-   *  produces wildly wrong values, especially for Mars whose true
-   *  phase curve splits at 50° into a different regime. A sentinel
-   *  value of 0 disables the polynomial entirely (Lambertian for
-   *  every α), which is how planets with no published curve — Pluto
-   *  here, every exoplanet under bk5 — opt out. */
+  /** Upper validity bound in degrees. Beyond this α, callers fall
+   *  back to anchor-scaled Lambert. Sentinel `0` disables the
+   *  polynomial entirely (pure Lambert). */
   readonly alphaMaxDeg: number;
 }
 
@@ -85,23 +49,11 @@ function mallamaDV(coefs: PhaseCoefficients, aDeg: number): number {
   );
 }
 
-/** Mallama 2018 empirical phase factor: `10^(−ΔV(α)/2.5)` where ΔV is
- *  the polynomial described on `PhaseCoefficients`.
- *
- *  - `alphaMaxDeg = 0` sentinel → pure Lambertian for every α.
- *  - α inside [0, αmax°] → polynomial path.
- *  - α beyond αmax → Lambert(α) scaled by k = poly(αmax) / Lambert(αmax)
- *    so brightness is continuous at the boundary and each planet's
- *    empirical character (Saturn's c0 ring boost; Mars's
- *    faster-than-Lambert darkening) extends past the published
- *    validity range instead of snapping to a uniform Lambert sphere.
- *
- *  α is clamped defensively to [0, π] — sibling-symmetric with
- *  `lambertianPhaseFactor`. The polynomial extrapolates wildly past
- *  its fitted domain (Horner happily diverges), so a misuse with e.g.
- *  degrees passed where radians were expected would otherwise emit a
- *  catastrophically wrong magnitude. The clamp + αmax-fallback fail
- *  safe together. */
+/** Mallama 2018 empirical phase factor. Inside [0, αmax°] uses the
+ *  polynomial; beyond αmax falls back to anchor-scaled Lambert
+ *  (continuous at the boundary). α clamped to [0, π] — Horner
+ *  diverges wildly past its fitted domain, so the αmax fallback is
+ *  load-bearing against accidental degrees/radians swaps. */
 export function mallamaPhaseFactor(
   coefs: PhaseCoefficients,
   alphaRad: number,
@@ -129,35 +81,15 @@ export function peakPhaseFactor(coefs: PhaseCoefficients | undefined): number {
   return Math.exp(-coefs.c0 * 0.4 * LOG10);
 }
 
-// ── Per-planet coefficients from Mallama 2018 (Icarus 282) ─────────────
-//
-// Polynomial fits from Mallama, Krobusek, Pavlov 2018, "Comprehensive
-// wide-band magnitudes and albedos for the planets, with applications
-// to exo-planets and Planet Nine," Icarus 282 (2017) 19–33,
-// DOI 10.1016/j.icarus.2016.09.023. Each `alphaMaxDeg` is the upper
-// bound of α actually observed in the cited data; outside that range
-// the renderer falls back to Lambert.
+// Per-planet coefficients from Mallama 2018 (Icarus 282). Each
+// alphaMaxDeg is the upper bound observed in the cited data; outside
+// that range the renderer falls back to anchor-scaled Lambert.
 
-/** Mercury — 7th-order V-band fit (Mallama 2018 Table A-1.2),
- *  published validity 2° ≤ α ≤ 170°. The polynomial includes a
- *  `c7 = +6.592e-15` term we drop to keep storage at degree 6
- *  (two vec4 attributes per instance). The truncation budget is
- *  pinned by `phase-function.test.ts`: |ΔV_truncated − ΔV_full|
- *  stays below 0.25 mag only out to α ≈ 87°, then grows rapidly
- *  (~0.66 mag at 100°, ~2.4 mag at 120°, ~27 mag at 170°) — past
- *  88° the dropped c7·α⁷ term dominates and the truncated polynomial
- *  is no longer physically faithful. To stop it running away we cap
- *  `alphaMaxDeg` at 87° (well short of Mallama's published 170°);
- *  the renderer rolls into anchor-scaled Lambert past that, which
- *  tracks the published 7th-order curve to within 0.5 mag across
- *  the entire 87°–170° range. The physical justification: at high α
- *  Mercury reads as an unresolved thin crescent dominated by the
- *  geometric `(sin α + (π−α)·cos α)/π` falloff Lambertian models;
- *  the anchor multiplier `k = poly(87°)/Lambert(87°)` provides the
- *  right normalization at the handover. A future upgrade could
- *  store c7 in a third vec4 attribute to recover the full polynomial
- *  out to 170° — Mercury is the only Mallama 2018 fit beyond
- *  degree 6. */
+/** Mercury — Mallama 2018 Table A-1.2 7th-order fit, truncated to
+ *  degree 6 to fit two vec4 attributes (the c7 term is dropped).
+ *  alphaMaxDeg = 87° because past that the truncated polynomial
+ *  diverges from the published 7th-order curve; Lambert anchored at
+ *  87° takes over. Truncation budget pinned by phase-function.test.ts. */
 export const MERCURY_PHASE: PhaseCoefficients = {
   c0: 0,
   c1: 6.617e-2,
@@ -169,14 +101,9 @@ export const MERCURY_PHASE: PhaseCoefficients = {
   alphaMaxDeg: 87,
 };
 
-/** Venus — 4th-order V-band fit (Mallama 2018 Table A-2.2), valid up
- *  to 165° per the paper text. The strongly negative α¹ coefficient
- *  — slight forward-scattering brightening at the smallest phase
- *  angles — is the empirical asymmetry that Lambert cannot
- *  reproduce; at α ≈ 160° Venus is several magnitudes brighter than
- *  a Lambertian sphere because its atmosphere forward-scatters
- *  strongly. The anomalous forward-scattering peak near α = 170°
- *  isn't captured by the polynomial — Lambert takes over there. */
+/** Venus — Mallama 2018 Table A-2.2 4th-order fit, valid to 165°.
+ *  The α = 170° forward-scattering peak isn't captured by the
+ *  polynomial — Lambert takes over there. */
 export const VENUS_PHASE: PhaseCoefficients = {
   c0: 0,
   c1: -1.044e-3,
@@ -188,14 +115,9 @@ export const VENUS_PHASE: PhaseCoefficients = {
   alphaMaxDeg: 165,
 };
 
-/** Earth — Mallama 2018 Table A-3.1 publishes the disc-integrated
- *  Earth phase function as a discrete table, not a polynomial:
- *  ΔV(0°) = 0.000, ΔV(45°) = 1.123, ΔV(90°) = 2.069, ΔV(135°) =
- *  3.801. The coefficients below are a closed-form cubic fit that
- *  passes exactly through those four points (c0 = 0 by definition).
- *  Validity bound capped at 135° — the published table goes no
- *  further, and extrapolating a fit beyond its data is exactly the
- *  kind of mistake `alphaMaxDeg` exists to prevent. */
+/** Earth — closed-form cubic fit through the four discrete values
+ *  in Mallama 2018 Table A-3.1 (the paper publishes a table, not a
+ *  polynomial). alphaMaxDeg = 135°, the table's last datum. */
 export const EARTH_PHASE: PhaseCoefficients = {
   c0: 0,
   c1: 3.406e-2,
@@ -207,11 +129,9 @@ export const EARTH_PHASE: PhaseCoefficients = {
   alphaMaxDeg: 135,
 };
 
-/** Mars — 2nd-order V-band fit (Mallama 2018 Table A-4.2), valid for
- *  α from a few degrees up to ~50°. The published model also
- *  includes rotation and orbital-longitude phase terms (L₁, L₂)
- *  that we don't model in v1. Beyond 50° the polynomial extrapolates
- *  badly; Lambert is a closer approximation in that regime. */
+/** Mars — Mallama 2018 Table A-4.2 2nd-order fit, valid to ~50°.
+ *  The published rotation + orbital-longitude phase terms (L₁, L₂)
+ *  aren't modelled. */
 export const MARS_PHASE: PhaseCoefficients = {
   c0: 0,
   c1: 2.267e-2,
@@ -223,11 +143,8 @@ export const MARS_PHASE: PhaseCoefficients = {
   alphaMaxDeg: 50,
 };
 
-/** Jupiter — 2nd-order V-band fit (Mallama 2018 Table A-5.2), valid
- *  for the observed range α = 0–12°. Phase-angle excursions outside
- *  that band require a viewer between Sol and Jupiter, which is
- *  rare in the typical Stellata camera footprint; Lambert is a fine
- *  fallback there. */
+/** Jupiter — Mallama 2018 Table A-5.2 2nd-order fit, observed range
+ *  α = 0–12°. */
 export const JUPITER_PHASE: PhaseCoefficients = {
   c0: 0,
   c1: -3.7e-4,
@@ -239,19 +156,10 @@ export const JUPITER_PHASE: PhaseCoefficients = {
   alphaMaxDeg: 12,
 };
 
-/** Saturn (globe + rings) — Mallama 2018 Table A-6.2 publishes a
- *  joint α/ring-tilt formula
- *
- *    M(α°, β) = C₀ + C₁·sin(β) + C₂·α − C₃·sin(β)·exp(C₄·α)
- *
- *  with V-band C₁ = −1.825, C₂ = 0.026, C₃ = 0.378, C₄ = −2.25 and
- *  β the absolute ring inclination. Stellata doesn't model Saturn's
- *  obliquity yet, so this entry is a static-β = 16° (long-run mean
- *  |β|) approximation: c0 captures C₁·sin(β) plus the at-α=0
- *  exp-term contribution, and c1 = C₂ carries the linear α
- *  modulation. The exp-term (an opposition-surge effect that decays
- *  past α ≈ 2°) is folded into c0 as a small bias rather than
- *  reproduced — the polynomial form here can't represent it. */
+/** Saturn — static-β = 16° (long-run mean) approximation of the
+ *  Mallama 2018 Table A-6.2 joint α/ring-tilt formula. c0 absorbs
+ *  the ring contribution + opposition-surge exp-term-at-α=0 bias;
+ *  c1 carries the linear α modulation. */
 export const SATURN_PHASE: PhaseCoefficients = {
   c0: -0.55,
   c1: 0.026,
@@ -263,12 +171,7 @@ export const SATURN_PHASE: PhaseCoefficients = {
   alphaMaxDeg: 6.5,
 };
 
-// Uranus and Neptune intentionally do NOT have Mallama 2018 phase
-// polynomials. The paper's Tables A-7.2 and A-8.2 publish a
-// sub-latitude (Uranus) and a temporal year-since-1984 (Neptune)
-// model — neither is a function of phase angle α, because both
-// planets' max α from Earth is "negligible" (3° for Uranus, 2° for
-// Neptune). Stellata viewers can fly close enough for α to grow
-// large, but with no published curve to anchor the empirical
-// brightening we let both planets fall through to the Lambertian
-// default — same as Pluto and every exoplanet.
+// Uranus and Neptune fall through to Lambert by design — Mallama
+// 2018 Tables A-7.2 / A-8.2 model sub-latitude (Uranus) and temporal
+// (Neptune) effects, not α, because Earth-bound max α is negligible
+// for both. Pluto and every exoplanet share the Lambert fallback.

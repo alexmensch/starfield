@@ -53,21 +53,8 @@ import { OrbitRingsLayer } from './solar-system/orbit-rings-layer';
 import { PlanetBodyField } from './solar-system/planet-body-field';
 import { Heliopause } from './solar-system/heliopause';
 import { R_SUN_PC } from './solar-system/astronomy-constants';
-// Locally used subset — stellata.ts still reads these in its body.
-// The other warp-timing constants are re-exported below for any
-// external import path that points at './stellata' instead of
-// './camera/timing', without bringing unused names into local scope.
-// AIM_T_MIN_MS / AIM_T_MAX_MS moved off the local set in 9mm.194.4
-// when AimController claimed the aim-duration ramp.
-// WARP_BASE_DIR, the warp-tuning getters, hybridUSeam, recordLastWarp
-// moved off in 9mm.194.5 when WarpController claimed the 3-phase FSM.
-// OBSERVE_TRANSITION_MS moved off in 9mm.194.6 with the ObserveTransition
-// extract — still re-exported below for external import paths that point
-// at './stellata' instead of './camera/timing'.
-// FOCUS_LERP_MS, the FocusTarget type, the focus-transition primitives
-// (FocusLerpState / newFocusLerpFrom / parkDistance / tickFocusLerp),
-// chartPlateauDistancePc and warpArrivalEaseFn moved off in 9mm.194.8
-// with the FocusController extract.
+// Locally used subset; other warp-timing constants re-exported below
+// for external import paths still pointing at './stellata'.
 import { DCAM_LOG_FLOOR_PC } from './camera/timing';
 export {
   AIM_T_MAX_MS,
@@ -116,15 +103,10 @@ export interface FilterState {
   // HUD: Sol/GC locator arrows in both navigate + observe modes, plus the
   // OBSERVE-mode screen-centred ring. Future HUD widgets hang off this flag.
   showHud: boolean;
-  // (showMolecularClouds removed: cloud layer is shelved for v1.0 — see
-  // CLAUDE.md. The render machinery / picking helpers stay; they no-op
-  // when the cloud catalog isn't attached. Re-enabling means restoring
-  // the FilterState field, the URL flag bit 2 reservation, and the
-  // load+attach call in main.ts.)
-  // Milky Way analytic background. Default-on; in chart mode
-  // it switches to outline-only rendering (gated on this same toggle).
-  // May be force-flipped off by the FPS probe on the first few frames
-  // if the device can't sustain ≥30 fps with it on.
+  // Milky Way analytic background. Default-on; chart mode switches to
+  // outline-only rendering on this same toggle. May be force-flipped
+  // off by the FPS probe on the first few frames if the device can't
+  // sustain ≥30 fps with it on.
   showMilkyway: boolean;
   // Star chart mode. Only meaningful while cameraMode==='observe';
   // chart-mode orchestrator (chart-mode.ts) ignores it otherwise. Drives
@@ -140,32 +122,11 @@ export interface StellataOptions {
 
 const ALL_SPECT_MASK = 0b111111111;
 
-// Star size physics. The unaided eye's stellar PSF has a Gaussian-ish
-// width σ ≈ 30″ set by ocular aberrations + diffraction; "perceived disc"
-// is where intensity exceeds detection threshold, which from the Gaussian
-// PSF model gives radius = σ × √(STAR_PHYSICS_FACTOR × Δm) for Δm
-// magnitudes above threshold. STAR_PHYSICS_FACTOR = 2 ln(10) / 2.5 ≈ 1.84.
-//
-// Literal physics at 60° / 1080 px puts threshold disc at ~0.15 px and
-// Sirius at ~0.6 px — both invisible. starExaggerationK scales σ up to
-// land in a readable pixel range while preserving the √Δm curve between
-// stars (so ratios stay correct against the Milky Way disc).
-//
-// K is per-preset because the visible star population shifts with the
-// magnitude limit: naked-eye reveals only the brightest few thousand
-// (needs more exaggeration to feel populated), while "all" shows ~313k
-// stars and benefits from a smaller K to avoid the field becoming a
-// solid wash.
-//
-// Tunable at runtime via Stellata.setStarExaggerationK so the debug
-// panel can sweep the active preset's K visually. Higher = bolder, more
-// cartoonish stars; lower = more austere, nearer the literal physics.
+// Star size physics — see SCIENCE.md § Stellar perception model.
+// STAR_PHYSICS_FACTOR = 2·ln(10)/2.5. Per-preset starExaggerationK
+// is tunable via Stellata.setStarExaggerationK (debug panel).
 const STAR_PSF_ARCSEC = 30;
 const STAR_PHYSICS_FACTOR = 1.84;
-// Per-preset exaggeration. Each magnitude preset (naked-eye, binoculars,
-// all) has its own K so the disc sizing can be tuned independently for the
-// star population each preset reveals. Switching presets snaps the debug
-// slider to that preset's K.
 const STAR_EXAGGERATION_K_DEFAULTS: Record<MagPresetName, number> = {
   'naked-eye':  12,
   'binoculars': 9,
@@ -239,45 +200,9 @@ function computeMagPresets(): Record<MagPresetName, MagPreset> {
 // MAG_PRESETS see the latest values after a K tweak.
 export let MAG_PRESETS: Record<MagPresetName, MagPreset> = computeMagPresets();
 
-// GLOBAL_MIN_DIST_PC, MIN_PHYSICAL_RADIUS_R_SUN, and
-// PIN_ENGAGE_THRESHOLD_SQ_PC moved to camera/focus-controller.ts in
-// 9mm.194.8. GLOBAL_MIN_DIST_PC is re-imported above for the initial
-// `controls.minDistance` seed in the constructor (overwritten ~400
-// lines later by `setFocus(catalog.solIndex)`).
-
-// ZOOM_FLOOR_FRACTION + VAR_TROUGH_FLOOR_FRACTION moved to
-// camera/star-physics.ts in 9mm.194.9. Re-imported here so the shader
-// uniforms (`uMaxPhysFrac`, `uVarTroughFrac`) seed from the canonical
-// source the variability/orbit-floor math reads.
-
-// DCAM_LOG_FLOOR_PC moved to camera/timing.ts — shared between this
-// file and any future camera-controller extracts that need a finite
-// log10(dCam) at close approach. Re-imported at the top of this file.
-
 // Default vertical FOV (degrees). User-tunable via the FOV slider; the
 // reset button snaps back to this value.
 export const DEFAULT_FOV = 50;
-
-// BINARY_VIEWPORT_HALF_ANGLE_RAD + BINARY_MIN_DIST_FACTOR moved to
-// camera/star-physics.ts in 9mm.194.9 — the binary-companion floor
-// they parameterise lives there alongside the rest of the per-star
-// pixel/distance geometry.
-
-// Warp animation tuning. A warp has two phases:
-//   1. Reorient (WARP_REORIENT_MS) — camera keeps looking at the source star
-//      while spherically rotating around it from its current orbit direction
-//      to the "behind A, facing B" direction, simultaneously zooming to
-//      the end-offset from A. End state: A is centered, B is straight
-//      ahead beyond A.
-//   2. Fly — straight-line flight from pStart to pEnd with a symmetric
-//      accelerate/decelerate profile. Duration scales log-linearly with
-//      distance and caps at MAX.
-// End offset matches the destination star's effective minDistance so
-// the warp parks exactly where the user can then orbit. Camera-wide
-// timing + reorient constants live in `./camera/timing` to break the
-// import cycle with `./camera/warp-tuning` (which needs them as initial
-// knob defaults). Re-exported here so any existing import paths keep
-// working.
 
 export type CameraMode = 'navigate' | 'observe';
 
@@ -369,16 +294,11 @@ export class Stellata implements FrameAnchor {
   private coreMaskMaterial: THREE.ShaderMaterial; // depth-only core mask
   private geometry: THREE.InstancedBufferGeometry;
 
-  // Floating origin to dodge float32 catastrophic cancellation when zoomed
-  // close to stars far from Sol. `worldOffset` is the absolute-space
-  // coordinate that currently sits at the renderer's local origin (0,0,0).
-  // `_localPositions` mirrors catalog.positions shifted by -worldOffset and
-  // is the buffer bound to the iPosition instance attribute; overlays read
-  // from it via the `localPositions` getter so every projection math path
-  // operates in the same frame as the camera. Recentering on focus change
-  // keeps all large-magnitude subtractions on the CPU side (JS Number =
-  // float64), so the GPU never sees kiloparsec-scale translations in its
-  // modelview matrix.
+  // Floating origin to dodge float32 cancellation when zoomed close to
+  // distant stars. worldOffset is the absolute coord that sits at
+  // local (0,0,0); _localPositions = catalog.positions − worldOffset
+  // bound to the iPosition attribute. Overlays project via the
+  // `localPositions` getter so every path stays in the camera's frame.
   private worldOffset = new THREE.Vector3();
   private _localPositions: Float32Array;
   private iPositionAttr!: THREE.InstancedBufferAttribute;
@@ -404,40 +324,22 @@ export class Stellata implements FrameAnchor {
   private bus = new EventBus<StellataEventMap>();
 
   private cameraMode: CameraMode = 'navigate';
-  // Navigate↔observe orchestrator (stellata-9mm.194.6). Owns the
-  // ObserveTransitionState slot, the 'enter'/'exit'/'unfocus' kinds, and
-  // the camera-mode FSM. Stellata still owns the `cameraMode` field
-  // (read by ~20 unrelated sites) and writes it through the controller's
-  // `setCameraModeValue` dep callback. See camera/observe-transition.ts.
+  // Stellata owns the cameraMode field (read by ~20 sites) and writes
+  // it through the controller's setCameraModeValue dep callback.
   private observe!: ObserveTransition;
   private observeControls!: ObserveControls;
 
-  // Wall-clock time variable (Unix-seconds) for the solar-system layer
-  // (stellata-3re.1). null = "live" (track Date.now() each call); a number
-  // = "pinned" (the time-scrubber epic stellata-nmu sets this when the
-  // user scrubs away from now). v1 never pins — getT() always returns
-  // wall-clock now — but the setter exists so nmu plugs in without an
-  // API change.
+  // null = "live" (Date.now() each call); a number = "pinned" by the
+  // time-scrubber. v1 never pins.
   private pinnedT: number | null = null;
 
-  // Focus FSM (stellata-9mm.194.8): owns focusedStar / focusedCloud /
-  // focusedPlanetSystem + the focus-park lerp slot + per-kind FocusTarget
-  // factories. Composed below in the constructor; see
-  // camera/focus-controller.ts. WarpController + ObserveTransition
-  // consume its `FocusOps` / `ObserveFocusOps` surfaces.
   private focus!: FocusController;
-  // Distance-vector destination — at most one of these is non-null at a
-  // time. Mutual exclusion is enforced by setVectorTo / setVectorToCloud
-  // both clearing the other slot.
+  // Distance-vector destination — at most one of these is non-null at
+  // a time. Mutual exclusion enforced by setVectorTo / setVectorToCloud.
   private vectorTo: number | null = null;
   private vectorToCloud: number | null = null;
   private monochrome = false;
-  // 3-phase warp FSM (stellata-9mm.194.5): reorient → fly → post-arrival.
-  // Composed below in the constructor; see camera/warp-controller.ts.
   private warp!: WarpController;
-  // Aim slerps (stellata-9mm.194.4): navigate-mode orbit-pivot rotation and
-  // observe-mode quaternion-in-place. Composed below in the constructor;
-  // see camera/aim-controller.ts for the two state machines.
   private aim!: AimController;
 
   // OBSERVE-mode "points of interest". Single-click on a star pins it.
@@ -462,27 +364,20 @@ export class Stellata implements FrameAnchor {
   // `filter.showHud`. Mono mode swaps strokes to a paper-chart palette via
   // setMonochrome on each layer (HUD is CSS-only).
   private galacticDisc: GalacticDisc;
-  // Per-host orbit-rings layer. Geometry rebuilds whenever the focused
-  // star's PlanetSystem changes; per-frame tick drives the pixel-gap
-  // visibility heuristic. Representational layer — only renders when
-  // the host is the focused star (stellata-3re.15 / unfocus-split).
+  // Representational layer — only renders when the host is focused.
   private orbitRingsLayer: OrbitRingsLayer;
-  // Global planet-body field. Holds every attached host's planet
-  // bodies (Sol in v1, exoplanet hosts in stellata-bk5). Bodies are
-  // physical objects: they render whenever attached, regardless of
-  // which host the camera is focused on, gated only by per-planet
-  // apparent-magnitude (stellata-3re.16) and per-host distance cull.
+  // Physical layer — renders for every attached host regardless of
+  // focus, gated by per-planet apparent magnitude + per-host distance cull.
   private planetBodyField: PlanetBodyField;
-  // Heliopause boundary (3re.5). Sol-anchored asymmetric wireframe
-  // ellipsoid; visible only when Sol is the focused host.
+  // Sol-anchored asymmetric ellipsoid; visible only when Sol is the
+  // focused host.
   private heliopause: Heliopause;
   private galacticGrid: GalacticGrid;
   private hudOverlay: HudOverlay;
 
-  // Local Group wireframe layer (stellata-38m). null until
-  // attachLocalGroup() runs; absent layer is a no-op everywhere.
-  // No toggle / URL flag — inherits the always-on model from the MW
-  // disc with the same FADE_INNER_PC / FADE_OUTER_PC reveal curve.
+  // null until attachLocalGroup() runs; absent layer is a no-op
+  // everywhere. Shares the MW disc's FADE_INNER_PC / FADE_OUTER_PC
+  // reveal curve.
   private localGroupLayer: LocalGroupLayer | null = null;
 
   // Molecular cloud overlay. null until attachClouds() runs;
@@ -502,11 +397,9 @@ export class Stellata implements FrameAnchor {
   // clears it.
   private dust: DustField | null = null;
 
-  // Per-layer target resolver — answers "what's under (x, y)?" for the
-  // click FSM and hover engine (stellata-9mm.194.3). Pure resolver; the
-  // click FSM in onPointerUp + the observe single/double-click
-  // dispatchers stay here as composition-layer orchestration. Hover
-  // providers read it via `stellata.picker.pickXxxHit(...)`.
+  // Pure target resolver; the click FSM in onPointerUp + the observe
+  // single/double-click dispatchers stay here as composition-layer
+  // orchestration.
   readonly picker!: Picker;
 
   constructor({ canvas, catalog }: StellataOptions) {
@@ -730,15 +623,10 @@ export class Stellata implements FrameAnchor {
       uPinFocusToCenter: { value: -1 },
     };
 
-    // Disc pass: per-channel max so overlapping discs / halos don't sum.
-    // The shader writes premultiplied colour `(C·α, α)`; MaxEquation gives
-    // `dst = max(src, dst)` per channel (blend factors are ignored under
-    // GL_MAX). Two close-binary cores no longer fight via depth-test for
-    // the lens of intersection, two halos no longer pile up at their
-    // contact point, and a halo over the Milky Way no longer additively
-    // lifts the background — the brighter source wins each pixel. (See
-    // stellata-dx7.) Depth write stays on so the glow pass can depth-test
-    // against the disc silhouettes.
+    // Disc pass: per-channel max so overlapping discs/halos don't sum.
+    // Shader writes premultiplied (C·α, α); MaxEquation gives
+    // dst = max(src, dst) per channel. Depth write stays on so the
+    // glow pass can depth-test against the disc silhouettes.
     this.material = new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3,
       uniforms: { ...sharedUniforms, uRenderMode: { value: 1 } },
@@ -840,21 +728,20 @@ export class Stellata implements FrameAnchor {
       fovYRadRef: this.material.uniforms.uFovYRad as { value: number },
       viewportRef: this.material.uniforms.uViewport as { value: THREE.Vector2 },
     });
-    // Aim slerps (stellata-9mm.194.4) — mode-aware orbit-pivot / in-place
-    // quaternion rotation. The warp / focus-lerp / observe-transition
-    // busy checks stay on stellata's `aimAt` dispatcher because they
-    // gate behaviour the controller doesn't know about.
+    // The warp / focus-lerp / observe-transition busy checks stay on
+    // stellata's aimAt dispatcher because they gate behaviour the
+    // controller doesn't know about.
     this.aim = new AimController({
       camera: this.camera,
       controls: this.controls,
       observeControls: this.observeControls,
       getCameraMode: () => this.cameraMode,
     });
-    // Focus FSM (stellata-9mm.194.8). FocusController implements the
-    // `FocusOps` + `ObserveFocusOps` surfaces consumed by WarpController
-    // + ObserveTransition. `getWarp` / `getObserve` are lazy because
-    // those controllers depend back on FocusController — the construct
-    // cycle is broken by deferred resolution at first request.
+    // FocusController implements the FocusOps / ObserveFocusOps
+    // surfaces consumed by WarpController + ObserveTransition.
+    // getWarp / getObserve are lazy because those controllers depend
+    // back on FocusController — the construct cycle is broken by
+    // deferred resolution at first request.
     this.focus = new FocusController({
       camera: this.camera,
       controls: this.controls,
@@ -872,7 +759,6 @@ export class Stellata implements FrameAnchor {
       getWarp: () => this.warp,
       getObserve: () => this.observe,
     });
-    // 3-phase warp FSM (stellata-9mm.194.5).
     this.warp = new WarpController({
       camera: this.camera,
       controls: this.controls,
@@ -885,7 +771,6 @@ export class Stellata implements FrameAnchor {
         this.material.uniforms.uChartMagBright.value as number,
       focus: this.focus,
     });
-    // Navigate↔observe orchestrator (stellata-9mm.194.6).
     this.observe = new ObserveTransition({
       camera: this.camera,
       controls: this.controls,
@@ -897,12 +782,9 @@ export class Stellata implements FrameAnchor {
       getCameraMode: () => this.cameraMode,
       setCameraModeValue: (mode) => { this.cameraMode = mode; },
     });
-    // Build/teardown orbit rings + heliopause whenever the focused
-    // star's planet data changes. Both are representational layers
-    // gated on host-focused (stellata-3re.15). Planet bodies live in
-    // PlanetBodyField — they're physical objects, attached once at
-    // startup (below) and rendered whenever the camera is within
-    // their per-host cull distance, regardless of focus.
+    // Orbit rings + heliopause are representational layers gated on
+    // host-focus. Planet bodies live in PlanetBodyField and render
+    // whenever inside the per-host cull distance regardless of focus.
     this.on('planetSystem', (ps) => {
       this.orbitRingsLayer.setPlanetSystem(ps, this.catalog.solIndex);
       this.heliopause.setVisible(ps !== null && ps.hostStarIdx === this.catalog.solIndex);
@@ -1031,7 +913,7 @@ export class Stellata implements FrameAnchor {
   /** Absolute-space coordinate of the renderer's current local origin.
    *  Read-only snapshot; callers must not mutate. URL serialisation
    *  emits this so close-orbit unfocus poses (where worldOffset sits at
-   *  the former focal star, not Sol — see stellata-a7d.2.11) round-trip
+   *  the former focal star, not Sol — see the close-orbit unfocus contract) round-trip
    *  exactly through the float32 cam/tgt fields. */
   getWorldOffset(): Readonly<THREE.Vector3> { return this.worldOffset; }
   /** Shift the floating origin to a new absolute position. Star instance
@@ -1056,7 +938,7 @@ export class Stellata implements FrameAnchor {
   }
   /** Pin `t` to a specific Unix-seconds value, or pass `null` to
    *  return to live tracking. Wired for the time-scrubber epic
-   *  (stellata-nmu); v1 never calls this from the UI. */
+   * ; v1 never calls this from the UI. */
   setT(t: number | null): void {
     this.pinnedT = t;
     this.bus.emit('state');
@@ -1104,7 +986,7 @@ export class Stellata implements FrameAnchor {
   isCameraBusy(): boolean { return this.focus.isCameraBusy(); }
 
   // Cancellation hooks for the focus-park lerp (r9q.2) and the
-  // navigate-mode unfocus lerp (a7d.2.6) — both must clear before a new
+ // navigate-mode unfocus lerp — both must clear before a new
   // camera-changing action (focus, warp, aim, click) proceeds. Forward
   // to FocusController which owns the focus-park slot and delegates the
   // unfocus path to ObserveTransition.
@@ -1216,7 +1098,7 @@ export class Stellata implements FrameAnchor {
   }
 
   // setFocus / setFocusedCloud / recenterFocusToStar / refreshPlanetSystem
-  // moved to FocusController in 9mm.194.8. The thin shims below preserve
+ // moved to FocusController. The thin shims below preserve
   // the public surface for callers outside the camera/ folder (URL state,
   // search, the click FSM in onPointerUp) without re-introducing the
   // routing logic here.
@@ -1291,7 +1173,7 @@ export class Stellata implements FrameAnchor {
     return this._recenterDelta.set(dx, dy, dz);
   }
 
-  // recenterFocusToStar moved to FocusController in 9mm.194.8 — it
+ // recenterFocusToStar moved to FocusController — it
   // mutates focus state (focusedStar + per-star minDistance +
   // planet-system reload), which now lives there.
 
@@ -1785,7 +1667,7 @@ export class Stellata implements FrameAnchor {
   setOrbitTargetCloud(cloudIdx: number) { this.focus.setOrbitTargetCloud(cloudIdx); }
 
   // makeStarFocusTarget / makeCloudFocusTarget / currentFocusTarget
-  // moved to FocusController in 9mm.194.8 — they close over the focus
+ // moved to FocusController — they close over the focus
   // state (focusedStar / focusedCloud / focusedPlanetSystem) so they
   // belong where that state lives. WarpController consumes them through
   // the `FocusOps` seam.
@@ -1927,11 +1809,6 @@ export class Stellata implements FrameAnchor {
     return out.set(p[i * 3 + 0], p[i * 3 + 1], p[i * 3 + 2]);
   }
 
-  // All per-kind pick paths now live on `this.picker` (stellata-9mm.194.3).
-  // The click FSM (onPointerUp) and the observe single/double-click
-  // dispatchers stay here as composition-layer orchestration; hover
-  // providers reach picks via `stellata.picker.pickXxxHit(...)`.
-
   /** Cached PlanetSystem for an attached host, or null if the host
    *  isn't attached. Used by the planet hover formatter to resolve
    *  `(hostStarIdx, planetIdx)` from a pick back to a Planet record
@@ -2065,7 +1942,7 @@ export class Stellata implements FrameAnchor {
   //  - _tmpAnimateLocal: owned by animate() and the methods it calls
   //    in sequence (updateGalacticLayers). Single writer in steady-state;
   //    the warp tick claimed its share when WarpController extracted in
-  //    9mm.194.5. Adding a new writer that retains the value across
+ //.5. Adding a new writer that retains the value across
   //    another animate-stack method violates the contract.
   //  - _tmpRenderLocal: owned by per-call read methods invoked outside
   //    the animate stack (renderedCloudSizePx, etc.). Independent of
@@ -2077,7 +1954,7 @@ export class Stellata implements FrameAnchor {
   /** Public access to the HUD overlay — for the arrow-fade debug HUD only. */
   get hud(): HudOverlay { return this.hudOverlay; }
 
-  // parkDistForStar moved to FocusController (9mm.194.8) — used by
+ // parkDistForStar moved to FocusController — used by
   // ObserveTransition's ObserveFocusOps seam and the focus-park lerp.
 
   private onPointerDown = (e: PointerEvent) => {

@@ -1,5 +1,5 @@
 // Pure-math star-geometry helpers extracted from Stellata.ts so the
-// angular-diameter pipeline (a7d.2) is unit-testable and so the disc
+// angular-diameter pipeline is unit-testable and so the disc
 // formula isn't typed three times across the renderer's TypeScript path
 // (renderedSizePx, renderedDiscPxAtPeak) and the GLSL vertex shader.
 //
@@ -86,29 +86,12 @@ export const PICK_MAG_BIAS_PX_PER_MAG = 0.05;
 // star and planet pick paths share a single source.
 export const MIN_DISC_HIT_RADIUS_PX = 4;
 
-// Score for a star pick candidate. Lower is better. Used by pickStar
-// for both the prime tier (cursor inside a rendered disc) and the
-// proximity-fallback tier (no disc hit, nearest centre within a
-// pixel threshold). The score is dominated by `pxDist` — the cursor's
-// screen-pixel distance from the disc centre — so the star whose
-// centre the cursor is closest to wins. The sub-pixel `appMag` bias
-// (`PICK_MAG_BIAS_PX_PER_MAG`) only matters for near-coincident
-// candidates: it picks the brighter component when two catalog rows
-// share the same x/y/z (e.g. Alula Australis A/B in AT-HYG, both at
-// HIP-less Gl 423A/B with identical galactocentric coordinates).
-//
-// The prime tier deliberately does NOT tiebreak by camera distance —
-// depth-occlusion is intentionally ignored in the picker. The Double
-// Double (ε¹ / ε² Lyr) sits ~3.5 arcmin apart with hitboxes that
-// overlap each other's centres at typical zoom; a "closest to camera"
-// rule consistently picked one component for every click, leaving the
-// other un-clickable. The trade-off: a faint background star whose
-// projected centre lands ≥ 1 px closer to the cursor than a bright
-// foreground star wins, even if the foreground disc fully contains
-// the cursor. The au3 / xec failure mode (overlapping disc hitboxes
-// leaving one component unclickable) was deemed worse than the rare
-// inverse case where the visually obvious foreground disc loses by a
-// pixel.
+// Pick score: pxDist + sub-pixel appMag bias. The bias only matters
+// for near-coincident candidates (catalogue rows sharing x/y/z, e.g.
+// Alula Australis A/B). Camera distance is deliberately NOT a
+// tiebreaker: the Double Double (ε¹/ε² Lyr) has overlapping hitboxes
+// at typical zoom, and "closest to camera" leaves one component
+// permanently un-clickable.
 export function pickScore(pxDist: number, appMag: number): number {
   return pxDist + appMag * PICK_MAG_BIAS_PX_PER_MAG;
 }
@@ -164,7 +147,7 @@ export type PickResult<T extends PickCandidate> = {
 // natural choice for layers without a brightness bias. The star caller
 // passes `pickScore` to retain the sub-pixel mag tiebreaker.
 //
-// Single source of truth across all layered pickers in stellata-lo5:
+// Single source of truth across all layered pickers in the hover layer:
 // star (StarPickCandidate, pickScore), Local Group (PickCandidate +
 // cameraDistancePc, default scorer), planets (cross-host candidate with
 // hostStarIdx/planetIdx/cameraDistancePc, default scorer). Callers that

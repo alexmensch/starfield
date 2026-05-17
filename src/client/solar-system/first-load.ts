@@ -1,4 +1,4 @@
-// Default first-load view (stellata-vjm). When the user lands on the
+// Default first-load view. When the user lands on the
 // bare URL with no `?v=` view fragment, park the camera 5 AU from Sol
 // aimed at the galactic centre with the HUD on. The galactic-centre
 // framing puts Sgr / Sco low on the horizon and the brightest part

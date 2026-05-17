@@ -11,13 +11,13 @@ animation that connects observe→observe arrivals see
 The navigate↔observe mode-switch orchestrator — the
 `ObserveTransitionState` slot, the `enter` / `exit` / `unfocus` kinds,
 and the per-frame lerp — lives in
-`src/client/camera/observe-transition.ts` (extracted from `stellata.ts`
-in stellata-9mm.194.6). The integration shell composes the controller
-alongside Picker / AimController / WarpController and delegates the
-animate-loop tick when `observe.isAnyActive()` returns true. Stellata
-still owns the `cameraMode` field (~20 unrelated read sites) and writes
-it through the controller's `setCameraModeValue` dep callback so the
-controller's state machine stays the canonical mode-switcher.
+`src/client/camera/observe-transition.ts`. The integration shell
+composes the controller alongside Picker / AimController /
+WarpController and delegates the animate-loop tick when
+`observe.isAnyActive()` returns true. Stellata still owns the
+`cameraMode` field (~20 unrelated read sites) and writes it through
+the controller's `setCameraModeValue` dep callback so the controller's
+state machine stays the canonical mode-switcher.
 `alignCameraUpToQuaternion` (re-anchor `camera.up` before any `lookAt`
 on the observe→navigate seam) lifted to
 `src/client/camera/up-align-pure.ts` in the same PR — the controller

@@ -1,4 +1,4 @@
-// Shared helpers for the hover-card formatters (stellata-lo5).
+// Shared helpers for the hover-card formatters.
 //
 // Lifted here at the second usage (Local Group + cloud both surface
 // "Size <major> × <minor>" axis pairs) per the named-constants-and-dry

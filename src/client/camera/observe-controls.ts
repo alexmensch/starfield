@@ -1,40 +1,13 @@
 import * as THREE from 'three';
 
-// Direct-manipulation look-around for OBSERVE mode. The user puts the
-// cursor on a world point ("grabs" it) and drags; the camera rotates so
-// that point stays glued to the cursor across the entire drag — like
-// fingertip-dragging the inside of a celestial sphere.
+// Direct-manipulation look-around for OBSERVE mode. Premultiply
+// camera.quaternion by the shortest rotation that takes the
+// pointer-move ray direction → the pointer-down ray direction; the
+// world point under the cursor stays glued there across the drag.
 //
-// On pointer-down we unproject the cursor pixel into a world-space ray
-// direction `dGrabbed`. On every pointer-move we unproject the current
-// pixel into `dCurrent` (using the live camera quaternion), compute the
-// shortest rotation R that takes `dCurrent → dGrabbed`, and pre-multiply
-// `camera.quaternion` by R. Premultiply rotates the camera's basis in
-// world space; the pixel under the cursor — whose direction in
-// camera-local coordinates is fixed by FOV/aspect/pixel — therefore
-// now points at `dGrabbed` in world. The grabbed world point follows
-// the cursor pixel-perfectly, frame after frame.
-//
-// Properties of this scheme:
-//   - No fixed yaw axis. Every drag rotates around whatever screen-
-//     relative axis matches the cursor motion; there's no "world up"
-//     to align with anything.
-//   - No pole singularity. Shortest-path rotations are well-defined
-//     through ±90° in any direction, so a vertical drag can pass
-//     straight over NGP and out the far side without the camera
-//     getting stuck.
-//   - Roll-independent. A two-finger Safari twist rotates
-//     camera.quaternion via Stellata's rollCamera, which changes
-//     which world point is under each pixel — but pointer-down captures
-//     whatever's under the cursor at that instant and pointer-move
-//     keeps it there. So the user can rotate the screen image to match
-//     the sky overhead and dragging still drags the world along.
-//
-// Wheel adjusts the camera FOV. Coexists with TrackballControls: when
-// this controller is enabled, the caller should set
-// TrackballControls.enabled = false. We attach our own pointer/wheel
-// listeners on enable() and detach them on disable() so the two control
-// schemes never see the same gesture.
+// Coexists with TrackballControls — caller must set
+// TrackballControls.enabled = false while this is enabled.
+// See docs/camera-observe.md.
 export class ObserveControls {
   private static FOV_STEP_PER_WHEEL = 1.5; // degrees per typical wheel notch
   private static FOV_MIN = 10;

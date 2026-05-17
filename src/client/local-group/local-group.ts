@@ -1,33 +1,10 @@
-// Local Group wireframe layer (stellata-38m / extended to 2 Mpc in
-// stellata-1ui).
+// Local Group wireframe layer. Geometry pre-baked in absolute ICRS
+// pc; group position rebases to -worldOffset per frame for floating
+// origin. Opacity tracks galactic-fade.ts so LG and MW disc reveal in
+// lockstep. See docs/local-group.md.
 //
-// Renders LineLoop outlines for confirmed-galaxy Local Group members
-// out to MAX_DISTANCE_PC of Sol (2 Mpc — M31 + M33 + Andromeda subgroup
-// + outer-band dIrrs). Each object's geometry is pre-baked in
-// absolute ICRS pc at construction; the group is rebased to
-// -worldOffset per frame so the floating origin doesn't drift the
-// outlines. Opacity tracks the same FADE_INNER_PC / FADE_OUTER_PC
-// curve the MW disc uses (galactic-fade.ts), so the two layers fade
-// in lockstep as context overlays rather than disjoint reveals.
-//
-// Object kinds:
-//
-//   disc       — Magellanic-style inclined disc. Three LineLoop rings:
-//                 the midplane (z=0 in the disc-local frame) and a
-//                 thickness pair offset ±c along the disc normal. axes
-//                 = (R, R, h) for a circular disc with semi-thickness h.
-//   ellipsoid  — Triaxial blob. Three orthogonal meridian LineLoops on
-//                 the principal axes — xy, xz, yz — so the silhouette
-//                 reads as an ellipsoid from any angle.
-//
-// Per stellata-pattern-coverage-across-peers, every renderable kind in
-// the catalog is exhaustively covered here; a future addition (e.g. a
-// shell/torus kind for a circumgalactic component) needs both a JSON
-// schema bump and a new branch.
-//
-// Per-object silhouette samples are precomputed for the label engine
-// (createDistanceGatedLabel) — see getAbsSample / sampleCount. The
-// label engine subtracts worldOffset from these to project them.
+// Object kinds: disc (Magellanic-style — midplane + two thickness
+// rings) and ellipsoid (three orthogonal meridian LineLoops).
 
 import * as THREE from 'three';
 import type { LgCatalog, LgObject } from './local-group-loader';
@@ -109,7 +86,7 @@ export class LocalGroupLayer {
     if (this.mono) {
       // Chart (mono / paper) mode hides the Local Group wireframes — same
       // policy GalacticDisc + heliopause adopt; chart-mode renders its
-      // own paper-aesthetic when stellata-m40 takes this on, currently
+      // own paper-aesthetic when chart-mode takes this on, currently
       // it does not.
       this.group.visible = false;
       return;
@@ -143,9 +120,9 @@ export class LocalGroupLayer {
     out.copy(this.absSamples[objectIdx][sampleIdx]);
   }
 
-  /** Hover-engine entry point for the Local Group layer (stellata-lo5.5).
+  /** Hover-engine entry point for the Local Group layer.
    *
-   *  Visibility-only gate per stellata-lo5-hover-conventions Rule 2:
+   *  Visibility-only gate per hover Rule 2:
    *  mirrors the renderer's "is this drawn?" predicate exactly — chart
    *  (mono) mode and the distance-fade smoothstep are both encoded by
    *  `group.visible`, which `update()` flips each frame. The pick
