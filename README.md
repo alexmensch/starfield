@@ -185,7 +185,7 @@ anchor. From there:
 ### Watch the dust shape the sky
 
 Set the magnitude limit to "All" (showing all 313,000 stars) and
-pull the camera out to ~1 kpc from Sol, then orbit around. The
+pull the camera out to ~3 kpc from Sol, then orbit around. The
 Edenhofer 2023 3D dust grid is real volumetric structure, not an
 analytical shell — as you move, extinction patterns paint
 themselves across the stellar density as filaments and clumps that
