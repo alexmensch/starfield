@@ -1,0 +1,51 @@
+name: Enhancement
+description: A new feature, new data layer, or change to existing behaviour.
+title: "[Enhancement]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion. The more concrete and specific the request, the more likely it is to actually land.
+
+        Stellata's data-fidelity principle means every new astronomical object class needs a published, observational source. If your suggestion involves new data, please name the catalogue, paper, or DOI in the relevant field below. See [SCIENCE.md](../SCIENCE.md) for context.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: Exactly what you want
+      description: |
+        A specific description of the proposed behaviour, ideally with a worked example. "Add support for X" is harder to act on than "When viewing Y, show Z by doing W".
+      placeholder: When focused on a star with confirmed exoplanets, show ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: data-source
+    attributes:
+      label: Data source / catalogue (if applicable)
+      description: |
+        If the enhancement involves new astronomical data, name the catalogue, paper, or DOI you have in mind. Include a link if you have one. Skip this field if the enhancement is purely UI / rendering / interaction.
+      placeholder: |
+        e.g. NASA Exoplanet Archive — Confirmed Planets table
+        https://exoplanetarchive.ipac.caltech.edu/
+    validations:
+      required: false
+
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it would be valuable
+      description: What does this enable that the current version doesn't? Helps me with prioritisation, doesn't gate the request.
+      placeholder: ...
+    validations:
+      required: false
+
+  - type: textarea
+    id: anything-else
+    attributes:
+      label: Anything else
+      description: Mockups, related issues, prior art in other tools, references, etc.
+    validations:
+      required: false

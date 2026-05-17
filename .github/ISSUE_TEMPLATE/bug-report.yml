@@ -1,0 +1,83 @@
+name: Bug report
+description: Something in Stellata didn't render, behave, or compute the way it should.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug.
+
+        The single most useful thing you can include is the **Stellata URL** of the view where you saw the issue. Every setting and the camera pose are packed into the `?v=…` query parameter at the top of your address bar, so a copy-paste lets me reproduce exactly what you saw.
+
+        If you have a proposed fix or a code snippet you've already worked out, please paste it in the "Anything else" section at the bottom.
+
+  - type: input
+    id: stellata-url
+    attributes:
+      label: Stellata URL
+      description: Copy the URL from your address bar at the moment the bug appeared. This usually contains the camera pose and all settings.
+      placeholder: https://stellata.xyz/?v=...
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What didn't work
+      description: What you saw or what went wrong. Screenshots help if they show something the URL can't reproduce (eg. a render glitch tied to your hardware).
+      placeholder: When I focused on Betelgeuse and pressed O, ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-expected
+    attributes:
+      label: What you expected
+      description: What you thought should have happened instead. Even if it feels obvious, write it down: it isn't always obvious from the failure description.
+      placeholder: I expected chart mode to engage, but instead ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: browser
+    attributes:
+      label: Browser
+      description: Especially relevant for rendering, gesture, or layout issues.
+      options:
+        - "Safari (desktop)"
+        - "Safari (mobile)"
+        - "Chrome (desktop)"
+        - "Chrome (mobile)"
+        - "Firefox (desktop)"
+        - "Firefox (mobile)"
+        - "Edge"
+        - "Other / not sure"
+    validations:
+      required: false
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      description: e.g. macOS 14.5, Windows 11, iOS 17.5, Android 14
+    validations:
+      required: false
+
+  - type: textarea
+    id: console-errors
+    attributes:
+      label: Console errors (optional)
+      description: Open the browser devtools console and paste any red errors here.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: anything-else
+    attributes:
+      label: Anything else
+      description: Proposed fixes, code snippets, theories about the cause, related issues, etc.
+    validations:
+      required: false

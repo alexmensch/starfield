@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Sponsorship
+    url: https://github.com/sponsors/alexmensch
+    about: Stellata is built in my spare time. Sponsorship through GitHub Sponsors helps keep development going.

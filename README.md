@@ -1,195 +1,292 @@
 # Stellata
 
-An observational 3D model of our galaxy at every scale we've measured
-it — from individual stars and their planets, through the local
-interstellar medium, out to the structure of the galactic disc.
-Built entirely on observation. Every object in Stellata comes from a
-published observational catalogue or direct in-situ measurement: if
-we've measured it, it's here. Theoretical predictions and conjectured
-structures (the Oort cloud, anything beyond Gaia's reach) aren't.
-The model's scope is bounded only by what observation has touched,
-and grows as observation does.
+*Explore the universe.*
 
-Loads the classic-IDs subset of the [AT-HYG
-catalog](https://codeberg.org/astronexus/athyg) (~313k stars) and
-renders it on the GPU with per-frame, camera-relative apparent
-magnitude, filterable by distance, magnitude, spectral class, and
-constellation. Around Sol, the eight planets and Pluto render at
-their live heliocentric positions inside the heliopause boundary.
+A physically accurate 3D model of our local corner of the universe at every
+scale astronomy has measured it. Experience what it would actually look
+like to *be there*: from individual stars and their planets, through the local
+interstellar medium, out to the structure of the galactic disc, and
+beyond into the intergalactic void.
 
-Stack: TypeScript, Three.js (WebGL2), Vite, Cloudflare Workers.
+Every object in Stellata comes from a published observational
+catalogue and direct measurement: if we've measured it, it's
+here. Theoretical predictions and conjectured structures are excluded. The
+model's scope is bounded by what has been observed, currently enclosing
+a volume up to 6.5 million light years from our solar system.
 
-## Features
+Try it at **[https://stellata.xyz](https://stellata.xyz)**.
 
-- All 313k stars rendered on the GPU as instanced quads. Each frame, each
-  star's apparent magnitude is recomputed from the current camera position.
-- **Physical-size rendering at close range.** Stars' rendered size blends
-  between a brightness-based point glow (distant) and a resolved disc
-  whose radius comes from the catalog absmag + spectral class via Stefan–
-  Boltzmann. Supergiants like Betelgeuse fill up to 50% of the viewport
-  at maximum zoom-in; white dwarfs render as crisp small points. Discs
-  are opaque and occlude anything behind them; distant stars still
-  accumulate additively so dense fields stay bright.
-- **Luminosity-class visual differentiation.** Halo falloff and disc edge
-  softness scale with the MK luminosity class — crisp edges for white
-  dwarfs, fuzzy extended atmospheres for hypergiants.
-- **Variable-star pulsation.** ~3,700 stars cross-matched with the GCVS
-  catalogue. Pulsate both in apparent-magnitude-driven point size (distant)
-  and physically in disc radius (close). Time compressed so Cepheids cycle
-  in a few seconds, Miras in ~minute, Betelgeuse takes ~8 minutes.
-- **Binary-system rendering.** Two-pass flagging surfaces ~13k visual
-  doubles for chart mode. Geometric inference catches catalog pairs
-  within ~1030 AU of each other (~14 systems where AT-HYG carries both
-  components, e.g. α Cen). The Hipparcos CCDM × MultFlag cross-match
-  catches the rest — Sirius, Mizar, Castor, Albireo, γ And, ε Lyr,
-  Algol, 70 Oph, Polaris, … — using the published double-multiple
-  cross-reference filtered to physical components (`MultFlag ∈ {C, G,
-  O}`) so wide line-of-sight optical pairs (Vega, Pollux, …) don't
-  flag. When focused on a geometrically-paired binary member,
-  `minDistance` bumps so both components stay in the viewport.
-- **Solar system layer around Sol.** The eight planets and Pluto
-  render at their live heliocentric positions, computed from the JPL
-  Standish 1992 Keplerian-elements approximation (sub-arcminute
-  accurate 3000 BC – 3000 AD). Faint orbit rings on the ecliptic plane
-  surface the geometry of the system; the heliopause appears as an
-  asymmetric translucent shell at ~122 AU upwind, ~115 AU at the
-  flanks, ~200 AU into the heliotail (Voyager 1/2 + IBEX). A discreet
-  bottom-right time readout shows the live UTC moment the positions
-  correspond to. The default first-load view parks the camera at 5 AU
-  from Sol aimed at the galactic centre, with the HUD ring on — an
-  immediate "you are here, that's our system, now look around" anchor.
-- Filter by distance from Sol, maximum apparent magnitude (with `naked eye` /
-  `binoculars` / `all` presets), spectral class, and constellation. The
-  presets carry physically calibrated angular star sizes (Gaussian-PSF
-  detection-threshold model with √Δm scaling) plus magnitude limits — m ≤
-  6.5 for naked eye, 10.5 for 7×50 binoculars, 15 for the catalog
-  ceiling. Manual size/dynamic-range tweaks survive preset switches and
-  viewport resizes; per-section reset buttons snap each field back to
-  the active preset.
-- User-tunable camera FOV (default 50° vertical, slider 10°–120°). Star
-  sizes recompute against the new arcsec-per-pixel ratio so they stay
-  proportional to the volumetric Milky Way bulge regardless of FOV or
-  screen size.
-- User-tunable star-size exaggeration (slider, 1=Realistic to 20=Extreme).
-  Drives the scale on the eye PSF used to compute angular star sizes,
-  per magnitude preset (defaults: naked-eye = 12, binoculars = 9,
-  all = 5 — wider catalogs use a smaller K so the denser star population
-  doesn't wash out the field). The slider drives whichever preset is
-  currently active. At low values the sky reads close to literal physics
-  (most stars go sub-pixel and are floored to 1 px); at high values the
-  brightest stars dominate the frame.
-- Click a star to focus; click another to draw a measured distance vector
-  (chevron-marked, clipped when the destination goes off-screen); click the
-  far tip to travel there instantly, or hover the distance label and click
-  the "→ Warp" affordance (or press `W`) for an animated flight between the
-  two stars.
-- **Star chart mode** (observe-only). Press `M` while in observe mode
-  to flip the scene to a paper-chart aesthetic inspired by Sky Atlas
-  2000.0 — flat hard-edged star discs sized linearly by magnitude
-  across the visible range, and a per-frame label engine that draws
-  proper-named stars, every Bayer-letter Greek glyph, and constellation
-  Latin names (outline-style overlay typography that's allowed to
-  overlap) with greedy collision avoidance. Variable stars get an outer
-  ring around an inner pulsing disc; double / multiple stars get short
-  horizontal wings through the disc. Disabled automatically when
-  leaving observe mode.
-- Two camera modes via the navigate / observe pill in the top-right card.
-  **Navigate** is the default orbit camera. **Observe** parks the camera
-  at the focused star (the star's disc itself is hidden; you're standing
-  on it) and switches to a custom look-around controller — drag to yaw +
-  pitch (clamped at the poles, FPS-style), wheel adjusts FOV, two-finger
-  roll still tilts the horizon. The optional **head-up display** adds a
-  translucent screen-centred ring (sized in angular units, so it scales
-  with FOV) and Sol / Galactic-Centre locator arrows that tangent the
-  ring rim and swivel as you look around; the focus ring smoothly morphs
-  into the HUD ring through the navigate↔observe transition so the
-  arrow attachment slides instead of popping. Picking a new "Location"
-  while in observe re-uses the warp animation to fly to the new anchor;
-  on arrival, the camera slerps back to the same celestial direction it
-  was facing at warp start, so the user sees the same patch of sky from
-  a different vantage with all the parallax that implies.
-- Per-star "approach distance" — the camera's near-star landing distance
-  (warp arrival, observe-exit, orbit-min clamp) is computed per-star so
-  the disc renders at a uniform on-screen size regardless of stellar
-  radius. Supergiants land much further away than dwarfs but read the
-  same visual size at parking. Single tunable in `stellata.ts`
-  (`TARGET_APPROACH_DISC_PX`).
-- Dual search inputs: one for focusing, one for measurement destination.
-  Matches proper names (fuzzy), Bayer designations (`α Cen` / `Alpha Cen` /
-  `Alf Cen` all work), Flamsteed numbers (`58 Ori`), and numeric catalog
-  IDs (`HIP 27989`, `HD 39801`, `HR 2061`, `Gl 559A`) via direct lookup.
-- Hover any star for a detailed tooltip — name, constellation, distance,
-  full spectral classification (preserving composite/peculiar markers like
-  `K0III+K7V`), and, for variables, period + magnitude amplitude.
-- Constellation overlay draws the classical stick-figure asterism lines
-  (sourced from Stellarium's HIP-indexed sky culture data). The figure
-  deforms in true 3D as the viewpoint moves away from Sol, leaves a
-  gap around every figure-star, and is masked behind a close-range
-  resolved disc so lines appear to pass behind the star rather than on top.
-- **Per-star interstellar dust extinction.** Edenhofer 2023's 3D dust map
-  resampled onto a 512³ ICRS voxel grid (~1.25 kpc cube), served as 64
-  chunks via Git LFS and progressively uploaded to a `Data3DTexture` on
-  the client. The vertex shader raymarches camera-to-star at run time
-  and dims + reddens stars by line-of-sight A_V — so stars behind dense
-  dust look fainter and redder, exactly as you'd see them.
-- **Galactic reference layers** to anchor the local catalog against the
-  Milky Way's geometry: an always-on translucent disc outline (15 kpc
-  midplane + bulge wireframe) that fades in as the camera pulls away
-  from Sol, plus a toggleable galactic coordinate sphere (equator + lat
-  circles every 10° + meridians every 10°). The Sol / Galactic-Centre
-  locator arrows live on the head-up display (its own toggle), with live
-  distance labels — clickable to slerp the camera toward the named
-  object.
-- **Milky Way volumetric background.** A bounded raymarch through two
-  galactic-scale proxy meshes (a flattened disc + an oblate bulge,
-  both anchored at the galactic centre) produces an integrated
-  surface-brightness band that responds correctly to camera position
-  from anywhere in the galaxy — fly past the GC and the band reorients
-  with proper parallax, not as a painted backdrop. Includes analytical
-  mid-plane dust with wavelength-dependent reddening so the dark dust
+![Stellata — hero view](docs/screenshots/hero.png)
+
+## Highlights
+
+- **Everything is rendered live, from where you are.** Stars (more than
+  313,000 in the catalogue), planets, the volumetric Milky Way, the
+  Local Group dwarf galaxies, and the 3D dust between them: every
+  object continually re-renders against the current camera each frame.
+  Fly halfway to Sirius and the sky changes: parallax, reddening, and 
+  occlusion are all real, not fabricated.
+
+- **Close-up stars resolve as physical objects.** Approach a star and
+  it stops being a dot: its disc grows to its actual radius (from
+  catalogue absolute magnitude + spectral class via Stefan–Boltzmann)
+  and occludes whatever is behind it. Supergiants like Betelgeuse
+  fill half the viewport; white dwarfs render as crisp small points.
+
+- **Interstellar dust dims and reddens stars correctly.** The vertex
+  shader raymarches the Edenhofer 2023 3D dust map from camera to
+  star at run time, so stars behind dense ISM look fainter and
+  redder, exactly as you would see them.
+
+- **Variable stars pulsate.** ~3,700 stars cross-matched with GCVS
+  pulse on time-compressed cycles: Cepheids in seconds, Miras in a
+  minute, Betelgeuse in ~8 minutes. Visible both as brightness
+  swing and as physical disc-radius change at close range.
+
+- **The solar system at live planetary positions.** Around Sol, the
+  eight planets and Pluto render at their current heliocentric
+  positions (JPL Standish ephemerides, sub-arcminute accurate
+  3000 BC – 3000 AD), inside the asymmetric heliopause shell
+  measured by Voyager and IBEX. A small clock in the corner shows
+  the UTC time the positions correspond to.
+
+- **The Milky Way is volumetric, not a skybox.** A bounded raymarch
+  through galactic-scale density meshes produces the surface-
+  brightness band. Fly past the galactic centre and it reorients
+  with proper parallax. Analytical mid-plane dust means the dark
   lane reads correctly.
-- Scale bar in the bottom-left adapts to the current zoom in round pc or ly
-  units.
-- URL state sync: all settings plus camera pose are packed into a single
-  opaque `?v=…` query param, so any view is bookmarkable and shareable.
-  Typical share links are 25–40 characters; default state has no `?v=`
-  at all.
-- Top-left brand surface with always-visible **About** and **Credits**
-  modals (data sources, citations, licence) — both reuse the welcome-modal
-  styling.
-- First-visit welcome modal with a "Don't show this again" opt-out
-  (persisted to `localStorage`).
-- Mobile-friendly responsive layout (pure CSS flex, no breakpoints). The
-  settings panel collapses as a whole and each section (Navigation /
-  Stars / Overlays / Camera) collapses independently; both states persist
-  per-group across visits.
-- Constellation picker is a typeahead — type the name or 3-letter IAU
-  code, or focus the empty field to browse the full alphabetised list.
-  A "None" entry at the top of the list clears the highlight.
-- Targeted reset buttons next to star size, dynamic range, field of
-  view, and exaggeration controls.
-- Two-finger rotate gesture to roll the view around the center of the
-  screen. See [Gesture support](#gesture-support) for platform notes.
-- **Keyboard shortcuts** for power users. `?` opens a help overlay
-  listing the full set; highlights: `G` opens a centred picker that
-  mirrors the topbar search (focus / destination / observe-location
-  depending on context), `C` does the same for constellations (double-tap
-  to toggle the constellation lines on or off), `O` switches to observe
-  mode when a star is focused, `M` toggles chart mode (observe only),
-  `H` / `S` toggle
-  the HUD and galactic-coordinate sphere, `+` / `-` / `=` step the
-  magnitude limit by 0.5 or reset to naked-eye, `R` resets the camera
-  sliders, and `Esc` steps back through observe → destination →
-  focus.
 
-## Prerequisites
+- **A paper-chart mode for when you want to read the sky like a
+  star atlas.** A second visual mode is inspired by Sky Atlas 2000.0:
+  flat hard-edged discs sized by apparent magnitude, full
+  Bayer/Flamsteed labels, constellation names, double-star wings,
+  variable-star rings.
+
+![Stellata — chart mode](docs/screenshots/chart-mode.png)
+
+- **Navigate, observe, warp.** Orbit any star (navigate), or land on
+  it and look at the sky from its location (observe). Pick a second star
+  to measure the distance, then warp: an animated camera flight
+  between the two stars with full physical scaling.
+
+- **Shareable views.** All settings plus camera pose pack into the
+  current URL, so any view can be bookmarked and shared.
+
+## Grounded in published science
+
+Everything you see is calibrated against the source data. Star sizes
+come from absolute magnitudes via Stefan–Boltzmann; halo softness
+tracks MK luminosity class; binaries come from the Hipparcos CCDM
+cross-reference filtered by MultFlag; dwarf galaxies in the Local
+Group come from Pace 2024's Local Volume Database with hand-curated
+structural detail for the LMC, SMC, M31, M33, and Sagittarius dSph
+from the primary literature.
+
+The full record of sources, formulas, and deliberate modelling
+simplifications lives in **[SCIENCE.md](./SCIENCE.md)**. Read for
+citations, DOIs, and what is and isn't observationally grounded.
+
+## Things to try
+
+Stellata rewards exploration more than reading. A short curated list
+of viewpoints and objects, each chosen because it exercises something
+the renderer does that doesn't quite show up in a screenshot.
+
+### See the giants as physical objects
+
+Approach these slowly. The discs grow to the star's real radius
+computed from its catalogued absolute magnitude and spectral class,
+so they fill the viewport long before you'd expect.
+
+- **Betelgeuse (α Orionis)** — the canonical red supergiant.
+  M2 Ia at 152 pc; the disc resolves to a large fraction of the
+  viewport at close range and pulses on an ~8-minute cycle.
+- **Antares (α Scorpii)** — the other canonical red supergiant.
+  M1.5 Iab at 170 pc. Visibly redder than Betelgeuse.
+- **Rigel (β Orionis)** — blue supergiant in the same constellation
+  as Betelgeuse. B8 Ia at 265 pc, intrinsically brighter than
+  Betelgeuse — but hotter, so Stefan–Boltzmann gives it a smaller
+  physical radius. The Rigel / Betelgeuse pair makes the L = R²T⁴
+  trade-off visible.
+- **Deneb (α Cygni)** — A2 Ia supergiant at 433 pc, in Cygnus.
+  Renders as a notably bright white-blue disc.
+
+### Watch variables pulse in real time
+
+Stellata compresses time so periods you'd never see in a human
+lifetime cycle in seconds. Focus on one of these and just wait:
+
+- **δ Cephei** — the namesake Cepheid. Full cycle in a few seconds.
+- **η Aquilae** — another bright classical Cepheid.
+- **Mira (o Ceti)** — the long-period prototype. ~1 minute per
+  cycle; amplitude is dramatic.
+- **Betelgeuse** — slower (~8 minutes per cycle) but visible as
+  both brightness swing and physical disc-radius pulse if you're
+  focused close in.
+
+### Fly out and watch the constellations break
+
+The constellation lines come from Earth's viewpoint. Move just a
+few tens of parsecs and the figures visibly deform — this is the
+moment the model stops being a planetarium and starts being a 3D
+map.
+
+- **Orion** — Betelgeuse (~152 pc) and Rigel (~265 pc) are at very
+  different distances; flying through Orion stretches the figure
+  asymmetrically.
+- **Big Dipper / Ursa Major** — most members belong to the Ursa
+  Major moving group, but Dubhe (α UMa) and Alkaid (η UMa) don't.
+  The asterism breaks lopsidedly as you back away.
+- **Cygnus** — Deneb is at ~433 pc, the rest of the Northern Cross
+  much closer. Backing the camera off tilts the cross dramatically.
+
+### Visual doubles, in chart mode
+
+Switch to chart mode while observing from a focused star to see
+the double-star wings glyph. The model flags ~13,000 doubles via
+the Hipparcos CCDM cross-match.
+
+- **Mizar + Alcor (ζ + 80 UMa)** — the classic naked-eye double.
+  Both stars are in the catalogue at distinct positions, so they
+  render as two separate discs; Mizar additionally carries the
+  binary wings glyph in chart mode.
+- **Albireo (β¹ + β² Cygni)** — Earth's favourite colour-contrast
+  pair, gold and blue. Stellata's 3D positions reveal it as an
+  *optical* double rather than a true binary: β¹ at 111 pc, β² at
+  122 pc, ~35 light-years apart along the line of sight — far too
+  distant to be gravitationally bound. The colour contrast is
+  real; the pairing is a chance alignment. (This matches the
+  modern post-Gaia consensus, which retired Albireo from binary-
+  catalogue status around 2018.)
+- **ε Lyrae** — the wide "double double" pair. ε¹ and ε² Lyr are
+  catalogued separately and render as a visible naked-eye pair;
+  each carries the binary wings glyph in chart mode (each is itself
+  a close binary that Hipparcos resolves).
+
+### Beyond the heliopause
+
+The default first-load view parks you 5 AU from Sol facing the
+galactic centre — a deliberate "you are here, that's our system"
+anchor. From there:
+
+- **From Pluto, looking inward.** The Sun is just one bright star
+  among many; the heliopause shell sits overhead.
+- **Cross the heliopause at the upwind apex (~122 AU) and look
+  back.** The model's asymmetry — ~115 AU at the flanks, ~200 AU
+  into the heliotail — reads from outside the bubble.
+
+### Watch the dust shape the sky
+
+Set the magnitude limit to "All" (showing all 313,000 stars) and
+pull the camera out to ~3 kpc from Sol, then orbit around. The
+Edenhofer 2023 3D dust grid is real volumetric structure, not an
+analytical shell — as you move, extinction patterns paint
+themselves across the stellar density as filaments and clumps that
+follow the actual local ISM. Stars behind dense lanes dim and
+redden; stars in clear windows shine through. Combined with the
+live per-camera apparent-magnitude recomputation (further =
+dimmer), the effect reads more like a map of the local ISM than a
+star-chart background.
+
+### Galactic-scale views
+
+The Milky Way is volumetric, not a skybox. These viewpoints prove it:
+
+- **Park 8 kpc above the galactic centre and look down.** The disc
+  and bulge render as illuminated 3D structures; their orientation
+  responds to camera motion.
+- **Stand on a star a few kpc out and look around.** The MW band
+  wraps continuously, with parallax that wouldn't be possible from
+  a flat backdrop.
+- **Fly toward the galactic centre.** As you cross into the bulge,
+  the surface brightness of the volumetric band ramps. The dark
+  dust lane along the midplane (a Drimmel–Spergel analytical
+  profile baked into the band's own raymarch) reads correctly as
+  you orient along the disc plane.
+
+### Local Group destinations
+
+For ambitious distances. The Local Group layer renders LineLoop
+wireframes for confirmed-galaxy members out to 2 Mpc.
+
+- **Sagittarius dSph** (~26 kpc) — our closest companion dwarf,
+  currently being tidally torn apart by the MW. The wireframe shows
+  the elongated structural axis that captures.
+- **LMC / SMC** (~50 / 63 kpc) — the Magellanic Clouds render with
+  hand-curated structure (LMC: inclined disc at i = 32°; SMC:
+  triaxial along line of sight) rather than the default oblate
+  ellipsoid.
+- **M31 (Andromeda, 776 kpc) and M33 (Triangulum, 840 kpc)** — the
+  two major spirals beyond the MW; M31's inclined disc (i = 77°) is
+  visible.
+
+## Browser support
+
+- **WebGL2** required (any browser from 2018 onward — Safari 15+,
+  Chrome 56+, Firefox 51+).
+- Loads and renders on any device, but the user interface for mobile
+  devices / small viewports is currently pending a future update.
+
+## Gestures
+
+The two-finger rotate gesture (roll the view around the screen
+centre) is available on:
+
+- **Mobile / touch** — iOS Safari, Android Chrome, any browser that
+  exposes multi-touch `touchmove` events.
+- **Desktop Safari** — via the macOS trackpad two-finger rotate
+  gesture, detected through Safari's non-standard `gesturechange`
+  event.
+
+Chrome and Firefox on desktop do **not** expose a rotate gesture
+(they consume two-finger trackpad input for scroll/pinch only), so
+roll is unavailable in those browsers by design. All other
+navigation (orbit, zoom, pan) works the same everywhere.
+
+## Known limitations
+
+- **Proper motion is not accounted for.** Stars are rendered at their
+  catalog Julian 2000.0 positions; they don't move as you would see over
+  astronomical timescales. A future update will account for this to
+  render present time positions.
+- **Variable-star pulsation uses a constant-temperature model.**
+  Real pulsating variables (Miras, Cepheids) split their brightness
+  change between radius and temperature; we attribute the whole
+  swing to radius (`R ∝ √L`). Visually more dramatic than real
+  life.
+- **Only ~3,700 variables pulse** — those successfully cross-matched
+  between AT-HYG (via HIP or HD) and GCVS. Variables without a
+  HIP/HD cross-reference, or whose GCVS entry lacks a parseable
+  period, render as non-variable.
+- **Most secondaries aren't separately positioned yet.** ~13k primaries
+  are flagged as visual doubles via the CCDM cross-match (Sirius,
+  Mizar, Castor, Albireo, γ And, ε Lyr, Algol, …) and carry the
+  chart-mode binary glyph, but AT-HYG only stores the primary's
+  position for most of them. Apart from α Cen-style cases
+  caught by the geometric pass, the secondary doesn't render as its
+  own disc.
+- **Spectral-class colouring is provisional.** The current B–V →
+  RGB mapping is a placeholder pending a perceptually-calibrated
+  pass.
+- **No nebulae or dark clouds yet.** Molecular-cloud ellipsoids
+  (Zucker 2020/2021) are committed but shelved while the visual
+  treatment is refined. Diffuse and emission nebulae are not
+  currently modelled.
+
+## For developers
+
+Most users won't need this section: the deployed site at
+[stellata.xyz](https://stellata.xyz) is the whole product. This is
+how to run it locally.
+
+### Prerequisites
 
 - Node 20+
-- [Git LFS](https://git-lfs.com/) installed — the catalogue source files
-  are tracked via LFS. A clone without LFS will check out pointer stubs
-  instead of the real content and the preprocessor will fail.
+- [Git LFS](https://git-lfs.com/) — catalogue source files are
+  tracked via LFS. A clone without LFS will check out pointer stubs
+  and the preprocessor will fail.
 
-## Setup
+### Setup
 
 ```bash
 git lfs install        # one-time, if you haven't already
@@ -198,207 +295,90 @@ cd stellata
 npm install
 ```
 
-All catalogue source files (AT-HYG, GCVS, Stellarium, Zucker, Edenhofer
-dust) are included in the repo — no manual downloads needed. The dust
-voxel chunks (~120 MiB total) and stellar catalogue ride on Git LFS, so
-make sure that's installed before cloning.
+All catalogue source files are included in the repo, no manual
+downloads needed. The dust voxel chunks (~120 MiB total) and stellar
+catalogue ride on Git LFS.
 
-## Running
+### Running
 
 ```bash
 npm run dev
 ```
 
-This runs the preprocessor (regenerating `public/catalog.bin` if the source
-CSV has changed) and starts Vite on <http://localhost:5173>.
+Runs the preprocessor (regenerating `public/catalog.bin` if the
+source CSV has changed) and starts Vite on
+<http://localhost:5173>.
 
 ### Other commands
 
-| Command                  | What it does                                          |
-| ------------------------ | ----------------------------------------------------- |
-| `npm run build:catalog`  | Regenerate `public/catalog.bin` from the CSV          |
-| `npm run build:clouds`   | Regenerate `public/clouds.json` from the Zucker tables |
-| `npm run build:dust-sync`| Mirror `data/dust/` voxel chunks to `public/dust/`    |
-| `npm run build`          | Full production build into `dist/`                    |
-| `npm run typecheck`      | `tsc --noEmit` over everything                        |
-| `npm test`               | Run the vitest regression suite                       |
-| `npm run test:coverage`  | Vitest run with v8 coverage report                    |
-| `npm run deploy`         | `wrangler deploy` (requires Cloudflare auth)          |
+| Command                   | What it does                                           |
+| ------------------------- | ------------------------------------------------------ |
+| `npm run build:catalog`   | Regenerate `public/catalog.bin` from the CSV           |
+| `npm run build:clouds`    | Regenerate `public/clouds.json` from the Zucker tables |
+| `npm run build:dust-sync` | Mirror `data/dust/` voxel chunks to `public/dust/`     |
+| `npm run build`           | Full production build into `dist/`                     |
+| `npm run typecheck`       | `tsc --noEmit` over everything                         |
+| `npm test`                | Run the vitest regression suite                        |
+| `npm run test:coverage`   | Vitest run with v8 coverage report                     |
+| `npm run deploy`          | `wrangler deploy` (requires Cloudflare auth)           |
 
-## Deploying to Cloudflare Workers
+### Project documentation
 
-`wrangler.toml` is configured to serve `dist/` via the Workers static-assets
-binding. After authenticating wrangler:
+- **[CLAUDE.md](./CLAUDE.md)** — project conventions, folder layout,
+  and the documentation index. Start here when navigating the
+  codebase.
+- **[SCIENCE.md](./SCIENCE.md)** — every data source, citation,
+  formula, and modelling decision.
+- **[`docs/`](./docs/)** — topic-specific deep dives (architecture,
+  rendering pipeline, URL state, camera modes, etc.). The
+  documentation index in CLAUDE.md describes what each one covers.
 
-```bash
-npm run build
-npm run deploy
-```
+## Sponsorship
 
-No additional services (R2, KV, D1) are used — the ~13 MB catalog binary
-and the ~13 MB JSON search index ship as static assets alongside the
-HTML/JS. Both compress well (~2 MB each gzipped), so the wire transfer
-is moderate even on mobile networks.
+Stellata is built and maintained in my spare time. If it's useful to
+you and you'd like to support continued development, sponsorship
+through [GitHub Sponsors](https://github.com/sponsors/alexmensch) is
+warmly welcomed.
 
-## Data sources
+## Contributing
 
-| File | Purpose | Source | Size |
-| --- | --- | --- | --- |
-| `data/athyg_33_classic_ids.csv` | Stellar catalogue | [AT-HYG v3.3 subsets on Codeberg](https://codeberg.org/astronexus/athyg/src/branch/main/data/subsets) | ~64 MB, LFS |
-| `data/gcvs5.txt` | Variable-star periods + amplitudes | [GCVS 5.1 · Sternberg Astronomical Institute](http://www.sai.msu.su/gcvs/gcvs/index.htm) | ~14 MB, LFS |
-| `data/crossid.txt` | GCVS ↔ Hip/HD cross-references | same as above | ~12 MB, LFS |
-| `data/stellarium-modern-skyculture.json` | Classical constellation stick figures | [Stellarium modern sky culture](https://github.com/Stellarium/stellarium/tree/master/skycultures/modern) | ~200 KB |
-| `data/dust/chunk_*.bin` + `manifest.json` + `particles.bin` | Resampled 3D interstellar-dust grid for per-star extinction | [Edenhofer et al. 2023](https://doi.org/10.5281/zenodo.8187943) (Zenodo) — fetched via the `dustmaps` Python package and resampled by `scripts/build-dust.py` | ~120 MiB total, LFS |
-| _(in-source)_ | Planet positions | [JPL Standish 1992 Keplerian elements](https://ssd.jpl.nasa.gov/planets/approx_pos.html) — Table 2a/2b values inlined in `src/client/ephemeris.ts` | <1 KB |
-| _(in-source)_ | Planet bodies | [NASA Planetary Fact Sheets](https://nssdc.gsfc.nasa.gov/planetary/factsheet/) (radii) + JPL DE440 mean elements at J2000 (semi-major axes, eccentricities); Pluto from New Horizons 2015 | <1 KB |
-| _(in-source)_ | Heliopause boundary | Voyager 1/2 termination-shock crossings (122 / 115 AU) + IBEX/Cassini ENA estimates for the heliotail (200 AU); apex direction after Frisch & Slavin 2013 | <1 KB |
-
-The larger catalogue files are tracked via Git LFS so they don't balloon
-the git pack. Small files (Stellarium JSON) stay as regular blobs.
-Solar-system data is small enough that it lives directly in source
-rather than as a separate file. Builds are fully self-contained —
-refresh from upstream is a manual, infrequent step, not a build
-dependency.
-
-The AT-HYG **classic-IDs** subset selects stars that have at least one
-classical designation (IAU proper name, Bayer, Flamsteed, HIP, HD, HR, or
-Gliese/Jahreiss) — ~317k stars.
-
-## Input data format
-
-The preprocessor (`scripts/build-catalog.ts`) expects an AT-HYG v3.3
-classic-IDs CSV, as produced by the
-[AT-HYG project](https://codeberg.org/astronexus/athyg). The columns it
-reads:
-
-| Column        | Required | Purpose                                                              |
-| ------------- | -------- | -------------------------------------------------------------------- |
-| `x0, y0, z0`  | yes      | Parsecs, equatorial, Sol at origin                                   |
-| `absmag`      | yes      | Absolute magnitude — drives the physical-radius computation          |
-| `dist`        | no       | Used only for the `dist > 50,000 pc` outlier filter                  |
-| `ci`          | no       | B–V colour index (defaults to 0.65 when missing)                     |
-| `spect`       | no       | Parsed into spectral class, subclass, and luminosity class; full string carried for tooltip display |
-| `con`         | no       | 3-letter IAU constellation code (case-insensitive)                   |
-| `proper`      | no       | Human-readable star name                                             |
-| `bayer`       | no       | Bayer designation short code (e.g. `Alp`, `Alp-2`)                   |
-| `flam`        | no       | Flamsteed number                                                     |
-| `hip`         | no       | Hipparcos ID — also used for GCVS cross-match and Stellarium figures |
-| `hd`          | no       | Henry Draper ID — searchable, and GCVS cross-match fallback          |
-| `hr`          | no       | Yale Bright Star ID                                                  |
-| `gl`          | no       | Gliese / GJ ID                                                       |
-
-Rows are dropped when any of `x0`, `y0`, `z0`, or `absmag` is missing, or
-when `dist` exceeds 50,000 parsecs.
-
-Variability data is cross-matched from GCVS at preprocessing time. Each
-catalog star's HIP (then HD as fallback) is looked up in the GCVS cross-
-reference file to find its GCVS designation, which is then looked up in
-the main GCVS file for period (days) and magnitude amplitude. Stars
-without a known period (constant, supernova, irregular variables) simply
-don't pulse.
-
-The renderer-facing `catalog.bin` carries positions, absmag, colour index,
-spectral + luminosity class, computed physical radius in solar radii, a
-binary-companion pointer, variability period/amplitude, and the proper
-name. The search layer is a separate `search-index.json` carrying the
-full identifier set per star plus the raw spectral string. Loaded in
-parallel at startup. See `CLAUDE.md` for the binary layout.
-
-## Browser requirements
-
-- **WebGL2** — the vertex shader uses GLSL ES 3.00 with `uint` uniforms and
-  bitwise operators for the spectral-class mask. All browsers from 2018
-  onward support this (Safari 15+, Chrome 56+, Firefox 51+).
-- Works on desktop and mobile. On narrow viewports the display-settings
-  panel collapses by default and floats above the scene.
-
-## Gesture support
-
-The two-finger rotate gesture (roll the view around the screen center) is
-available on:
-
-- **Mobile / touch** — iOS Safari, Android Chrome, any browser that exposes
-  multi-touch `touchmove` events.
-- **Desktop Safari** — via the macOS trackpad two-finger rotate gesture,
-  detected through Safari's non-standard `gesturechange` event.
-
-Chrome and Firefox on desktop do **not** expose a rotate gesture (they
-consume two-finger trackpad input for scroll/pinch only), so roll is
-unavailable in those browsers by design. All other navigation (orbit, zoom,
-pan) works the same everywhere.
-
-## Known limitations
-
-- **Visible position jitter** when orbiting at the minimum distance from
-  stars that are far from the world origin — a float32 precision issue in
-  the vertex shader. Workaround: zoom out slightly.
-- **No IAU constellation *boundary* dataset.** The stick-figure asterism
-  lines are included (from Stellarium); the 1930 IAU region boundaries are
-  not.
-- **No proper motion over time.** Stars are rendered at their catalog
-  positions; they don't move as you'd see over astronomical timescales.
-- **Distance cap at 50,000 pc** — anything farther is treated as bad data
-  and dropped. The Milky Way is only ~30 kpc across, so this is fine for
-  anything in-galaxy, but it excludes catalogued extragalactic objects.
-- **Constellation assignments reflect the view from Sol.** The 3-letter
-  code is the IAU region the star appears in from Earth; stars in the same
-  "constellation" can be physically far apart.
-- **Variable-star pulsation uses a constant-temperature model.** Real
-  pulsating variables (Miras, Cepheids) split their brightness change
-  between radius change and temperature change; we model it as
-  `R ∝ √L` which over-attributes the swing to radius. Visually more
-  dramatic than real life, but simpler and single-model.
-- **Only ~3.7k variables pulse** — those successfully cross-matched
-  between AT-HYG (via HIP or HD) and the GCVS. Known variables that
-  lack a HIP/HD cross-reference, or whose entry in GCVS lacks a parseable
-  period, render as non-variable.
-- **Most secondaries aren't separately positioned** — the chart-mode
-  CCDM cross-match (above) flags ~13k primaries as visual doubles, so
-  the canonical naked-eye list (Sirius, Mizar, Castor, γ And, Albireo,
-  Algol, ε Lyr, 70 Oph, Polaris, …) all carry the binary glyph. But
-  AT-HYG only stores the *primary's* position for most of these, so
-  apart from α Cen-style cases caught by the geometric pass the
-  secondary doesn't render as its own disc — the wings glyph is the
-  only visible cue that the star is a multiple. Spectroscopic binaries
-  (components never separately catalogued) carry the wings glyph if
-  CCDM lists them but otherwise render as singletons.
-
-## Releases
-
-Tagged releases live on the
-[Releases page](https://github.com/alexmensch/stellata/releases); each
-release page is the canonical changelog (auto-generated from merged
-PRs). The cut-a-release runbook is in [`RELEASING.md`](./RELEASING.md).
+The issue tracker is open. Bug reports and enhancement suggestions
+are welcome. External pull requests are not currently accepted; see
+[`.github/CONTRIBUTING.md`](.github/CONTRIBUTING.md) for the full
+rationale and how to write a useful bug report or feature request.
 
 ## Licence
 
-The code in this repository is licensed under AGPL-3.0-only. See [`LICENSE`](./LICENSE).
+The code in this repository is licensed under AGPL-3.0-only. See
+[`LICENSE`](./LICENSE).
 
-The **AT-HYG v3.3** catalog data used by this project is made available
-by David Nash under a CC-BY-SA-4.0 license. The generated `catalog.bin`
-and `search-index.json` are derivatives of that data and carry the same
-licence. See the [AT-HYG repository](https://codeberg.org/astronexus/athyg)
-for attribution requirements.
+Data sources retain their own licences:
 
-The **General Catalogue of Variable Stars (GCVS 5.1)** is maintained by
-Samus et al at the Sternberg Astronomical Institute, Lomonosov Moscow
-State University, and is free for research and educational use with
-attribution. See [http://www.sai.msu.su/gcvs/gcvs/](http://www.sai.msu.su/gcvs/gcvs/)
-for citation details.
+- **AT-HYG v3.3** (stellar catalogue) — David Nash,
+  [Codeberg](https://codeberg.org/astronexus/athyg), CC-BY-SA-4.0.
+  The generated `catalog.bin` and `search-index.json` are
+  derivatives and carry the same licence.
+- **GCVS 5.1** (variable stars) — Samus et al at the Sternberg
+  Astronomical Institute, [http://www.sai.msu.su/gcvs/gcvs/](http://www.sai.msu.su/gcvs/gcvs/).
+  Free for research and educational use with attribution.
+- **Hipparcos Main Catalogue + CCDM** (ESA SP-1200, 1997; Dommanget
+  & Nys 1994) — public domain via [CDS](https://cdsarc.cds.unistra.fr/viz-bin/cat/I/239).
+- **Stellarium modern sky culture** (constellation stick figures) —
+  [Stellarium](https://github.com/Stellarium/stellarium/tree/master/skycultures/modern),
+  MIT-licensed (line data; illustrations not used).
+- **Edenhofer et al. 2023 3D dust map** —
+  [Zenodo](https://doi.org/10.5281/zenodo.8187943), CC-BY-4.0. The
+  resampled voxel grid in `data/dust/` is a derivative and carries
+  the same licence.
+- **Pace 2024 Local Volume Database** (dwarf galaxies) —
+  [arXiv:2411.07424](https://arxiv.org/abs/2411.07424), CC0. The
+  `dwarf_all` snapshot at `data/local-group/lvdb-snapshot.csv` is a
+  frozen copy of the upstream table.
+- **Zucker 2020 + 2021** (molecular cloud distances and bounding
+  boxes; data committed but rendering shelved for v1.0) —
+  [10.3847/1538-4357/ab9d24](https://doi.org/10.3847/1538-4357/ab9d24)
+  and [10.3847/1538-4357/ac1f96](https://doi.org/10.3847/1538-4357/ac1f96).
 
-The **Hipparcos Main Catalogue** (ESA SP-1200, 1997) supplies the
-HIP↔CCDM↔MultFlag cross-reference used to flag visual doubles.
-Hipparcos data is in the public domain; see
-[https://cdsarc.cds.unistra.fr/viz-bin/cat/I/239](https://cdsarc.cds.unistra.fr/viz-bin/cat/I/239)
-for the CDS-hosted release notes. CCDM (Catalog of the Components of
-Double and Multiple stars) is by Dommanget & Nys (1994).
-
-The classical **constellation stick-figure** lines are taken from
-[Stellarium's modern sky culture](https://github.com/Stellarium/stellarium/tree/master/skycultures/modern).
-The line data is MIT-licensed (illustrations, which this project does not
-use, are separately under the Free Art License).
-
-The **Edenhofer et al. 2023 3D dust map** is published on Zenodo under
-CC-BY-4.0 (DOI [10.5281/zenodo.8187943](https://doi.org/10.5281/zenodo.8187943)).
-The resampled voxel grid in `data/dust/` is a derivative work and
-carries the same licence; see the dataset page for citation details.
+See [SCIENCE.md](./SCIENCE.md) for citation details and the
+peer-reviewed papers underpinning hand-curated Local Group
+overrides (LMC, SMC, M31, M33, Sgr dSph, M 32, NGC 205).

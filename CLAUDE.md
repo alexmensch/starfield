@@ -229,7 +229,8 @@ Claude Code should read on demand when working on the relevant area.
 - **`docs/build-and-data.md`** — binary catalog format, search index,
   build scripts (`build-catalog.ts`, `build-clouds.py`, `build-dust.py`),
   Stellarium HIP resolution, geometric-binary inference, GCVS
-  cross-match, idempotency. Read when touching `scripts/` or `data/`.
+  cross-match, reference epoch + PM-not-applied contract, idempotency.
+  Read when touching `scripts/` or `data/`.
 - **`docs/architecture.md`** — event bus, click-state machine, focused
   constellation aim, floating origin, pin-to-center, FocusTarget
   contract. The cross-cutting patterns the rest of the codebase
