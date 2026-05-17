@@ -157,14 +157,18 @@ Switch to chart mode while observing from a focused star to see
 the double-star wings glyph. The model flags ~13,000 doubles via
 the Hipparcos CCDM cross-match.
 
-- **α Centauri** — uniquely, both A and B render as separate discs
-  (caught by the geometric pass, not the CCDM one). Get close and
-  you can orbit between them.
 - **Mizar + Alcor (ζ + 80 UMa)** — the classic naked-eye double.
-  Mizar carries the wings glyph; Alcor is a separate star nearby.
-- **ε Lyrae** — the "double double". Carries the multiplicity glyph.
-- **Albireo (β Cygni)** — only the primary renders, but the glyph
-  is there. Celebrated for its real-world gold/blue colour contrast.
+  Both stars are in the catalogue at distinct positions, so they
+  render as two separate discs; Mizar additionally carries the
+  binary wings glyph in chart mode.
+- **Albireo (β¹ + β² Cygni)** — both components are catalogued
+  separately, the K-type primary (gold) and the B-type companion
+  (blue). The real-world colour contrast carries through into the
+  rendered discs.
+- **ε Lyrae** — the wide "double double" pair. ε¹ and ε² Lyr are
+  catalogued separately and render as a visible naked-eye pair;
+  each carries the binary wings glyph in chart mode (each is itself
+  a close binary that Hipparcos resolves).
 
 ### Beyond the heliopause
 
@@ -178,6 +182,19 @@ anchor. From there:
   back.** The model's asymmetry — ~115 AU at the flanks, ~200 AU
   into the heliotail — reads from outside the bubble.
 
+### Watch the dust shape the sky
+
+Set the magnitude limit to "All" (showing all 313,000 stars) and
+pull the camera out to ~1 kpc from Sol, then orbit around. The
+Edenhofer 2023 3D dust grid is real volumetric structure, not an
+analytical shell — as you move, extinction patterns paint
+themselves across the stellar density as filaments and clumps that
+follow the actual local ISM. Stars behind dense lanes dim and
+redden; stars in clear windows shine through. Combined with the
+live per-camera apparent-magnitude recomputation (further =
+dimmer), the effect reads more like a map of the local ISM than a
+star-chart background.
+
 ### Galactic-scale views
 
 The Milky Way is volumetric, not a skybox. These viewpoints prove it:
@@ -188,9 +205,11 @@ The Milky Way is volumetric, not a skybox. These viewpoints prove it:
 - **Stand on a star a few kpc out and look around.** The MW band
   wraps continuously, with parallax that wouldn't be possible from
   a flat backdrop.
-- **Fly toward the galactic centre.** As you cross into the bulge
-  the surface brightness ramps; analytical mid-plane dust darkens
-  stars on lines of sight through the densest gas.
+- **Fly toward the galactic centre.** As you cross into the bulge,
+  the surface brightness of the volumetric band ramps. The dark
+  dust lane along the midplane (a Drimmel–Spergel analytical
+  profile baked into the band's own raymarch) reads correctly as
+  you orient along the disc plane.
 
 ### Local Group destinations
 
