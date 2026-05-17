@@ -16,7 +16,7 @@ import {
   peakPhaseFactor,
   type PhaseCoefficients,
 } from './phase-function';
-import { applyDiscBlendDefaults } from '../stellata';
+import { applyDiscBlendDefaults } from '../star-pipeline';
 import { AU_PC, KM_PC } from './astronomy-constants';
 import {
   orbitalPlaneNormalFor,

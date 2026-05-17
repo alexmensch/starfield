@@ -116,9 +116,14 @@ src/
   client/
     main.ts               bootstrap
     stellata.ts           Three.js scene + state machine + event bus
+    star-pipeline.ts      InstancedBufferGeometry + disc/glow/coreMask
+                          ShaderMaterials + meshes; owns applyDiscBlendDefaults
+                          + setMonochromeBlend + dispose. Extracted from
+                          stellata.ts in 9mm.43.
     index.html, styles.css, globals.d.ts
     stellata-events.test.ts integration-shell event-emission test
     disc-blend.test.ts    star-disc/glow blend-equation parity test
+    star-pipeline.test.ts dispose + uniform-sharing + blend defaults
     shaders/
       star.vert.glsl, star.frag.glsl              GLSL3/WebGL2
       planet.vert.glsl, planet.frag.glsl          three-pass instanced planet bodies (3re.16-17)
