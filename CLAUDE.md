@@ -150,7 +150,8 @@ src/
                           focus-target, arrival-curves, camera-motion, warp-pure,
                           warp-button, warp-tuning, mode-toggle, star-geometry,
                           star-physics, camera-up-align, up-align-pure, picker,
-                          aim-controller, warp-controller, observe-transition (+ tests).
+                          aim-controller, warp-controller, observe-transition,
+                          focus-controller (+ tests).
                           timing.ts — CAMERA_LERP_MS / WARP_*_MS /
                           AIM_*_MS / OBSERVE_TRANSITION_MS / DCAM_LOG_FLOOR_PC /
                           WARP_BASE_DIR (canonical camera-wide constants;
@@ -186,6 +187,17 @@ src/
                           stellata.ts in 9mm.194.9; sits between
                           star-geometry's pure formulae and the
                           per-frame uniform reads in stellata)
+                          focus-controller.ts — focus FSM + focus-park
+                          lerp + per-kind FocusTarget factories +
+                          pin-engage geometry; FocusOps seam consumed
+                          by WarpController; ObserveFocusOps seam
+                          consumed by ObserveTransition. Canonical home
+                          for GLOBAL_MIN_DIST_PC + PIN_ENGAGE_THRESHOLD_SQ_PC.
+                          FrameAnchor (recenterOrigin + worldOffset +
+                          starLocalPosition) stays on stellata.ts —
+                          cleaner extraction is coupled to the
+                          StarPipeline extract (9mm.43). Extracted from
+                          stellata.ts in 9mm.194.8.
     loaders/              catalog-loader, dust-loader (+ tests). cloud-loader
                           lives under molecular-clouds/; local-group-loader
                           under local-group/

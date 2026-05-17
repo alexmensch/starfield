@@ -18,12 +18,14 @@
 //      TrackballControls.update()'s per-frame lookAt(target) would
 //      overwrite a slerped quaternion one frame later.
 //
-// Cross-controller coupling lives behind the `FocusOps` interface (see
-// below): per-kind FocusTarget factories, current-focus dispatch,
-// floating-origin recentre, mutation of focusedStar / focusedCloud /
-// vector slots, observe-transition busy gate, and the lerp-cancel pair
-// startWarp calls before claiming the camera. In 194.5 Stellata is the
-// implementor (a shim); 194.8 hands the seam to FocusController.
+// Cross-controller coupling lives behind the `FocusOps` interface
+// (defined in `./focus-controller`): per-kind FocusTarget factories,
+// current-focus dispatch, floating-origin recentre, mutation of
+// focusedStar / focusedCloud / vector slots, observe-transition busy
+// gate, and the lerp-cancel pair startWarp calls before claiming the
+// camera. FocusController (9mm.194.8) is the implementor; the interface
+// is re-exported here for back-compat with importers that still point
+// at `./warp-controller`.
 //
 // Bus events emitted from here:
 //   'warp' (boolean) — true at startWarp, false at finishWarp.
@@ -40,7 +42,10 @@ import type { TrackballControls } from 'three/examples/jsm/controls/TrackballCon
 import type { CameraMode, StellataEventMap } from '../stellata';
 import type { EventBus } from '../util/event-bus';
 import type { FocusTarget } from './focus-target';
+import { type FocusOps } from './focus-controller';
 import type { ObserveControls } from './observe-controls';
+
+export type { FocusOps };
 import {
   type ArrivalState,
   newArrival,
@@ -64,53 +69,6 @@ import {
   warpReorientMs,
 } from './warp-tuning';
 import { hybridUSeam } from './arrival-curves';
-
-/** Cross-controller seam consumed by WarpController. Stellata implements
- *  this directly in 194.5; in 194.8 it migrates to FocusController and
- *  WarpController's import seam updates in one line. */
-export interface FocusOps {
-  /** FocusTarget describing whichever object is currently focused (star
-   *  or cloud), or null if nothing is focused. Used as the source side
-   *  of a warp. */
-  currentFocusTarget(): FocusTarget | null;
-  /** Build a FocusTarget for a star at catalog index `idx`. */
-  makeStarFocusTarget(idx: number): FocusTarget;
-  /** Build a FocusTarget for the cloud at index `idx`, or null when the
-   *  cloud layer hasn't loaded or the index is out of range. */
-  makeCloudFocusTarget(idx: number): FocusTarget | null;
-  /** Star position in the renderer's local frame. */
-  starLocalPosition(idx: number): THREE.Vector3;
-  /** Shift the floating origin to `newOrigin`, returning the applied
-   *  delta. The returned Vector3 is shared scratch — copy if needed
-   *  beyond the synchronous call. Returns null on no-op. */
-  recenterOrigin(newOrigin: THREE.Vector3): THREE.Vector3 | null;
-  /** Star-specific shorthand: recenterOrigin onto catalog[idx] PLUS
-   *  the focus-state book-keeping (focusedStar = idx, minDistance
-   *  refresh, planet-system reload). No event emit; caller decides
-   *  when to fan out 'focus' / 'state'. */
-  recenterFocusToStar(idx: number): THREE.Vector3 | null;
-  /** Full setFocus / setFocusedCloud paths — these fire 'focus' /
-   *  'cloudFocus' / 'state' events as side effects. Used by finishWarp
-   *  on navigate-mode arrivals (where mid-Fly recentre didn't fire) and
-   *  by the coincident-source bail in startWarp. */
-  setFocus(idx: number | null): void;
-  setFocusedCloud(idx: number | null): void;
-  /** Distance-vector destination slots — cleared on arrival regardless
-   *  of which kind the warp targeted. */
-  setVectorTo(idx: number | null): void;
-  setVectorToCloud(idx: number | null): void;
-  getFocusedStar(): number | null;
-  getFocusedCloud(): number | null;
-  /** True when an observe enter / exit transition is in flight (the
-   *  'unfocus' kind is excluded). startWarp bails so warp doesn't
-   *  collide with the in-flight observe handover. */
-  isObserveTransitionActive(): boolean;
-  /** Cancellation hooks for the focus-park lerp (r9q.2) and the
-   *  navigate-mode unfocus lerp (a7d.2.6) — both must clear before
-   *  the warp claims the camera. */
-  cancelFocusLerp(): void;
-  cancelUnfocusLerp(): void;
-}
 
 export type WarpPhaseKind = 'reorient' | 'fly' | 'post-arrival';
 

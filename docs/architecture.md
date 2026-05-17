@@ -130,12 +130,17 @@ Public surface — `warpTo(destIdx)`, `warpToCloud(destIdx)`, `skip()`,
 `getWarpPhase(nowMs?)`, `dispose()`.
 
 Cross-controller coupling lives behind the `FocusOps` interface
-(declared in `warp-controller.ts`): per-kind `FocusTarget` factories,
-current-focus dispatch, floating-origin recentre, mutation of
-`focusedStar` / `focusedCloud` / vector slots, observe-transition busy
-gate, and the lerp-cancel pair `startWarp` calls before claiming the
-camera. In 194.5 Stellata implements `FocusOps` directly (a shim);
-9mm.194.8 hands the seam to FocusController.
+(declared in `focus-controller.ts`, re-exported from
+`warp-controller.ts` for back-compat with prior import paths):
+per-kind `FocusTarget` factories, current-focus dispatch,
+floating-origin recentre, mutation of `focusedStar` / `focusedCloud` /
+vector slots, observe-transition busy gate, and the lerp-cancel pair
+`startWarp` calls before claiming the camera. `FocusController` is
+the implementor (9mm.194.8); the frame-anchor and vector-slot
+methods on the interface are delegated back to the integration shell
+via `FrameAnchor` and `setVectorTo` / `setVectorToCloud` deps so the
+star-pipeline buffer (`_localPositions`) keeps living next to the
+resources it touches.
 
 Bus events emitted from the controller:
 - `'warp'` (boolean) — true at startWarp, false at finishWarp.
@@ -220,9 +225,10 @@ Cross-controller coupling lives behind the `ObserveFocusOps` interface
 (declared in `observe-transition.ts`): focused-star inspection,
 `parkDistForStar` lookup, vector-slot clears at observe entry,
 `setFocus` on `clearFocusOnExit`, and the `isCameraBusy` gate setMode
-consults before claiming the camera. Stellata implements
-`ObserveFocusOps` directly today (a shim); 9mm.194.8 hands the seam to
-FocusController and the `focus:` dep wire updates in one line.
+consults before claiming the camera. `FocusController` is the
+implementor (9mm.194.8) — `parkDistForStar` reads through the same
+`star-physics.ts` helper Stellata used previously, `isCameraBusy`
+unions the in-flight warp / aim / focus-lerp / observe states.
 
 Bus events emitted from the controller:
 - `'cameraMode'` (CameraMode) — at every successful setMode + startExit
@@ -246,6 +252,68 @@ See `docs/camera-observe.md` for the per-feature notes (drag mechanics,
 HUD locators, click dispatch) and the inherited contract that the
 controller honours.
 
+## FocusController (`camera/focus-controller.ts`)
+
+`FocusController` owns the focus FSM and the focus-park lerp,
+extracted from `stellata.ts` in stellata-9mm.194.8:
+
+- **Focus state** — `focusedStar`, `focusedCloud`, `focusedPlanetSystem`,
+  `planetSystemToken`. Mutually exclusive (star ↔ cloud); the second
+  setter clears the first via the standard `setFocus(null)` /
+  `setFocusedCloud(null)` paths so a single event ordering rule
+  (`'cloudFocus'` before `'focus'`) covers every swap.
+- **Focus-park lerp** — `focusLerpState` plus `startFocusLerp` /
+  `endFocusLerp` so subscribers see exactly one true→false `'focusLerp'`
+  edge per lerp regardless of how many `setFocus` writes happen during
+  the in-flight animation. `tick(nowMs)` ticks the lerp through
+  `tickFocusLerp`; the integration shell dispatches here when
+  `isFocusLerpActive()` is true.
+- **Click/select-driven focus** — `focusStar`, `setOrbitTarget`,
+  `flyToCloud`, `setOrbitTargetCloud`, `unfocus`. Each gates on
+  `getWarp().isActive()` and cancels any in-flight focus-park /
+  unfocus lerp before claiming the camera.
+- **Pin geometry** — `isPinEngaged()`, `getPinEngageThresholdSq()`.
+  The per-frame guard reads the controller; see the dedicated
+  Pin-to-center section below.
+- **`FocusTarget` factories** — `makeStarFocusTarget`,
+  `makeCloudFocusTarget`, `currentFocusTarget`. Each closes over the
+  current focus state and the controller's deps (catalog, controls,
+  camera, bus, frame anchor, clouds getter) so the returned object can
+  read absolute / local positions, mutate per-kind state, and emit
+  through the shared event bus without exposing controller privates to
+  `focus-target.ts`.
+
+Public surface — see the file for the full method list. The cross-
+controller seam is the `FocusOps` interface (consumed by WarpController)
+and `ObserveFocusOps` (consumed by ObserveTransition); FocusController
+implements both, with frame-anchor + vector-slot methods delegated
+back to the integration shell.
+
+Construction cycle — `WarpController` and `ObserveTransition` both
+take `focus: FocusOps` from `FocusController`, but `FocusController`'s
+guards read back into those controllers (`getWarp().isActive()` etc.).
+The cycle is broken by `getWarp: () => this.warp` and
+`getObserve: () => this.observe` lazy refs: FocusController is
+constructed first (with neither dep wired), Warp + Observe are
+constructed next (with `focus: this.focus`), and the lazy getters
+resolve at first request. This is the same pattern Picker uses for
+async-attached layers (`getClouds`, `getLocalGroup`).
+
+Bus events emitted from the controller:
+- `'focus'` (number | null), `'cloudFocus'` (number | null),
+  `'planetSystem'` (PlanetSystem | null) — focus state mutations.
+- `'focusLerp'` (boolean) — focus-park lerp start / end edges.
+- `'cameraMode'` (CameraMode) — from `setFocus`'s observe-cleanup
+  branch (focal star changing while in observe mode).
+- `'state'` — at every focus mutation + focus-lerp edges.
+
+The `FrameAnchor` interface stays on Stellata — `recenterOrigin`,
+`getWorldOffset`, `starLocalPosition`, `starLocalPositionInto`. These
+read or rewrite the star-pipeline `_localPositions` buffer plus
+the `iPositionAttr.needsUpdate` write, which all live next to the
+ShaderMaterial they touch. Cleaner extraction is coupled to the
+StarPipeline extract (9mm.43) and deferred until then.
+
 ## Floating origin (large-world precision)
 
 Close-range orbit of a star far from Sol used to jitter visibly because
@@ -263,16 +331,20 @@ the currently focused star.
   is a `Float32Array` of `catalog.positions − worldOffset`. It's bound
   to the `iPosition` instance attribute and is what every overlay and
   pick path projects through.
-- `recenterOrigin(newOrigin)` rewrites the local-positions buffer using
-  JS Number (= float64) subtraction and shifts `camera.position` and
-  `controls.target` by the same delta so the user sees no jump.
-- `setFocus(idx)` calls `recenterOrigin` on focus. **Unfocus does
-  *not* recenter** — `worldOffset` stays at the former focal object
-  so camera/target/iPosition all remain in their float32-clean local
-  frame. Recentering on unfocus used to cause a visible jump (the
-  `idx===null` branch shifted `target` by the focal star's full world
-  position, breaking the pin invariant below and re-introducing
-  cancellation in the projection chain).
+- `Stellata.recenterOrigin(newOrigin)` (exposed via the `FrameAnchor`
+  seam) rewrites the local-positions buffer using JS Number (= float64)
+  subtraction and shifts `camera.position` and `controls.target` by the
+  same delta so the user sees no jump. The two callers are
+  `FocusController.recenterFocusToStar` (focus mutations) and
+  `WarpController.tryMidFlyRecentre` (mid-flight pivot onto the
+  destination).
+- `FocusController.setFocus(idx)` calls `recenterOrigin` on focus.
+  **Unfocus does *not* recenter** — `worldOffset` stays at the former
+  focal object so camera/target/iPosition all remain in their
+  float32-clean local frame. Recentering on unfocus used to cause a
+  visible jump (the `idx===null` branch shifted `target` by the focal
+  star's full world position, breaking the pin invariant below and
+  re-introducing cancellation in the projection chain).
 - **Default-load** (a7d.2.8) auto-engages `setFocus(catalog.solIndex)`
   before the first frame so URL-less loads start with the pin engaged
   and the per-Sol orbit floor in effect, matching every other entry
@@ -330,12 +402,12 @@ local frame, stored at full Float32 precision relative to the anchor.
 
 Warp, focus-park lerp, mid-Fly recentre, and any future camera-transition
 code consume focusable objects through the **`FocusTarget` interface**
-(`src/client/focus-target.ts`). The warp animation has no
+(`src/client/camera/focus-target.ts`). The warp animation has no
 kind-switch statements — adding a new focusable kind (planet, probe,
 nebula, exoplanet, …) consists of:
 
 1. Implementing the interface (typically as a factory method on
-   `Stellata` that returns an object closing over the per-kind
+   `FocusController` that returns an object closing over the per-kind
    catalog / state / event-bus references).
 2. Plumbing pick / click handling for the new kind so its
    `FocusTarget` can be passed to `startWarp` / `focusStar`-style
@@ -387,8 +459,8 @@ focus state via `dest.applyFocus()` (mid-Fly recentre) and
 `dest.emitFocusEvents()` (`finishWarp`). No `destKind` switches
 remain in the warp pipeline; the dispatch table sits in the
 `makeStarFocusTarget` / `makeCloudFocusTarget` factory methods on
-`Stellata`, which is the one place that needs editing when a new kind
-is added.
+`FocusController`, which is the one place that needs editing when a
+new kind is added.
 
 ## Pin-to-center (`uPinFocusToCenter`)
 
@@ -404,9 +476,10 @@ chain with `projectionMatrix * vec4(0, 0, -dPc, 1)` for the matched
 int uniform, ~5 lines of GLSL, no CPU cost.
 
 JS-side per frame in `stellata.ts`: pin engages iff
+`FocusController.isPinEngaged()`, which checks
 `focusedStar !== null && cameraMode === 'navigate'
 && (!warp.isActive() || warp.isRecenteredToDest())
-&& !aimState && !focusLerpState
+&& !aim.isActive() && !focusLerpState
 && controls.target.lengthSq() < 1e-12`.
 
 The `warp.isRecenteredToDest()` clause relaxes the pin guard for the
@@ -438,10 +511,11 @@ Three residual sources have bitten this:
    `recenterOrigin(0,0,0)` from the `setFocus(null)` branch (see
    above) — `worldOffset` stays put on unfocus.
 
-**Fix for #1 and #2** lives at the choke point in `setFocus`'s
-`idx !== null` branch: after `recenterOrigin`, subtract `target` from
-`camera.position` (preserving cam-to-target offset) and snap target to
-`(0,0,0)`. Eliminates both residuals for every caller of `setFocus`.
+**Fix for #1 and #2** lives at the choke point in
+`FocusController.setFocus`'s `idx !== null` branch: after
+`recenterOrigin`, subtract `target` from `camera.position` (preserving
+cam-to-target offset) and snap target to `(0,0,0)`. Eliminates both
+residuals for every caller of `setFocus`.
 
 Limitations: pan moves target away → pin disengages (intentional;
 post-pan the focused star isn't at view centre). Doesn't fire in
@@ -453,12 +527,16 @@ flying toward.
 
 **Where to look:**
 - `src/client/shaders/star.vert.glsl` — `uPinFocusToCenter` decl + use site.
-- `src/client/stellata.ts` — `GLOBAL_MIN_DIST_PC = 5e-3 pc`, `setFocus`
-  body (the post-recenter snap to origin in the focused branch; empty
-  unfocus branch), per-frame pin guard in the animate loop.
-- `src/client/url-state.ts` — `DecodedView.worldOffset`, encoder/loader.
-- `src/client/url-state.test.ts` — round-trip regression test.
-- `src/client/pin-debug-hud.ts` — Pin section in the unified debug
+- `src/client/camera/focus-controller.ts` — `GLOBAL_MIN_DIST_PC = 5e-3`,
+  `PIN_ENGAGE_THRESHOLD_SQ_PC = 1e-12`, `setFocus` body (the
+  post-recenter snap to origin in the focused branch; empty unfocus
+  branch), `isPinEngaged` gating rules.
+- `src/client/stellata.ts` — per-frame pin guard in the animate loop
+  (reads `focus.isPinEngaged()` + `focus.getFocusedStar()`).
+- `src/client/util/url-state.ts` — `DecodedView.worldOffset`,
+  encoder/loader.
+- `src/client/util/url-state.test.ts` — round-trip regression test.
+- `src/client/debug/pin-debug-hud.ts` — Pin section in the unified debug
   panel (`debug.panel()`); live readouts with latched directional
   extremes. **Always use this when investigating any "star drifts
   off-screen" report.**

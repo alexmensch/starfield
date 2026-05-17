@@ -21,7 +21,7 @@ import { MAX_DISTANCE_PC, CAMERA_FAR_PC } from '../../scripts/build-local-group-
 import { GalacticGrid } from './galactic/galactic-grid';
 import { HudOverlay } from './overlays/hud-overlay';
 import { GALACTIC_CENTRE_PC } from './galactic/galactic-coords';
-import { MolecularClouds, cloudViewingDistancePc, renderedCloudSizePx } from './molecular-clouds/molecular-clouds';
+import { MolecularClouds, renderedCloudSizePx } from './molecular-clouds/molecular-clouds';
 import type { CloudCatalog } from './molecular-clouds/cloud-loader';
 import { MilkyWay } from './milkyway/milkyway';
 import { ObserveControls } from './camera/observe-controls';
@@ -39,38 +39,20 @@ import { Picker } from './camera/picker';
 import { AimController } from './camera/aim-controller';
 import {
   WarpController,
-  type FocusOps,
   type WarpInfo,
   type WarpPhaseInfo,
 } from './camera/warp-controller';
+import { ObserveTransition } from './camera/observe-transition';
 import {
-  ObserveTransition,
-  type ObserveFocusOps,
-} from './camera/observe-transition';
-import { alignCameraUpToQuaternion } from './camera/up-align-pure';
-// `warpArrivalEaseFn` is shared between WarpController's Fly phase and
-// the non-warp arrival callers in this file (focus-park, fly-to-cloud,
-// unfocus zoom-out) — they all want the user's debug-panel curve choice
-// applied. Keep the import here even after WarpController claimed the
-// warp tick.
-import { warpArrivalEaseFn } from './camera/warp-tuning';
+  FocusController,
+  type FrameAnchor,
+  GLOBAL_MIN_DIST_PC,
+} from './camera/focus-controller';
 import { getPlanetSystem, hasPlanets, type PlanetSystem } from './solar-system/planet-system';
 import { OrbitRingsLayer } from './solar-system/orbit-rings-layer';
 import { PlanetBodyField } from './solar-system/planet-body-field';
 import { Heliopause } from './solar-system/heliopause';
 import { R_SUN_PC } from './solar-system/astronomy-constants';
-import {
-  type FocusLerpState,
-  newFocusLerpFrom,
-  parkDistance,
-  tickFocusLerp,
-} from './camera/focus-transition';
-// camera-motion's ArrivalState / newArrival / tickArrival moved off
-// stellata.ts in 9mm.194.6 along with ObserveTransition (the navigate-mode
-// close-zoom 'unfocus' lerp was the last consumer here). Focus-park /
-// fly-to-cloud now build arrivals indirectly via newFocusLerpFrom.
-import type { FocusTarget } from './camera/focus-target';
-import { chartPlateauDistancePc } from './chart-mode/chart-disc-pure';
 // Locally used subset — stellata.ts still reads these in its body.
 // The other warp-timing constants are re-exported below for any
 // external import path that points at './stellata' instead of
@@ -82,10 +64,11 @@ import { chartPlateauDistancePc } from './chart-mode/chart-disc-pure';
 // OBSERVE_TRANSITION_MS moved off in 9mm.194.6 with the ObserveTransition
 // extract — still re-exported below for external import paths that point
 // at './stellata' instead of './camera/timing'.
-import {
-  DCAM_LOG_FLOOR_PC,
-  FOCUS_LERP_MS,
-} from './camera/timing';
+// FOCUS_LERP_MS, the FocusTarget type, the focus-transition primitives
+// (FocusLerpState / newFocusLerpFrom / parkDistance / tickFocusLerp),
+// chartPlateauDistancePc and warpArrivalEaseFn moved off in 9mm.194.8
+// with the FocusController extract.
+import { DCAM_LOG_FLOOR_PC } from './camera/timing';
 export {
   AIM_T_MAX_MS,
   AIM_T_MIN_MS,
@@ -256,14 +239,11 @@ function computeMagPresets(): Record<MagPresetName, MagPreset> {
 // MAG_PRESETS see the latest values after a K tweak.
 export let MAG_PRESETS: Record<MagPresetName, MagPreset> = computeMagPresets();
 
-// Fallback orbit-controls floor when no star is focused. Sized to keep
-// the camera comfortably outside any single star's physical envelope
-// (Sol's photosphere at 2.25×10⁻⁸ pc, Earth's orbit at 4.85×10⁻⁶ pc) so
-// approaching origin without an explicit focus anchor doesn't enter the
-// extreme-close-range regime where float32 matrix cancellation drifts
-// the projected center off-screen. To get closer than this, focus a
-// star — `minOrbitDistForStar` then returns the per-star physical floor.
-const GLOBAL_MIN_DIST_PC = 5e-3;
+// GLOBAL_MIN_DIST_PC, MIN_PHYSICAL_RADIUS_R_SUN, and
+// PIN_ENGAGE_THRESHOLD_SQ_PC moved to camera/focus-controller.ts in
+// 9mm.194.8. GLOBAL_MIN_DIST_PC is re-imported above for the initial
+// `controls.minDistance` seed in the constructor (overwritten ~400
+// lines later by `setFocus(catalog.solIndex)`).
 
 // ZOOM_FLOOR_FRACTION + VAR_TROUGH_FLOOR_FRACTION moved to
 // camera/star-physics.ts in 9mm.194.9. Re-imported here so the shader
@@ -273,24 +253,6 @@ const GLOBAL_MIN_DIST_PC = 5e-3;
 // DCAM_LOG_FLOOR_PC moved to camera/timing.ts — shared between this
 // file and any future camera-controller extracts that need a finite
 // log10(dCam) at close approach. Re-imported at the top of this file.
-
-// Floor on a catalog `physicalRadius[idx]` (in solar radii) before
-// converting to parsecs (`* R_SUN_PC`). Keeps R > 0 in geometric
-// formulas — angular-arrival θ = R/d, perceptual-disc kernels, the
-// hybrid arrival curve's inner regime. 1e-9 R_sun ≈ 0.7 km, six
-// orders of magnitude below any catalog entry, so the clamp never
-// fires on real data; it just defines a numerically-safe limit. Six
-// pre-existing sites in this file floor the same quantity at 1e-9 or
-// 1e-6 inconsistently (stellata-9mm.195) — migrate them off the
-// literals as part of that bead, not here.
-const MIN_PHYSICAL_RADIUS_R_SUN = 1e-9;
-
-// Squared-length threshold below which `controls.target` is treated as
-// coincident with the local origin (= focal-star position). Engages the
-// uPinFocusToCenter shader pin so the focused star renders at NDC (0,0)
-// regardless of float32 cancellation. 1e-12 pc² ≈ (1e-6 pc)² ≈ 0.2 AU
-// — under this, the geometric pin is the right answer.
-const PIN_ENGAGE_THRESHOLD_SQ_PC = 1e-12;
 
 // Default vertical FOV (degrees). User-tunable via the FOV slider; the
 // reset button snaps back to this value.
@@ -380,7 +342,7 @@ export type StellataEventMap = {
   frame: void;
 };
 
-export class Stellata implements FocusOps, ObserveFocusOps {
+export class Stellata implements FrameAnchor {
   readonly catalog: Catalog;
   readonly renderer: THREE.WebGLRenderer;
   readonly camera: THREE.PerspectiveCamera;
@@ -458,24 +420,12 @@ export class Stellata implements FocusOps, ObserveFocusOps {
   // API change.
   private pinnedT: number | null = null;
 
-  private focusedStar: number | null = null;
-  // "Soft" focus on a molecular cloud — mutually exclusive with focusedStar.
-  // Drives the focus search box and meta bar so the user-facing "what am I
-  // looking at" reads as the cloud name. Star-specific UI (focus ring,
-  // distance vector, warp source, floating-origin recenter) ignores this.
-  private focusedCloud: number | null = null;
-  // Planet system attached to the currently focused star, or null. v1 only
-  // populates this when Sol is focused; the solar-system rendering layers
-  // (3re.4 planet bodies, 3re.5 heliopause, 3re.7 orbit rings) read this
-  // through getFocusedPlanetSystem() instead of checking focusedStar against
-  // catalog.solIndex directly, so stellata-bk5 can extend planet support
-  // to other hosts without touching the renderers.
-  //
-  // Stale-load guard: refreshPlanetSystem awaits getPlanetSystem(); if the
-  // user re-focuses before that resolves, the in-flight result is dropped
-  // by comparing against planetSystemToken.
-  private focusedPlanetSystem: PlanetSystem | null = null;
-  private planetSystemToken = 0;
+  // Focus FSM (stellata-9mm.194.8): owns focusedStar / focusedCloud /
+  // focusedPlanetSystem + the focus-park lerp slot + per-kind FocusTarget
+  // factories. Composed below in the constructor; see
+  // camera/focus-controller.ts. WarpController + ObserveTransition
+  // consume its `FocusOps` / `ObserveFocusOps` surfaces.
+  private focus!: FocusController;
   // Distance-vector destination — at most one of these is non-null at a
   // time. Mutual exclusion is enforced by setVectorTo / setVectorToCloud
   // both clearing the other slot.
@@ -484,14 +434,7 @@ export class Stellata implements FocusOps, ObserveFocusOps {
   private monochrome = false;
   // 3-phase warp FSM (stellata-9mm.194.5): reorient → fly → post-arrival.
   // Composed below in the constructor; see camera/warp-controller.ts.
-  // Stellata implements `FocusOps` (the cross-controller seam) and passes
-  // itself in as the focus dependency.
   private warp!: WarpController;
-  // Smooth focus-park lerp (stellata-r9q.2): glides the camera from the
-  // current pose to parkDistForStar(idx) when the user focuses a star they
-  // aren't already inside. Branching + animate-loop dispatch live in
-  // focusStar / updateFocusLerp.
-  private focusLerpState: FocusLerpState | null = null;
   // Aim slerps (stellata-9mm.194.4): navigate-mode orbit-pivot rotation and
   // observe-mode quaternion-in-place. Composed below in the constructor;
   // see camera/aim-controller.ts for the two state machines.
@@ -907,12 +850,29 @@ export class Stellata implements FocusOps, ObserveFocusOps {
       observeControls: this.observeControls,
       getCameraMode: () => this.cameraMode,
     });
-    // 3-phase warp FSM (stellata-9mm.194.5). Stellata implements
-    // `FocusOps` directly — the cross-controller seam — so the
-    // controller can drive setFocus / setFocusedCloud / recenterOrigin
-    // / vector-clear without reaching back through a wrapper. In
-    // 9mm.194.8 FocusController claims that interface and this `focus`
-    // wire updates in one line.
+    // Focus FSM (stellata-9mm.194.8). FocusController implements the
+    // `FocusOps` + `ObserveFocusOps` surfaces consumed by WarpController
+    // + ObserveTransition. `getWarp` / `getObserve` are lazy because
+    // those controllers depend back on FocusController — the construct
+    // cycle is broken by deferred resolution at first request.
+    this.focus = new FocusController({
+      camera: this.camera,
+      controls: this.controls,
+      observeControls: this.observeControls,
+      catalog: this.catalog,
+      bus: this.bus,
+      frameAnchor: this,
+      aim: this.aim,
+      uHideFocusIdxRef: this.material.uniforms.uHideFocusIdx as { value: number },
+      getCameraMode: () => this.cameraMode,
+      setCameraModeValue: (mode) => { this.cameraMode = mode; },
+      getClouds: () => this.clouds,
+      setVectorTo: (idx) => this.setVectorTo(idx),
+      setVectorToCloud: (idx) => this.setVectorToCloud(idx),
+      getWarp: () => this.warp,
+      getObserve: () => this.observe,
+    });
+    // 3-phase warp FSM (stellata-9mm.194.5).
     this.warp = new WarpController({
       camera: this.camera,
       controls: this.controls,
@@ -923,13 +883,9 @@ export class Stellata implements FocusOps, ObserveFocusOps {
       isChartMode: () => this.filter.chart,
       getChartMagBright: () =>
         this.material.uniforms.uChartMagBright.value as number,
-      focus: this,
+      focus: this.focus,
     });
-    // Navigate↔observe orchestrator (stellata-9mm.194.6). Stellata
-    // implements `ObserveFocusOps` — the controller's narrower
-    // cross-controller seam — and writes `cameraMode` only through the
-    // `setCameraModeValue` callback so the controller's state machine
-    // stays the canonical mode-switcher.
+    // Navigate↔observe orchestrator (stellata-9mm.194.6).
     this.observe = new ObserveTransition({
       camera: this.camera,
       controls: this.controls,
@@ -937,7 +893,7 @@ export class Stellata implements FocusOps, ObserveFocusOps {
       aim: this.aim,
       uHideFocusIdxRef: this.material.uniforms.uHideFocusIdx as { value: number },
       bus: this.bus,
-      focus: this,
+      focus: this.focus,
       getCameraMode: () => this.cameraMode,
       setCameraModeValue: (mode) => { this.cameraMode = mode; },
     });
@@ -1011,7 +967,7 @@ export class Stellata implements FocusOps, ObserveFocusOps {
     // at this point in the constructor: handlers aren't subscribed yet
     // and camera/aspect are already initialised.
     if (catalog.solIndex >= 0) {
-      this.setFocus(catalog.solIndex);
+      this.focus.setFocus(catalog.solIndex);
     }
     // No camera-position park here. The bare-URL pose is fully owned by
     // first-load.ts (`applyFirstLoadView`) and `?v=` URLs apply their
@@ -1044,15 +1000,13 @@ export class Stellata implements FocusOps, ObserveFocusOps {
   ): () => void {
     return this.bus.on(name, handler);
   }
-  getFocusLerpActive(): boolean { return this.focusLerpState !== null; }
-
-  getFocusedStar(): number | null { return this.focusedStar; }
-  getFocusedCloud(): number | null { return this.focusedCloud; }
+  getFocusedStar(): number | null { return this.focus.getFocusedStar(); }
+  getFocusedCloud(): number | null { return this.focus.getFocusedCloud(); }
   /** Planet system for the currently focused star, or null if the focus
    *  has none (or has not finished loading). The solar-system rendering
    *  layer gates on this — renderers also subscribe to
    *  the 'planetSystem' event to react to focus swaps. */
-  getFocusedPlanetSystem(): PlanetSystem | null { return this.focusedPlanetSystem; }
+  getFocusedPlanetSystem(): PlanetSystem | null { return this.focus.getFocusedPlanetSystem(); }
   /** True when the orbit-rings layer is currently rendering at least one
    *  ring. Frame-coherent — `updateGalacticLayers()` runs before
    *  `'frame'` event handlers, so overlays driven by the frame loop
@@ -1063,10 +1017,9 @@ export class Stellata implements FocusOps, ObserveFocusOps {
    *  global PlanetBodyField — overlays must not mutate. Used by
    *  planet-labels to project bodies to screen space. */
   getFocusedPlanetLocalPositions(): Float32Array | null {
-    if (!this.focusedPlanetSystem) return null;
-    return this.planetBodyField.getHostLocalPositions(
-      this.focusedPlanetSystem.hostStarIdx,
-    );
+    const ps = this.focus.getFocusedPlanetSystem();
+    if (!ps) return null;
+    return this.planetBodyField.getHostLocalPositions(ps.hostStarIdx);
   }
   /** True when the orbit ring for planet `i` is currently rendering on
    *  the focused host. Used by planet-labels to hide labels in lockstep
@@ -1148,82 +1101,27 @@ export class Stellata implements FocusOps, ObserveFocusOps {
    *  this file deliberately use a narrower predicate — those are
    *  intentional: focus-change can interrupt aim but not warp, cosmetic
    *  cloud picking is suppressed during warp only, etc. */
-  isCameraBusy(): boolean {
-    return this.warp.isActive()
-      || this.aim.isActive()
-      || this.focusLerpState !== null
-      || this.observe.isAnyActive();
-  }
+  isCameraBusy(): boolean { return this.focus.isCameraBusy(); }
 
-  // Cancel an in-flight 'unfocus' lerp (a7d.2.6) so a new camera-changing
-  // action (focus, warp, aim, click) can proceed without the lerp's next
-  // tick lerping the camera away from the action's destination. No-op for
-  // observe enter/exit transitions and when no transition is active.
-  // Public (rather than private) so WarpController can clear an
-  // in-flight unfocus lerp at startWarp time without reaching into
-  // Stellata's privates. Part of the FocusOps shim — 9mm.194.8 hands
-  // it to FocusController.
-  cancelUnfocusLerp() { this.observe.cancelUnfocusLerp(); }
+  // Cancellation hooks for the focus-park lerp (r9q.2) and the
+  // navigate-mode unfocus lerp (a7d.2.6) — both must clear before a new
+  // camera-changing action (focus, warp, aim, click) proceeds. Forward
+  // to FocusController which owns the focus-park slot and delegates the
+  // unfocus path to ObserveTransition.
+  cancelFocusLerp() { this.focus.cancelFocusLerp(); }
+  cancelUnfocusLerp() { this.focus.cancelUnfocusLerp(); }
 
-  // Cancel an in-flight focus-park lerp (r9q.2). controls.enabled is
-  // not touched here because focusStar / flyToCloud don't disable it
-  // when starting the lerp — see the unfocus-lerp precedent for why
-  // toggling controls during a click-driven animation races with
-  // TrackballControls' pointerup handler.
-  //
-  // Public for the same reason as `cancelUnfocusLerp`: WarpController's
-  // FocusOps shim calls it at startWarp time.
-  cancelFocusLerp() {
-    this.endFocusLerp();
-  }
-
-  // Set/clear the focus-lerp slot through these helpers so overlays
-  // subscribed to the 'focusLerp' event see exactly one true → false edge
-  // per lerp. Calling startFocusLerp twice in a row emits a single
-  // 'true' (state changed shape but stays active); endFocusLerp() is a
-  // no-op when no lerp is running.
-  private startFocusLerp(state: FocusLerpState) {
-    const wasInactive = this.focusLerpState === null;
-    this.focusLerpState = state;
-    if (wasInactive) {
-      this.bus.emit('focusLerp', true);
-    }
-  }
-  private endFocusLerp() {
-    if (this.focusLerpState !== null) {
-      this.focusLerpState = null;
-      this.bus.emit('focusLerp', false);
-    }
-  }
   /** Threshold squared-length below which `controls.target` engages the
    *  focused-star pin. Surfaced for the pin debug HUD so the displayed
    *  rule matches the runtime constant exactly. */
-  getPinEngageThresholdSq(): number { return PIN_ENGAGE_THRESHOLD_SQ_PC; }
+  getPinEngageThresholdSq(): number { return this.focus.getPinEngageThresholdSq(); }
 
   /** Whether the focused-star pin (uPinFocusToCenter) would engage right
    *  now, mirroring the per-frame guard in animate(). Read by the pin
    *  section of the unified debug panel (`debug.panel()`) to display
-   *  live state.
-   *
-   *  The warp guard releases when `warpState.recenteredToDest` is true:
-   *  after the mid-Fly recentre (stellata-2br.5) the destination is at
-   *  local (0,0,0) and the camera is doing `lookAt(local origin)` per
-   *  frame, so pin-to-NDC matches the geometry `lookAt` is already
-   *  computing. The shader pin then bypasses any residual Float32
-   *  noise in the projection chain for the rest of Fly + into
-   *  finishWarp. focus-park lerp (`focusLerpState`) stays guarded —
-   *  that path slerps the camera quaternion through a non-lookAt arc
-   *  where pin-to-centre would snap-jump the focal star to NDC origin
-   *  before the slerp finishes turning into it. */
-  isPinEngaged(): boolean {
-    return (
-      this.focusedStar !== null &&
-      this.cameraMode === 'navigate' &&
-      (!this.warp.isActive() || this.warp.isRecenteredToDest()) &&
-      !this.aim.isActive() && !this.focusLerpState &&
-      this.controls.target.lengthSq() < PIN_ENGAGE_THRESHOLD_SQ_PC
-    );
-  }
+   *  live state. See FocusController.isPinEngaged for the gating rules. */
+  isPinEngaged(): boolean { return this.focus.isPinEngaged(); }
+
   /** True while an aim animation is in flight. Mirror of getWarpActive
    *  for the camera's other interpolated transition. */
   isAimActive(): boolean { return this.aim.isActive(); }
@@ -1317,136 +1215,13 @@ export class Stellata implements FocusOps, ObserveFocusOps {
     this.observe.setMode(mode, opts);
   }
 
-  // Public for the FocusOps shim — WarpController calls `setFocus` /
-  // `setFocusedCloud` on navigate-mode arrivals and the coincident-source
-  // bail. 9mm.194.8 routes this through FocusController instead.
-  setFocus(idx: number | null) {
-    // Star and cloud focus are mutually exclusive — selecting either one
-    // clears the other. Both setters end up here for the cloud-clear leg
-    // so the cloud-focus event always fires before the star-focus event,
-    // letting UI listeners settle in the right order.
-    const cloudCleared = this.focusedCloud !== null;
-    if (cloudCleared) {
-      this.focusedCloud = null;
-      this.bus.emit('cloudFocus', null);
-    }
-    if (this.focusedStar === idx) {
-      if (cloudCleared) this.bus.emit('state');
-      return;
-    }
-    // OBSERVE depends on a focused star anchor. Any change to the anchor
-    // (unfocus or switch to another star) bails out of observe immediately.
-    // Snap rather than animate because a transition needs the original
-    // anchor to mean anything.
-    if (this.cameraMode === 'observe') {
-      // Snap-exit observe BEFORE the focus mutation runs: an in-flight
-      // 'enter' / 'exit' transition references the OLD focal star via
-      // fromPos/toPos and must be dropped before the floating-origin
-      // recentre downstream of setFocus. Unlike ObserveTransition.startExit's
-      // animate:false branch, this path deliberately does NOT touch
-      // controls.target or call controls.update() — the camera is at
-      // local (0,0,0) right now and target is set by setFocus's
-      // recenterFocusToStar block below.
-      this.observe.cancelTransition();
-      this.aim.cancel();
-      this.cameraMode = 'navigate';
-      this.material.uniforms.uHideFocusIdx.value = -1;
-      this.observeControls.disable();
-      alignCameraUpToQuaternion(this.camera);
-      this.controls.enabled = true;
-      this.bus.emit('cameraMode', this.cameraMode);
-    }
-    // Recenter the floating origin only when *focusing* a star. The new
-    // origin snaps to the focal star's absolute position, so close-range
-    // rendering happens with tiny coordinate values and the projection
-    // chain stays float32-clean. On *unfocus* (idx === null) we leave
-    // worldOffset alone — the camera is wherever it was, and continuing
-    // to render in the (former focal star's) local frame keeps every
-    // close-orbit precision invariant intact across the focus → unfocus
-    // transition (stellata-a7d.2.11). worldOffset only ever changes on
-    // focus, so the URL contract is "cam/tgt are in worldOffset-local
-    // frame; worldOffset itself rides along when it differs from Sol"
-    // (see url-state.ts FIELDS_V2 bit 20 + the loader's worldOffset
-    // application). Earlier behaviour recentred to Sol on every unfocus
-    // for URL simplicity, but that re-introduced kpc-scale subtractions
-    // in the projection chain and visibly bumped the focal star on
-    // screen at the moment of unfocus.
-    if (idx !== null) {
-      this.recenterFocusToStar(idx);
-      // After recenterOrigin, the focused star is at local (0,0,0). Snap
-      // controls.target to (0,0,0) and shift camera by the same delta so
-      // the camera-to-target relationship is preserved — the user-visible
-      // pose doesn't change. Without this, target lands at -dx (where dx
-      // is whatever recenterOrigin shifted by) and the per-frame pin guard
-      // (target.lengthSq < 1e-12) silently disengages whenever Sol's
-      // catalog offset (5e-6 pc) or a long warp's |AB|·1e-7 Float32
-      // residual leaks through. Every call site that sets target+camera
-      // before setFocus relies on this snap to land cleanly.
-      //
-      // This target/camera snap is unique to setFocus — observe-warp
-      // arrivals route through swapObserveAnchor, which parks the camera
-      // at (0,0,0) explicitly and doesn't touch controls.target.
-      const t = this.controls.target;
-      this.camera.position.x -= t.x;
-      this.camera.position.y -= t.y;
-      this.camera.position.z -= t.z;
-      t.set(0, 0, 0);
-    } else {
-      this.focusedStar = null;
-      // Unfocus: clamp the new minDistance to ≤ current eye distance so
-      // TrackballControls doesn't push the camera outward when the user was
-      // sitting closer than GLOBAL_MIN_DIST_PC to the (former) focal star.
-      // Once minDistance is below current eye, future zoom-out is free; the
-      // 5e-3 pc unfocused floor latches once the user has zoomed out past it.
-      const eye = this.camera.position.distanceTo(this.controls.target);
-      this.controls.minDistance = Math.min(GLOBAL_MIN_DIST_PC, eye);
-      this.refreshPlanetSystem(null);
-    }
-    this.bus.emit('focus', idx);
-    this.bus.emit('state');
-  }
-
-  // Reload the focused star's planet system. Called from every code path
-  // that mutates focusedStar (setFocus + swapObserveAnchor). The token
-  // guard drops a previous in-flight load if the focus changes again
-  // before the Promise resolves — relevant once stellata-bk5 introduces
-  // truly async fetches; for Sol the resolve happens on the next
-  // microtask, ahead of the next animation frame.
-  private refreshPlanetSystem(idx: number | null) {
-    const token = ++this.planetSystemToken;
-    if (idx === null || !hasPlanets(this.catalog, idx)) {
-      if (this.focusedPlanetSystem !== null) {
-        this.focusedPlanetSystem = null;
-        this.bus.emit('planetSystem', null);
-      }
-      return;
-    }
-    void getPlanetSystem(this.catalog, idx).then((ps) => {
-      if (token !== this.planetSystemToken) return;
-      if (this.focusedPlanetSystem === ps) return;
-      this.focusedPlanetSystem = ps;
-      this.bus.emit('planetSystem', ps);
-    });
-  }
-
-  /**
-   * Set or clear the cloud "soft focus". Setting a cloud clears any star
-   * focus first (which also resets the floating origin to Sol). Star-only
-   * UI (focus ring, distance vector, warp) ignores this — clouds aren't
-   * focusable in the way stars are; only the user-facing "what am I
-   * looking at" labels track it.
-   */
-  setFocusedCloud(idx: number | null) {
-    if (idx !== null && this.focusedStar !== null) {
-      // Clear the star focus first; setFocus(null) doesn't touch
-      // focusedCloud unless it was already set, so no event noise.
-      this.setFocus(null);
-    }
-    if (this.focusedCloud === idx) return;
-    this.focusedCloud = idx;
-    this.bus.emit('cloudFocus', idx);
-    this.bus.emit('state');
-  }
+  // setFocus / setFocusedCloud / recenterFocusToStar / refreshPlanetSystem
+  // moved to FocusController in 9mm.194.8. The thin shims below preserve
+  // the public surface for callers outside the camera/ folder (URL state,
+  // search, the click FSM in onPointerUp) without re-introducing the
+  // routing logic here.
+  setFocus(idx: number | null) { this.focus.setFocus(idx); }
+  setFocusedCloud(idx: number | null) { this.focus.setFocusedCloud(idx); }
 
   private tmpRecenter = new THREE.Vector3();
   // Scratch Vector3 reused for `recenterOrigin`'s return value (the
@@ -1465,7 +1240,8 @@ export class Stellata implements FocusOps, ObserveFocusOps {
   // shifted by the same delta so the user sees no visible jump; only
   // numerical precision improves.
   //
-  // Triggered automatically from setFocus(). Don't call externally — it
+  // Triggered automatically from FocusController.setFocus() and
+  // WarpController.tryMidFlyRecentre. Don't call externally — it
   // bypasses the state-change bookkeeping that setFocus threads through.
   //
   // Returns the (dx, dy, dz) world-offset delta applied (newOrigin −
@@ -1476,10 +1252,10 @@ export class Stellata implements FocusOps, ObserveFocusOps {
   // The returned Vector3 is shared scratch — copy if you need to
   // outlive the next recenterOrigin call.
   //
-  // Public for the FocusOps shim — WarpController calls it from
-  // tryMidFlyRecentre. The "don't call externally" rule still applies
-  // to non-warp/non-focus callers; the recentre is a state-mutation
-  // primitive, not a routine API.
+  // Public for the `FrameAnchor` seam — FocusController.recenterFocusToStar
+  // and WarpController.tryMidFlyRecentre invoke it. The "don't call
+  // externally" rule still applies to non-warp/non-focus callers; the
+  // recentre is a state-mutation primitive, not a routine API.
   recenterOrigin(newOrigin: THREE.Vector3): THREE.Vector3 | null {
     const dx = newOrigin.x - this.worldOffset.x;
     const dy = newOrigin.y - this.worldOffset.y;
@@ -1515,31 +1291,9 @@ export class Stellata implements FocusOps, ObserveFocusOps {
     return this._recenterDelta.set(dx, dy, dz);
   }
 
-  // Star-focused recentre: pivot the floating origin onto catalog[idx]
-  // AND update the focus-state book-keeping (focusedStar, per-star
-  // minDistance, planet-system reload). No 'focus' / 'state' event
-  // emit — caller fires those when the camera has landed (setFocus,
-  // WarpController.swapObserveAnchor, WarpController.tryMidFlyRecentre
-  // via dest.emitFocusEvents at finishWarp).
-  //
-  // Public for the FocusOps shim — WarpController.swapObserveAnchor
-  // calls it on observe→observe arrival when the phase-3 recentre
-  // didn't already land focusedStar on newIdx. 9mm.194.8 routes through
-  // FocusController instead.
-  recenterFocusToStar(newIdx: number): THREE.Vector3 | null {
-    const p = this.catalog.positions;
-    const delta = this.recenterOrigin(this.tmpRecenter.set(
-      p[newIdx * 3], p[newIdx * 3 + 1], p[newIdx * 3 + 2],
-    ));
-    this.focusedStar = newIdx;
-    this.controls.minDistance = starPhysics.minOrbitDistForStar({
-      catalog: this.catalog,
-      idx: newIdx,
-      fovMinorRad: starPhysics.fovMinorRad(this.camera),
-    });
-    this.refreshPlanetSystem(newIdx);
-    return delta;
-  }
+  // recenterFocusToStar moved to FocusController in 9mm.194.8 — it
+  // mutates focus state (focusedStar + per-star minDistance +
+  // planet-system reload), which now lives there.
 
   // Wire a loaded DustField into the star shader. Safe to call after the
   // Stellata is already rendering — uniforms flip atomically on the next
@@ -1631,69 +1385,9 @@ export class Stellata implements FocusOps, ObserveFocusOps {
    *  attachClouds runs. */
   get cloudLayer(): MolecularClouds | null { return this.clouds; }
 
-  /** Cloud-side analogue of focusStar — used by search-select and
-   *  click-vector-tip. Routes through the same focus-park primitives
-   *  (r9q.3) so the lerp-or-noop UX matches stars. `animate: false`
-   *  (URL restore) snaps without a transition. setFocus(null) below
-   *  leaves worldOffset alone (a7d.2.11), so no frame-shift handling
-   *  is needed here — target is `cloud.centerAbs - worldOffset` in the
-   *  current local frame both before and after the focus clear. */
+  /** Cloud-side analogue of focusStar — see FocusController.flyToCloud. */
   flyToCloud(idx: number, opts: { animate?: boolean } = {}) {
-    if (!this.clouds) return;
-    const cloud = this.clouds.clouds[idx];
-    if (!cloud) return;
-    if (this.warp.isActive()) return;
-    this.cancelUnfocusLerp();
-    this.cancelFocusLerp();
-
-    if (this.focusedStar !== null) this.setFocus(null);
-    this.setVectorTo(null);
-    this.setVectorToCloud(null);
-
-    const animate = opts.animate ?? true;
-    const startQuat = this.camera.quaternion.clone();
-    const startUp = this.camera.up.clone();
-
-    const target = new THREE.Vector3().copy(cloud.centerAbs).sub(this.worldOffset);
-    this.controls.target.copy(target);
-    const parkDist = parkDistance({
-      R_pc: Math.max(cloud.axes[0], cloud.axes[1], cloud.axes[2]),
-      dMinFloor: cloudViewingDistancePc(cloud),
-    });
-    const eyeDist = this.camera.position.distanceTo(target);
-
-    if (animate && eyeDist > parkDist) {
-      // Cloud destination — `targetRadius: null` triggers the hybrid
-      // curve's fallback to cubic-Hermite. Clouds have no single
-      // geometric R (ellipsoid axes), so angular-size driving doesn't
-      // apply.
-      this.startFocusLerp(newFocusLerpFrom(
-        this.camera.position,
-        startQuat,
-        startUp,
-        target,
-        parkDist,
-        FOCUS_LERP_MS,
-        performance.now(),
-        warpArrivalEaseFn({
-          d0: eyeDist,
-          dEnd: parkDist,
-          targetRadius: null,
-        }),
-      ));
-      // controls.enabled stays true — see focusStar's comment.
-    } else if (eyeDist > parkDist) {
-      const dir = new THREE.Vector3()
-        .subVectors(this.camera.position, target)
-        .normalize();
-      if (dir.lengthSq() === 0) dir.set(0, 0, 1);
-      this.camera.position.copy(target).addScaledVector(dir, parkDist);
-      this.camera.lookAt(target);
-      this.controls.update();
-    } else {
-      this.controls.update();
-    }
-    this.setFocusedCloud(idx);
+    this.focus.flyToCloud(idx, opts);
   }
 
   private tmpVec3b = new THREE.Vector3();
@@ -1828,79 +1522,23 @@ export class Stellata implements FocusOps, ObserveFocusOps {
     this.bus.emit('state');
   }
 
+  /** Click-handler entry point for "clear whatever's focused". The
+   *  vector-only short-circuit lives here (vector slots are still on
+   *  Stellata); everything else delegates to FocusController.unfocus. */
   unfocus(opts: { animate?: boolean } = {}) {
     if (this.warp.isActive()) return;
-    if (
-      this.focusedStar === null && this.focusedCloud === null &&
-      this.vectorTo === null && this.vectorToCloud === null
-    ) return;
-    // A focus-park lerp inbound to the same star we're now unfocusing
-    // away from would otherwise race the unfocus zoom-out below.
-    this.cancelFocusLerp();
-    const animate = opts.animate ?? true;
-    this.setVectorTo(null);
-    this.setVectorToCloud(null);
-    // X-out from OBSERVE: drive the same animated zoom-out the
-    // navigate-mode toggle uses, then clear focus. startExit captures
-    // forward + camera.position before setFocus(null) runs, sets
-    // cameraMode='navigate' (so setFocus's observe-cleanup branch
-    // skips), and builds the 'exit' transition; setFocus(null)
-    // afterwards clamps controls.minDistance and emits 'focus' so the
-    // search box / overlays settle within the same frame. Since
-    // a7d.2.11 setFocus(null) doesn't recentre, so the animation runs
-    // in the (former focal star's) local frame.
-    if (animate && this.cameraMode === 'observe' && this.focusedStar !== null) {
-      this.observe.startExit({ animate: true, clearFocusOnExit: false });
-      this.setFocus(null);
+    const hasFocus =
+      this.focus.getFocusedStar() !== null
+      || this.focus.getFocusedCloud() !== null;
+    if (!hasFocus && this.vectorTo === null && this.vectorToCloud === null) return;
+    // Vector-only: FocusController.unfocus is a no-op without a focused
+    // star or cloud, so wipe the measurement vector here directly.
+    if (!hasFocus) {
+      this.setVectorTo(null);
+      this.setVectorToCloud(null);
       return;
     }
-    // Navigate-mode close-zoom unfocus: animate the camera back to the
-    // former focal star's parking distance instead of teleporting (a7d.2.6).
-    // Skip when the camera is already further out than parkDistForStar (the
-    // acceptance "no-op when at or beyond the floor" criterion), or when
-    // there's no focused star to anchor on (cloud-only / vector-only
-    // unfocus, no animation reference). Pin disengages naturally because
-    // setFocus(null) clears focusedStar before the lerp tick runs; the
-    // (former) focal star sits at iPosition=(0,0,0) in the worldOffset-
-    // local frame so the projection chain stays float32-clean without it.
-    if (
-      animate &&
-      this.cameraMode === 'navigate' &&
-      this.focusedStar !== null &&
-      !this.observe.isAnyActive()
-    ) {
-      const focalIdx = this.focusedStar;
-      const minDist = this.parkDistForStar(focalIdx);
-      const fromPos = this.camera.position.clone();
-      const eye = fromPos.distanceTo(this.controls.target);
-      if (eye < minDist) {
-        const dir = fromPos.clone().sub(this.controls.target).normalize();
-        const toPos = this.controls.target.clone().addScaledVector(dir, minDist);
-        // Clear focus before the lerp starts so UI listeners (search box,
-        // overlays, focus-ring) update immediately. setFocus(null) clamps
-        // controls.minDistance to ≤ current eye, so the camera doesn't
-        // fight the lerp's outward motion. After the lerp lands, the
-        // controller's finish branch tightens minDistance to minDist.
-        this.setFocus(null);
-        this.setFocusedCloud(null);
-        // Don't toggle controls.enabled during the lerp. The animate()
-        // dispatcher routes to observe.tick(), which lerps
-        // camera.position directly and skips controls.update(), so any
-        // user input accumulates inside TrackballControls but doesn't
-        // apply visually. Disabling explicitly would race the click-to-
-        // unfocus event chain: Stellata's pointerup listener runs before
-        // TrackballControls' dynamically-added pointerup, and TC's
-        // handleMouseUp early-returns on `enabled === false` without
-        // resetting its internal `_state` from ROTATE → after the lerp
-        // every cursor movement would drag the view as if a button were
-        // held. queueMicrotask doesn't help — the microtask checkpoint
-        // drains between event listeners.
-        this.observe.startUnfocusLerp(fromPos, toPos, minDist);
-        return;
-      }
-    }
-    this.setFocus(null);
-    this.setFocusedCloud(null);
+    this.focus.unfocus(opts);
   }
 
   setFilter(patch: Partial<FilterState>) {
@@ -1993,10 +1631,11 @@ export class Stellata implements FocusOps, ObserveFocusOps {
     this.camera.fov = fov;
     this.camera.updateProjectionMatrix();
     this.material.uniforms.uFovYRad.value = (fov * Math.PI) / 180;
-    if (this.focusedStar !== null) {
+    const focusedStar = this.focus.getFocusedStar();
+    if (focusedStar !== null) {
       this.controls.minDistance = starPhysics.minOrbitDistForStar({
         catalog: this.catalog,
-        idx: this.focusedStar,
+        idx: focusedStar,
         fovMinorRad: starPhysics.fovMinorRad(this.camera),
       });
     }
@@ -2131,237 +1770,25 @@ export class Stellata implements FocusOps, ObserveFocusOps {
     this.milkyway.setIsobar(on);
   }
 
-  /**
-   * Focus a star. With `animate: true` (default), the camera glides to
-   * `parkDistForStar(idx)` over `FOCUS_LERP_MS` when the camera is
-   * currently outside that park distance; otherwise the camera stays put
-   * and only the focus state / orbit floor are updated. With
-   * `animate: false`, the camera snaps to the park pose directly
-   * (URL-restore path).
-   *
-   * Flow: `setFocus` translates the camera into the new floating-origin
-   * frame (new star at local (0,0,0)). We capture starting orientation
-   * BEFORE `setFocus`, then build the lerp AFTER — the lerp's
-   * fromPos/toPos must live in the post-recentre frame, otherwise the
-   * camera teleports backward and lands at `|targetOld|` past the star.
-   */
+  /** Focus a star — thin shim over FocusController.focusStar. The
+   *  click FSM in `onPointerUp`, the typeahead, and URL state restore
+   *  all call through here. */
   focusStar(starIndex: number, opts: { animate?: boolean } = {}) {
-    if (this.warp.isActive()) return;
-    this.cancelUnfocusLerp();
-    this.cancelFocusLerp();
-    const animate = opts.animate ?? true;
-
-    // Orientation is frame-shift-invariant; capture once. After setFocus
-    // we still want `fromQuat` to be the user's pre-click camera view.
-    const startQuat = this.camera.quaternion.clone();
-    const startUp = this.camera.up.clone();
-
-    const fovMinor = starPhysics.fovMinorRad(this.camera);
-    const parkDist = starPhysics.parkDistForStar({
-      catalog: this.catalog, idx: starIndex, fovMinorRad: fovMinor,
-    });
-    const minOrbit = starPhysics.minOrbitDistForStar({
-      catalog: this.catalog, idx: starIndex, fovMinorRad: fovMinor,
-    });
-
-    // setFocus's contract: caller seeds controls.target with the new
-    // star's local position in the CURRENT (pre-recentre) frame; setFocus
-    // then recentres worldOffset to the new star and translates camera +
-    // target by -target so both land in the new frame with target at
-    // (0,0,0). Match that contract.
-    this.controls.target.copy(this.starLocalPosition(starIndex));
-    this.controls.minDistance = minOrbit;
-    this.setVectorTo(null);
-    this.setFocus(starIndex);
-    // From here on: the new star sits at local (0,0,0); camera.position
-    // is already translated into the new frame.
-
-    const target = this.controls.target; // (0,0,0) post-recentre
-    const eyeDist = this.camera.position.length();
-
-    if (animate && eyeDist > parkDist) {
-      this.startFocusLerp(newFocusLerpFrom(
-        this.camera.position,
-        startQuat,
-        startUp,
-        target,
-        parkDist,
-        FOCUS_LERP_MS,
-        performance.now(),
-        warpArrivalEaseFn({
-          d0: eyeDist,
-          dEnd: parkDist,
-          targetRadius:
-            Math.max(this.catalog.physicalRadius[starIndex], MIN_PHYSICAL_RADIUS_R_SUN) * R_SUN_PC,
-        }),
-      ));
-      // Deliberately do NOT toggle controls.enabled. The animate-loop
-      // dispatcher routes through updateFocusLerp before
-      // controls.update(), so user input accumulates inside
-      // TrackballControls but doesn't apply visually. Disabling here
-      // would race the click-to-focus event chain — Stellata's pointerup
-      // runs before TC's dynamically-added pointerup, and TC's _state
-      // would stay stuck at ROTATE until the next click clears it (cursor
-      // appears captured). Same precedent as the unfocus lerp.
-    } else if (eyeDist > parkDist) {
-      // animate: false snap path — outside park: place at park along
-      // current eye direction with an explicit lookAt so orientation
-      // matches what TC would resolve.
-      const dir = this.camera.position.clone().normalize();
-      if (dir.lengthSq() === 0) dir.set(0, 0, 1);
-      this.camera.position.copy(target).addScaledVector(dir, parkDist);
-      this.camera.lookAt(target);
-      this.controls.update();
-    } else {
-      // Inside park: stay-put. Nothing to move.
-      this.controls.update();
-    }
+    this.focus.focusStar(starIndex, opts);
   }
 
-  setOrbitTarget(starIndex: number) {
-    this.controls.target.copy(this.starLocalPosition(starIndex));
-    this.controls.update();
-    this.setFocus(starIndex);
-  }
+  setOrbitTarget(starIndex: number) { this.focus.setOrbitTarget(starIndex); }
 
   /** Cloud-side analogue of setOrbitTarget — orbit pivot moves to the
    *  cloud centroid and the cloud becomes the soft focus, but the camera
-   *  stays where it is (no teleport). User then orbits/zooms to view it.
-   *  Mirrors the click-on-star UX without teleporting. */
-  setOrbitTargetCloud(cloudIdx: number) {
-    if (!this.clouds) return;
-    const cloud = this.clouds.clouds[cloudIdx];
-    if (!cloud) return;
-    // setFocusedCloud clears any star focus first. Since a7d.2.11,
-    // that doesn't recentre worldOffset back to Sol — the floating
-    // origin stays at the former focal star — so subtract worldOffset
-    // to translate the cloud's absolute centroid into the current
-    // local frame before assigning it as controls.target.
-    this.setFocusedCloud(cloudIdx);
-    this.controls.target.copy(cloud.centerAbs).sub(this.worldOffset);
-    this.controls.update();
-  }
+   *  stays where it is. See FocusController.setOrbitTargetCloud. */
+  setOrbitTargetCloud(cloudIdx: number) { this.focus.setOrbitTargetCloud(cloudIdx); }
 
-  // Per-kind FocusTarget factories. The warp / camera-transition code
-  // consumes these objects rather than switching on a `destKind`
-  // literal; adding a new focusable kind = adding a factory + plumbing
-  // pick / click handling to it, then everything below
-  // (warp animation, mid-Fly recentre, pin guard, finishWarp event
-  // family) just works without touching the warp internals. See
-  // `docs/architecture.md` § FocusTarget contract.
-  //
-  // Both factories close over `this` so the returned object can read
-  // catalog / cloud data, mutate the per-kind focus field, and emit
-  // through the shared event bus without exposing Stellata's
-  // privates to focus-target.ts.
-
-  /** Build a FocusTarget for the star at catalog index `idx`.
-   *  Public for the FocusOps shim — WarpController.warpTo composes it
-   *  for the destination side. */
-  makeStarFocusTarget(idx: number): FocusTarget {
-    // Captures whether a sibling-kind focus existed at the moment of
-    // applyFocus, so emitFocusEvents knows whether to emit a clearing
-    // 'cloudFocus' event for the displaced cloud focus. Snapshotted at
-    // applyFocus time because the focus fields may be mutated by other
-    // code between applyFocus and emitFocusEvents.
-    let cloudWasCleared = false;
-    return {
-      kind: 'star',
-      idx,
-      anchorInto: (out) => {
-        const p = this.catalog.positions;
-        out.set(p[idx * 3], p[idx * 3 + 1], p[idx * 3 + 2]);
-        return true;
-      },
-      localPositionInto: (out) => {
-        this.starLocalPositionInto(idx, out);
-        return true;
-      },
-      parkRadius: () => this.parkDistForStar(idx),
-      applyFocus: () => {
-        cloudWasCleared = this.focusedCloud !== null;
-        if (cloudWasCleared) this.focusedCloud = null;
-        this.focusedStar = idx;
-        this.controls.minDistance = starPhysics.minOrbitDistForStar({
-          catalog: this.catalog,
-          idx,
-          fovMinorRad: starPhysics.fovMinorRad(this.camera),
-        });
-        this.refreshPlanetSystem(idx);
-      },
-      emitFocusEvents: () => {
-        if (cloudWasCleared) this.bus.emit('cloudFocus', null);
-        this.bus.emit('focus', idx);
-        this.bus.emit('state');
-      },
-      physicalRadius: () =>
-        Math.max(this.catalog.physicalRadius[idx], MIN_PHYSICAL_RADIUS_R_SUN) * R_SUN_PC,
-      chartPlateauDistance: (magBright) =>
-        chartPlateauDistancePc(this.catalog.absmag[idx], magBright),
-    };
-  }
-
-  /** Build a FocusTarget for the cloud at index `idx`. Returns null
-   *  when the cloud layer hasn't loaded or the index is out of range —
-   *  callers should bail in that case rather than constructing a
-   *  half-valid warp.
-   *
-   *  Public for the FocusOps shim — WarpController.warpToCloud
-   *  composes it for the destination side. */
-  makeCloudFocusTarget(idx: number): FocusTarget | null {
-    if (!this.clouds) return null;
-    const cloud = this.clouds.clouds[idx];
-    if (!cloud) return null;
-    let starWasCleared = false;
-    return {
-      kind: 'cloud',
-      idx,
-      anchorInto: (out) => {
-        out.copy(cloud.centerAbs);
-        return true;
-      },
-      localPositionInto: (out) => this.cloudLocalPositionInto(idx, out),
-      parkRadius: () => cloudViewingDistancePc(cloud),
-      applyFocus: () => {
-        starWasCleared = this.focusedStar !== null;
-        if (starWasCleared) {
-          this.focusedStar = null;
-          this.refreshPlanetSystem(null);
-          // Per-cloud minDistance floor isn't tracked today; mirror
-          // setFocus(null)'s clamp so the controls don't trap the
-          // camera further out than the cloud's parked pose.
-          const eye = this.camera.position.distanceTo(this.controls.target);
-          this.controls.minDistance = Math.min(GLOBAL_MIN_DIST_PC, eye);
-        }
-        this.focusedCloud = idx;
-      },
-      emitFocusEvents: () => {
-        if (starWasCleared) this.bus.emit('focus', null);
-        this.bus.emit('cloudFocus', idx);
-        this.bus.emit('state');
-      },
-      // Clouds have no single geometric radius — the ellipsoid axes
-      // vary by 2-3× per cloud. Angular-size-based arrival curves
-      // (e.g. `'hybrid'`) fall back to log-d when this returns null.
-      physicalRadius: () => null,
-      // Clouds render as isobar contours in chart mode (not as
-      // magnitude-driven discs), so there's no disc plateau to detect.
-      chartPlateauDistance: () => null,
-    };
-  }
-
-  /** Build a FocusTarget describing whichever object is currently
-   *  focused (star or cloud), or null if nothing is focused. Used as
-   *  the `source` side of a warp; the dispatch table sits in exactly
-   *  one place.
-   *
-   *  Public for the FocusOps shim — WarpController.warpTo /
-   *  warpToCloud read it to snapshot the source. */
-  currentFocusTarget(): FocusTarget | null {
-    if (this.focusedStar !== null) return this.makeStarFocusTarget(this.focusedStar);
-    if (this.focusedCloud !== null) return this.makeCloudFocusTarget(this.focusedCloud);
-    return null;
-  }
+  // makeStarFocusTarget / makeCloudFocusTarget / currentFocusTarget
+  // moved to FocusController in 9mm.194.8 — they close over the focus
+  // state (focusedStar / focusedCloud / focusedPlanetSystem) so they
+  // belong where that state lives. WarpController consumes them through
+  // the `FocusOps` seam.
 
   /** Start an animated journey from the currently focused thing (star
    *  or cloud) to the star at `destIdx`. Thin shim over WarpController. */
@@ -2481,21 +1908,6 @@ export class Stellata implements FocusOps, ObserveFocusOps {
     this.aim.aimAt(pointLocal);
   }
 
-  // Tick the focus-park lerp (r9q.2). controls.enabled is left true
-  // throughout the lerp; the animate() dispatcher routes here instead
-  // of controls.update(), so user drag accumulates in TC without
-  // visible effect until the lerp lands. On landing we re-issue
-  // controls.update() so TC re-syncs against the final camera pose.
-  private updateFocusLerp() {
-    const state = this.focusLerpState;
-    if (!state) return;
-    const stillActive = tickFocusLerp(state, performance.now(), this.camera);
-    if (!stillActive) {
-      this.endFocusLerp();
-      this.controls.update();
-    }
-  }
-
   // Star position in the renderer's local frame — i.e. in the same space
   // as `camera.position` and `controls.target`. This is what overlays want
   // for projection math and what the orbit camera operates in. It is NOT
@@ -2589,10 +2001,11 @@ export class Stellata implements FocusOps, ObserveFocusOps {
     // Aspect change → fov_minor moves → orbit floor needs a refresh while
     // a star is focused. (FOV-only changes go through setCameraFov, which
     // does its own recompute.)
-    if (this.focusedStar !== null) {
+    const focusedStar = this.focus.getFocusedStar();
+    if (focusedStar !== null) {
       this.controls.minDistance = starPhysics.minOrbitDistForStar({
         catalog: this.catalog,
-        idx: this.focusedStar,
+        idx: focusedStar,
         fovMinorRad: starPhysics.fovMinorRad(this.camera),
       });
     }
@@ -2664,17 +2077,8 @@ export class Stellata implements FocusOps, ObserveFocusOps {
   /** Public access to the HUD overlay — for the arrow-fade debug HUD only. */
   get hud(): HudOverlay { return this.hudOverlay; }
 
-  // Auto-park target — the ObserveFocusOps shim. Body delegates to the
-  // pure star-physics helper; logic and constants live in
-  // `camera/star-physics.ts`. 9mm.194.8 hands this seam to
-  // FocusController and the method goes away from this file.
-  parkDistForStar(idx: number): number {
-    return starPhysics.parkDistForStar({
-      catalog: this.catalog,
-      idx,
-      fovMinorRad: starPhysics.fovMinorRad(this.camera),
-    });
-  }
+  // parkDistForStar moved to FocusController (9mm.194.8) — used by
+  // ObserveTransition's ObserveFocusOps seam and the focus-park lerp.
 
   private onPointerDown = (e: PointerEvent) => {
     if (e.button !== 0) return;
@@ -2722,11 +2126,13 @@ export class Stellata implements FocusOps, ObserveFocusOps {
     // star-only overlay (skipped naturally — no focus ring code touches
     // focusedCloud), and (b) viewing distance for clouds is
     // cloudViewingDistancePc rather than parkDistForStar.
+    const focusedStar = this.focus.getFocusedStar();
+    const focusedCloud = this.focus.getFocusedCloud();
     const focusedThing =
-      this.focusedStar !== null
-        ? { kind: 'star' as const, idx: this.focusedStar }
-        : this.focusedCloud !== null
-          ? { kind: 'cloud' as const, idx: this.focusedCloud }
+      focusedStar !== null
+        ? { kind: 'star' as const, idx: focusedStar }
+        : focusedCloud !== null
+          ? { kind: 'cloud' as const, idx: focusedCloud }
           : null;
     const clickedThing =
       starIdx >= 0
@@ -2959,8 +2365,8 @@ export class Stellata implements FocusOps, ObserveFocusOps {
       this.warp.tick(performance.now());
     } else if (this.aim.isActive()) {
       this.aim.tick(performance.now());
-    } else if (this.focusLerpState) {
-      this.updateFocusLerp();
+    } else if (this.focus.isFocusLerpActive()) {
+      this.focus.tick(performance.now());
     } else if (this.aim.isObserveAimActive()) {
       this.aim.tickObserve(performance.now());
       // Observe-mode aim slerps the camera quaternion in place. The
@@ -2989,8 +2395,8 @@ export class Stellata implements FocusOps, ObserveFocusOps {
     // user hasn't panned the camera target away from the focused star
     // (target ≈ local origin). Pan moves target away from the star and
     // we want it to render at its actual projected position again.
-    const pinTarget = this.isPinEngaged() ? this.focusedStar : -1;
-    this.material.uniforms.uPinFocusToCenter.value = pinTarget;
+    const pinTarget = this.focus.isPinEngaged() ? this.focus.getFocusedStar() : -1;
+    this.material.uniforms.uPinFocusToCenter.value = pinTarget ?? -1;
     // Advance variability clock (seconds since start). Shared with glow
     // material via sharedUniforms so both passes see the same time.
     this.material.uniforms.uTime.value = (performance.now() - this.animateStartMs) / 1000;
@@ -3064,12 +2470,12 @@ export class Stellata implements FocusOps, ObserveFocusOps {
       this.galacticGrid.group.visible = false;
     }
 
+    const focusedStar = this.focus.getFocusedStar();
     const focusedLocal =
-      this.focusedStar !== null
-        ? this.starLocalPositionInto(this.focusedStar, this._tmpAnimateLocal)
+      focusedStar !== null
+        ? this.starLocalPositionInto(focusedStar, this._tmpAnimateLocal)
         : null;
-    const isSolFocus =
-      this.focusedStar !== null && this.focusedStar === this.catalog.solIndex;
+    const isSolFocus = focusedStar !== null && focusedStar === this.catalog.solIndex;
     // HudOverlay computes its own fade alpha from THIS frame's shaft
     // geometry — no more one-frame-lag flash when the HUD toggles on
     // (ml8 symptom 1). The distance-vector overlay does the same in its
@@ -3085,10 +2491,10 @@ export class Stellata implements FocusOps, ObserveFocusOps {
       sizeMaxPx: this.filter.sizeMax,
       cameraMode: this.cameraMode,
       transition: this.getObserveTransitionProgress(),
-      focusedDiscRadiusPx: this.focusedStar !== null
+      focusedDiscRadiusPx: focusedStar !== null
         ? starPhysics.renderedDiscPxAtPeak({
             catalog: this.catalog,
-            idx: this.focusedStar,
+            idx: focusedStar,
             camPos: this.camera.position,
             localPositions: this._localPositions,
             uniforms: this.material.uniforms as unknown as starPhysics.StarPhysicsUniforms,
@@ -3132,6 +2538,7 @@ export class Stellata implements FocusOps, ObserveFocusOps {
     this.aim.dispose();
     this.warp.dispose();
     this.observe.dispose();
+    this.focus.dispose();
     this.hudOverlay.dispose();
     this.controls.dispose();
     // Star pipeline: one shared InstancedBufferGeometry feeds the disc, glow,
