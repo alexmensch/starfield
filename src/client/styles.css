@@ -1086,11 +1086,11 @@ body.monochrome #con-results {
    yield to nothing. The halo is suppressed so the type reads as
    transparent ink rather than competing with star-name labels. */
 #chart-labels .chart-label.kind-con {
-  font-size: 16px;
-  font-weight: 600;
-  letter-spacing: 0.32em;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
   text-transform: uppercase;
-  fill: rgba(0, 0, 0, 0.55);
+  fill: rgba(0, 0, 0, 0.18);
   stroke: none;
 }
 #chart-labels .chart-label.kind-cloud {
