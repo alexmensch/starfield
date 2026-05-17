@@ -97,6 +97,117 @@ The full record of sources, formulas, and deliberate modelling
 simplifications lives in **[SCIENCE.md](./SCIENCE.md)**. Read for
 citations, DOIs, and what is and isn't observationally grounded.
 
+## Things to try
+
+Stellata rewards exploration more than reading. A short curated list
+of viewpoints and objects, each chosen because it exercises something
+the renderer does that doesn't quite show up in a screenshot.
+
+### See the giants as physical objects
+
+Approach these slowly. The discs grow to the star's real radius
+computed from its catalogued absolute magnitude and spectral class,
+so they fill the viewport long before you'd expect.
+
+- **Betelgeuse (α Orionis)** — the canonical red supergiant.
+  M2 Ia at 152 pc; the disc resolves to a large fraction of the
+  viewport at close range and pulses on an ~8-minute cycle.
+- **Antares (α Scorpii)** — the other canonical red supergiant.
+  M1.5 Iab at 170 pc. Visibly redder than Betelgeuse.
+- **Rigel (β Orionis)** — blue supergiant in the same constellation
+  as Betelgeuse. B8 Ia at 265 pc, intrinsically brighter than
+  Betelgeuse — but hotter, so Stefan–Boltzmann gives it a smaller
+  physical radius. The Rigel / Betelgeuse pair makes the L = R²T⁴
+  trade-off visible.
+- **Deneb (α Cygni)** — A2 Ia supergiant at 433 pc, in Cygnus.
+  Renders as a notably bright white-blue disc.
+
+### Watch variables pulse in real time
+
+Stellata compresses time so periods you'd never see in a human
+lifetime cycle in seconds. Focus on one of these and just wait:
+
+- **δ Cephei** — the namesake Cepheid. Full cycle in a few seconds.
+- **η Aquilae** — another bright classical Cepheid.
+- **Mira (o Ceti)** — the long-period prototype. ~1 minute per
+  cycle; amplitude is dramatic.
+- **Betelgeuse** — slower (~8 minutes per cycle) but visible as
+  both brightness swing and physical disc-radius pulse if you're
+  focused close in.
+
+### Fly out and watch the constellations break
+
+The constellation lines come from Earth's viewpoint. Move just a
+few tens of parsecs and the figures visibly deform — this is the
+moment the model stops being a planetarium and starts being a 3D
+map.
+
+- **Orion** — Betelgeuse (~152 pc) and Rigel (~265 pc) are at very
+  different distances; flying through Orion stretches the figure
+  asymmetrically.
+- **Big Dipper / Ursa Major** — most members belong to the Ursa
+  Major moving group, but Dubhe (α UMa) and Alkaid (η UMa) don't.
+  The asterism breaks lopsidedly as you back away.
+- **Cygnus** — Deneb is at ~433 pc, the rest of the Northern Cross
+  much closer. Backing the camera off tilts the cross dramatically.
+
+### Visual doubles, in chart mode
+
+Switch to chart mode while observing from a focused star to see
+the double-star wings glyph. The model flags ~13,000 doubles via
+the Hipparcos CCDM cross-match.
+
+- **α Centauri** — uniquely, both A and B render as separate discs
+  (caught by the geometric pass, not the CCDM one). Get close and
+  you can orbit between them.
+- **Mizar + Alcor (ζ + 80 UMa)** — the classic naked-eye double.
+  Mizar carries the wings glyph; Alcor is a separate star nearby.
+- **ε Lyrae** — the "double double". Carries the multiplicity glyph.
+- **Albireo (β Cygni)** — only the primary renders, but the glyph
+  is there. Celebrated for its real-world gold/blue colour contrast.
+
+### Beyond the heliopause
+
+The default first-load view parks you 5 AU from Sol facing the
+galactic centre — a deliberate "you are here, that's our system"
+anchor. From there:
+
+- **From Pluto, looking inward.** The Sun is just one bright star
+  among many; the heliopause shell sits overhead.
+- **Cross the heliopause at the upwind apex (~122 AU) and look
+  back.** The model's asymmetry — ~115 AU at the flanks, ~200 AU
+  into the heliotail — reads from outside the bubble.
+
+### Galactic-scale views
+
+The Milky Way is volumetric, not a skybox. These viewpoints prove it:
+
+- **Park 8 kpc above the galactic centre and look down.** The disc
+  and bulge render as illuminated 3D structures; their orientation
+  responds to camera motion.
+- **Stand on a star a few kpc out and look around.** The MW band
+  wraps continuously, with parallax that wouldn't be possible from
+  a flat backdrop.
+- **Fly toward the galactic centre.** As you cross into the bulge
+  the surface brightness ramps; analytical mid-plane dust darkens
+  stars on lines of sight through the densest gas.
+
+### Local Group destinations
+
+For ambitious distances. The Local Group layer renders LineLoop
+wireframes for confirmed-galaxy members out to 2 Mpc.
+
+- **Sagittarius dSph** (~26 kpc) — our closest companion dwarf,
+  currently being tidally torn apart by the MW. The wireframe shows
+  the elongated structural axis that captures.
+- **LMC / SMC** (~50 / 63 kpc) — the Magellanic Clouds render with
+  hand-curated structure (LMC: inclined disc at i = 32°; SMC:
+  triaxial along line of sight) rather than the default oblate
+  ellipsoid.
+- **M31 (Andromeda, 776 kpc) and M33 (Triangulum, 840 kpc)** — the
+  two major spirals beyond the MW; M31's inclined disc (i = 77°) is
+  visible.
+
 ## Browser support
 
 - **WebGL2** required (any browser from 2018 onward — Safari 15+,
