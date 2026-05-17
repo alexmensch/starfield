@@ -224,6 +224,20 @@ alongside the HTML/JS. Both compress well (~2 MB each gzipped).
   rendering pipeline, URL state, camera modes, etc.). The
   documentation index in CLAUDE.md describes what each one covers.
 
+## Sponsorship
+
+Stellata is built and maintained in my spare time. If it's useful to
+you and you'd like to support continued development, sponsorship
+through [GitHub Sponsors](https://github.com/sponsors/alexmensch) is
+warmly welcomed.
+
+## Contributing
+
+The issue tracker is open — bug reports and enhancement suggestions
+are welcome. External pull requests are not currently accepted; see
+[`.github/CONTRIBUTING.md`](.github/CONTRIBUTING.md) for the full
+rationale and how to write a useful bug report or feature request.
+
 ## Licence
 
 The code in this repository is licensed under AGPL-3.0-only. See
