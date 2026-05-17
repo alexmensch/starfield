@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { Stellata } from '../stellata';
+import { renderedSizePx } from '../camera/star-physics';
 import { projectToScreen } from './overlay-project';
 import { setNumAttr, setStyle } from './dirty-attr';
 
@@ -64,7 +65,15 @@ export function createFocusRingOverlay(stellata: Stellata) {
       // disc exceeds the ring diameter — the ring becomes redundant chrome
       // on top of the star. Skipped during transitions because the disc is
       // about to be hidden / has just appeared anyway.
-      if (stellata.renderedSizePx(idx) > FOCUS_RING_RADIUS_PX * 2) {
+      const sizePx = renderedSizePx({
+        catalog: stellata.catalog,
+        idx,
+        camPos: stellata.camera.position,
+        localPositions: stellata.localPositions,
+        uniforms: stellata.uniforms,
+        filter: stellata.getFilter(),
+      });
+      if (sizePx > FOCUS_RING_RADIUS_PX * 2) {
         hide();
         return;
       }
