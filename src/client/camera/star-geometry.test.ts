@@ -5,6 +5,7 @@ import {
   pickScore,
   pickFromCandidates,
   type StarPickCandidate,
+  sortedDistRange,
   varEffectiveAmplitude,
   distAtFillFraction,
   peakAmplitudeFactor,
@@ -314,5 +315,56 @@ describe('star-geometry / pickFromCandidates', () => {
     expect(r?.candidate.idx).toBe(81);
     expect(r?.candidate.cameraDistancePc).toBe(50_000);
     expect(r?.tier).toBe('prime');
+  });
+});
+
+describe('star-geometry / sortedDistRange', () => {
+  // Half-open [start, end) slice on a sorted Float32Array. Shared
+  // between the star pick path (filter window) and the core-mask gate
+  // (triangle-inequality bracket); both compose this helper.
+  it('returns an empty range when minDist > maxDist', () => {
+    const sd = new Float32Array([0, 1, 2, 3, 4]);
+    const { start, end } = sortedDistRange(sd, 3, 1);
+    expect(end).toBeLessThanOrEqual(start);
+  });
+
+  it('returns the full array when the band covers the whole range', () => {
+    const sd = new Float32Array([0.5, 1.0, 1.5, 2.0]);
+    const { start, end } = sortedDistRange(sd, 0, 100);
+    expect(start).toBe(0);
+    expect(end).toBe(4);
+  });
+
+  it('snaps the start to the first value >= minDist', () => {
+    const sd = new Float32Array([0, 1, 2, 3, 4, 5]);
+    const { start } = sortedDistRange(sd, 2.5, 100);
+    expect(start).toBe(3); // first index whose value (3) ≥ 2.5
+  });
+
+  it('snaps the end past the last value <= maxDist', () => {
+    const sd = new Float32Array([0, 1, 2, 3, 4, 5]);
+    const { end } = sortedDistRange(sd, 0, 3.5);
+    expect(end).toBe(4); // half-open — covers values 0,1,2,3
+  });
+
+  it('inclusive on both endpoints', () => {
+    const sd = new Float32Array([0, 1, 2, 3, 4]);
+    const { start, end } = sortedDistRange(sd, 1, 3);
+    expect(start).toBe(1);
+    expect(end).toBe(4);
+    expect(end - start).toBe(3); // 1, 2, 3
+  });
+
+  it('returns start=end when no values fall in the band', () => {
+    const sd = new Float32Array([0, 1, 10, 11]);
+    const { start, end } = sortedDistRange(sd, 3, 5);
+    expect(start).toBe(end);
+  });
+
+  it('handles an empty array', () => {
+    const sd = new Float32Array([]);
+    const { start, end } = sortedDistRange(sd, 0, 100);
+    expect(start).toBe(0);
+    expect(end).toBe(0);
   });
 });

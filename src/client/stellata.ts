@@ -28,25 +28,17 @@ import { ObserveControls } from './camera/observe-controls';
 import { mark as perfMark, measure as perfMeasure, frame as perfFrame } from './debug/perf-hud';
 import {
   angularToPx as angularToPxPure,
-  MIN_DISC_HIT_RADIUS_PX,
   physSizePx,
-  pickFromCandidates,
-  pickScore,
-  type PickResult,
-  type StarPickCandidate,
+  sortedDistRange,
   varEffectiveAmplitude,
   distAtFillFraction,
   peakAmplitudeFactor,
 } from './camera/star-geometry';
+import { Picker } from './camera/picker';
 import { getPlanetSystem, hasPlanets, type PlanetSystem } from './solar-system/planet-system';
 import { OrbitRingsLayer } from './solar-system/orbit-rings-layer';
 import { PlanetBodyField } from './solar-system/planet-body-field';
-import {
-  Heliopause,
-  HELIOPAUSE_APEX_LOCAL_PC,
-  HELIOPAUSE_LABEL_ELEMENT_ID,
-  HELIOPAUSE_SAMPLE_POINTS_LOCAL,
-} from './solar-system/heliopause';
+import { Heliopause } from './solar-system/heliopause';
 import { R_SUN_PC } from './solar-system/astronomy-constants';
 import {
   type FocusLerpState,
@@ -97,7 +89,6 @@ import {
 } from './camera/warp-tuning';
 import { hybridUSeam } from './camera/arrival-curves';
 import { EventBus } from './util/event-bus';
-import type { HoverHit } from './hover/hover-types';
 
 export type MagPresetName = 'naked-eye' | 'binoculars' | 'all';
 
@@ -293,10 +284,6 @@ const VAR_TROUGH_FLOOR_FRACTION = 0.2;
 // 1e-6 inconsistently (stellata-9mm.195) — migrate them off the
 // literals as part of that bead, not here.
 const MIN_PHYSICAL_RADIUS_R_SUN = 1e-9;
-
-// MIN_DISC_HIT_RADIUS_PX moved to star-geometry.ts — shared between the
-// star pick path and the planet pick path (stellata-lo5.4). Re-imported
-// at the top of this file alongside the other pick helpers.
 
 // Squared-length threshold below which `controls.target` is treated as
 // coincident with the local origin (= focal-star position). Engages the
@@ -517,30 +504,6 @@ type Target = { kind: 'star'; idx: number } | { kind: 'cloud'; idx: number };
 function sameTarget(a: Target | null, b: Target | null): boolean {
   if (a === null || b === null) return a === b;
   return a.kind === b.kind && a.idx === b.idx;
-}
-
-// `[start, end)` half-open slice of `sortedDist` covering values in
-// `[minDist, maxDist]`. Lower-bound + upper-bound binary searches.
-// Shared between pickStar and hasStarWithin so the windowed-scan
-// pattern lives in one place.
-function sortedDistRange(
-  sortedDist: Float32Array,
-  minDist: number,
-  maxDist: number,
-): { start: number; end: number } {
-  const n = sortedDist.length;
-  let lo = 0, hi = n;
-  while (lo < hi) {
-    const m = (lo + hi) >>> 1;
-    if (sortedDist[m] < minDist) lo = m + 1; else hi = m;
-  }
-  const start = lo;
-  hi = n;
-  while (lo < hi) {
-    const m = (lo + hi) >>> 1;
-    if (sortedDist[m] <= maxDist) lo = m + 1; else hi = m;
-  }
-  return { start, end: lo };
 }
 
 // Disc-pass blending state. Applied at material construction and re-applied
@@ -770,6 +733,13 @@ export class Stellata {
   // dispose() can release the ~128 MiB Data3DTexture. attachDust(null)
   // clears it.
   private dust: DustField | null = null;
+
+  // Per-layer target resolver — answers "what's under (x, y)?" for the
+  // click FSM and hover engine (stellata-9mm.194.3). Pure resolver; the
+  // click FSM in onPointerUp + the observe single/double-click
+  // dispatchers stay here as composition-layer orchestration. Hover
+  // providers read it via `stellata.picker.pickXxxHit(...)`.
+  readonly picker!: Picker;
 
   constructor({ canvas, catalog }: StellataOptions) {
     this.catalog = catalog;
@@ -1070,6 +1040,31 @@ export class Stellata {
     // focused star = Sol via the planet-system event below.
     this.heliopause = new Heliopause();
     this.scene.add(this.heliopause.group);
+
+    // Picker resolves every layer's "what's under (x, y)?" — composed
+    // by the click FSM in onPointerUp and by the hover providers.
+    // Layers that attach asynchronously (clouds, Local Group) are
+    // read through getters so Picker sees them as soon as they land.
+    // `picker` is `readonly` — assigned via writable cast since field
+    // initialisation in TS requires bypassing the readonly guard here.
+    (this as { picker: Picker }).picker = new Picker({
+      domElement: this.renderer.domElement,
+      camera: this.camera,
+      catalog: this.catalog,
+      sortedByDistFromSol: this.sortedByDistFromSol,
+      sortedDistFromSol: this.sortedDistFromSol,
+      getLocalPositions: () => this._localPositions,
+      getFilter: () => this.filter,
+      getClouds: () => this.clouds,
+      getLocalGroupLayer: () => this.localGroupLayer,
+      getHeliopause: () => this.heliopause,
+      getPlanetBodyField: () => this.planetBodyField,
+      getWorldOffset: () => this.worldOffset,
+      getWarpActive: () => this.warpState !== null,
+      renderedSizePxFn: (idx) => this.renderedSizePx(idx),
+      fovYRadRef: this.material.uniforms.uFovYRad as { value: number },
+      viewportRef: this.material.uniforms.uViewport as { value: THREE.Vector2 },
+    });
     // Build/teardown orbit rings + heliopause whenever the focused
     // star's planet data changes. Both are representational layers
     // gated on host-focused (stellata-3re.15). Planet bodies live in
@@ -1882,24 +1877,6 @@ export class Stellata {
    *  (`stellata.cloudLayer.setOpacity(0.5)` etc.). null until
    *  attachClouds runs. */
   get cloudLayer(): MolecularClouds | null { return this.clouds; }
-
-  /** Hit-test a screen-space cursor against the cloud layer. Returns the
-   *  cloud index of the nearest hit, or null if no cloud is under the
-   *  cursor. Always returns null when the layer is hidden by the toggle
-   *  or warping. */
-  pickCloud(clientX: number, clientY: number): number | null {
-    if (!this.clouds || this.warpState) return null;
-    const rect = this.renderer.domElement.getBoundingClientRect();
-    const ndc = this.tmpNdc.set(
-      ((clientX - rect.left) / rect.width) * 2 - 1,
-      -(((clientY - rect.top) / rect.height) * 2 - 1),
-    );
-    this.cloudRaycaster.setFromCamera(ndc, this.camera);
-    return this.clouds.raycast(this.cloudRaycaster);
-  }
-
-  private cloudRaycaster = new THREE.Raycaster();
-  private tmpNdc = new THREE.Vector2();
 
   /** Cloud-side analogue of focusStar — used by search-select and
    *  click-vector-tip. Routes through the same focus-park primitives
@@ -3319,276 +3296,10 @@ export class Stellata {
     return out.set(p[i * 3 + 0], p[i * 3 + 1], p[i * 3 + 2]);
   }
 
-  pickStar(clientX: number, clientY: number, pixelThreshold = 16): number {
-    return this.pickStarResult(clientX, clientY, pixelThreshold)?.candidate.idx ?? -1;
-  }
-
-  // Hover-engine entry point for the star layer (stellata-lo5). Shares
-  // the candidate-building work with `pickStar` via `pickStarResult` —
-  // tier + cameraDistancePc ride through on the winning candidate so no
-  // re-projection is needed.
-  pickStarHit(clientX: number, clientY: number, pixelThreshold = 14): HoverHit | null {
-    const r = this.pickStarResult(clientX, clientY, pixelThreshold);
-    if (r === null) return null;
-    return {
-      idx: r.candidate.idx,
-      cameraDistancePc: r.candidate.cameraDistancePc,
-      tier: r.tier,
-    };
-  }
-
-  // Two-tier star pick (project + filter + collect; reducer in
-  // star-geometry.ts):
-  //   1. Cursor inside a star's rendered disc → prime candidate. Among
-  //      prime hits, the cursor's screen-pixel distance to the disc
-  //      centre wins (`pickScore`), so visually-resolved pairs whose
-  //      hitboxes overlap stay independently clickable — the Double
-  //      Double (ε¹/ε² Lyr) is the canonical case. Sub-pixel mag bias
-  //      tiebreaks coincident catalog companions sharing x/y/z, e.g.
-  //      Alula Australis A/B (Gl 423A/B). Camera distance is
-  //      deliberately ignored: a faint background star whose centre
-  //      projects ≥ 1 px closer to the cursor wins over a bright
-  //      foreground disc that contains the cursor. See pickScore.
-  //   2. Otherwise proximity within pixelThreshold, same scoring.
-  //      Prime hits always beat fallback hits.
-  //
-  // Returns the winning candidate alongside its tier so callers can
-  // either extract `.idx` (click path, `pickStar`) or carry the whole
-  // candidate through to a HoverHit (hover path, `pickStarHit`)
-  // without re-walking the projection.
-  private pickStarResult(
-    clientX: number,
-    clientY: number,
-    pixelThreshold: number,
-  ): PickResult<StarPickCandidate> | null {
-    const rect = this.renderer.domElement.getBoundingClientRect();
-    const viewportW = rect.width;
-    const viewportH = rect.height;
-    const cursorX = clientX - rect.left;
-    const cursorY = clientY - rect.top;
-
-    const camPos = this.camera.position;
-    // Local-frame positions drive camera-relative math and screen projection
-    // (the camera lives in local frame under the floating origin). distSol
-    // values are precomputed in sortedDistFromSol — no per-star sqrt needed.
-    const locPos = this._localPositions;
-    const { absmag, spectClass, amplitudeMag, periodDays } = this.catalog;
-    const f = this.filter;
-    const v = new THREE.Vector3();
-
-    // Window the scan to the slice of sortedDistFromSol that lies inside
-    // the user's [minDistSol, maxDistSol] band. Skips out-of-band stars
-    // without computing per-star sqrt(x²+y²+z²); also collapses the
-    // catalog to the visible distance window when the user has narrowed
-    // the slider.
-    const sortedIdx = this.sortedByDistFromSol;
-    const { start, end } = sortedDistRange(this.sortedDistFromSol, f.minDistSol, f.maxDistSol);
-
-    const candidates: StarPickCandidate[] = [];
-    for (let k = start; k < end; k++) {
-      const i = sortedIdx[k];
-      const bit = 1 << (spectClass[i] | 0);
-      if (!(f.spectMask & bit)) continue;
-      const x = locPos[i * 3 + 0];
-      const y = locPos[i * 3 + 1];
-      const z = locPos[i * 3 + 2];
-      const dx = x - camPos.x;
-      const dy = y - camPos.y;
-      const dz = z - camPos.z;
-      const dCam = Math.max(Math.sqrt(dx * dx + dy * dy + dz * dz), DCAM_LOG_FLOOR_PC);
-      const appMag = absmag[i] + 5 * (Math.log10(dCam) - 1);
-      // For variables, use the bright-extreme appMag so a star whose
-      // disc is only visible at peak phase remains pickable across the
-      // whole cycle. Without this, a variable with static appMag just
-      // above the limit gets dropped here even though the GPU shows
-      // its disc whenever magMod swings negative.
-      const amp = periodDays[i] > 0 ? amplitudeMag[i] : 0;
-      const filterMag = appMag - amp * 0.5;
-      if (filterMag > f.maxAppMag) continue;
-
-      v.set(x, y, z).project(this.camera);
-      if (v.z < -1 || v.z > 1) continue;
-      const screenX = (v.x + 1) * 0.5 * viewportW;
-      const screenY = (1 - v.y) * 0.5 * viewportH;
-      const pxDist = Math.hypot(cursorX - screenX, cursorY - screenY);
-      const pxSize = this.renderedSizePx(i);
-      const hitRadius = Math.max(pxSize * 0.5, MIN_DISC_HIT_RADIUS_PX);
-      // Prune to candidates that could win in either tier; the reducer
-      // re-checks tier eligibility, this is just to keep the array tiny.
-      if (pxDist > hitRadius && pxDist > pixelThreshold) continue;
-      candidates.push({ idx: i, pxDist, hitRadius, appMag, cameraDistancePc: dCam });
-    }
-    return pickFromCandidates(
-      candidates,
-      pixelThreshold,
-      (c) => pickScore(c.pxDist, c.appMag),
-    );
-  }
-
-  // Hover-engine entry point for the planet layer (stellata-lo5.4).
-  // Walks every attached host's planets — focus state is intentionally
-  // NOT part of the gate (visibility ⇒ hoverable, per
-  // stellata-lo5-hover-conventions Rule 2). v1 attaches Sol once at
-  // startup, so the picker effectively walks Sol's planets regardless
-  // of which star is focused (or whether any is). The shader's own
-  // visibility kill condition (`appMag > maxAppMag + 0.5`) is mirrored
-  // inside the picker so invisible planets aren't surfaced.
-  pickPlanetHit(clientX: number, clientY: number, pixelThreshold = 14): HoverHit | null {
-    const rect = this.renderer.domElement.getBoundingClientRect();
-    return this.planetBodyField.pick(
-      this.camera,
-      rect,
-      clientX,
-      clientY,
-      pixelThreshold,
-    );
-  }
-
-  // Hover-engine entry point for the Local Group layer (stellata-lo5.5).
-  // Delegates to LocalGroupLayer.pick — that method gates on
-  // `group.visible`, which `update()` flips per frame to mirror the
-  // renderer's chart-mode + distance-fade visibility predicate. Returns
-  // null when the layer isn't attached (fresh checkout without the
-  // build artifact).
-  pickLocalGroupHit(clientX: number, clientY: number, pixelThreshold = 14): HoverHit | null {
-    if (!this.localGroupLayer) return null;
-    const rect = this.renderer.domElement.getBoundingClientRect();
-    return this.localGroupLayer.pick(
-      this.camera,
-      this.worldOffset,
-      rect,
-      clientX,
-      clientY,
-      pixelThreshold,
-    );
-  }
-
-  // Hover-engine entry point for the heliopause (stellata-lo5.6).
-  // Fallback-only tier — the heliopause is an extended translucent
-  // shell, not a rendered disc. The disambiguator's prime>fallback rule
-  // means any star or planet visually atop the shell still wins its own
-  // hover (the heliopause never blocks "see-through" picks).
-  //
-  // Hit surface, per Alex's lo5.6 smoke feedback: anywhere on the
-  // projected shell silhouette OR anywhere on the apex SVG label, not
-  // just a 14 px radius around the apex centroid. Two regimes:
-  //
-  //  - Outside the shell (camera past the ellipsoid surface): all 62
-  //    sample points project in front of the near plane, the silhouette
-  //    bbox is well-defined, and the cursor anywhere inside it
-  //    registers a fallback hit. AABB is loose vs the true projected
-  //    ellipse (overshoots the diagonals ~6-8%) — fallback tier makes
-  //    the overshoot harmless because stars/planets at those diagonal
-  //    corners win their own prime hover anyway.
-  //
-  //  - Inside the shell (camera within the ellipsoid): at least one
-  //    sample point sits behind the near plane, the shell back-face-
-  //    culls and doesn't paint, and the silhouette test bails. The
-  //    apex label may still be visible (it gates separately on the
-  //    orbit-ring-visible predicate plus its own near-plane guard),
-  //    so the cursor inside the label's bounding rect still registers.
-  //
-  // Base gate: shell mesh visibility (`heliopause.isVisible()`), the
-  // actual rendered state — gives any future user-toggleable
-  // representational-layer switch one place to AND into. The label
-  // test relies on the label engine's own setVisible(display: none)
-  // wire to gate itself; getBoundingClientRect() returns zero bounds
-  // when the element is `display: none`, so the inside-bbox check
-  // harmlessly fails.
-  pickHeliopauseHit(clientX: number, clientY: number, _pixelThreshold = 14): HoverHit | null {
-    if (!this.heliopause.isVisible()) return null;
-    const rect = this.renderer.domElement.getBoundingClientRect();
-    const cursorX = clientX - rect.left;
-    const cursorY = clientY - rect.top;
-
-    // Silhouette bbox: project all sample points to screen-space.
-    // Bail (allInFront=false) if any sample is behind the near plane —
-    // matches the label engine's exact predicate so the silhouette is
-    // hoverable iff it's also drawn.
-    let allInFront = true;
-    let minX = Infinity, minY = Infinity;
-    let maxX = -Infinity, maxY = -Infinity;
-    const tmp = new THREE.Vector3();
-    const nearNeg = -this.camera.near;
-    for (const sample of HELIOPAUSE_SAMPLE_POINTS_LOCAL) {
-      tmp.copy(sample);
-      tmp.applyMatrix4(this.camera.matrixWorldInverse);
-      if (tmp.z >= nearNeg) { allInFront = false; break; }
-      tmp.applyMatrix4(this.camera.projectionMatrix);
-      const sx = (tmp.x + 1) * 0.5 * rect.width;
-      const sy = (1 - tmp.y) * 0.5 * rect.height;
-      if (sx < minX) minX = sx;
-      if (sx > maxX) maxX = sx;
-      if (sy < minY) minY = sy;
-      if (sy > maxY) maxY = sy;
-    }
-    const insideSilhouette = allInFront
-      && cursorX >= minX && cursorX <= maxX
-      && cursorY >= minY && cursorY <= maxY;
-
-    // Label bbox: getBoundingClientRect returns all-zero bounds for a
-    // `display: none` element, so this test harmlessly fails whenever
-    // the label engine has hidden the label (orbit-ring fade, chart
-    // mode, near-plane guard).
-    let insideLabel = false;
-    const labelEl = document.getElementById(HELIOPAUSE_LABEL_ELEMENT_ID);
-    if (labelEl) {
-      const lr = labelEl.getBoundingClientRect();
-      if (lr.width > 0 && lr.height > 0) {
-        insideLabel = clientX >= lr.left && clientX <= lr.right
-          && clientY >= lr.top && clientY <= lr.bottom;
-      }
-    }
-
-    if (!insideSilhouette && !insideLabel) return null;
-
-    const cam = this.camera.position;
-    const apex = HELIOPAUSE_APEX_LOCAL_PC;
-    const dx = apex.x - cam.x;
-    const dy = apex.y - cam.y;
-    const dz = apex.z - cam.z;
-    const cameraDistancePc = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    return { idx: 0, cameraDistancePc, tier: 'fallback' };
-  }
-
-  // Hover-engine entry point for the molecular-cloud layer
-  // (stellata-lo5.7). Fallback-only tier — clouds are extended
-  // visible objects (Rule 3); the disambiguator's prime>fallback rule
-  // means any star or planet visually atop the cloud still wins its own
-  // prime hover, so clouds never block see-through picks.
-  //
-  // The pick path reuses `MolecularClouds.raycast` verbatim — the
-  // Three.js raycaster intersects the rendered ellipsoid meshes, so the
-  // hit surface naturally spans the whole projected silhouette (front
-  // face) without needing a separate sample-AABB.
-  //
-  // Visibility gate: cloud layer attached AND `group.visible`. The
-  // group is hidden by `MolecularClouds.update(_, visible=false)`
-  // whenever the renderer wouldn't draw the layer (currently never
-  // toggled at v1.0 because the un-shelve `attachClouds` call is
-  // commented out, so `this.clouds` is null and the gate short-circuits
-  // here). Decoupled from warp state per the visibility-only Rule 2 —
-  // the click-focus `pickCloud` keeps its `warpState` gate; hover
-  // doesn't need one.
-  pickCloudHit(clientX: number, clientY: number, _pixelThreshold = 14): HoverHit | null {
-    if (!this.clouds || !this.clouds.group.visible) return null;
-    const rect = this.renderer.domElement.getBoundingClientRect();
-    const ndc = this.tmpNdc.set(
-      ((clientX - rect.left) / rect.width) * 2 - 1,
-      -(((clientY - rect.top) / rect.height) * 2 - 1),
-    );
-    this.cloudRaycaster.setFromCamera(ndc, this.camera);
-    const idx = this.clouds.raycast(this.cloudRaycaster);
-    if (idx === null) return null;
-
-    const cloud = this.clouds.clouds[idx];
-    const cam = this.camera.position;
-    const cx = cloud.centerAbs.x - this.worldOffset.x - cam.x;
-    const cy = cloud.centerAbs.y - this.worldOffset.y - cam.y;
-    const cz = cloud.centerAbs.z - this.worldOffset.z - cam.z;
-    const cameraDistancePc = Math.sqrt(cx * cx + cy * cy + cz * cz);
-    return { idx, cameraDistancePc, tier: 'fallback' };
-  }
+  // All per-kind pick paths now live on `this.picker` (stellata-9mm.194.3).
+  // The click FSM (onPointerUp) and the observe single/double-click
+  // dispatchers stay here as composition-layer orchestration; hover
+  // providers reach picks via `stellata.picker.pickXxxHit(...)`.
 
   /** Cached PlanetSystem for an attached host, or null if the host
    *  isn't attached. Used by the planet hover formatter to resolve
@@ -3932,8 +3643,8 @@ export class Stellata {
 
     // Pick a star first — they're the primary interaction target. Fall
     // back to clouds when no star is hit.
-    const starIdx = this.pickStar(e.clientX, e.clientY);
-    const cloudIdx = starIdx >= 0 ? null : this.pickCloud(e.clientX, e.clientY);
+    const starIdx = this.picker.pickStar(e.clientX, e.clientY);
+    const cloudIdx = starIdx >= 0 ? null : this.picker.pickCloud(e.clientX, e.clientY);
     if (starIdx < 0 && cloudIdx === null) return;
 
     // Unified click-state machine — clouds participate the same way as
@@ -4027,7 +3738,7 @@ export class Stellata {
     // Mirror the POI overlay visibility gate — toggling without a visible
     // ring/arrow would change state with no feedback.
     if (!this.filter.showHud || this.isObserveTransitionActive()) return;
-    const idx = this.pickStar(x, y);
+    const idx = this.picker.pickStar(x, y);
     if (idx < 0) return;
     this.togglePoi(idx);
   }

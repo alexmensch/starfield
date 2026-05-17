@@ -4,7 +4,7 @@
 //
 // Visibility ⇒ hoverable per stellata-lo5-hover-conventions Rule 2:
 // the provider does NOT gate on focused-host / mode / warp state.
-// `Stellata.pickCloudHit` mirrors the renderer's "is this drawn?"
+// `Picker.pickCloudHit` mirrors the renderer's "is this drawn?"
 // predicate — the cloud layer is attached AND its group is visible —
 // so any cloud the user can see surfaces a hover card. The provider
 // is registered in main.ts only when `stellata.cloudLayer` is non-null,
@@ -37,7 +37,7 @@ export function createCloudHoverProvider(
   const { stellata, context } = config;
   return {
     kind: 'cloud',
-    pick: (x, y, pxThreshold) => stellata.pickCloudHit(x, y, pxThreshold),
+    pick: (x, y, pxThreshold) => stellata.picker.pickCloudHit(x, y, pxThreshold),
     // Cloud objects are identified by catalog idx alone — sub-layer
     // host identity (hit.hostStarIdx) is unused for this layer.
     format: (hit) => formatCloudHover(hit.idx, context),

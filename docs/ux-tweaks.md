@@ -84,7 +84,8 @@ for the surrounding context.
   `chart-labels.ts`. Distance from the disc centre to the label
   anchor, applied as `(x + offset, y - offset)` for a top-right read.
 - **Pick hit-radius floor** — `MIN_DISC_HIT_RADIUS_PX` (4 px) in
-  `pickStar` (`stellata.ts`). Floor on the prime-disc hit test so
+  `star-geometry.ts`, consumed by `Picker.pickStar`. Floor on the
+  prime-disc hit test so
   tiny chart-mode discs stay hoverable. Raise for easier hover at the
   cost of more cases where a neighbour disc whose centre is
   marginally closer to the cursor wins over the visually-targeted
