@@ -191,8 +191,8 @@ export class MolecularClouds {
    * null if no cloud is hit. The renderer's depth-test means foreground
    * stars block clicks from reaching clouds behind them, but we don't
    * test against star geometry here — that's a star pick, handled by
-   * pickStar in stellata.ts. Caller should pick the star first and
-   * fall back to a cloud pick when no star is hit.
+   * `Picker.pickStar` in camera/picker.ts. Caller should pick the star
+   * first and fall back to a cloud pick when no star is hit.
    */
   raycast(raycaster: THREE.Raycaster): number | null {
     const hits = raycaster.intersectObjects(this.meshes, false);

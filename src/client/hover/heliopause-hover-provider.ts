@@ -4,7 +4,7 @@
 //
 // Visibility ⇒ hoverable per stellata-lo5-hover-conventions Rule 2:
 // the provider does NOT gate on focused-host / mode state directly.
-// `Stellata.pickHeliopauseHit` mirrors the renderer's "is the apex
+// `Picker.pickHeliopauseHit` mirrors the renderer's "is the apex
 // label drawn?" predicate via the shared `isHeliopauseApexVisible`
 // export — single source of truth so the hover surface can't drift
 // from the SVG label.
@@ -29,7 +29,7 @@ export function createHeliopauseHoverProvider(
   const { stellata } = config;
   return {
     kind: 'heliopause',
-    pick: (x, y, pxThreshold) => stellata.pickHeliopauseHit(x, y, pxThreshold),
+    pick: (x, y, pxThreshold) => stellata.picker.pickHeliopauseHit(x, y, pxThreshold),
     // The apex is the lone object on this layer — no idx decoding,
     // no sub-layer identity. Format is keyed off the constant payload.
     format: () => formatHeliopauseHover(),

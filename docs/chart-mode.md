@@ -185,8 +185,8 @@ the end of each tick.
 
 ## Picking under chart mode
 
-`pickStar` (`stellata.ts`) three fixes for the small-disc / variable
-case:
+`Picker.pickStar` (`camera/picker.ts`) three fixes for the small-disc /
+variable case:
 
 1. **Variable bright-extreme filter.** Filter check uses
    `appMag - amplitude/2` so a variable whose disc is only visible at

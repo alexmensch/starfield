@@ -60,11 +60,12 @@ as the cloud's `dMinFloor` instead of the star 90 %-fill solve.
 
 **Picking + hover:** per-cloud `Mesh` objects participate in
 `THREE.Raycaster` intersection via the cloud `Group`.
-`Stellata.pickCloud` does the raycast; the click handler in
+`Picker.pickCloud` does the raycast; the click handler in
 `onPointerUp` falls back to a cloud pick when no star is hit (stars take
-priority because they're the smaller, more precise target), and
-`bindHoverTooltip` does the same fallback so hovering over a cloud's
-body shows its name + distance + axes in the existing tooltip element.
+priority because they're the smaller, more precise target), and the
+hover engine's `cloud-hover-provider` calls `Picker.pickCloudHit` so
+hovering over a cloud's body shows its name + distance + axes in the
+existing tooltip element.
 
 **Search:** cloud entries share the same Fuse fuzzy index as star
 entries, discriminated by a `kind: 'star' | 'cloud'` tag. The Focus

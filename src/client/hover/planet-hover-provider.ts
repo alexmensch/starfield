@@ -31,7 +31,7 @@ export function createPlanetHoverProvider(
   const { stellata } = config;
   return {
     kind: 'planet',
-    pick: (x, y, pxThreshold) => stellata.pickPlanetHit(x, y, pxThreshold),
+    pick: (x, y, pxThreshold) => stellata.picker.pickPlanetHit(x, y, pxThreshold),
     format: (hit) => {
       const hostStarIdx = hit.hostStarIdx;
       if (hostStarIdx === undefined) return { name: '', lines: [] };

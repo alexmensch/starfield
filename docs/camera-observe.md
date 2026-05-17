@@ -198,7 +198,7 @@ arrives within that window AND within `OBSERVE_DBL_CLICK_DIST_PX_SQ`
 **double-click** fires instead. Otherwise the **single-click** runs
 when the timer elapses.
 
-- *Single-click:* `pickStar()` resolves the click; if a star is hit,
+- *Single-click:* `picker.pickStar()` resolves the click; if a star is hit,
   `togglePoi()` pins or unpins it. Sol is rejected (the dedicated
   `#sol-arrow` already covers it); stars without HIP are rejected
   (URL state is HIP-only); the cap is 16 (adding past the cap is a

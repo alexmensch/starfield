@@ -149,7 +149,8 @@ Implications for code that reads positions:
 - **Rendering / projection math** must use `stellata.localPositions`
   (same frame as `camera.position` and `controls.target`). The disc
   mask, focus ring, distance vector, constellation overlay, and all
-  `pickStar` / `renderedSizePx` / `aimAtConstellation` paths do this.
+  `Picker.pickStar` / `renderedSizePx` / `aimAtConstellation` paths
+  do this.
 - **Distance-from-Sol** (the distSol filter, hover-tooltip distances,
   the Sol locator-arrow label) must use `catalog.positions` *or* must
   compute `||localPosition + worldOffset||` in JS float64. The shader's

@@ -211,3 +211,30 @@ export function distAtFillFraction(
 ): number {
   return R_pc / Math.tan((targetFrac * fovMinorRad) / 2);
 }
+
+// `[start, end)` half-open slice of `sortedDist` covering values in
+// `[minDist, maxDist]`. Lower-bound + upper-bound binary searches.
+// Shared across all consumers that scan stars in a Sol-distance band:
+// the star pick path (windowed `[minDistSol, maxDistSol]` band), and
+// the core-mask gate (triangle-inequality bracket around the camera's
+// own Sol distance). Single source so the bracket logic isn't typed
+// twice.
+export function sortedDistRange(
+  sortedDist: Float32Array,
+  minDist: number,
+  maxDist: number,
+): { start: number; end: number } {
+  const n = sortedDist.length;
+  let lo = 0, hi = n;
+  while (lo < hi) {
+    const m = (lo + hi) >>> 1;
+    if (sortedDist[m] < minDist) lo = m + 1; else hi = m;
+  }
+  const start = lo;
+  hi = n;
+  while (lo < hi) {
+    const m = (lo + hi) >>> 1;
+    if (sortedDist[m] <= maxDist) lo = m + 1; else hi = m;
+  }
+  return { start, end: lo };
+}
