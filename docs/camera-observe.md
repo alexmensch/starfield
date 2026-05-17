@@ -8,6 +8,40 @@ animation that connects observe→observe arrivals see
 `docs/camera-warp.md`; for the steady-state camera geometry see
 `docs/camera-controls.md`.
 
+The navigate↔observe mode-switch orchestrator — the
+`ObserveTransitionState` slot, the `enter` / `exit` / `unfocus` kinds,
+and the per-frame lerp — lives in
+`src/client/camera/observe-transition.ts` (extracted from `stellata.ts`
+in stellata-9mm.194.6). The integration shell composes the controller
+alongside Picker / AimController / WarpController and delegates the
+animate-loop tick when `observe.isAnyActive()` returns true. Stellata
+still owns the `cameraMode` field (~20 unrelated read sites) and writes
+it through the controller's `setCameraModeValue` dep callback so the
+controller's state machine stays the canonical mode-switcher.
+`alignCameraUpToQuaternion` (re-anchor `camera.up` before any `lookAt`
+on the observe→navigate seam) lifted to
+`src/client/camera/up-align-pure.ts` in the same PR — the controller
+imports it without inheriting from Stellata. Cross-controller coupling
+(focused-star inspection, parkDistForStar lookup, vector-slot clears,
+focus-change side effects) lives behind the `ObserveFocusOps` interface
+that Stellata implements directly today; 9mm.194.8 hands that seam to
+FocusController and the `focus:` dep wire updates in one line.
+
+Public surface:
+- `setMode(mode, opts)` — mode-pill toggle, keyboard O, URL restore.
+- `startExit(opts)` — search-row X-button (`clearFocusOnExit`),
+  `Stellata.unfocus()`'s observe-animated branch.
+- `startUnfocusLerp(from, to, finalMinDist)` — `Stellata.unfocus()`'s
+  navigate-mode close-zoom branch.
+- `tick(nowMs)` — animate-loop dispatcher.
+- `isActive` / `isAnyActive` / `getProgress` — observer predicates;
+  `isActive` excludes the `unfocus` kind so overlays gating on observe
+  visibility stay steady-state-navigate during close-zoom.
+- `cancelUnfocusLerp` — `FocusOps` shim for WarpController.
+- `cancelTransition` — used by `Stellata.setFocus`'s observe-cleanup
+  branch when the focal star is changing mid-flight.
+- `dispose` — for Stellata.dispose.
+
 ## OBSERVE camera mode
 
 A second camera mode that parks the camera at the focused star and
@@ -21,7 +55,7 @@ an anchor, but disabling the button advertises the affordance up-front.
 focused star's position under the floating origin) over
 `OBSERVE_TRANSITION_MS = 1800 ms`. The focal star stays visible across
 the glide and is hidden via `uHideFocusIdx = focusedStar` only at
-`finishObserveTransition`'s `enter` branch — once the camera is parked
+`ObserveTransition`'s `enter` finish branch — once the camera is parked
 on top of it. Hiding it at transition start would feel like the star
 vanishes before the camera arrives. `controls.enabled = false`;
 `observeControls.enable()` after the transition completes. The
@@ -146,8 +180,8 @@ when the user hits Esc / clicks the focused star / clicks the X while
 already in navigate, and the camera sits closer than
 `parkDistForStar(focal)`, `unfocus()` lerps the camera outward along
 its view direction to `parkDistForStar` over `OBSERVE_TRANSITION_MS`
-instead of teleporting. Reuses `observeTransition` with a third
-`kind: 'unfocus'`. `setFocus(null)` runs at lerp start so UI clears
+instead of teleporting. Reuses `ObserveTransition`'s state slot with a
+third `kind: 'unfocus'`. `setFocus(null)` runs at lerp start so UI clears
 immediately; `controls.minDistance` is tightened to `parkDistForStar`
 on landing so manual zoom-in is bounded by the same parking distance.
 Skipped (snap) when already at or beyond the floor; cancelled cleanly
@@ -164,7 +198,7 @@ invariant) keeps the animation aimed correctly even though
 `setFocus(null)` translates camera position into Sol-centric coords
 mid-call.
 
-`finishObserveTransition` then sets `controls.target` to the
+`ObserveTransition`'s `exit` finish branch then sets `controls.target` to the
 transition's `fromPos` (the observed star's location, in whichever
 frame is current). Two reasons:
 - The exit translates the camera backward along its forward direction
