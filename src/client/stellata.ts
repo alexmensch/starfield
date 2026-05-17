@@ -42,6 +42,11 @@ import {
   type WarpInfo,
   type WarpPhaseInfo,
 } from './camera/warp-controller';
+import {
+  ObserveTransition,
+  type ObserveFocusOps,
+} from './camera/observe-transition';
+import { alignCameraUpToQuaternion } from './camera/up-align-pure';
 // `warpArrivalEaseFn` is shared between WarpController's Fly phase and
 // the non-warp arrival callers in this file (focus-park, fly-to-cloud,
 // unfocus zoom-out) — they all want the user's debug-panel curve choice
@@ -59,7 +64,10 @@ import {
   parkDistance,
   tickFocusLerp,
 } from './camera/focus-transition';
-import { type ArrivalState, newArrival, tickArrival } from './camera/camera-motion';
+// camera-motion's ArrivalState / newArrival / tickArrival moved off
+// stellata.ts in 9mm.194.6 along with ObserveTransition (the navigate-mode
+// close-zoom 'unfocus' lerp was the last consumer here). Focus-park /
+// fly-to-cloud now build arrivals indirectly via newFocusLerpFrom.
 import type { FocusTarget } from './camera/focus-target';
 import { chartPlateauDistancePc } from './chart-mode/chart-disc-pure';
 // Locally used subset — stellata.ts still reads these in its body.
@@ -70,10 +78,12 @@ import { chartPlateauDistancePc } from './chart-mode/chart-disc-pure';
 // when AimController claimed the aim-duration ramp.
 // WARP_BASE_DIR, the warp-tuning getters, hybridUSeam, recordLastWarp
 // moved off in 9mm.194.5 when WarpController claimed the 3-phase FSM.
+// OBSERVE_TRANSITION_MS moved off in 9mm.194.6 with the ObserveTransition
+// extract — still re-exported below for external import paths that point
+// at './stellata' instead of './camera/timing'.
 import {
   DCAM_LOG_FLOOR_PC,
   FOCUS_LERP_MS,
-  OBSERVE_TRANSITION_MS,
 } from './camera/timing';
 export {
   AIM_T_MAX_MS,
@@ -318,42 +328,6 @@ const BINARY_MIN_DIST_FACTOR = 1 / Math.tan(BINARY_VIEWPORT_HALF_ANGLE_RAD);
 
 export type CameraMode = 'navigate' | 'observe';
 
-interface ObserveTransitionState {
-  startTimeMs: number;
-  durationMs: number;
-  fromPos: THREE.Vector3;
-  toPos: THREE.Vector3;
-  // 'enter' parks the camera at the focused star (toPos = origin under the
-  // floating-origin frame). 'exit' translates to the star's effective
-  // minDistance along the camera's current backward direction; on
-  // completion controls.target snaps to the focal star and TrackballControls
-  // re-enables. 'unfocus' is the navigate-mode close-zoom unfocus zoom-out
-  // (a7d.2.6): focus has already been cleared when the lerp starts, the
-  // camera lerps from its close-orbit position outward to the former focal
-  // star's parking distance, and on completion controls.minDistance is
-  // tightened to that parking distance so manual zoom-in is bounded.
-  kind: 'enter' | 'exit' | 'unfocus';
-  // Only meaningful for 'exit' transitions. When true, finishObserveTransition
-  // calls setFocus(null) right after the camera lands at minDistance — used by
-  // the X button on the location search so the user gets the same zoom-out
-  // animation whether they're returning to navigate-with-focus or fully
-  // unfocusing.
-  clearFocusOnExit?: boolean;
-  // Only meaningful for 'unfocus'. controls.minDistance to set when the lerp
-  // lands. setFocus(null) (called before the transition starts) clamps
-  // minDistance to the pre-animation eye distance so the camera doesn't get
-  // pushed outward when the lerp begins; this value tightens minDistance to
-  // the parking distance once the lerp completes.
-  finalMinDistance?: number;
-  // Park-arrival state for 'unfocus' (the outbound zoom from inside parkDist
-  // back to the former focal star's park distance). Set only on the unfocus
-  // path; updateObserveTransition delegates that branch to tickArrival so
-  // 2br.3's log-distance profile can be swapped in by touching the helper
-  // alone. enter/exit aren't park-arrivals (see docs/camera-arrival.md
-  // § Inventory) and keep their inline smoothstep.
-  arrival?: ArrivalState;
-}
-
 type Target = { kind: 'star'; idx: number } | { kind: 'cloud'; idx: number };
 function sameTarget(a: Target | null, b: Target | null): boolean {
   if (a === null || b === null) return a === b;
@@ -415,7 +389,7 @@ export type StellataEventMap = {
   frame: void;
 };
 
-export class Stellata implements FocusOps {
+export class Stellata implements FocusOps, ObserveFocusOps {
   readonly catalog: Catalog;
   readonly renderer: THREE.WebGLRenderer;
   readonly camera: THREE.PerspectiveCamera;
@@ -477,7 +451,12 @@ export class Stellata implements FocusOps {
   private bus = new EventBus<StellataEventMap>();
 
   private cameraMode: CameraMode = 'navigate';
-  private observeTransition: ObserveTransitionState | null = null;
+  // Navigate↔observe orchestrator (stellata-9mm.194.6). Owns the
+  // ObserveTransitionState slot, the 'enter'/'exit'/'unfocus' kinds, and
+  // the camera-mode FSM. Stellata still owns the `cameraMode` field
+  // (read by ~20 unrelated sites) and writes it through the controller's
+  // `setCameraModeValue` dep callback. See camera/observe-transition.ts.
+  private observe!: ObserveTransition;
   private observeControls!: ObserveControls;
 
   // Wall-clock time variable (Unix-seconds) for the solar-system layer
@@ -948,6 +927,22 @@ export class Stellata implements FocusOps {
         this.material.uniforms.uChartMagBright.value as number,
       focus: this,
     });
+    // Navigate↔observe orchestrator (stellata-9mm.194.6). Stellata
+    // implements `ObserveFocusOps` — the controller's narrower
+    // cross-controller seam — and writes `cameraMode` only through the
+    // `setCameraModeValue` callback so the controller's state machine
+    // stays the canonical mode-switcher.
+    this.observe = new ObserveTransition({
+      camera: this.camera,
+      controls: this.controls,
+      observeControls: this.observeControls,
+      aim: this.aim,
+      uHideFocusIdxRef: this.material.uniforms.uHideFocusIdx as { value: number },
+      bus: this.bus,
+      focus: this,
+      getCameraMode: () => this.cameraMode,
+      setCameraModeValue: (mode) => { this.cameraMode = mode; },
+    });
     // Build/teardown orbit rings + heliopause whenever the focused
     // star's planet data changes. Both are representational layers
     // gated on host-focused (stellata-3re.15). Planet bodies live in
@@ -1134,34 +1129,32 @@ export class Stellata implements FocusOps {
   getWarpInfo(): WarpInfo | null { return this.warp.getWarpInfo(); }
 
   getCameraMode(): CameraMode { return this.cameraMode; }
-  // True when an observe-mode transition (enter or exit) is in flight. The
-  // 'unfocus' kind reuses observeTransition state for a navigate-mode lerp
-  // and shouldn't surface to UI/overlay code that's gating on observe-mode
-  // visibility — overlays should see steady-state navigate during it.
-  isObserveTransitionActive(): boolean {
-    return this.observeTransition !== null && this.observeTransition.kind !== 'unfocus';
-  }
+  // True when an observe-mode transition (enter or exit) is in flight.
+  // The 'unfocus' kind is excluded — it reuses the controller's state slot
+  // for a navigate-mode lerp and shouldn't surface to UI/overlay code
+  // gating on observe-mode visibility.
+  isObserveTransitionActive(): boolean { return this.observe.isActive(); }
 
   // True whenever a camera-position lerp is in flight — warp, observe
   // enter/exit, OR the navigate-mode unfocus zoom-out. URL-state writes
   // gate on this to avoid serialising transient mid-lerp poses; the end
   // of each animation schedules a final write with the settled pose.
   isCameraTransitionActive(): boolean {
-    return this.warp.isActive() || this.observeTransition !== null;
+    return this.warp.isActive() || this.observe.isAnyActive();
   }
 
   /** True while *any* camera-driving animation is in flight: warp,
-   *  aim-slerp, or observe enter/exit. Sites that need a uniform "the
-   *  camera is currently animating" gate should call this. Several call
-   *  sites in this file deliberately use a narrower predicate (e.g.
-   *  warp only, or warp + observeTransition without aim) — those are
+   *  aim-slerp, focus-park lerp, OR an observe transition (enter / exit /
+   *  navigate-close-zoom unfocus). Sites that need a uniform "the camera
+   *  is currently animating" gate should call this. Several call sites in
+   *  this file deliberately use a narrower predicate — those are
    *  intentional: focus-change can interrupt aim but not warp, cosmetic
    *  cloud picking is suppressed during warp only, etc. */
   isCameraBusy(): boolean {
     return this.warp.isActive()
       || this.aim.isActive()
       || this.focusLerpState !== null
-      || this.isObserveTransitionActive();
+      || this.observe.isAnyActive();
   }
 
   // Cancel an in-flight 'unfocus' lerp (a7d.2.6) so a new camera-changing
@@ -1172,11 +1165,7 @@ export class Stellata implements FocusOps {
   // in-flight unfocus lerp at startWarp time without reaching into
   // Stellata's privates. Part of the FocusOps shim — 9mm.194.8 hands
   // it to FocusController.
-  cancelUnfocusLerp() {
-    if (this.observeTransition?.kind === 'unfocus') {
-      this.observeTransition = null;
-    }
-  }
+  cancelUnfocusLerp() { this.observe.cancelUnfocusLerp(); }
 
   // Cancel an in-flight focus-park lerp (r9q.2). controls.enabled is
   // not touched here because focusStar / flyToCloud don't disable it
@@ -1241,20 +1230,11 @@ export class Stellata implements FocusOps {
    *  for the camera's other interpolated transition. */
   isAimActive(): boolean { return this.aim.isActive(); }
 
-  // Eased progress of the in-flight observe-mode camera translate, or null
-  // if no transition is active. `f` matches the easing inside
-  // updateObserveTransition so overlays that lerp alongside the camera
-  // (focus ring shrink, HUD ring grow) stay in sync visually. The
-  // 'unfocus' lerp (a7d.2.6) reuses the same state slot but isn't an
-  // observe transition — focus has already been cleared and there's no
-  // focus-ring/HUD-ring morph to drive. Hide it from this getter so
-  // overlay code stays steady-state-navigate during the lerp.
+  // Eased progress of the in-flight observe-mode camera translate, or
+  // null if no transition is active. Forwards to the controller; see
+  // ObserveTransition.getProgress.
   getObserveTransitionProgress(): { f: number; kind: 'enter' | 'exit' } | null {
-    const s = this.observeTransition;
-    if (!s || s.kind === 'unfocus') return null;
-    const t = Math.min(1, (performance.now() - s.startTimeMs) / s.durationMs);
-    const f = t < 0.5 ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t);
-    return { f, kind: s.kind };
+    return this.observe.getProgress();
   }
 
   // ──────────────────── OBSERVE-mode points of interest ────────────────────
@@ -1330,105 +1310,13 @@ export class Stellata implements FocusOps {
     this.bus.emit('state');
   }
 
-  /**
-   * Switch between the two camera modes. OBSERVE parks the camera at the
-   * focused star and swaps TrackballControls for an in-place look-around
-   * controller. NAVIGATE is the default orbit-camera flow.
-   *
-   * Defensive against:
-   *   - re-entry while a transition is in flight (no-op)
-   *   - request matching the current mode (no-op)
-   *   - OBSERVE without a focused star (no-op — the UI gates the toggle but
-   *     URL state could carry mode=observe without a focus)
-   *   - OBSERVE during warp / aim (no-op — those animations own the camera)
-   *
-   * `animate=false` skips the transition; used by URL restore so a shared
-   * link with mode=observe lands instantly at the parked pose.
-   */
+  // Mode-switch entry point. Forwards to the ObserveTransition
+  // controller; see camera/observe-transition.ts for the full FSM
+  // (re-entry / focus-gate / animate=false guards + bus emit shape).
+  // Public so the mode-pill click handler, keyboard 'O' shortcut, and
+  // url-state restore can drive mode changes through a single surface.
   setCameraMode(mode: CameraMode, opts: { animate?: boolean } = {}) {
-    if (mode === this.cameraMode) return;
-    if (this.isCameraBusy()) return;
-    if (mode === 'observe') {
-      if (this.focusedStar === null) return;
-      // Drop any drawn vector — measurement endpoints don't survive a
-      // perspective change to "I'm standing on the source."
-      this.setVectorTo(null);
-      this.setVectorToCloud(null);
-      this.cameraMode = 'observe';
-      this.controls.enabled = false;
-      if (opts.animate === false) {
-        // Snap. Camera quaternion is preserved; only its position moves to
-        // the focal star's local origin. Hide the focal star here since
-        // there's no transition to defer to.
-        this.camera.position.set(0, 0, 0);
-        this.material.uniforms.uHideFocusIdx.value = this.focusedStar;
-        this.observeControls.enable();
-      } else {
-        // Animated entry: keep the focal star visible during the glide.
-        // finishObserveTransition (kind='enter') sets uHideFocusIdx once
-        // the camera is parked at the star, so the star doesn't pop out
-        // before the camera reaches it.
-        this.observeTransition = {
-          startTimeMs: performance.now(),
-          durationMs: OBSERVE_TRANSITION_MS,
-          fromPos: this.camera.position.clone(),
-          toPos: new THREE.Vector3(0, 0, 0),
-          kind: 'enter',
-        };
-      }
-      this.bus.emit('cameraMode', this.cameraMode);
-      this.bus.emit('state');
-      return;
-    }
-
-    // mode === 'navigate'
-    this.startObserveExit({
-      animate: opts.animate !== false,
-      clearFocusOnExit: false,
-    });
-  }
-
-  // Shared exit path from OBSERVE → navigate. Used by both the navigate-mode
-  // toggle (focus retained) and the location-search X button
-  // (clearFocusOnExit=true; setFocus(null) runs on landing). Always emits the
-  // mode-change + state-change events so listeners settle once per exit
-  // regardless of which path triggered it.
-  private startObserveExit(opts: { animate: boolean; clearFocusOnExit: boolean }) {
-    if (this.cameraMode !== 'observe') return;
-    this.cameraMode = 'navigate';
-    this.material.uniforms.uHideFocusIdx.value = -1;
-    this.observeControls.disable();
-    // Cancel any in-flight observe aim — its post-flight re-enable would
-    // fight the upcoming exit transition / TrackballControls handover.
-    this.aim.cancel();
-
-    if (!opts.animate || this.focusedStar === null) {
-      // Hard switch. controls.target snaps back to the focal star's local
-      // origin (or world origin when unfocused) and TrackballControls
-      // re-enables.
-      this.controls.target.set(0, 0, 0);
-      this.alignCameraUpToQuaternion();
-      this.controls.update();
-      this.controls.enabled = true;
-      if (opts.clearFocusOnExit) this.setFocus(null);
-    } else {
-      // Pull back along the camera's current view direction so whatever the
-      // user was just looking at stays roughly forward after exit. Distance
-      // = the focal star's effective minDistance, so orbit picks up exactly
-      // where it would on a fresh focus.
-      const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
-      const minDist = this.parkDistForStar(this.focusedStar);
-      this.observeTransition = {
-        startTimeMs: performance.now(),
-        durationMs: OBSERVE_TRANSITION_MS,
-        fromPos: this.camera.position.clone(),
-        toPos: forward.multiplyScalar(-minDist),
-        kind: 'exit',
-        clearFocusOnExit: opts.clearFocusOnExit,
-      };
-    }
-    this.bus.emit('cameraMode', this.cameraMode);
-    this.bus.emit('state');
+    this.observe.setMode(mode, opts);
   }
 
   // Public for the FocusOps shim — WarpController calls `setFocus` /
@@ -1453,12 +1341,20 @@ export class Stellata implements FocusOps {
     // Snap rather than animate because a transition needs the original
     // anchor to mean anything.
     if (this.cameraMode === 'observe') {
-      this.observeTransition = null;
+      // Snap-exit observe BEFORE the focus mutation runs: an in-flight
+      // 'enter' / 'exit' transition references the OLD focal star via
+      // fromPos/toPos and must be dropped before the floating-origin
+      // recentre downstream of setFocus. Unlike ObserveTransition.startExit's
+      // animate:false branch, this path deliberately does NOT touch
+      // controls.target or call controls.update() — the camera is at
+      // local (0,0,0) right now and target is set by setFocus's
+      // recenterFocusToStar block below.
+      this.observe.cancelTransition();
       this.aim.cancel();
       this.cameraMode = 'navigate';
       this.material.uniforms.uHideFocusIdx.value = -1;
       this.observeControls.disable();
-      this.alignCameraUpToQuaternion();
+      alignCameraUpToQuaternion(this.camera);
       this.controls.enabled = true;
       this.bus.emit('cameraMode', this.cameraMode);
     }
@@ -1932,47 +1828,18 @@ export class Stellata implements FocusOps {
     const animate = opts.animate ?? true;
     this.setVectorTo(null);
     this.setVectorToCloud(null);
-    // X-out from OBSERVE: clear focus FIRST so the search box empties as
-    // soon as the user clicks (via the 'focus' event → syncFocusUI), then
-    // animate the same zoom-out the navigate-mode toggle uses. Since
+    // X-out from OBSERVE: drive the same animated zoom-out the
+    // navigate-mode toggle uses, then clear focus. startExit captures
+    // forward + camera.position before setFocus(null) runs, sets
+    // cameraMode='navigate' (so setFocus's observe-cleanup branch
+    // skips), and builds the 'exit' transition; setFocus(null)
+    // afterwards clamps controls.minDistance and emits 'focus' so the
+    // search box / overlays settle within the same frame. Since
     // a7d.2.11 setFocus(null) doesn't recentre, so the animation runs
-    // in the (former focal star's) local frame — fromPos/toPos below
-    // are captured in that same frame.
+    // in the (former focal star's) local frame.
     if (animate && this.cameraMode === 'observe' && this.focusedStar !== null) {
-      const focalIdx = this.focusedStar;
-      const minDist = this.parkDistForStar(focalIdx);
-      // Quaternion → forward is frame-invariant — capturing here is
-      // historical (a7d.2.11 made setFocus(null) below frame-preserving
-      // too) but harmless and self-documenting.
-      const forward = new THREE.Vector3(0, 0, -1)
-        .applyQuaternion(this.camera.quaternion);
-
-      // Exit observe internals.
-      this.cameraMode = 'navigate';
-      this.material.uniforms.uHideFocusIdx.value = -1;
-      this.observeControls.disable();
-      this.aim.cancel();
-
-      // Clear the star focus; search box clears via the 'focus' event
-      // handler. cameraMode is already 'navigate' so the observe-cleanup
-      // branch inside setFocus is skipped. Since a7d.2.11, setFocus(null)
-      // leaves worldOffset alone — camera.position stays put.
+      this.observe.startExit({ animate: true, clearFocusOnExit: false });
       this.setFocus(null);
-
-      const fromPos = this.camera.position.clone();
-      const toPos = fromPos.clone().addScaledVector(forward, -minDist);
-      this.observeTransition = {
-        startTimeMs: performance.now(),
-        durationMs: OBSERVE_TRANSITION_MS,
-        fromPos,
-        toPos,
-        kind: 'exit',
-        // Focus has already been cleared above — nothing for
-        // finishObserveTransition to clean up.
-        clearFocusOnExit: false,
-      };
-      this.bus.emit('cameraMode', this.cameraMode);
-      this.bus.emit('state');
       return;
     }
     // Navigate-mode close-zoom unfocus: animate the camera back to the
@@ -1988,7 +1855,7 @@ export class Stellata implements FocusOps {
       animate &&
       this.cameraMode === 'navigate' &&
       this.focusedStar !== null &&
-      !this.observeTransition
+      !this.observe.isAnyActive()
     ) {
       const focalIdx = this.focusedStar;
       const minDist = this.parkDistForStar(focalIdx);
@@ -2000,12 +1867,12 @@ export class Stellata implements FocusOps {
         // Clear focus before the lerp starts so UI listeners (search box,
         // overlays, focus-ring) update immediately. setFocus(null) clamps
         // controls.minDistance to ≤ current eye, so the camera doesn't
-        // fight the lerp's outward motion. After the lerp lands,
-        // finishObserveTransition tightens minDistance to minDist.
+        // fight the lerp's outward motion. After the lerp lands, the
+        // controller's finish branch tightens minDistance to minDist.
         this.setFocus(null);
         this.setFocusedCloud(null);
         // Don't toggle controls.enabled during the lerp. The animate()
-        // dispatcher routes to updateObserveTransition, which lerps
+        // dispatcher routes to observe.tick(), which lerps
         // camera.position directly and skips controls.update(), so any
         // user input accumulates inside TrackballControls but doesn't
         // apply visually. Disabling explicitly would race the click-to-
@@ -2016,33 +1883,7 @@ export class Stellata implements FocusOps {
         // every cursor movement would drag the view as if a button were
         // held. queueMicrotask doesn't help — the microtask checkpoint
         // drains between event listeners.
-        const unfocusStartMs = performance.now();
-        this.observeTransition = {
-          startTimeMs: unfocusStartMs,
-          durationMs: OBSERVE_TRANSITION_MS,
-          fromPos,
-          toPos,
-          kind: 'unfocus',
-          finalMinDistance: minDist,
-          arrival: newArrival({
-            pStart: fromPos,
-            pEnd: toPos,
-            target: { center: this.controls.target, parkDist: minDist },
-            startMs: unfocusStartMs,
-            durationMs: OBSERVE_TRANSITION_MS,
-            // Outbound — d0 < dEnd (camera was inside parkDist,
-            // moving outward to minDist). The hybrid curve detects
-            // outbound and falls back to cubic-Hermite; passing
-            // `targetRadius: null` enforces the same path even if
-            // a future curve cared about direction.
-            easeUFn: warpArrivalEaseFn({
-              d0: eye,
-              dEnd: minDist,
-              targetRadius: null,
-            }),
-          }),
-        };
-        this.bus.emit('state');
+        this.observe.startUnfocusLerp(fromPos, toPos, minDist);
         return;
       }
     }
@@ -3259,8 +3100,8 @@ export class Stellata implements FocusOps {
       // controls.target still needs the per-frame re-pin so URL state stays
       // truthful mid-flight.
       this.observeUpdateTarget();
-    } else if (this.observeTransition) {
-      this.updateObserveTransition();
+    } else if (this.observe.isAnyActive()) {
+      this.observe.tick(performance.now());
     } else if (this.cameraMode === 'observe') {
       // Look-around input (yaw/pitch/roll/FOV) mutates the camera directly
       // via observeControls + the existing two-finger handlers. update()
@@ -3387,97 +3228,6 @@ export class Stellata implements FocusOps {
     this.clouds?.update(this.worldOffset, false);
   }
 
-  // Symmetric ease translate from `fromPos` to `toPos`, no quaternion change.
-  // Camera look direction is preserved by holding the quaternion fixed; we
-  // skip controls.update() during the run so the target doesn't tug it.
-  //
-  // 'unfocus' is the navigate-mode outbound park-arrival (a7d.2.6); it shares
-  // the deceleration shape with focus-park and warp Fly via tickArrival so
-  // 2br.3's log-distance swap lands in one place. 'enter' / 'exit' are
-  // observe-mode handovers — endpoints are AT or near the focal star, not
-  // at parkDist — so they keep the inline time-smoothstep (see
-  // docs/camera-arrival.md § Inventory).
-  private updateObserveTransition() {
-    const state = this.observeTransition;
-    if (!state) return;
-    if (state.kind === 'unfocus' && state.arrival) {
-      const { done } = tickArrival(state.arrival, performance.now(), this.camera);
-      if (done) this.finishObserveTransition();
-      return;
-    }
-    const t = Math.min(1, (performance.now() - state.startTimeMs) / state.durationMs);
-    const f = t < 0.5 ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t);
-    this.camera.position.lerpVectors(state.fromPos, state.toPos, f);
-    if (t >= 1) this.finishObserveTransition();
-  }
-
-  private finishObserveTransition() {
-    const state = this.observeTransition;
-    if (!state) return;
-    this.observeTransition = null;
-    if (state.kind === 'enter') {
-      this.camera.position.copy(state.toPos);
-      // Hide the focal star now that the camera is parked at it. Deferred
-      // from setCameraMode so the user sees the star throughout the glide
-      // — popping it out at transition start would read as "star vanishes,
-      // then camera moves into its location" rather than a continuous
-      // arrival.
-      if (this.focusedStar !== null) {
-        this.material.uniforms.uHideFocusIdx.value = this.focusedStar;
-      }
-      this.observeControls.enable();
-    } else if (state.kind === 'unfocus') {
-      this.camera.position.copy(state.toPos);
-      // Tighten controls.minDistance to the parking distance the camera
-      // just landed at. setFocus(null) clamped it to the (smaller) start
-      // eye distance to let the lerp move outward; now that the camera
-      // is parked, the same minDistance the focused star had during
-      // close orbit becomes the unfocused floor. controls.target was
-      // not touched during the lerp (animate() dispatched to the lerp
-      // tick rather than controls.update()) so it stays at whatever it
-      // was at unfocus start — usually (0,0,0) = former focal star's
-      // local origin = a sensible orbit pivot.
-      if (state.finalMinDistance !== undefined) {
-        this.controls.minDistance = state.finalMinDistance;
-      }
-      this.controls.update();
-    } else {
-      this.camera.position.copy(state.toPos);
-      // Target = the camera's pre-exit position (= the observed star's
-      // location, in whichever frame is current). The exit translates
-      // backward along the camera's forward direction by minDist, so
-      // fromPos lies exactly along forward at that distance, which makes
-      // TrackballControls.update()'s lookAt(target) a no-op for orientation
-      // and gives the user a sensible orbit pivot (the star they just left)
-      // for any subsequent drag.
-      //
-      // Origin frame at this point: since a7d.2.11, both branches
-      // (focus-retained exit and unfocus exit) leave worldOffset on
-      // the (former) focal star — setFocus(null) no longer recentres
-      // — so fromPos is the captured camera position in *that* local
-      // frame regardless of which path the user took. Setting
-      // target = (0,0,0) would point at the focal star's local origin
-      // and lookAt(target) would whip the camera around to face it;
-      // setting target = fromPos keeps lookAt a no-op.
-      this.controls.target.copy(state.fromPos);
-      this.alignCameraUpToQuaternion();
-      this.controls.update();
-      this.controls.enabled = true;
-      if (state.clearFocusOnExit) this.setFocus(null);
-    }
-    this.bus.emit('state');
-  }
-
-  // Re-anchor camera.up to the camera's current local +Y. Required before any
-  // lookAt(target) (i.e. before TrackballControls re-engages) on the observe→
-  // navigate seam. Without this, lookAt re-resolves roll against world (0,1,0)
-  // and snaps any pitch the user accumulated in observe back through the
-  // horizontal plane — visible as a jump proportional to how much they looked
-  // around.
-  private alignCameraUpToQuaternion() {
-    this.camera.up.set(0, 1, 0).applyQuaternion(this.camera.quaternion);
-  }
-
   private observeTmpFwd = new THREE.Vector3();
   private observeUpdateTarget() {
     // 1 pc ahead of the camera in its current look direction. Choice of 1 pc
@@ -3506,6 +3256,7 @@ export class Stellata implements FocusOps {
     this.observeControls.disable();
     this.aim.dispose();
     this.warp.dispose();
+    this.observe.dispose();
     this.hudOverlay.dispose();
     this.controls.dispose();
     // Star pipeline: one shared InstancedBufferGeometry feeds the disc, glow,

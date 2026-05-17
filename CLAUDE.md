@@ -149,8 +149,8 @@ src/
     camera/               controls, observe-controls, focus-transition,
                           focus-target, arrival-curves, camera-motion, warp-pure,
                           warp-button, warp-tuning, mode-toggle, star-geometry,
-                          camera-up-align, picker, aim-controller,
-                          warp-controller (+ tests).
+                          camera-up-align, up-align-pure, picker, aim-controller,
+                          warp-controller, observe-transition (+ tests).
                           timing.ts — CAMERA_LERP_MS / WARP_*_MS /
                           AIM_*_MS / OBSERVE_TRANSITION_MS / DCAM_LOG_FLOOR_PC /
                           WARP_BASE_DIR (canonical camera-wide constants;
@@ -166,6 +166,14 @@ src/
                           → fly → post-arrival) + WarpState + tryMidFlyRecentre
                           + swapObserveAnchor + FocusOps cross-controller seam
                           (extracted from stellata.ts in 9mm.194.5)
+                          observe-transition.ts — navigate↔observe FSM:
+                          ObserveTransitionState + setMode + startExit +
+                          startUnfocusLerp + ObserveFocusOps seam (extracted
+                          from stellata.ts in 9mm.194.6)
+                          up-align-pure.ts — alignCameraUpToQuaternion
+                          helper (lifted from stellata.ts in 9mm.194.6;
+                          paired with the existing camera-up-align.test.ts
+                          algebra fixture)
     loaders/              catalog-loader, dust-loader (+ tests). cloud-loader
                           lives under molecular-clouds/; local-group-loader
                           under local-group/

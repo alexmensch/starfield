@@ -191,7 +191,7 @@ visualisation of the conceptual "starts at this angular distance"
 attachment point.
 
 During the navigate→observe transition the ring grows from radius 0 to
-`ringRadiusPx`, eased by the same `f` that drives `updateObserveTransition`.
+`ringRadiusPx`, eased by the same `f` that drives `ObserveTransition.tick`.
 The reverse direction shrinks it back to 0. The focus ring
 (`focus-ring-overlay.ts`) does the opposite — its 24 px radius lerps to
 0 on enter, back to 24 on exit — so the two circles morph through each
