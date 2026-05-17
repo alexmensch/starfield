@@ -433,9 +433,9 @@ keeps the sine smooth (no plateau clipping at the cap, no disappearing
 into a pixel at the trough) across the full amplitude range from
 Cepheid-sized swings to dramatic Miras.
 
-`renderedSizePx` in `stellata.ts` replicates this whole shader pipeline
-on the CPU so the SVG `disc-mask` and focus-ring overlays follow the
-pulsating disc size exactly frame-by-frame.
+`renderedSizePx` in `camera/star-physics.ts` replicates this whole
+shader pipeline on the CPU so the SVG `disc-mask` and focus-ring
+overlays follow the pulsating disc size exactly frame-by-frame.
 
 ## Dust extinction + the shelved particle layer
 
