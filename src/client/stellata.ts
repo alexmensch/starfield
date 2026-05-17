@@ -70,6 +70,7 @@ export {
   WARP_T_MIN_MS,
 } from './camera/timing';
 import { EventBus } from './util/event-bus';
+import { StarPipeline } from './star-pipeline';
 
 export type MagPresetName = 'naked-eye' | 'binoculars' | 'all';
 
@@ -214,20 +215,6 @@ function sameTarget(a: Target | null, b: Target | null): boolean {
   return a.kind === b.kind && a.idx === b.idx;
 }
 
-// Disc-pass blending state. Applied at material construction and re-applied
-// on chart-mode -> colour-mode swap-back, since chart mode swaps the disc
-// material to MultiplyBlending. Single source of truth for the four
-// CustomBlending fields plus the depth flags so a future tweak (e.g. the
-// AddEquation -> MaxEquation switch in PR #25) only needs to touch one site.
-export function applyDiscBlendDefaults(m: THREE.ShaderMaterial) {
-  m.blending = THREE.CustomBlending;
-  m.blendSrc = THREE.OneFactor;
-  m.blendDst = THREE.OneFactor;
-  m.blendEquation = THREE.MaxEquation;
-  m.depthWrite = true;
-  m.depthTest = true;
-}
-
 export const DEFAULT_FILTER: FilterState = {
   minDistSol: 0,
   maxDistSol: 50_000,
@@ -276,23 +263,15 @@ export class Stellata implements FrameAnchor {
   readonly controls: TrackballControls;
 
   private scene: THREE.Scene;
-  private discMesh: THREE.Mesh;
-  private glowMesh: THREE.Mesh;
-  // Core depth-mask — renders disc-pass cores depth-only before any
-  // background layer so MW / clouds / grid depth-fail behind them.
-  // Visibility gated each frame on (focusedStar || warping) so the draw
-  // call is skipped entirely when no star can be in the disc pass.
-  private coreMaskMesh: THREE.Mesh;
+  // Star render pipeline — one InstancedBufferGeometry feeds three
+  // ShaderMaterials (core depth-mask / disc / glow). Owns the dispose
+  // contract for the densest resource cluster in the app. Per-frame
+  // uniform writes still go through `starPipeline.discMaterial.uniforms`
+  // from this file; the encapsulation is resource ownership only.
+  private starPipeline!: StarPipeline;
   // Dust-particle render layer. Shelved for v1.0 — see
   // docs/rendering.md § "Dust extinction + the shelved particle layer".
   private dustParticles!: DustParticleLayer;
-  // Shared uniforms object so changing uMaxAppMag/uSpectMask/etc. affects
-  // both passes. The per-pass uRenderMode differs; we split into two
-  // materials but give them the same uniforms map (minus uRenderMode).
-  private material: THREE.ShaderMaterial;      // disc pass (opaque)
-  private glowMaterial: THREE.ShaderMaterial;  // glow pass (additive)
-  private coreMaskMaterial: THREE.ShaderMaterial; // depth-only core mask
-  private geometry: THREE.InstancedBufferGeometry;
 
   // Floating origin to dodge float32 cancellation when zoomed close to
   // distant stars. worldOffset is the absolute coord that sits at
@@ -301,7 +280,6 @@ export class Stellata implements FrameAnchor {
   // `localPositions` getter so every path stays in the camera's frame.
   private worldOffset = new THREE.Vector3();
   private _localPositions: Float32Array;
-  private iPositionAttr!: THREE.InstancedBufferAttribute;
 
   // Sorted-by-distance-from-Sol index for the core-mask query. Distance
   // from Sol is intrinsic (computed from absolute catalog positions) and
@@ -492,44 +470,10 @@ export class Stellata implements FrameAnchor {
     for (let i = 0; i < catalog.count; i++) {
       this.sortedDistFromSol[i] = distSol[this.sortedByDistFromSol[i]];
     }
-    // Instanced quads: one unit square per star, expanded in screen space in
-    // the vertex shader. This replaces the earlier THREE.Points approach,
-    // which was capped by the driver-defined gl_PointSize maximum (often
-    // 64–255 px) — too small for the angular-diameter rendering to reach
-    // the viewport-filling sizes we want for supergiants at close range.
-    this.geometry = new THREE.InstancedBufferGeometry();
-    this.geometry.setAttribute(
-      'aCorner',
-      new THREE.BufferAttribute(
-        new Float32Array([-0.5, -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, 0.5]),
-        2,
-      ),
-    );
-    this.geometry.setIndex([0, 1, 2, 1, 3, 2]);
-    this.iPositionAttr = new THREE.InstancedBufferAttribute(this._localPositions, 3);
-    // iPosition is dynamic: overwritten on every recenterOrigin().
-    this.iPositionAttr.setUsage(THREE.DynamicDrawUsage);
-    this.geometry.setAttribute('iPosition', this.iPositionAttr);
-    this.geometry.setAttribute('iAbsmag', new THREE.InstancedBufferAttribute(catalog.absmag, 1));
-    this.geometry.setAttribute('iCi', new THREE.InstancedBufferAttribute(catalog.ci, 1));
-    this.geometry.setAttribute('iSpectClass', new THREE.InstancedBufferAttribute(catalog.spectClass, 1));
-    this.geometry.setAttribute('iLogRadius', new THREE.InstancedBufferAttribute(logRadii, 1));
-    this.geometry.setAttribute('iPeriodDays', new THREE.InstancedBufferAttribute(catalog.periodDays, 1));
-    this.geometry.setAttribute('iAmplitudeMag', new THREE.InstancedBufferAttribute(catalog.amplitudeMag, 1));
-    this.geometry.setAttribute('iLumClass', new THREE.InstancedBufferAttribute(lumClassF32, 1));
-    // Precomputed distance-from-Sol per star. The shader's distSol filter
-    // used to derive this from length(iPosition), but iPosition is now
-    // local-frame (camera-relative when focused) so the computed length is
-    // no longer distance from Sol. Precomputing is also ~one sqrt per
-    // vertex cheaper than the old path.
-    this.geometry.setAttribute('iDistSol', new THREE.InstancedBufferAttribute(distSol, 1));
-    this.geometry.instanceCount = catalog.count;
-    this.geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 60_000);
-
-    // Shared uniforms — both materials point at the same objects, so any
-    // setFilter / theme / resize update propagates to both passes without
-    // duplicate bookkeeping. uRenderMode is the only divergent uniform and
-    // is bound directly to its material.
+    // Shared uniforms — all three star passes point at the same value
+    // objects, so any setFilter / theme / resize update propagates to
+    // every pass without duplicate bookkeeping. uRenderMode is the only
+    // divergent uniform; StarPipeline binds it per material.
     const sharedUniforms = {
       uCameraPos: { value: new THREE.Vector3() },
       uMaxAppMag: { value: this.filter.maxAppMag },
@@ -623,71 +567,25 @@ export class Stellata implements FrameAnchor {
       uPinFocusToCenter: { value: -1 },
     };
 
-    // Disc pass: per-channel max so overlapping discs/halos don't sum.
-    // Shader writes premultiplied (C·α, α); MaxEquation gives
-    // dst = max(src, dst) per channel. Depth write stays on so the
-    // glow pass can depth-test against the disc silhouettes.
-    this.material = new THREE.ShaderMaterial({
-      glslVersion: THREE.GLSL3,
-      uniforms: { ...sharedUniforms, uRenderMode: { value: 1 } },
+    this.starPipeline = new StarPipeline({
+      scene: this.scene,
+      catalog,
+      logRadii,
+      lumClassF32,
+      distSol,
+      localPositions: this._localPositions,
       vertexShader,
       fragmentShader,
-      transparent: true,
+      sharedUniforms,
+      boundingSphereRadiusPc: 60_000,
     });
-    applyDiscBlendDefaults(this.material);
-
-    // Glow pass: additive so overlapping distant stars accumulate brightness
-    // (dense stellata density preserved). No depth write, so multiple glows
-    // at the same pixel all contribute. Depth *test* is on so glows behind
-    // a disc drawn in the disc pass are correctly occluded.
-    this.glowMaterial = new THREE.ShaderMaterial({
-      glslVersion: THREE.GLSL3,
-      uniforms: { ...sharedUniforms, uRenderMode: { value: 0 } },
-      vertexShader,
-      fragmentShader,
-      transparent: true,
-      depthWrite: false,
-      depthTest: true,
-      blending: THREE.AdditiveBlending,
-    });
-
-    // Core depth-mask: writes near depth at disc-pass star cores before any
-    // background layer renders, so the Milky Way / molecular clouds /
-    // galactic grid depth-fail behind close stars instead of bleeding
-    // through. colorWrite off → cheaper than a colour pass and never paints
-    // anything visible. Visibility gated each frame on focus / warp state
-    // so this draw call is skipped when no star can be in the disc pass.
-    this.coreMaskMaterial = new THREE.ShaderMaterial({
-      glslVersion: THREE.GLSL3,
-      uniforms: { ...sharedUniforms, uRenderMode: { value: 2 } },
-      vertexShader,
-      fragmentShader,
-      depthWrite: true,
-      depthTest: true,
-      colorWrite: false,
-    });
-
-    // renderOrder: core mask (-4) → background layers → discs (0) → glows (1).
-    this.coreMaskMesh = new THREE.Mesh(this.geometry, this.coreMaskMaterial);
-    this.coreMaskMesh.frustumCulled = false;
-    this.coreMaskMesh.renderOrder = -4;
-    this.coreMaskMesh.visible = false;
-    this.scene.add(this.coreMaskMesh);
-    this.discMesh = new THREE.Mesh(this.geometry, this.material);
-    this.discMesh.frustumCulled = false;
-    this.discMesh.renderOrder = 0;
-    this.scene.add(this.discMesh);
-    this.glowMesh = new THREE.Mesh(this.geometry, this.glowMaterial);
-    this.glowMesh.frustumCulled = false;
-    this.glowMesh.renderOrder = 1;
-    this.scene.add(this.glowMesh);
 
     // Star-material uniforms passed by reference so floating-origin
     // recenters, resize updates, and dust loads propagate to the
     // particle pass automatically.
     this.dustParticles = new DustParticleLayer(
       this.scene,
-      this.material.uniforms as unknown as DustParticleSharedUniforms,
+      this.starPipeline.discMaterial.uniforms as unknown as DustParticleSharedUniforms,
     );
 
     // Galactic reference layers — disc is always added; grid hides itself
@@ -730,11 +628,11 @@ export class Stellata implements FrameAnchor {
         idx,
         camPos: this.camera.position,
         localPositions: this._localPositions,
-        uniforms: this.material.uniforms as unknown as starPhysics.StarPhysicsUniforms,
+        uniforms: this.starPipeline.discMaterial.uniforms as unknown as starPhysics.StarPhysicsUniforms,
         filter: this.filter,
       }),
-      fovYRadRef: this.material.uniforms.uFovYRad as { value: number },
-      viewportRef: this.material.uniforms.uViewport as { value: THREE.Vector2 },
+      fovYRadRef: this.starPipeline.discMaterial.uniforms.uFovYRad as { value: number },
+      viewportRef: this.starPipeline.discMaterial.uniforms.uViewport as { value: THREE.Vector2 },
     });
     // The warp / focus-lerp / observe-transition busy checks stay on
     // stellata's aimAt dispatcher because they gate behaviour the
@@ -758,7 +656,7 @@ export class Stellata implements FrameAnchor {
       bus: this.bus,
       frameAnchor: this,
       aim: this.aim,
-      uHideFocusIdxRef: this.material.uniforms.uHideFocusIdx as { value: number },
+      uHideFocusIdxRef: this.starPipeline.discMaterial.uniforms.uHideFocusIdx as { value: number },
       getCameraMode: () => this.cameraMode,
       setCameraModeValue: (mode) => { this.cameraMode = mode; },
       getClouds: () => this.clouds,
@@ -771,12 +669,12 @@ export class Stellata implements FrameAnchor {
       camera: this.camera,
       controls: this.controls,
       observeControls: this.observeControls,
-      uHideFocusIdxRef: this.material.uniforms.uHideFocusIdx as { value: number },
+      uHideFocusIdxRef: this.starPipeline.discMaterial.uniforms.uHideFocusIdx as { value: number },
       bus: this.bus,
       getCameraMode: () => this.cameraMode,
       isChartMode: () => this.filter.chart,
       getChartMagBright: () =>
-        this.material.uniforms.uChartMagBright.value as number,
+        this.starPipeline.discMaterial.uniforms.uChartMagBright.value as number,
       focus: this.focus,
     });
     this.observe = new ObserveTransition({
@@ -784,7 +682,7 @@ export class Stellata implements FrameAnchor {
       controls: this.controls,
       observeControls: this.observeControls,
       aim: this.aim,
-      uHideFocusIdxRef: this.material.uniforms.uHideFocusIdx as { value: number },
+      uHideFocusIdxRef: this.starPipeline.discMaterial.uniforms.uHideFocusIdx as { value: number },
       bus: this.bus,
       focus: this.focus,
       getCameraMode: () => this.cameraMode,
@@ -1162,7 +1060,7 @@ export class Stellata implements FrameAnchor {
       loc[j + 1] = abs[j + 1] - oy;
       loc[j + 2] = abs[j + 2] - oz;
     }
-    this.iPositionAttr.needsUpdate = true;
+    this.starPipeline.iPositionAttr.needsUpdate = true;
 
     this.camera.position.x -= dx;
     this.camera.position.y -= dy;
@@ -1174,7 +1072,7 @@ export class Stellata implements FrameAnchor {
     this.worldOffset.copy(newOrigin);
     // Shader needs the world offset to reconstruct absolute positions for
     // dust-texture sampling (local-frame iPosition + uWorldOffset).
-    (this.material.uniforms.uWorldOffset.value as THREE.Vector3).copy(newOrigin);
+    (this.starPipeline.discMaterial.uniforms.uWorldOffset.value as THREE.Vector3).copy(newOrigin);
     // Each attached host's iHostLocalPos = hostAbs - worldOffset; refresh
     // them so the planet shader sees correct local-frame host positions.
     this.planetBodyField.recenter(newOrigin);
@@ -1190,7 +1088,7 @@ export class Stellata implements FrameAnchor {
   // frame. Safe to call multiple times; the most recent dust wins. Pass
   // null to detach (e.g. to disable extinction for a mode toggle).
   attachDust(dust: DustField | null) {
-    const u = this.material.uniforms;
+    const u = this.starPipeline.discMaterial.uniforms;
     // Re-attach with a different DustField? Release the previous one's
     // ~128 MiB Data3DTexture before swapping the reference, otherwise
     // the old texture would leak. attachDust is called exactly once
@@ -1223,7 +1121,7 @@ export class Stellata implements FrameAnchor {
    *  no effect. Also drives the Milky Way background so the dust-darkened
    *  regions of the band track the same knob. */
   setExtinctionStrength(x: number) {
-    this.material.uniforms.uExtinctionStrength.value = Math.max(0, x);
+    this.starPipeline.discMaterial.uniforms.uExtinctionStrength.value = Math.max(0, x);
     this.milkyway.setExtinctionStrength(x);
   }
 
@@ -1308,7 +1206,7 @@ export class Stellata implements FrameAnchor {
   // accessor here means the integration shell is still the single point
   // that knows the renderer's material identity.
   get uniforms(): starPhysics.StarPhysicsUniforms & starPhysics.ChartDiscUniforms {
-    return this.material.uniforms as unknown as
+    return this.starPipeline.discMaterial.uniforms as unknown as
       starPhysics.StarPhysicsUniforms & starPhysics.ChartDiscUniforms;
   }
 
@@ -1364,7 +1262,7 @@ export class Stellata implements FrameAnchor {
 
   setFilter(patch: Partial<FilterState>) {
     Object.assign(this.filter, patch);
-    const u = this.material.uniforms;
+    const u = this.starPipeline.discMaterial.uniforms;
     u.uMaxAppMag.value = this.filter.maxAppMag;
     u.uMinDistSol.value = this.filter.minDistSol;
     u.uMaxDistSol.value = this.filter.maxDistSol;
@@ -1451,7 +1349,7 @@ export class Stellata implements FrameAnchor {
     if (this.camera.fov === fov) return;
     this.camera.fov = fov;
     this.camera.updateProjectionMatrix();
-    this.material.uniforms.uFovYRad.value = (fov * Math.PI) / 180;
+    this.starPipeline.discMaterial.uniforms.uFovYRad.value = (fov * Math.PI) / 180;
     const focusedStar = this.focus.getFocusedStar();
     if (focusedStar !== null) {
       this.controls.minDistance = starPhysics.minOrbitDistForStar({
@@ -1491,7 +1389,7 @@ export class Stellata implements FrameAnchor {
   // is recomputed whenever uVisibleThreshold changes. Both materials share
   // the same uniforms object so a single write hits the disc + glow passes.
   setStarRenderParams(patch: Partial<StarRenderParams>) {
-    const u = this.material.uniforms;
+    const u = this.starPipeline.discMaterial.uniforms;
     if (patch.visibleThreshold !== undefined) {
       u.uVisibleThreshold.value = patch.visibleThreshold;
       u.uVisibleK.value = -Math.log(patch.visibleThreshold);
@@ -1505,7 +1403,7 @@ export class Stellata implements FrameAnchor {
     if (patch.sizeKnee !== undefined) u.uSizeKnee.value = patch.sizeKnee;
   }
   getStarRenderParams(): StarRenderParams {
-    const u = this.material.uniforms;
+    const u = this.starPipeline.discMaterial.uniforms;
     return {
       visibleThreshold: u.uVisibleThreshold.value,
       coreThreshold: u.uCoreThreshold.value,
@@ -1544,24 +1442,8 @@ export class Stellata implements FrameAnchor {
   setMonochrome(on: boolean) {
     if (this.monochrome === on) return;
     this.monochrome = on;
-    this.material.uniforms.uMonochrome.value = on ? 1 : 0;
-    // Both materials share the uMonochrome uniform via sharedUniforms, so
-    // one assignment covers both. Blending and depth settings differ per
-    // pass, though — disc pass is per-channel max in colour mode, multiply
-    // in chart mode; glow pass is additive in colour mode, multiply in chart.
-    if (on) {
-      this.material.blending = THREE.MultiplyBlending;
-      this.material.depthWrite = false;
-      this.material.depthTest = false;
-      this.glowMaterial.blending = THREE.MultiplyBlending;
-      this.glowMaterial.depthTest = false;
-    } else {
-      applyDiscBlendDefaults(this.material);
-      this.glowMaterial.blending = THREE.AdditiveBlending;
-      this.glowMaterial.depthTest = true;
-    }
-    this.material.needsUpdate = true;
-    this.glowMaterial.needsUpdate = true;
+    this.starPipeline.discMaterial.uniforms.uMonochrome.value = on ? 1 : 0;
+    this.starPipeline.setMonochromeBlend(on);
     this.renderer.setClearColor(on ? 0xf5f2ea : 0x000000, on ? 1 : 0);
     this.galacticDisc.setMonochrome(on);
     this.localGroupLayer?.setMonochrome(on);
@@ -1583,7 +1465,7 @@ export class Stellata implements FrameAnchor {
    *  Wires the shader's uMaxAppMag uniform to the stellata's shared
    *  reference so the contour tracks the magnitude slider live. */
   setCloudsIsobar(on: boolean) {
-    this.clouds?.setIsobar(on, this.material.uniforms.uMaxAppMag);
+    this.clouds?.setIsobar(on, this.starPipeline.discMaterial.uniforms.uMaxAppMag);
   }
 
   /** Chart-mode isobar pass on/off for the milky-way layer. */
@@ -1812,8 +1694,8 @@ export class Stellata implements FrameAnchor {
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h, false);
-    this.material.uniforms.uPixelRatio.value = this.renderer.getPixelRatio();
-    this.material.uniforms.uViewport.value.set(w, h);
+    this.starPipeline.discMaterial.uniforms.uPixelRatio.value = this.renderer.getPixelRatio();
+    this.starPipeline.discMaterial.uniforms.uViewport.value.set(w, h);
     // Aspect change → fov_minor moves → orbit floor needs a refresh while
     // a star is focused. (FOV-only changes go through setCameraFov, which
     // does its own recompute.)
@@ -1841,7 +1723,7 @@ export class Stellata implements FrameAnchor {
   // by every screen-space size calc (star disc, cloud silhouette, peak-
   // amplitude disc, glsl `physSizePx` mirror).
   private angularToPx(): number {
-    const u = this.material.uniforms;
+    const u = this.starPipeline.discMaterial.uniforms;
     const viewport = u.uViewport.value as THREE.Vector2;
     return angularToPxPure(viewport.y, u.uFovYRad.value as number);
   }
@@ -2137,7 +2019,7 @@ export class Stellata implements FrameAnchor {
     // Largest catalog star at distance d subtends 2·atan(R_max/d) radians,
     // which is CORE_MASK_MIN_PX × fov_y / viewport.y radians at the
     // threshold. Solve for d → R_max / tan(half-angle).
-    const u = this.material.uniforms;
+    const u = this.starPipeline.discMaterial.uniforms;
     const fovYRad = u.uFovYRad.value as number;
     const viewport = u.uViewport.value as THREE.Vector2;
     const halfAngle = (Stellata.CORE_MASK_MIN_PX * fovYRad)
@@ -2205,19 +2087,19 @@ export class Stellata implements FrameAnchor {
     }
     perfMeasure('controls.update');
     perfMark('pre-render');
-    this.material.uniforms.uCameraPos.value.copy(this.camera.position);
+    this.starPipeline.discMaterial.uniforms.uCameraPos.value.copy(this.camera.position);
     // Pin the focused star at NDC (0,0) only when the geometric
     // invariant holds: navigate mode, no warp/aim animation, and the
     // user hasn't panned the camera target away from the focused star
     // (target ≈ local origin). Pan moves target away from the star and
     // we want it to render at its actual projected position again.
     const pinTarget = this.focus.isPinEngaged() ? this.focus.getFocusedStar() : -1;
-    this.material.uniforms.uPinFocusToCenter.value = pinTarget ?? -1;
+    this.starPipeline.discMaterial.uniforms.uPinFocusToCenter.value = pinTarget ?? -1;
     // Advance variability clock (seconds since start). Shared with glow
     // material via sharedUniforms so both passes see the same time.
-    this.material.uniforms.uTime.value = (performance.now() - this.animateStartMs) / 1000;
+    this.starPipeline.discMaterial.uniforms.uTime.value = (performance.now() - this.animateStartMs) / 1000;
     perfMark('coreMask');
-    this.coreMaskMesh.visible = this.shouldEnableCoreMask();
+    this.starPipeline.coreMaskMesh.visible = this.shouldEnableCoreMask();
     perfMeasure('coreMask');
     this.updateGalacticLayers();
     // Milky Way analytic background. The skybox mesh is already in the
@@ -2313,7 +2195,7 @@ export class Stellata implements FrameAnchor {
             idx: focusedStar,
             camPos: this.camera.position,
             localPositions: this._localPositions,
-            uniforms: this.material.uniforms as unknown as starPhysics.StarPhysicsUniforms,
+            uniforms: this.starPipeline.discMaterial.uniforms as unknown as starPhysics.StarPhysicsUniforms,
           }) * 0.5
         : 0,
       w: window.innerWidth,
@@ -2357,13 +2239,7 @@ export class Stellata implements FrameAnchor {
     this.focus.dispose();
     this.hudOverlay.dispose();
     this.controls.dispose();
-    // Star pipeline: one shared InstancedBufferGeometry feeds the disc, glow,
-    // and core-mask passes, so it's disposed once. Each pass has its own
-    // ShaderMaterial.
-    this.geometry.dispose();
-    this.material.dispose();
-    this.glowMaterial.dispose();
-    this.coreMaskMaterial.dispose();
+    this.starPipeline.dispose();
     this.dustParticles.dispose();
     this.clouds?.dispose();
     this.localGroupLayer?.dispose();

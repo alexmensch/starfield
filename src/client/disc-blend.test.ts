@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { applyDiscBlendDefaults } from './stellata';
+import { applyDiscBlendDefaults } from './star-pipeline';
 
 // Pin the disc-pass blend equation across the helper's lifecycle.
 // PR #25 had to update two parallel sites for the AddEquation →
