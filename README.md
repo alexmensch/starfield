@@ -161,10 +161,14 @@ the Hipparcos CCDM cross-match.
   Both stars are in the catalogue at distinct positions, so they
   render as two separate discs; Mizar additionally carries the
   binary wings glyph in chart mode.
-- **Albireo (β¹ + β² Cygni)** — both components are catalogued
-  separately, the K-type primary (gold) and the B-type companion
-  (blue). The real-world colour contrast carries through into the
-  rendered discs.
+- **Albireo (β¹ + β² Cygni)** — Earth's favourite colour-contrast
+  pair, gold and blue. Stellata's 3D positions reveal it as an
+  *optical* double rather than a true binary: β¹ at 111 pc, β² at
+  122 pc, ~35 light-years apart along the line of sight — far too
+  distant to be gravitationally bound. The colour contrast is
+  real; the pairing is a chance alignment. (This matches the
+  modern post-Gaia consensus, which retired Albireo from binary-
+  catalogue status around 2018.)
 - **ε Lyrae** — the wide "double double" pair. ε¹ and ε² Lyr are
   catalogued separately and render as a visible naked-eye pair;
   each carries the binary wings glyph in chart mode (each is itself
