@@ -1,5 +1,6 @@
 import type { Stellata } from '../stellata';
 import type { ArrowDebugRecord } from '../overlays/hud-overlay';
+import { renderedDiscPxAtPeak } from '../camera/star-physics';
 
 // Live diagnostic readouts for the navigate-mode Sol/GC arrow fade.
 // Mounted as a section inside the unified debug panel (see debug.ts).
@@ -93,7 +94,15 @@ export function buildArrowSection(stellata: Stellata): ArrowSection {
     // here — open `debug.distVec()` if a future section is needed.
     const alpha = stellata.hud.getCurrentFadeAlpha();
     const focused = stellata.getFocusedStar();
-    const discRadius = stellata.getFocusedStarPeakDiscRadiusPx();
+    const discRadius = focused !== null
+      ? renderedDiscPxAtPeak({
+          catalog: stellata.catalog,
+          idx: focused,
+          camPos: stellata.camera.position,
+          localPositions: stellata.localPositions,
+          uniforms: stellata.uniforms,
+        }) * 0.5
+      : 0;
     const refLen = Math.max(lengths.sol, lengths.gc);
     const coverage = refLen > 0 ? Math.max(0, discRadius - shaftStart) / refLen : 0;
 

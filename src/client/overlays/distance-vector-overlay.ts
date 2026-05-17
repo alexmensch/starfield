@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { Stellata } from '../stellata';
+import { renderedSizePx, renderedDiscPxAtPeak } from '../camera/star-physics';
 import { fmtDist } from '../ui/distance-util';
 import {
   buildArrowSvgPath,
@@ -143,7 +144,14 @@ export function createDistanceVectorOverlay(
     // is keyed off the largest semi-axis (matches `cloudViewingDistancePc`);
     // exact for spheres, slight overshoot for prolate clouds viewed end-on.
     const destOffsetPx = toStar !== null
-      ? Math.max(stellata.renderedSizePx(toStar), 0)
+      ? Math.max(renderedSizePx({
+          catalog: stellata.catalog,
+          idx: toStar,
+          camPos: stellata.camera.position,
+          localPositions: stellata.localPositions,
+          uniforms: stellata.uniforms,
+          filter: stellata.getFilter(),
+        }), 0)
       : Math.max(stellata.renderedCloudSizePx(toCloud as number), 0);
     const dxPx = pB[0] - pA[0];
     const dyPx = pB[1] - pA[1];
@@ -220,7 +228,15 @@ export function createDistanceVectorOverlay(
     // Drawn-shaft length is the distance from shaftStart to tip (with
     // SOURCE_OFFSET_PX inset at the source end and the destination's
     // rendered silhouette inset at the tip end) — i.e., the visible line.
-    const discRadiusPx = fromStar !== null ? stellata.getFocusedStarPeakDiscRadiusPx() : 0;
+    const discRadiusPx = fromStar !== null
+      ? renderedDiscPxAtPeak({
+          catalog: stellata.catalog,
+          idx: fromStar,
+          camPos: stellata.camera.position,
+          localPositions: stellata.localPositions,
+          uniforms: stellata.uniforms,
+        }) * 0.5
+      : 0;
     const shaftDrawnLenPx = Math.hypot(tipX - shaftStartX, tipY - shaftStartY);
     const arrowAlpha = focusedArrowFadeAlpha(
       stellata.getCameraMode(),

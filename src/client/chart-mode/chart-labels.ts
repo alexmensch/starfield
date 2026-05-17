@@ -5,6 +5,7 @@ import { mark as perfMark, measure as perfMeasure } from '../debug/perf-hud';
 import { FLAG_BINARY_PRIMARY } from '../../../scripts/catalog-pure';
 import { projectToScreen } from '../overlays/overlay-project';
 import { setNumAttr } from '../overlays/dirty-attr';
+import { getChartDiscParams } from '../camera/star-physics';
 
 // Chart-mode label engine. Per-frame, projects every candidate
 // label (proper-named star, Bayer-letter star, constellation Latin name,
@@ -567,7 +568,7 @@ function tick(
   // space the GPU disc renders. We mirror the chart-mode magnitude →
   // pixel formula (vertex shader's chart branch) here so the visual
   // matches the rendered disc exactly.
-  const discParams = stellata.getChartDiscParams();
+  const discParams = getChartDiscParams(stellata.uniforms);
   const usedRings = new Set<number>();
   const usedWings = new Set<number>();
   const discPxFor = (appMag: number): number => {

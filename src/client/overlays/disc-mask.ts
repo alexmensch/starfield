@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { Stellata } from '../stellata';
+import { renderedSizePx } from '../camera/star-physics';
 import { projectToScreen } from './overlay-project';
 import { selectMaskCandidates } from './disc-mask-pure';
 import { setNumAttr } from './dirty-attr';
@@ -87,7 +88,14 @@ export function createDiscMask(stellata: Stellata) {
   // Project a star's world position to screen + set a mask circle. Returns
   // whether a circle was placed (false = off-screen / too small).
   const placeSlot = (s: Slot, idx: number): boolean => {
-    const size = stellata.renderedSizePx(idx);
+    const size = renderedSizePx({
+      catalog: stellata.catalog,
+      idx,
+      camPos: stellata.camera.position,
+      localPositions: stellata.localPositions,
+      uniforms: stellata.uniforms,
+      filter: stellata.getFilter(),
+    });
     if (size <= DISC_THRESHOLD_PX) return false;
     const positions = stellata.localPositions;
     const camera = stellata.camera;

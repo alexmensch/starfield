@@ -228,8 +228,8 @@ skipped at build time — that excludes constant stars, supernovae, and
 irregular variables. Typical match rate: ~3.7k of 313k catalog stars.
 
 Implementation: `src/client/shaders/star.vert.glsl` and
-`src/client/stellata.ts` (CPU-side `renderedSizePx` mirror); see
-`docs/rendering.md` §Variable star rendering, and
+`src/client/camera/star-physics.ts` (CPU-side `renderedSizePx`
+mirror); see `docs/rendering.md` §Variable star rendering, and
 `docs/build-and-data.md` §GCVS variability cross-match for the
 build-time matching rules.
 
