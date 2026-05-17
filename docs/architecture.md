@@ -103,6 +103,50 @@ target), so `aimAtConstellation` instead routes the centroid through
 `aimAt(c)`, which slerps the camera quaternion in place — same code
 path Sol/GC label clicks use.
 
+## Warp controller (`camera/warp-controller.ts`)
+
+`WarpController` owns the 3-phase warp FSM extracted from `stellata.ts`
+in stellata-9mm.194.5:
+
+1. **Reorient** — quaternion slerp + radial easing around the source
+   anchor, ending with the camera on the A→B line outside the source's
+   parking radius. Per-frame `lookAt(A)` in navigate mode; a captured
+   `reorientEndQuaternion` for observe-launches where `mag0 ≈ 0`
+   collapses the lookAt path.
+2. **Fly** — position lerp along the line, delegated to
+   `camera-motion.ts`'s `tickArrival` so focus-park, unfocus, and warp
+   Fly share one arrival profile. Fires a one-shot mid-Fly
+   floating-origin recentre onto the destination via `tryMidFlyRecentre`
+   once the camera passes the trajectory midpoint, plus a chart-mode
+   plateau-trigger that pivots to phase 3 early when the destination
+   disc has flatlined.
+3. **Post-arrival** — quaternion slerp back to the warp-start orientation
+   (parallax view), plus an observe-mode position lerp `pEnd → B`. Skipped
+   on navigate arrivals because `TrackballControls.update()`'s per-frame
+   `lookAt(target)` would overwrite a slerped quaternion one frame later.
+
+Public surface — `warpTo(destIdx)`, `warpToCloud(destIdx)`, `skip()`,
+`tick(nowMs)`, `isActive()`, `isRecenteredToDest()`, `getWarpInfo()`,
+`getWarpPhase(nowMs?)`, `dispose()`.
+
+Cross-controller coupling lives behind the `FocusOps` interface
+(declared in `warp-controller.ts`): per-kind `FocusTarget` factories,
+current-focus dispatch, floating-origin recentre, mutation of
+`focusedStar` / `focusedCloud` / vector slots, observe-transition busy
+gate, and the lerp-cancel pair `startWarp` calls before claiming the
+camera. In 194.5 Stellata implements `FocusOps` directly (a shim);
+9mm.194.8 hands the seam to FocusController.
+
+Bus events emitted from the controller:
+- `'warp'` (boolean) — true at startWarp, false at finishWarp.
+- `'state'` — at startWarp, at finishWarp (via swapObserveAnchor on
+  observe→observe arrivals, or via `setFocus` / `setFocusedCloud` on
+  navigate arrivals).
+- `'focus'` (number | null) — only from `swapObserveAnchor`.
+
+See `docs/camera-warp.md` for the phase math and `docs/camera-arrival.md`
+for the shared Fly arrival profile.
+
 ## Aim controller (`camera/aim-controller.ts`)
 
 `AimController` owns the two aim-slerp state machines extracted from
@@ -124,10 +168,10 @@ formula `2·acos(|q0·q1|)`; the navigate branch uses the planar
 `acos(dir0·dir1)` between unit direction vectors.
 
 Composition split — `Stellata.aimAt(pointLocal)` is the dispatcher that
-owns the cross-controller busy gates (`warpState`, `cancelUnfocusLerp`,
-`cancelFocusLerp`, `isObserveTransitionActive`) before delegating to
-`this.aim.aimAt(pointLocal)`. The controller knows only the mode it
-runs in and its own slot state.
+owns the cross-controller busy gates (`warp.isActive()`,
+`cancelUnfocusLerp`, `cancelFocusLerp`, `isObserveTransitionActive`)
+before delegating to `this.aim.aimAt(pointLocal)`. The controller knows
+only the mode it runs in and its own slot state.
 
 Cancellation contract — `aim.cancel()` drops both slot states but does
 **not** touch `controls.enabled` or call `observeControls.enable()`.
@@ -295,11 +339,11 @@ int uniform, ~5 lines of GLSL, no CPU cost.
 
 JS-side per frame in `stellata.ts`: pin engages iff
 `focusedStar !== null && cameraMode === 'navigate'
-&& (!warpState || warpState.recenteredToDest)
+&& (!warp.isActive() || warp.isRecenteredToDest())
 && !aimState && !focusLerpState
 && controls.target.lengthSq() < 1e-12`.
 
-The `warpState.recenteredToDest` clause relaxes the pin guard for the
+The `warp.isRecenteredToDest()` clause relaxes the pin guard for the
 post-recentre window of warp Fly: after the mid-Fly recentre
 (stellata-2br.5) the destination is at local `(0,0,0)` and the camera
 is doing `lookAt(local origin)` per frame, so pin-to-NDC matches the
@@ -336,7 +380,7 @@ Three residual sources have bitten this:
 Limitations: pan moves target away → pin disengages (intentional;
 post-pan the focused star isn't at view centre). Doesn't fire in
 observe mode or during aim animations. Pin DOES fire during the
-post-recentre window of warp Fly (see `warpState.recenteredToDest`
+post-recentre window of warp Fly (see `warp.isRecenteredToDest()`
 in the guard above); pre-recentre Fly stays guarded because the
 focused star is the source, not the destination the camera is
 flying toward.

@@ -7,6 +7,18 @@ For the steady-state camera geometry (minDistance / TrackballControls)
 see `docs/camera-controls.md`; for OBSERVE mode see
 `docs/camera-observe.md`.
 
+The 3-phase FSM, `WarpState`, the `startWarp` / `finishWarp` /
+`updateWarp` / `tryMidFlyRecentre` / `swapObserveAnchor` methods, plus
+the warp-only scratch state all live in `src/client/camera/warp-controller.ts`
+(extracted from `stellata.ts` in stellata-9mm.194.5). The integration
+shell composes the controller alongside Picker / AimController, and
+delegates the animate-loop tick when `warp.isActive()` returns true.
+Cross-controller coupling (focus state, FocusTarget factories,
+floating-origin recentre, vector-slot clear) lives behind the
+`FocusOps` interface that Stellata implements directly today; 9mm.194.8
+hands that seam to FocusController and the `focus:` dep wire updates
+in one line.
+
 ## Warp animation
 
 An animated camera flight between the focused star (A) and the distance
@@ -19,8 +31,9 @@ auto-park every landing uses; lerps over `FOCUS_LERP_MS` or stays put
 when already inside park, see `docs/camera-observe.md` § Focus-park
 lerp).
 
-Two- or three-phase animation in `stellata.ts updateWarp`, depending
-on whether the warp re-enters OBSERVE on arrival:
+Two- or three-phase animation in `WarpController.updateWarp` (called
+per frame via `WarpController.tick(nowMs)`), depending on whether the
+warp re-enters OBSERVE on arrival:
 
 1. **Reorient** (`WARP_REORIENT_MS` = 1800). Camera position
    spherically slerps around A from wherever the user was to `A +
