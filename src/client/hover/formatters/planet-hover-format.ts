@@ -19,8 +19,8 @@
 // tests stub them with constants. `fmtDistAuto` (which switches to AU
 // below 0.01 pc) is the canonical formatter for sub-Oort scales.
 
-import { fmtDistAuto } from '../../distance-util';
-import type { Planet } from '../../planet-system';
+import { fmtDistAuto } from '../../ui/distance-util';
+import type { Planet } from '../../solar-system/planet-system';
 import type { HoverPayload } from '../hover-types';
 
 export interface PlanetHoverFormatContext {

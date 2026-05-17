@@ -22,8 +22,8 @@
 // reading the same way regardless of whether the renderer treats the
 // shape as a disc or an ellipsoid.
 
-import type { Cloud } from '../../cloud-loader';
-import { fmtDistAuto } from '../../distance-util';
+import type { Cloud } from '../../molecular-clouds/cloud-loader';
+import { fmtDistAuto } from '../../ui/distance-util';
 import type { HoverPayload } from '../hover-types';
 import { formatAxisPair } from './format-util';
 

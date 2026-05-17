@@ -12,7 +12,7 @@
 // state from distance-util — set the unit explicitly in tests via
 // `setUnit('pc')` to keep golden output stable.
 
-import { fmtDist } from '../../distance-util';
+import { fmtDist } from '../../ui/distance-util';
 import type { HoverPayload } from '../hover-types';
 
 export interface StarHoverFormatContext {

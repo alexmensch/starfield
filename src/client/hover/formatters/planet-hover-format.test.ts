@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { setUnit } from '../../distance-util';
-import { SOL_PLANETS } from '../../planet-system';
+import { setUnit } from '../../ui/distance-util';
+import { SOL_PLANETS } from '../../solar-system/planet-system';
 import {
   formatPlanetHover,
   type PlanetHoverFormatContext,
