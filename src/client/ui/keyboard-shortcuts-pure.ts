@@ -1,6 +1,6 @@
 // Pure-math helpers for keyboard-shortcuts.ts. Co-located with the
 // constants they read so the production binding and the vitest suite
-// share a single source of truth (per stellata-named-constants-and-dry).
+// share a single source of truth.
 
 /** Window inside which three D presses count as a triple-tap. */
 export const D_TRIPLE_TAP_MS = 500;

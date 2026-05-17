@@ -1,15 +1,12 @@
-// Per-star planet data model for the solar-system layer (stellata-3re).
+// Per-star planet data model for the solar-system layer.
 //
 // This module is intentionally generic: any focusable star *may* carry a
 // planet system, even though Sol is the only one populated in v1. The
-// future exoplanet epic (stellata-bk5) plugs additional hosts in by
-// extending the resolver below, without changing the shape consumed by
-// renderers (`PlanetSystem`, `Planet`, the `hasPlanets`/`getPlanetSystem`
-// pair).
+// future exoplanet epic plugs additional hosts in by extending the
+// resolver below without changing the renderer-side shape.
 //
-// Rendering layers (3re.4 planet bodies, 3re.7 orbit rings, 3re.5
-// heliopause, etc.) gate themselves on `Stellata.getFocusedPlanetSystem()`
-// rather than checking "is this star Sol?" directly.
+// Rendering layers (planet bodies, orbit rings, heliopause) gate on
+// Stellata.getFocusedPlanetSystem(), not on "is this Sol?" directly.
 
 import type { Catalog } from '../loaders/catalog-loader';
 import {
@@ -36,14 +33,13 @@ export interface Planet {
   // disc sizing) is the renderer's responsibility — keep the canonical
   // unit human-readable here.
   readonly radiusKm: number;
-  // Semi-major axis in AU. Real orbital phase is deferred to stellata-3re.3
-  // (VSOP87 ephemerides); placeholder positions in 3re.4 use this alone.
+  // Semi-major axis in AU. Real orbital phase comes from VSOP87
+  // ephemerides; placeholder positions use this alone.
   readonly semiMajorAxisAu: number;
-  // Orbital eccentricity. The orbit-rings layer (stellata-3re.7) draws
-  // each ring as an ellipse with the host star at one focus, using
-  // `b = a·√(1−e²)` and a focal offset of `c = a·e`. v1 places the
-  // perihelion along the local +x axis as a placeholder; longitude of
-  // perihelion lands later (alongside VSOP87 in stellata-3re.3).
+  // Orbital eccentricity. The orbit-rings layer draws each ring as an
+  // ellipse with the host at one focus, using b = a·√(1−e²) and a
+  // focal offset c = a·e. Perihelion sits along local +x as a
+  // placeholder until VSOP87 longitude-of-perihelion lands.
   readonly eccentricity: number;
   readonly type: PlanetType;
   // Representative single-colour RGB in linear-ish [0,1]. Average tones
@@ -53,14 +49,14 @@ export interface Planet {
   // deferred until that lands.
   readonly colour: readonly [number, number, number];
   // Geometric albedo (V-band). Drives the apparent-magnitude
-  // calculation in the planet pipeline (3re.16). Mallama 2018 +
+ // calculation in the planet pipeline. Mallama 2018 +
   // NASA fact-sheet values.
   readonly albedo: number;
   // Optional Mallama 2018 empirical phase-curve coefficients —
   // overrides the default Lambertian phase function in the renderer
   // when present. See `phase-function.ts` for the polynomial form
   // and per-planet citations. Pluto and every exoplanet under
-  // `stellata-bk5` leave this undefined and fall back to Lambert.
+  // the exoplanet epic leave this undefined and fall back to Lambert.
   readonly phaseCoefficients?: PhaseCoefficients;
 }
 
@@ -79,7 +75,7 @@ export interface PlanetSystem {
    *  in `planets` array order. Units: parsecs. The renderer applies
    *  the per-host orbital-plane orientation quaternion downstream to
    *  rotate into ICRS — Sol's ecliptic frame becomes ICRS via the
-   *  same quaternion that orients its orbit rings (3re.8). */
+ * same quaternion that orients its orbit rings. */
   positionsAt?: (t: number, out: Float32Array) => void;
   /** Optional per-planet orbital-frame orientation in the host's local
    *  plane frame, indexed parallel to `planets`. The ring renderer
@@ -87,7 +83,7 @@ export interface PlanetSystem {
    *  rotation, so rings line up with the body positions emitted by
    *  `positionsAt` (which apply the same composition internally).
    *  When absent, rings sit flat on the host plane with perihelion at
-   *  +x — the pre-3re.13 placeholder behaviour. */
+ * +x — the pre-placeholder behaviour. */
   orbitOrientations?: readonly OrbitOrientationRad[];
 }
 
@@ -109,7 +105,7 @@ function solPositionsAt(t: number, out: Float32Array): void {
 // Semi-major axes and eccentricities from JPL DE440 mean elements at
 // J2000. Colours are observation-derived representative tones — pixel-
 // accurate texturing depends on the future planet-as-object epic
-// (stellata-2f6) clearing its design gate; for now bodies are flat-
+// clearing its design gate; for now bodies are flat-
 // coloured discs.
 export const SOL_PLANETS: readonly Planet[] = [
   {
@@ -215,7 +211,7 @@ export const SOL_PLANETS: readonly Planet[] = [
 
 // Sync probe — does this star have a planet system at all?
 //
-// v1 hardwires "planets ⇔ Sol". When stellata-bk5 lands an exoplanet
+// v1 hardwires "planets ⇔ Sol". When the exoplanet epic lands an exoplanet
 // flag bit on the catalog record, this becomes a flag check; callers
 // stay unchanged.
 export function hasPlanets(catalog: Catalog, starIdx: number | null): boolean {
@@ -225,7 +221,7 @@ export function hasPlanets(catalog: Catalog, starIdx: number | null): boolean {
 
 // Async resolver — supplies the `PlanetSystem` for `starIdx`, or null if
 // the star has no planets. Sol resolves with already-in-memory data;
-// stellata-bk5 is expected to extend this to fetch a per-star JSON
+// the exoplanet epic is expected to extend this to fetch a per-star JSON
 // shard lazily, caching by index. The Promise wrapper keeps the API
 // stable across that transition.
 export async function getPlanetSystem(

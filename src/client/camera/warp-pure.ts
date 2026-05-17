@@ -1,7 +1,7 @@
 // Pure-math helpers for the warp pipeline. Lives alongside
 // `perceptual-magnitude.ts` / `catalog-pure.ts` — small,
 // dependency-free, vitest-covered so the invariants the warp
-// jitter fix (stellata-fqw) rests on can't silently regress.
+// jitter fix rests on can't silently regress.
 
 import * as THREE from 'three';
 
@@ -28,7 +28,7 @@ export interface WarpPositionalFields {
  *      re-bound in the new local frame stays at the lerp endpoint.
  *   - `A` and `pStart` stay frame-coherent with `pEnd`, eliminating
  *      the "phase-3 mutates pEnd in place but leaves A/pStart in the
- *      source frame" footgun for future readers (stellata-9mm.164).
+ *      source frame" footgun for future readers.
  */
 export function shiftWarpWaypoints(
   state: WarpPositionalFields,

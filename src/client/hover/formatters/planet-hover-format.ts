@@ -1,23 +1,13 @@
-// Planet hover formatter (stellata-lo5.4). Sibling of star-hover-format
-// for the Sol planet layer (and, once stellata-bk5 lands, any future
-// exoplanet host).
-//
-// Layout (4 lines max):
+// Planet hover formatter. Layout (4 lines max):
 //   Line 1 — planet name
 //   Line 2 — current host→planet distance · apparent V-band magnitude
 //   Line 3 — Period <years>
 //   Line 4 — Radius <kilometres>
 //
-// "Vmag" is the spelled-out shorthand for apparent V-band magnitude;
-// "Radius" / "Period" are the spelled-out quantity labels (Rule 1 of
-// stellata-lo5-hover-conventions — single-letter prefixes are too
-// compressed for the user to parse at a 280 ms hover delay).
-//
-// Pure: takes only its inputs as a context bundle. The host→planet
-// distance and the apparent magnitude come in as functions so the
-// formatter doesn't need a Three.js camera or a live PlanetBodyField —
-// tests stub them with constants. `fmtDistAuto` (which switches to AU
-// below 0.01 pc) is the canonical formatter for sub-Oort scales.
+// Pure: takes only its inputs as a context bundle. host→planet
+// distance and apparent magnitude come in as functions so the
+// formatter doesn't need a Three.js camera or a live PlanetBodyField.
+// `fmtDistAuto` switches to AU below 0.01 pc for sub-Oort scales.
 
 import { fmtDistAuto } from '../../ui/distance-util';
 import type { Planet } from '../../solar-system/planet-system';

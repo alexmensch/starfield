@@ -1,5 +1,5 @@
 // Per-star camera/screen-geometry helpers. Extracted from stellata.ts
-// in 9mm.194.9 — these were a cluster of methods (renderedSizePx,
+// — these were a cluster of methods (renderedSizePx,
 // parkDistForStar, ...) that read `this.camera` / `this.catalog` /
 // `this.material.uniforms` / `this.filter`. Lifted here as pure
 // functions parameterised on those inputs so the integration shell

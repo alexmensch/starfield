@@ -1,19 +1,9 @@
-// Discreet plain-English UTC timestamp showing the current `t`
-// (Unix-seconds) the planets are positioned for. Sits under the star
-// count in the bottom-right `.meta` block.
-//
-// Visible only while the focused star has a planet system (3re.6
-// contract — Sol in v1), chart mode is off, and a warp is not in
-// flight; matches the rest of the solar-system layer's visibility
-// gate. The warp gate exists because focused-planet-system stays
-// pinned to the source for the duration of a warp (camera-frame
-// invariant), so without this filter the readout would tick on
-// during a Sol→other-star warp where the time has no logical
-// referent (see PR #36 review notes).
-//
-// v1 always shows wall-clock now and ticks once per second. The time-
-// scrubber epic (stellata-nmu) will swap the per-second tick for
-// scrubber-driven updates without changing the format.
+// Plain-English UTC timestamp for the current `t` driving planet
+// positions. Visible iff focused star has a planet system, chart mode
+// is off, and no warp is in flight. The warp gate exists because
+// focused-planet-system stays pinned to the source for the duration
+// of a warp — without it the readout would tick during a warp where
+// the time has no logical referent.
 
 import type { Stellata } from '../stellata';
 

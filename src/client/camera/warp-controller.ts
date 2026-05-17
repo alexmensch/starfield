@@ -1,41 +1,7 @@
-// WarpController — extracted from stellata.ts (stellata-9mm.194.5).
-// Owns the 3-phase warp FSM that ferries the camera between a focused
-// source (star or cloud) and a clicked destination:
+// 3-phase warp FSM (reorient → fly → post-arrival). Coupling via
+// `FocusOps` (defined in ./focus-controller; re-exported here).
 //
-//   1. Reorient — quaternion slerp + radial easing around the source
-//      anchor, ending with the camera on the A→B line outside the
-//      source's parking radius.
-//   2. Fly — position lerp along the line, delegated to camera-motion.ts
-//      so focus-park, unfocus, and warp Fly share one arrival profile.
-//      Fires a one-shot mid-Fly floating-origin recentre onto the
-//      destination once the camera passes the trajectory midpoint, plus
-//      a chart-mode plateau-trigger that pivots to phase 3 early when
-//      the destination disc has flatlined.
-//   3. Post-arrival — quaternion slerp back to the warp-start orientation
-//      (parallax view), plus an observe-mode position lerp pEnd → B so
-//      the user lands AT the destination star rather than at an
-//      endOffset hidden teleport. Skipped on navigate arrivals because
-//      TrackballControls.update()'s per-frame lookAt(target) would
-//      overwrite a slerped quaternion one frame later.
-//
-// Cross-controller coupling lives behind the `FocusOps` interface
-// (defined in `./focus-controller`): per-kind FocusTarget factories,
-// current-focus dispatch, floating-origin recentre, mutation of
-// focusedStar / focusedCloud / vector slots, observe-transition busy
-// gate, and the lerp-cancel pair startWarp calls before claiming the
-// camera. FocusController (9mm.194.8) is the implementor; the interface
-// is re-exported here for back-compat with importers that still point
-// at `./warp-controller`.
-//
-// Bus events emitted from here:
-//   'warp' (boolean) — true at startWarp, false at finishWarp.
-//   'state' — at startWarp, at finishWarp (via swapObserveAnchor on
-//             observe→observe arrival, or via setFocus / setFocusedCloud
-//             on navigate arrival).
-//   'focus' (number | null) — only from swapObserveAnchor.
-//
-// Docs: docs/camera-warp.md (phase math), docs/camera-arrival.md
-// (the shared Fly arrival profile).
+// See docs/camera-warp.md and docs/camera-arrival.md.
 
 import * as THREE from 'three';
 import type { TrackballControls } from 'three/examples/jsm/controls/TrackballControls.js';
@@ -596,14 +562,13 @@ export class WarpController {
   // before the Float32 chaos zone — for a 200 pc → 1 AU Sol arrival,
   // midpoint is at u ≈ 0.34, chaos zone at u ≈ 0.66.
   //
-  // After firing: `dest.localPositionInto` returns ≈(0,0,0) for the
-  // rest of the warp, `lookAt(local origin)` escapes the
-  // `B − camera.position` ULP fight, and focus state is mutated in
-  // place via `dest.applyFocus` (no events — those fire from finishWarp
-  // via `dest.emitFocusEvents` so search-row label etc. settle in
-  // lock-step with the camera landing). Kind-agnostic via FocusTarget.
-  // Used by both the navigate Fly branch (stellata-2br.5) and the
-  // observe→observe phase-3 branch (originally stellata-fqw).
+  // After firing: dest.localPositionInto returns ≈(0,0,0) for the
+  // rest of the warp, lookAt(local origin) escapes the B−camera.position
+  // ULP fight, and focus state is mutated in place via dest.applyFocus
+  // (events fire from finishWarp via dest.emitFocusEvents so search-row
+  // label etc. settle in lock-step with the camera landing).
+  // Kind-agnostic via FocusTarget; used by both the navigate Fly branch
+  // and the observe→observe phase-3 branch.
   private tryMidFlyRecentre(state: WarpState): void {
     if (state.recenteredToDest) return;
     const tmp = this.tmpAbs;
@@ -792,7 +757,7 @@ export class WarpController {
         // top of the destination star in the source's local frame;
         // with both camera and B at kpc-scale magnitudes,
         // matrixWorldInverse * B loses float32 precision and the
-        // destination jitters as the quaternion rotates (stellata-fqw).
+        // destination jitters as the quaternion rotates.
         // After this recentre the destination is at local (0,0,0) and
         // the camera lerps in from a small offset, so the projection
         // chain stays clean for the entire phase 3. uHideFocusIdx still
@@ -800,7 +765,7 @@ export class WarpController {
         // remains visible during the parallax slerp; swapObserveAnchor
         // at finishWarp re-points it to the destination on landing.
         //
-        // After 2br.5 this is just tryMidFlyRecentre invoked at a
+ // After this is just tryMidFlyRecentre invoked at a
         // different time — the navigate-mode mid-Fly path uses the
         // same dispatch. Skipped when the mid-Fly path already fired.
         if (state.returnToObserve && !state.recenteredToDest) {

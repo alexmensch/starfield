@@ -16,7 +16,7 @@
 // above this seam and does not need to change.
 //
 // See `docs/architecture.md` § FocusTarget contract for the bigger
-// picture and the rationale (stellata-2br.5 — the cubic-Hermite log-d
+// picture and the rationale (the unified arrival profile — the cubic-Hermite log-d
 // Fly profile exposed a class of Float32-precision bugs in lookAt(B)
 // that recentring the floating origin mid-Fly fixes; the kind-agnostic
 // version of that fix lives on this contract so future kinds inherit

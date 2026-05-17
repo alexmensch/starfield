@@ -2,7 +2,7 @@ import * as THREE from 'three';
 
 // J2000 ICRS coordinates of the galactic-frame axes:
 //  - Galactic Centre (l=0, b=0): RA=266.4051°, Dec=−28.93617°
-//  - North Galactic Pole (b=+90°): RA=192.85948°, Dec=27.12825°
+// - North Galactic Pole (b=+90°): RA=192.85948°, Dec=27.12825°
 // Values from the IAU/Hipparcos definition of the J2000 galactic frame.
 const ALPHA_GC = (266.4051 * Math.PI) / 180;
 const DELTA_GC = (-28.93617 * Math.PI) / 180;
@@ -56,10 +56,9 @@ export const GALACTIC_CENTRE_PC: THREE.Vector3 =
   gcDir.clone().multiplyScalar(R0_PC);
 
 /**
- * Unit vector toward the North Galactic Pole in ICRS coordinates — i.e. the
- * normal to the galactic plane. Re-orthogonalised against the GC direction
- * (= +X of the galactic basis), so it lies exactly perpendicular to the
- * adopted galactic-frame x-axis. Consumed by stellata-3re.8's "all
- * non-Sol hosts orbit in the galactic plane" rule.
+ * Unit vector toward the North Galactic Pole in ICRS — normal to the
+ * galactic plane. Re-orthogonalised against the GC direction (= +X of
+ * the galactic basis). Drives the "all non-Sol hosts orbit in the
+ * galactic plane" rule for the exoplanet orbit-rings layer.
  */
 export const GALACTIC_NORTH_POLE_ICRS: THREE.Vector3 = galZ.clone();

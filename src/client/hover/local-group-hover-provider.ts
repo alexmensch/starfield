@@ -1,7 +1,7 @@
-// Local Group hover provider (stellata-lo5.5). Sibling of star /
+// Local Group hover provider. Sibling of star /
 // planet hover providers for the Local Group wireframe layer.
 //
-// Visibility ⇒ hoverable per stellata-lo5-hover-conventions Rule 2:
+// Visibility ⇒ hoverable per hover Rule 2:
 // the provider does NOT gate on focused-host / focused-star / mode
 // state. `Picker.pickLocalGroupHit` (and `LocalGroupLayer.pick`
 // underneath) mirror the renderer's "is this drawn?" predicate — chart

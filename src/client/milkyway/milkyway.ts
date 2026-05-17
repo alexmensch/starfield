@@ -4,35 +4,10 @@ import milkywayFrag from '../shaders/milkyway.frag.glsl?raw';
 import { GAL_TO_ICRS, GALACTIC_CENTRE_PC, R0_PC } from '../galactic/galactic-coords';
 import type { DustField } from '../loaders/dust-loader';
 
-// Bounded volumetric raymarch through proxy meshes.
-//
-// Two proxy meshes (a flattened disc + an oblate bulge) define
-// integration volumes centred on the galactic centre. For each
-// fragment, the shader raymarches from front-face entry (or camera
-// position if camera is inside the mesh) to the back-face fragment,
-// evaluating the component's density profile and accumulating emission
-// with running dust extinction. The two meshes' contributions add via
-// AdditiveBlending.
-//
-// Why volumetric (vs. surface-only): surface-only emission evaluates
-// density at exactly one point per fragment, which can't represent the
-// path-length anisotropy that's the defining feature of the band — long
-// edge-on path through the disc gives bright band, short out-of-plane
-// path gives dim glow, smoothly. Volumetric integration produces this
-// for free. As a bonus the silhouette of the proxy mesh tapers to zero
-// naturally (the path through the volume shrinks to zero at the edge),
-// no `pow(|n·v|, k)` softening hack required.
-//
-// Why analytical-only dust (no voxel sampling in milky way layer): the
-// Edenhofer voxel grid has ~5 pc native structure, designed for short
-// per-star sightlines. Sampling it at coarse step intervals along the
-// long camera→fragment ray (8-15 kpc) aliases into visible parallel
-// streaks regardless of step distribution. Dropping voxel sampling
-// here loses the local-cloud bites in the band, but those belong to
-// the molecular cloud layer (renderOrder = -2) which renders named SF
-// clouds as proper 3D ellipsoids in front of the milky way. The voxel
-// grid stays in use for per-star extinction (star.vert.glsl) where
-// short rays + dense per-star sampling work cleanly.
+// Bounded volumetric raymarch through proxy meshes (disc + oblate
+// bulge), AdditiveBlending. Analytical-only dust here — voxel sampling
+// along 8–15 kpc rays aliases into parallel streaks regardless of step
+// distribution. See docs/milky-way.md.
 
 // --- Geometry / density parameters -------------------------------------
 

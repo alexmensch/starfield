@@ -10,33 +10,14 @@ import { sliderToDist, distToSlider, SLIDER_STEPS } from '../camera/controls';
 import { setUnit, getUnit, onUnitChange } from '../ui/distance-util';
 import { isLive } from '../solar-system/time';
 
-// URL state lives in a single opaque param: `?v=<base64url>`. The blob
-// is `[1 byte version] [LEB128 presence mask, 1–4 bytes] [variable
-// payload]` in v3. Only fields that diverge from canonical defaults
-// occupy bytes — a fully-default state has no `?v=` at all and a
-// typical share lands at ~10–25 chars.
-//
-// Three wire formats coexist. v3 (current) has an LEB128 presence mask
-// + per-component vec3 sub-masks (cam/tgt/up/worldOffset emit only the
-// components that diverge from their per-key default). v2 has a flat
-// 24-bit presence mask, 1-byte quantised scalars for fov/mag/smin/
-// smax/span, and 3-byte star/POI ids — every present vec3 always costs
-// 12 bytes. v1 (legacy: 32-bit mask, float32 scalars, uint32 ids) is
-// the original. Old shared URLs auto-upgrade to v3 on load via
-// `applyFromUrl`'s post-debounce rewrite.
-//
-// Adding a field: claim the next free presence bit, append a FieldSpec
-// to the buildFields() body, and add encoder/decoder logic in
-// `currentStateOf` / `applyDecodedView`. Old URLs still decode fine —
-// unknown bits are zero in the presence mask, so the decoder takes the
-// default. Don't repurpose retired bits for ~6 months of deploy
-// overlap. Breaking-shape changes (resizing existing fields, semantic
-// shifts) need a new SCHEMA_VERSION and a parallel FIELDS_V<n> table;
-// freeze the old one verbatim so its decoder stays correct.
+// URL state lives in a single opaque `?v=<base64url>` param. Three
+// wire formats coexist (v1/v2/v3); old shared URLs auto-upgrade to v3
+// on load. See docs/url-state.md for the wire format and the
+// "adding a field" recipe.
 //
 // Buffer order (FIELDS bit-index order) is independent of the dispatch
-// order in applyDecodedView. Both are load-bearing — see the comments
-// at each apply step.
+// order in applyDecodedView. Both are load-bearing — see the inline
+// comments at each apply step.
 
 const DEBOUNCE_MS = 300;
 const SCHEMA_VERSION_V1 = 1;
@@ -178,8 +159,8 @@ export interface DecodedView {
   /** Wall-clock `t` (Unix-seconds, double precision) for the solar-
    *  system layer. Emitted only when the user has scrubbed away from
    *  "now"; absence ⇒ receiver resolves to their local wall-clock at
-   *  load time. v1 (stellata-3re.1) wires the path but never emits —
-   *  the time-scrubber epic (stellata-nmu) flips on emission by
+   *  load time. v1 wires the path but never emits —
+   *  the time-scrubber epic flips on emission by
    *  introducing pinned-`t` state. */
   t?: number;
 }
@@ -276,7 +257,7 @@ const VEC3_DEFAULTS: Record<Vec3Key, readonly [number, number, number]> = {
 // frame cam can land at sub-µpc magnitudes (~1e-6 pc) that are well
 // inside the URL-write debouncer's 1e-3 epsilon. Eliding those as
 // "approximately default" would round the camera silently to the
-// frame origin on round-trip and break stellata-a7d.2.11.
+// frame origin on round-trip and break the close-orbit unfocus contract.
 function vec3FieldV3(
   bit: number,
   key: Vec3Key,
@@ -399,15 +380,11 @@ function writeU24LE(dv: DataView, off: number, val: number): void {
 }
 
 // LEB128: 7-bit payload + continuation bit per byte, low-group-first.
-// v3 uses this for the outer presence mask, replacing v2's fixed 3-
-// byte u24. Empty mask = 1 byte; single low-bit masks (cam = bit 0,
-// flags = bit 13 in mask 0x002000) = 1–2 bytes; full-mask high bits
-// degrade to 3–4 bytes — bit 21 (t) is the only field that costs an
-// extra byte vs u24, and it doesn't emit yet (gated on the time-
-// scrubber epic stellata-nmu).
+// v3 uses this for the outer presence mask, replacing v2's fixed
+// 3-byte u24. bit 21 (t) is the only field that costs an extra byte
+// vs u24, and it doesn't emit yet.
 //
-// Exported for unit-level tests in url-state.test.ts; the helpers
-// otherwise have no consumers outside this module.
+// Exported for unit-level tests in url-state.test.ts.
 export function writeVarint(dv: DataView, off: number, val: number): number {
   let n = 0;
   let x = val >>> 0;
@@ -951,7 +928,7 @@ export function currentStateOf(stellata: Stellata, idMaps: IdMaps): DecodedView 
   // setFocus call has already recentred worldOffset to that object's
   // absolute position, so cam/tgt are object-local. Without focus, the
   // origin rides along with whatever object was most recently anchored
-  // (the unfocus path no longer recentres to Sol — a7d.2.11). The
+ // (the unfocus path no longer recentres to Sol). The
   // worldOffset field below carries the absolute anchor position so
   // the loader can re-establish the same frame on page-load. Old-style
   // URLs without worldOffset always had worldOffset=(0,0,0) at save
@@ -975,7 +952,7 @@ export function currentStateOf(stellata: Stellata, idMaps: IdMaps): DecodedView 
   // strict equality to decide whether the field claims its outer
   // presence bit. Both layers are load-bearing — the inner strict
   // equality preserves floating-origin sub-µpc cam values
-  // (stellata-a7d.2.11) that would round to default under the outer
+  // that would round to default under the outer
   // epsilon if the inner check were also approx. Don't collapse to one
   // predicate without preserving both regimes.
   //
@@ -998,8 +975,8 @@ export function currentStateOf(stellata: Stellata, idMaps: IdMaps): DecodedView 
 
   // Scrubber-pinned `t` only — when the user is on live wall-clock,
   // omit so the share link resolves to the receiver's local now (the
-  // contract baked into stellata-3re.1). v1 always lands in the live
-  // branch; the gate flips on once stellata-nmu introduces pinning.
+  // contract baked into the solar-system contract). v1 always lands in the live
+  // branch; the gate flips on once the time-scrubber epic introduces pinning.
   const tNow = stellata.getT();
   if (!isLive(tNow)) view.t = tNow;
 
@@ -1088,7 +1065,7 @@ export function applyDecodedView(
 
   if (view.focus !== undefined) {
     if (view.focus === 'cleared') {
-      // URL restore — bypass the close-zoom unfocus animation (a7d.2.6).
+ // URL restore — bypass the close-zoom unfocus animation.
       // cam/tgt below would overwrite camera.position mid-lerp, leaving
       // the transition state to silently drag the camera away from the
       // restored pose on the next frame.
@@ -1119,7 +1096,7 @@ export function applyDecodedView(
   // the focal object, and the encoder elides worldOffset in that case —
   // but apply it anyway when present (no-op when redundant). Without
   // focus, worldOffset carries the close-orbit unfocus origin
-  // (a7d.2.11) so cam/tgt can be tiny local-frame values that round-
+ // so cam/tgt can be tiny local-frame values that round-
   // trip cleanly through float32. setWorldOffset also shifts camera
   // and target alongside the origin to preserve the user-visible
   // pose; for URL load we explicitly reset them to defaults here so
@@ -1195,7 +1172,7 @@ function writeUrl(stellata: Stellata, idMaps: IdMaps): void {
 
 // Returns true when a `?v=` blob was present and applied (regardless of
 // schema version). The caller uses the false branch to fall back to the
-// canonical first-load view (stellata-vjm). A malformed blob also
+// canonical first-load view. A malformed blob also
 // returns false so the user lands on the framed default rather than the
 // unframed canvas-default pose.
 export function applyFromUrl(stellata: Stellata, idMaps: IdMaps): boolean {
@@ -1254,10 +1231,10 @@ export function startUrlSync(stellata: Stellata, idMaps: IdMaps): void {
   onUnitChange(schedule);
 
   stellata.on('frame', () => {
-    // Skip URL writes while any camera-position lerp is in flight (warp,
-    // observe enter/exit, or navigate-mode unfocus zoom-out a7d.2.6) —
-    // the camera mutates every frame and we don't want intermediate poses
-    // in the URL. The end-of-animation events flush the final pose.
+    // Skip URL writes while any camera-position lerp is in flight
+    // (warp, observe enter/exit, or navigate-mode unfocus zoom-out) —
+    // the camera mutates every frame and we don't want intermediate
+    // poses in the URL. End-of-animation events flush the final pose.
     if (stellata.isCameraTransitionActive()) return;
     const c = stellata.camera.position;
     const t = stellata.controls.target;

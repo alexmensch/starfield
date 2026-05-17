@@ -1,8 +1,8 @@
-// Planet hover provider (stellata-lo5.4). Sibling of star-hover-provider
+// Planet hover provider. Sibling of star-hover-provider
 // for Sol's planet layer, ready to extend to any future exoplanet host
 // without touching the engine.
 //
-// Visibility ⇒ hoverable per stellata-lo5-hover-conventions Rule 2:
+// Visibility ⇒ hoverable per hover Rule 2:
 // the provider does NOT gate on focus state. The picker walks every
 // attached host's planets and the shader's own kill condition
 // (appMag > maxAppMag + 0.5) is the only visibility predicate. v1 only

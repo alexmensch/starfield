@@ -1,4 +1,4 @@
-// Star hover provider (stellata-lo5.3). The first concrete `HoverProvider`
+// Star hover provider. The first concrete `HoverProvider`
 // against the engine — extracted verbatim from the inline provider that
 // previously lived in main.ts.
 //

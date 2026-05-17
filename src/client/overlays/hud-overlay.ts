@@ -504,7 +504,7 @@ export class HudOverlay {
  * Reset every per-attribute sentinel in `state` to its poison-init value
  * so the next visible frame's first write through the dirty-attr gate
  * always lands. Used by `hideArrow` after the gated d / display writes.
- * Surfaced for direct test coverage of the sentinel-wipe contract (9mm.170
+ * Surfaced for direct test coverage of the sentinel-wipe contract (
  * — without this reset the first show-from-hide cycle would inherit stale
  * cx/cy/lx/ly/opacity from the prior visible session).
  *

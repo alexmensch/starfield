@@ -1,4 +1,4 @@
-// Star hover formatter (stellata-lo5.3). Port of the prior inline
+// Star hover formatter. Port of the prior inline
 // `describeStarDetailed` in main.ts.
 //
 // Line 1 is the star name (falling back through proper name → Bayer →

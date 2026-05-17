@@ -7,7 +7,7 @@
 // ring visible" (heliopause) to "camera-to-object distance past
 // threshold" (Local Group / MW).
 //
-// Per stellata-named-constants-and-dry rule 2, "schemas / structures
+// per DRY rule 2, "schemas / structures
 // / functions that are mostly-identical share a builder" — the
 // heliopause and Local Group label families differ only in their
 // sample geometry and visibility predicate, so they share this builder
@@ -61,7 +61,7 @@ export function createDistanceGatedLabel(
   // first setVisible() call always writes through. Without this, an SVG
   // element with no `display: none` in markup is treated as visible by
   // default and the first hide call doesn't paint until something else
-  // forces a write (stellata-8ee).
+  // forces a write.
   let visible: boolean | null = null;
   let smoothedX: number | null = null;
   let smoothedY: number | null = null;

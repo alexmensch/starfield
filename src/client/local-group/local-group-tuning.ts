@@ -9,7 +9,7 @@ import {
 } from './local-group';
 
 // Dev-only tuning section for the Local Group wireframe layer
-// (stellata-38m). Three knobs drive the apparent-size ranking that
+//. Three knobs drive the apparent-size ranking that
 // governs both the MW label and every LG dwarf label:
 //
 //   • top N        — max labels visible at once (default 5).

@@ -1,28 +1,9 @@
 import type { Stellata } from '../stellata';
 
-// Live diagnostic readouts for the focused-star pin (uPinFocusToCenter)
-// and the camera/target state that drives its engagement guard. Mounted
-// as a section inside the unified debug panel (see debug.ts).
-//
-// What it shows:
-//   - Current focus / camera mode / warp+aim flags / pin engaged state.
-//   - controls.target now and its latched min/max range per axis (signed —
-//     so a tiny accidental pan in a single direction shows up as a non-zero
-//     extreme on that axis even if it self-cancels later).
-//   - camera.position the same way.
-//   - distCam now and latched range; controls.minDistance for context.
-//   - Pin flip count and total off-frames, so brief disengagements during
-//     a long interaction are visible after the fact.
-//
-// Why latched extremes: the pin guard threshold is target.lengthSq() < 1e-12
-// (target.length < 1e-6 pc). Trackpad / accidental input can pan target by
-// orders of magnitude more than that on a sub-second timescale and self-
-// dampen back toward zero. Watching only the "now" value misses these
-// transient excursions; the latched extremes capture them.
-//
-// Click the [click to reset latches] label at the bottom to reset extremes
-// without dismissing the panel. The body of the section is selectable text
-// (drag-select to copy).
+// Focused-star-pin diagnostics. Latched signed min/max per axis
+// capture transient excursions (trackpad pans can swing target by
+// orders of magnitude past the 1e-6 pc engagement threshold and
+// self-dampen back toward zero before the next "now" sample).
 
 interface Latch {
   tgtMaxX: number; tgtMinX: number;

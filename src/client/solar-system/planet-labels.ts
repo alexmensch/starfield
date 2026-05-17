@@ -1,15 +1,10 @@
-// Per-planet body labels (stellata-3re.4, contract from stellata-3re.9).
-//
-// Always-on labels anchored to each planet's projected screen position
-// for the focused host's PlanetSystem. Name only; no hover, no click,
-// no orbital info. Hidden in chart mode (m40.3 owns chart-mode planet
-// glyphs separately) and during warp (the parent #overlay SVG already
-// hides via the body.warping CSS rule).
+// Always-on planet name labels for the focused host's PlanetSystem.
+// Hidden in chart mode (chart-mode owns its own planet glyphs) and
+// during warp (parent #overlay SVG hides via body.warping CSS).
 //
 // Reads cached local-frame positions from
-// Stellata.getFocusedPlanetLocalPositions() so the labels stay in sync
-// with the body mesh's instance positions without re-running the
-// placeholder math.
+// Stellata.getFocusedPlanetLocalPositions() so the labels stay in
+// sync with the body-mesh instance positions.
 
 import * as THREE from 'three';
 import type { Stellata } from '../stellata';
@@ -78,7 +73,7 @@ export function createPlanetLabels(stellata: Stellata): void {
       return;
     }
     // Chart (mono) mode renders its own paper-aesthetic glyph layer
-    // (stellata-m40.3) and shouldn't double up with these labels.
+    // and shouldn't double up with these labels.
     if (stellata.getMonochrome()) {
       setGroupVisible(false);
       return;

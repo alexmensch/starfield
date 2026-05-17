@@ -1,4 +1,4 @@
-// Cross-provider pick disambiguator for the hover engine (stellata-lo5).
+// Cross-provider pick disambiguator for the hover engine.
 //
 // Each `HoverProvider` runs its own pick path and reduces to a single
 // best `HoverHit` (or null) using the existing two-tier shape from

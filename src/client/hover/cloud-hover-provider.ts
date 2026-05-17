@@ -1,8 +1,8 @@
-// Molecular cloud hover provider (stellata-lo5.7). Sibling of star /
+// Molecular cloud hover provider. Sibling of star /
 // planet / Local Group / heliopause providers for the molecular-cloud
 // ellipsoid layer.
 //
-// Visibility ⇒ hoverable per stellata-lo5-hover-conventions Rule 2:
+// Visibility ⇒ hoverable per hover Rule 2:
 // the provider does NOT gate on focused-host / mode / warp state.
 // `Picker.pickCloudHit` mirrors the renderer's "is this drawn?"
 // predicate — the cloud layer is attached AND its group is visible —

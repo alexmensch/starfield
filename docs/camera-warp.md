@@ -9,14 +9,13 @@ see `docs/camera-controls.md`; for OBSERVE mode see
 
 The 3-phase FSM, `WarpState`, the `startWarp` / `finishWarp` /
 `updateWarp` / `tryMidFlyRecentre` / `swapObserveAnchor` methods, plus
-the warp-only scratch state all live in `src/client/camera/warp-controller.ts`
-(extracted from `stellata.ts` in stellata-9mm.194.5). The integration
-shell composes the controller alongside Picker / AimController, and
-delegates the animate-loop tick when `warp.isActive()` returns true.
-Cross-controller coupling (focus state, FocusTarget factories,
-floating-origin recentre, vector-slot clear) lives behind the
-`FocusOps` interface that Stellata implements directly today; 9mm.194.8
-hands that seam to FocusController and the `focus:` dep wire updates
+the warp-only scratch state all live in `src/client/camera/warp-controller.ts`.
+The integration shell composes the controller alongside Picker /
+AimController and delegates the animate-loop tick when
+`warp.isActive()` returns true. Cross-controller coupling (focus
+state, FocusTarget factories, floating-origin recentre, vector-slot
+clear) lives behind the `FocusOps` interface implemented by
+FocusController; the `focus:` dep wire updates
 in one line.
 
 ## Warp animation
