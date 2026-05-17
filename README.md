@@ -16,11 +16,6 @@ a volume up to 6.5 million light years from our solar system.
 
 Try it at **[https://stellata.xyz](https://stellata.xyz)**.
 
-<!-- TODO: hero screenshot — recommended: a few hundred pc out from
-     Sol, looking back through the Milky Way band, constellation lines
-     on, HUD ring + Sol/GC arrows visible. Conveys the "real 3D
-     galaxy you can navigate" framing in one image. -->
-
 ![Stellata — hero view](docs/screenshots/hero.png)
 
 ## Highlights
@@ -66,12 +61,6 @@ Try it at **[https://stellata.xyz](https://stellata.xyz)**.
   flat hard-edged discs sized by apparent magnitude, full
   Bayer/Flamsteed labels, constellation names, double-star wings,
   variable-star rings.
-
-<!-- TODO: second screenshot — recommended: star chart mode at a
-     constellation-scale FOV (Orion or Cygnus works well), showing
-     the paper aesthetic, Bayer letters, and a couple of binary
-     glyphs. Visually very distinct from the photographic mode
-     above. -->
 
 ![Stellata — chart mode](docs/screenshots/chart-mode.png)
 
