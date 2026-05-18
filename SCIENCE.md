@@ -292,6 +292,67 @@ brightness curve + smoothstep taper) and `src/client/stellata.ts`
 (`MAG_PRESETS`, `applyMagnitudePreset`, `computePresetPxSizes`).
 Live tuning via `debug.panel()` in the browser console.
 
+## Star colour calibration
+
+Per-star chromaticity is sampled from a 256-entry blackbody → sRGB
+lookup table indexed by B-V. The table is precomputed at build time
+(`scripts/blackbody-lut.ts` → `src/client/shaders/blackbody-lut.ts`)
+and bound to the star shader as a 256×1 `DataTexture`. Each entry
+folds three physically-grounded steps:
+
+1. **B-V → effective temperature** via the Ballesteros (2012) empirical
+   relation,
+   `T_eff = 4600 × (1/(0.92(B-V) + 1.7) + 1/(0.92(B-V) + 0.62))`,
+   calibrated against stars with both indices measured independently.
+   Accurate across A–K main-sequence, with reasonable extrapolation
+   into M and hot B.
+2. **Planck × CIE 1931** — the Planck spectrum at T_eff is integrated
+   against the CIE 1931 2° standard-observer colour-matching functions,
+   using the analytical multi-Gaussian fits in Wyman, Sloan & Shirley
+   (2013). The fits reproduce the tabulated CMFs to ~1%, well below
+   the chromaticity threshold relevant for star rendering.
+3. **XYZ → sRGB D65** — the standard linear sRGB transform (IEC
+   61966-2-1), peak-normalised per entry to preserve chroma, then
+   gamma-encoded via the sRGB piecewise transfer function. Out-of-gamut
+   negative components (hot O-stars whose Planckian chromaticity falls
+   outside sRGB) clip to zero before normalisation.
+
+Dust reddening composes upstream of the LUT: the shader integrates A_V
+along the camera-to-star sightline via the Edenhofer 3D dust map and
+shifts the B-V used for LUT sampling by `E(B-V) = A_V / 3.1`. The LUT
+input is therefore the **observed** (dust-reddened) B-V from the
+camera's vantage, not the intrinsic value, so colour drifts physically
+as the camera traverses dust between observer and star (the Mu Cephei
+"Garnet Star ↔ Peach Star" case study in
+`research/star-spectral-rendition/RECOMMENDATION.md`).
+
+The LUT spans B-V ∈ [-0.4, +2.0] in 256 entries; values are clamped
+to the endpoints before sampling. Hotter / cooler tails saturate at
+the endpoint colour, which is fine for the catalog's working range
+(intrinsic OB stars bottom out around -0.3; the reddest M-supergiants
+reach B-V ≈ +2.0–2.5 only after substantial line-of-sight extinction).
+
+Sources:
+
+- Ballesteros, F.J. (2012). New insights into black bodies.
+  *Europhysics Letters* 97, 34008.
+  https://doi.org/10.1209/0295-5075/97/34008
+- Wyman, C., Sloan, P.-P., Shirley, P. (2013). Simple analytic
+  approximations to the CIE XYZ color matching functions. *Journal of
+  Computer Graphics Techniques* 2(2), 1–11.
+  https://doi.org/10.5281/zenodo.10049479
+- IEC 61966-2-1:1999. Multimedia systems and equipment — Colour
+  measurement and management — Part 2-1: Colour management — Default
+  RGB colour space — sRGB.
+- Cross-check reference: Mitchell Charity's tabulated blackbody RGBs
+  at http://www.vendian.org/mncharity/dir3/blackbody/ (agreement
+  ΔE ≤ 5 across 3000–30000 K).
+
+Implementation: `scripts/blackbody-lut.ts` (LUT generator + pure
+helpers), `src/client/shaders/blackbody-lut.ts` (generated artifact),
+`src/client/shaders/star.vert.glsl` (`ciToColor` sampler), and
+`src/client/stellata.ts::makeColorLutTexture`.
+
 ## Variable-star modelling
 
 GCVS provides a period and a magnitude amplitude per matched star.
