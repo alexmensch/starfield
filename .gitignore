@@ -22,8 +22,11 @@ public/dust/
 # re-encode without re-running the 10-minute query phase. Local-only.
 data/dust/.voxels.npy
 
-# Python venv for scripts/build-dust.py
+# Python venv for scripts/build-dust.py and Phase 1 refresh scripts
 .venv/
+
+# Python bytecode cache (refresh_lib gets imported by refresh_lib.test.py)
+scripts/__pycache__/
 
 
 # Beads / Dolt files (added by bd init)
