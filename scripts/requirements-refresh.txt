@@ -1,0 +1,14 @@
+# Dependencies for the Phase 1 catalogue-refresh scripts (manual-run).
+# Install into the project venv:
+#
+#   python3 -m venv .venv
+#   .venv/bin/pip install -r scripts/requirements-refresh.txt
+#
+# Lower bounds reflect the versions verified during dch.21 development;
+# upper bounds are intentionally absent so security fixes flow through.
+
+numpy>=1.26
+astropy>=6.0
+astroquery>=0.4.7
+pyvo>=1.5
+requests>=2.31
