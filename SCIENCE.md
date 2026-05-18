@@ -15,6 +15,88 @@ two audiences:
 Implementation details live in the docs under `docs/`; this file points
 into them where relevant.
 
+## Scope principles
+
+Three overarching principles govern how the model is built and which
+detail is in scope at which range. Every individual modelling decision
+below should be consistent with these.
+
+### Data fidelity — "best possible model based on current observational data and knowledge"
+
+Stellata is a physical-accuracy project, not a stylised visualisation.
+The catalog grows in well-defined releases (Gaia DR4 expected late 2026,
+periodic AT-HYG refreshes), not continuously, so one-time data-
+processing investment pays off forever. There is no manual review path
+— 300k+ stars cannot be hand-checked, so the data-processing
+infrastructure itself has to be correct.
+
+When scoping data-processing / cross-match / catalog-ingest work:
+
+1. **Default to the hard upfront generalised solution, not a famous-
+   star carve-out + heuristic fallback.** The "tier just beyond the
+   famous ones" is always the trap — solve the class of problem, not
+   the visible exemplars. If "the system would need 20 hand-curated
+   overrides" the system is wrong, not the data.
+2. **Prefer official source-ID cross-walks** (HIP numbers, Gaia source
+   IDs, NSS catalogs, SIMBAD identifiers) over position-based matching
+   when the cross-walk exists. Position-based matching is the fallback,
+   not the primary strategy.
+3. **Hand-curated overrides** (e.g. `data/local-group/overrides.tsv`)
+   are acceptable only for truly singular edge cases where no canonical
+   source resolves them, or for objects a catalog excludes by
+   construction (M31, M33 in LVDB's `dwarf_all`) — not as a substitute
+   for systematic data engineering.
+4. **Ship-less-accurate-now vs ship-more-accurate-later: prefer the
+   latter for catalog/data work.** UX and rendering polish can iterate;
+   the catalog underpinning the model can't be re-shipped without
+   re-rendering everything.
+5. **All matching/processing must keep working when external catalogs
+   upgrade.** When refactoring a cross-match, ask: does this depend on
+   hand-tuned values that won't survive a DR4 swap? If yes, the
+   refactor isn't done.
+6. **Validation matters at scale.** Spot-checking 5 famous stars
+   doesn't tell you what's happening at star #150,000. When shipping a
+   new processing stage, build a parallel automated check (compare
+   against SIMBAD distances for a random sample, etc.) in the same
+   change.
+
+### Detail gradient — highest-density measurable info near Earth, simpler model further out
+
+Per-object near, statistical far. When scoping a layer beyond the
+AT-HYG catalog reach, prefer statistical / aggregate sources (HiPS-
+derived counts, binned populations) over hand-extending per-object
+data. The closer-to-Sol layer queue lives in the prioritisation
+framework (`bd memories stellata-prioritization-framework`); the
+mapping of catalog sources to the regime where they earn their keep is
+the CDS / VizieR ecosystem orientation captured in `bd show
+stellata-36y`.
+
+### Defer detail until zoom affordance
+
+Defer per-object detail rendering (textures, atmospheric haloes,
+banding, surface shading, day-night phase, ring systems, exoplanet
+bodies) until the user can actually navigate close enough to see it.
+
+Stellata bodies are billboarded discs sized via θ = 2·atan(R/d). At
+any host-relative camera distance more than a few thousand body-radii,
+every object floor-clamps to the pixel-size minimum and per-detail
+differences become invisible. Coding the detail before the user can
+perceive it is wasted effort and wasted bundle.
+
+When scoping a new visual layer, ask first: at what camera-to-object
+distance is this detail perceptible? If the answer is closer than the
+user can navigate to under existing focus + minDistance affordances,
+file the detail under the relevant zoom-in epic (currently
+`stellata-2f6` for planet detail, `stellata-bk5.3` for exoplanet
+bodies) and ship the layer without it. Don't reach for shader
+complexity to compensate for a perceptual constraint that's better
+fixed by a camera affordance.
+
+Same logic generalises beyond planets — any catalog object whose v1
+visual is a billboarded disc has the same regime: detail beyond a
+single representative colour earns its keep only when the user can fly
+close enough to see it.
+
 ## Data sources
 
 - **AT-HYG v3.3** (stellar catalogue): https://codeberg.org/astronexus/athyg
@@ -411,12 +493,12 @@ capture, and add the two major spirals LVDB's `dwarf_all` table omits:
   from the Cepheid measurement of Bonanos et al. 2006, *ApJ* 652, 313
   (DOI 10.1086/508140). Standalone row.
 
-Per the project's `frozen-external-data` convention, refreshing the
-LVDB snapshot is an explicit manual step (curl + `npm run
-build:local-group --force`) — `npm run build` never touches the
-network.
+Per the build's data-freshness policy (`docs/build-and-data.md`
+§ Frozen external data), refreshing the LVDB snapshot is an explicit
+manual step (curl + `npm run build:local-group --force`) — `npm run
+build` never touches the network.
 
-Per the `stellata-data-fidelity-principle`, hand-curated overrides are
+Per the data-fidelity principle above (§ Scope principles), hand-curated overrides are
 the exception, reserved for objects with well-studied departures that
 no canonical structural row resolves — or, in the case of M31 / M33,
 for the major spirals that the LVDB `dwarf_all` table excludes by
@@ -599,5 +681,5 @@ science it relates to.
   axial-tilt cues, day-night phase shading.** All deferred to the
   planet-as-object zoom-in epic (`stellata-2f6`) — at the user-
   reachable camera distances every planet floors at the disc-pixel
-  minimum, so detail rendering would be invisible. See the
-  `defer-detail-until-zoom-affordance` rule in CLAUDE.md.
+  minimum, so detail rendering would be invisible. See § Scope
+  principles — Defer detail until zoom affordance above.

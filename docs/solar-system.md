@@ -126,8 +126,8 @@ pass overwrites depth, so they still peek through the perceptual
 halo. See `docs/rendering.md §RenderOrder ladder` for the full
 cross-layer hierarchy. Surface detail (textures, atmospheric haloes,
 banding, axial-tilt cue) stays **deliberately deferred** to the
-planet-zoom epic (`stellata-2f6`); see the
-`defer-detail-until-zoom-affordance` rule in `CLAUDE.md`.
+planet-zoom epic (`stellata-2f6`); see `SCIENCE.md` § Scope principles
+— Defer detail until zoom affordance.
 
 ### Apparent-magnitude formula
 
