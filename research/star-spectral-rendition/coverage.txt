@@ -1,0 +1,61 @@
+# stellata-zsr.1 coverage report
+
+Source: data/athyg_33_classic_ids.csv
+
+Total records: 317,175
+
+## ci (B-V colour index)
+  empty in CSV:         13,074  (4.12%)
+  present in CSV:      304,101  (95.88%)
+
+## spect (spectral type)
+  empty in CSV:        107,289  (33.83%)
+  parseable:           209,817  (66.15%)
+  with lum_class:       92,995  (29.32%)
+
+## joint
+  both empty:                   6,452  (2.03%)
+  ci empty, spect present:      6,622  (2.09%)
+  ci present, spect empty:    100,837  (31.79%)
+  both present:               203,264
+
+## by spectral class (over parseable + unknown)
+  O                431  (0.14%)
+  B             20,588  (6.49%)
+  A             40,242  (12.69%)
+  F             45,636  (14.39%)
+  G             39,397  (12.42%)
+  K             55,362  (17.45%)
+  M              7,685  (2.42%)
+  C/S/W/N/R        440  (0.14%)
+  unknown      107,394  (33.86%)
+
+## by luminosity class (over parseable + unknown)
+  VII/D            38  (0.01%)
+  VI/sd            58  (0.02%)
+  V            42,655  (13.45%)
+  IV           11,651  (3.67%)
+  III          33,225  (10.48%)
+  II            3,622  (1.14%)
+  Ib            1,130  (0.36%)
+  Iab             311  (0.10%)
+  Ia              301  (0.09%)
+  Ia+/0             4  (0.00%)
+  unknown     224,180  (70.68%)
+
+## joint (class, lum) — top 15 buckets
+  K            unknown      32,660  (10.30%)
+  F            unknown      24,082  (7.59%)
+  A            unknown      23,813  (7.51%)
+  G            unknown      22,255  (7.02%)
+  K            III          19,521  (6.15%)
+  F            V            17,404  (5.49%)
+  A            V             9,699  (3.06%)
+  G            V             8,609  (2.71%)
+  B            unknown       8,094  (2.55%)
+  G            III           5,417  (1.71%)
+  M            unknown       5,233  (1.65%)
+  B            V             4,933  (1.56%)
+  A            IV            3,485  (1.10%)
+  B            III           2,784  (0.88%)
+  F            IV            2,779  (0.88%)
