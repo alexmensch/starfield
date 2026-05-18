@@ -302,6 +302,29 @@ def _default_backends() -> list[TapBackend]:
     return [esa_backend(), cds_backend()]
 
 
+# ─── Masked-value normaliser ──────────────────────────────────────────
+
+def coerce_masked(value: Any) -> Any:
+    """Convert astropy/numpy masked values to None for clean TSV nulls.
+
+    Astropy MaskedColumn elements return `numpy.ma.masked` (a
+    MaskedConstant) for missing cells; `str(np.ma.masked)` is "--" which
+    would corrupt the TSV via write_tsv's `str(v)` fallback. Coerce to
+    None so write_tsv emits an empty cell. Object-dtype string columns
+    return masked as `--` strings too — the MaskedConstant isinstance
+    check catches those.
+    """
+    try:
+        import numpy as np
+        if value is np.ma.masked:
+            return None
+        if isinstance(value, np.ma.core.MaskedConstant):
+            return None
+    except ImportError:
+        pass
+    return value
+
+
 # ─── TSV writer ───────────────────────────────────────────────────────
 
 def write_tsv(
