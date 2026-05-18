@@ -316,6 +316,21 @@ class TapClientTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             rl.TapClient([])
 
+    def test_public_backend_factories(self) -> None:
+        # Single-backend scripts (e.g. refresh-bailer-jones.py for VizieR-only
+        # tables) pass `backends=[rl.cds_backend()]` to TapClient. The
+        # factories must return valid TapBackend instances without importing
+        # astroquery/pyvo at module load time.
+        esa = rl.esa_backend()
+        cds = rl.cds_backend()
+        self.assertIsInstance(esa, rl.TapBackend)
+        self.assertIsInstance(cds, rl.TapBackend)
+        self.assertEqual(esa.name, "ESA")
+        self.assertEqual(cds.name, "CDS")
+        # Default list composes both in fallback order.
+        defaults = rl._default_backends()
+        self.assertEqual([b.name for b in defaults], ["ESA", "CDS"])
+
 
 # ─── write_tsv ────────────────────────────────────────────────────────
 

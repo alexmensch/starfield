@@ -270,23 +270,36 @@ class TapClient:
         raise last_transient
 
 
+CDS_TAP_URL = "https://tapvizier.u-strasbg.fr/TAPVizieR/tap"
+
+
+def _esa_run(query: str) -> Any:
+    from astroquery.gaia import Gaia
+    return Gaia.launch_job_async(query).get_results()
+
+
+def _cds_run(query: str) -> Any:
+    import pyvo
+    service = pyvo.dal.TAPService(CDS_TAP_URL)
+    return service.search(query).to_table()
+
+
+def esa_backend() -> TapBackend:
+    """ESA Gaia archive backend (gaiadr3.* tables, full DR3 catalogue)."""
+    return TapBackend(name="ESA", run=_esa_run)
+
+
+def cds_backend() -> TapBackend:
+    """CDS / VizieR TAP backend. Required for VizieR-only tables (e.g.
+    Bailer-Jones I/352/gedr3dis, Hipparcos-2 I/311/hip2) that ESA does
+    not host."""
+    return TapBackend(name="CDS", run=_cds_run)
+
+
 def _default_backends() -> list[TapBackend]:
-    """Build the default ESA + CDS backend list. Lazy imports keep this lib
+    """Default ESA → CDS fallback list. Lazy imports keep this lib
     importable without astroquery/pyvo installed."""
-
-    def esa_run(query: str) -> Any:
-        from astroquery.gaia import Gaia
-        return Gaia.launch_job_async(query).get_results()
-
-    def cds_run(query: str) -> Any:
-        import pyvo
-        service = pyvo.dal.TAPService("https://tapvizier.u-strasbg.fr/TAPVizieR/tap")
-        return service.search(query).to_table()
-
-    return [
-        TapBackend(name="ESA", run=esa_run),
-        TapBackend(name="CDS", run=cds_run),
-    ]
+    return [esa_backend(), cds_backend()]
 
 
 # ─── TSV writer ───────────────────────────────────────────────────────
