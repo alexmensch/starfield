@@ -46,7 +46,8 @@ public/local-group.json       generated artifact (gitignored).
 ```
 
 Refresh of `lvdb-snapshot.csv` is a manual step — per
-`frozen-external-data` the build never reaches the network:
+`docs/build-and-data.md` § Frozen external data the build never
+reaches the network:
 
 ```
 curl -sSL \
@@ -228,7 +229,7 @@ rewritten through `DISPLAY_NAME_OVERRIDES` at build time so LVDB's
   invisible / stellar-scale, not a wireframe primitive.
 - **Star catalogues for LMC/SMC/Sgr stellar populations** — AT-HYG
   depth doesn't reach LMC/SMC reliably; Sgr dSph red giants are
-  marginal. See `stellata-cds-data-sources-and-detail-gradient`.
+  marginal. See `SCIENCE.md` § Scope principles — Detail gradient.
 - **Chart-mode glyphs for Local Group / dSph members** — owned by
   `stellata-m40.4`.
 - **Galactic-disc fade-curve rework** — the current 500 pc / 5 kpc

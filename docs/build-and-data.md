@@ -5,6 +5,39 @@ renderer-ready binaries in `public/`. Everything in this doc is about
 `scripts/*` and the file formats they produce. For the science of *what*
 gets computed (Stefan–Boltzmann radii, etc.), see `SCIENCE.md`.
 
+## Frozen external data
+
+External scientific catalogs in Stellata's pipeline (stellar, ISM,
+nebular, exoplanetary, …) are committed under `data/` and read from
+disk at build time. The build does NOT fetch from the network — no
+`requests.get`, `urllib`, `astroquery`, or `fetch` calls participate in
+`npm run build` or the Python preprocessors.
+
+Why: the build keeps working long-term even when external sources go
+offline, change schemas, or move URLs. Existing pattern reflects this
+across every input — `athyg_33_classic_ids.csv`, `gcvs5.txt`,
+`crossid.txt`, `stellarium-modern-skyculture.json`, Edenhofer dust via
+committed `data/dust/*.bin`, Pace 2024 LVDB
+`data/local-group/lvdb-snapshot.csv`, Hipparcos `data/hip_ccdm.tsv`.
+Refresh from upstream is an explicit, manual, infrequent step, not a
+build dependency.
+
+When adding new external data:
+
+1. Fetch once (manually or via a one-shot helper) and commit the raw
+   file under `data/`. Files over ~1 MB ride Git LFS (see the existing
+   AT-HYG / GCVS / Edenhofer entries; the LVDB snapshot is under the
+   threshold and rides regular git).
+2. Document the source URL + retrieval date in `SCIENCE.md` § Data
+   sources.
+3. Build scripts read from `data/<file>`. They do not hit the network.
+4. If you write a fetch helper, name it explicitly (e.g.
+   `scripts/refresh-clouds.py`) and gate it from `npm run build` —
+   refresh is a separate command, not a build step.
+
+Applies to JSON / CSV / FITS / HDF5 / TSV catalogs, sky-culture JSON,
+dust map binaries — anything sourced from outside the repo.
+
 ## Binary catalog format (`public/catalog.bin`)
 
 Fixed-size records, sorted brightest-first by `absmag`. Current version is
