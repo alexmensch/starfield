@@ -197,14 +197,20 @@ def _dtype_matches(dtype: Any, want: type | tuple[type, ...]) -> bool:
             # NumPy 2.x: np.issubdtype(int32, int) is False — only int64 is
             # a subdtype of Python int (similarly float32 vs float). Map
             # Python builtins to numpy abstract supertypes so int / float
-            # match every width.
-            np_supertypes: dict[type, type] = {
-                int: np.integer,
-                float: np.floating,
-                bool: np.bool_,
-                complex: np.complexfloating,
+            # match every width. `str` accepts both fixed-width unicode
+            # arrays (<UN) and object-dtype arrays (Gaia TAP returns the
+            # latter for variable-length string columns).
+            np_supertypes: dict[type, tuple[type, ...]] = {
+                int: (np.integer,),
+                float: (np.floating,),
+                bool: (np.bool_,),
+                complex: (np.complexfloating,),
+                str: (np.character, np.object_),
             }
-            return any(np.issubdtype(dtype, np_supertypes.get(w, w)) for w in wants)
+            return any(
+                any(np.issubdtype(dtype, t) for t in np_supertypes.get(w, (w,)))
+                for w in wants
+            )
     except ImportError:
         pass
     if isinstance(dtype, type):

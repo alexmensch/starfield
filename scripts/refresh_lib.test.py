@@ -199,6 +199,19 @@ class SchemaTests(unittest.TestCase):
         with self.assertRaises(rl.SchemaError):
             rl.validate_schema(table, {"hip": int})
 
+    def test_matches_string_columns(self) -> None:
+        # Gaia TAP returns variable-length string columns (e.g. the Tycho-2
+        # `original_ext_source_id`) as object-dtype arrays, not fixed-width
+        # unicode. The `str` supertype must accept both shapes so refresh
+        # scripts can declare a column as `str` without worrying which
+        # representation upstream chose.
+        import numpy as np
+        table = {
+            "tyc_object": _FakeColumn(np.dtype("O")),
+            "tyc_unicode": _FakeColumn(np.dtype("<U11")),
+        }
+        rl.validate_schema(table, {"tyc_object": str, "tyc_unicode": str})
+
 
 # ─── is_up_to_date ────────────────────────────────────────────────────
 
