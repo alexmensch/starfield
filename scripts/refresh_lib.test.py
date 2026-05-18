@@ -5,7 +5,11 @@ No network. Uses synthetic exceptions (`TransientError`) and in-memory
 backends so the suite runs in < 1 s without astroquery / pyvo installed.
 
 Run:
-    python3 -m unittest scripts/refresh_lib.test.py
+    python3 scripts/refresh_lib.test.py
+
+(The `.test.py` filename matches the project's `.test.ts` convention but
+trips Python's `-m unittest` module-path parser on the dot; invoking the
+file directly executes `unittest.main()` in the `__main__` block below.)
 """
 
 from __future__ import annotations
@@ -318,16 +322,21 @@ class TapClientTests(unittest.TestCase):
 
     def test_public_backend_factories(self) -> None:
         # Single-backend scripts (e.g. refresh-bailer-jones.py for VizieR-only
-        # tables) pass `backends=[rl.cds_backend()]` to TapClient. The
-        # factories must return valid TapBackend instances without importing
-        # astroquery/pyvo at module load time.
+        # tables, refresh-simbad-sample.py for SIMBAD's divergent dialect)
+        # pass `backends=[rl.<x>_backend()]` to TapClient. The factories must
+        # return valid TapBackend instances without importing astroquery/pyvo
+        # at module load time.
         esa = rl.esa_backend()
         cds = rl.cds_backend()
+        simbad = rl.simbad_backend()
         self.assertIsInstance(esa, rl.TapBackend)
         self.assertIsInstance(cds, rl.TapBackend)
+        self.assertIsInstance(simbad, rl.TapBackend)
         self.assertEqual(esa.name, "ESA")
         self.assertEqual(cds.name, "CDS")
-        # Default list composes both in fallback order.
+        self.assertEqual(simbad.name, "SIMBAD")
+        # Default list composes ESA + CDS in fallback order. SIMBAD is NOT
+        # in the default list — it's an explicit override per its caller.
         defaults = rl._default_backends()
         self.assertEqual([b.name for b in defaults], ["ESA", "CDS"])
 
