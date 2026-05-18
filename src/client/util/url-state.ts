@@ -85,7 +85,7 @@ const INDEX_TO_PRESET: MagPresetName[] = ['naked-eye', 'binoculars', 'all'];
 //   mode=observe — chart is observe-gated), 7 = constellations disabled.
 const FLAG_GRID         = 1 << 0;
 const FLAG_HUD          = 1 << 1;
-// bit 2 reserved (formerly FLAG_MC_DISABLED — molecular clouds shelved for v1.0)
+// bit 2 reserved (formerly FLAG_MC_DISABLED — molecular clouds shelved)
 const FLAG_MW_DISABLED  = 1 << 3;
 const FLAG_UNIT_LY      = 1 << 4;
 const FLAG_MODE_OBSERVE = 1 << 5;

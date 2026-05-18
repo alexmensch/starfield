@@ -88,7 +88,7 @@ async function main() {
     // dust debugging and not worth gating behind an env check on a solo
     // project.
     window.stellata = stellata;
-    // Cloud layer is shelved for v1.0 (CLAUDE.md). The fetch and parsing
+    // Cloud layer is currently shelved (CLAUDE.md). The fetch and parsing
     // stay so the machinery is verified; the attach is suppressed so the
     // layer doesn't enter the scene. Re-enable by uncommenting the line
     // below.
@@ -146,7 +146,7 @@ async function main() {
     registerThemeStellata(stellata);
     bindChartMode(stellata, { bayerMap, starLabels });
     bindControls(stellata);
-    // null cloudCatalog: cloud layer is shelved for v1.0 (CLAUDE.md), so
+    // null cloudCatalog: cloud layer is currently shelved (CLAUDE.md), so
     // search shouldn't surface unreachable cloud entries. Pass
     // `cloudCatalog` directly when re-enabling.
     bindSearch(stellata, catalog, searchIndex, starLabels, null);
@@ -232,7 +232,7 @@ async function main() {
       }));
     }
     // Cloud provider registers iff the cloud layer is attached. The
-    // attach call is shelved at v1.0 (CLAUDE.md), so this branch is
+    // attach call is currently shelved (CLAUDE.md), so this branch is
     // unreached in shipping builds — un-shelving (uncommenting the
     // `attachClouds(cloudCatalog)` line above) auto-registers the
     // provider with no further wiring. The formatter and provider class

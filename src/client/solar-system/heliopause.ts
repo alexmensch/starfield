@@ -240,9 +240,9 @@ export function createHeliopauseLabel(stellata: Stellata): void {
     sampleCount: HELIOPAUSE_SAMPLE_POINTS_LOCAL.length,
     // HELIOPAUSE_SAMPLE_POINTS_LOCAL is already in Sol-anchored local pc — which
     // *is* world space whenever the heliopause label can show (the
-    // predicate below requires a focused planet system, and Sol is the
-    // only planet-bearing host in v1 so worldOffset == Sol's absolute
-    // position). No worldOffset subtraction needed here.
+    // predicate below requires a focused planet system, and Sol is
+    // currently the only planet-bearing host so worldOffset == Sol's
+    // absolute position). No worldOffset subtraction needed here.
     getWorldSample: (i, out) => out.copy(HELIOPAUSE_SAMPLE_POINTS_LOCAL[i]),
     visible: () => isHeliopauseApexVisible(stellata),
     // Bottom-right diagonal (1, 1)/√2 in CSS y-down coords.

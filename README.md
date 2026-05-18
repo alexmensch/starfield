@@ -375,7 +375,7 @@ Data sources retain their own licences:
   `dwarf_all` snapshot at `data/local-group/lvdb-snapshot.csv` is a
   frozen copy of the upstream table.
 - **Zucker 2020 + 2021** (molecular cloud distances and bounding
-  boxes; data committed but rendering shelved for v1.0) —
+  boxes; data committed but rendering currently shelved) —
   [10.3847/1538-4357/ab9d24](https://doi.org/10.3847/1538-4357/ab9d24)
   and [10.3847/1538-4357/ac1f96](https://doi.org/10.3847/1538-4357/ac1f96).
 

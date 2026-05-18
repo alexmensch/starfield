@@ -270,7 +270,7 @@ export class Stellata implements FrameAnchor {
   // uniform writes still go through `starPipeline.discMaterial.uniforms`
   // from this file; the encapsulation is resource ownership only.
   private starPipeline!: StarPipeline;
-  // Dust-particle render layer. Shelved for v1.0 — see
+  // Dust-particle render layer. Currently shelved — see
   // docs/rendering.md § "Dust extinction + the shelved particle layer".
   private dustParticles!: DustParticleLayer;
 
@@ -2139,7 +2139,7 @@ export class Stellata implements FrameAnchor {
       // in naturally as the camera nears each host's cull distance.
       this.orbitRingsLayer.update(this.camera, window.innerHeight);
       this.planetBodyField.update(this.camera, this.getT());
-      // Cloud layer is shelved for v1.0 (CLAUDE.md): visible=false. Flip
+      // Cloud layer is currently shelved (CLAUDE.md): visible=false. Flip
       // to true (or restore a FilterState flag) when re-enabling.
       this.clouds?.update(this.worldOffset, false);
       return;
@@ -2206,7 +2206,7 @@ export class Stellata implements FrameAnchor {
       h: window.innerHeight,
     });
 
-    // Cloud layer is shelved for v1.0 (CLAUDE.md): visible=false. Flip
+    // Cloud layer is currently shelved (CLAUDE.md): visible=false. Flip
     // to true (or restore a FilterState flag) when re-enabling.
     this.clouds?.update(this.worldOffset, false);
   }
