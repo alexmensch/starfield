@@ -1,6 +1,6 @@
 {
   "name": "stellata",
-  "version": "1.15.0",
+  "version": "1.15.1",
   "private": true,
   "type": "module",
   "license": "AGPL-3.0-only",
@@ -8,6 +8,7 @@
   "scripts": {
     "build:catalog": "tsx scripts/build-catalog.ts",
     "build:lut": "tsx scripts/blackbody-lut.ts",
+    "build:binaries": "python3 scripts/build-binaries.py",
     "build:clouds": "python3 scripts/build-clouds.py",
     "refresh:gaia-hip": "python3 scripts/refresh-gaia-hip-xmatch.py",
     "refresh:gaia-tyc": "python3 scripts/refresh-gaia-tyc-xmatch.py",
