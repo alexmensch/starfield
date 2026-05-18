@@ -332,6 +332,43 @@ class TapClientTests(unittest.TestCase):
         self.assertEqual([b.name for b in defaults], ["ESA", "CDS"])
 
 
+# ─── coerce_masked ────────────────────────────────────────────────────
+
+class CoerceMaskedTests(unittest.TestCase):
+    def test_passthrough_for_plain_values(self) -> None:
+        self.assertEqual(rl.coerce_masked(1.5), 1.5)
+        self.assertEqual(rl.coerce_masked(0), 0)
+        self.assertEqual(rl.coerce_masked("Orbital"), "Orbital")
+        self.assertIsNone(rl.coerce_masked(None))
+
+    def test_converts_masked_scalar_to_none(self) -> None:
+        import numpy as np
+        self.assertIsNone(rl.coerce_masked(np.ma.masked))
+
+    def test_converts_masked_array_element_to_none(self) -> None:
+        # Astropy MaskedColumn cells return np.ma.masked (a MaskedConstant)
+        # for missing entries; the second isinstance branch catches any
+        # other MaskedConstant subclass instance the upstream may emit.
+        import numpy as np
+        arr = np.ma.array([1.0, 2.0, 3.0], mask=[False, True, False])
+        self.assertEqual(rl.coerce_masked(arr[0]), 1.0)
+        self.assertIsNone(rl.coerce_masked(arr[1]))
+        self.assertEqual(rl.coerce_masked(arr[2]), 3.0)
+
+    def test_round_trips_through_write_tsv(self) -> None:
+        # Integration with write_tsv — the masked-to-None round trip is the
+        # whole point of coerce_masked, so pin it as a single assertion.
+        import numpy as np
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / "out.tsv"
+            rl.write_tsv(
+                [{"a": rl.coerce_masked(np.ma.masked), "b": rl.coerce_masked(2.5)}],
+                columns=["a", "b"],
+                output=out,
+            )
+            self.assertEqual(out.read_text(), "a\tb\n\t2.5\n")
+
+
 # ─── write_tsv ────────────────────────────────────────────────────────
 
 class WriteTsvTests(unittest.TestCase):

@@ -223,7 +223,7 @@ def check_spot_row(rows_by_id: dict[int, Any], spec: dict[str, Any]) -> None:
     for field, expected in spec.items():
         if field == "source_id":
             continue
-        actual = coerce_masked(row[field])
+        actual = rl.coerce_masked(row[field])
         if expected is None:
             if actual is not None:
                 deltas.append(f"  {field}: expected NULL, got {actual!r}")
@@ -242,27 +242,6 @@ def check_spot_row(rows_by_id: dict[int, Any], spec: dict[str, Any]) -> None:
             f"refresh-gaia-nss: spot-check source_id {sid} drift — "
             f"{len(deltas)} field(s) outside tolerance:\n{joined}"
         )
-
-
-def coerce_masked(value: Any) -> Any:
-    """Convert astropy/numpy masked values to None for clean TSV nulls.
-
-    Astropy MaskedColumn elements return `numpy.ma.masked` (a
-    MaskedConstant) for missing cells; `str(np.ma.masked)` is "--" which
-    would corrupt the TSV. Coerce to None so `write_tsv` emits an empty
-    cell. Object-dtype string columns return masked as `--` strings too —
-    handle those with the explicit check.
-    """
-    try:
-        import numpy as np
-        if value is np.ma.masked:
-            return None
-        # Object-dtype masked strings: astropy renders them as "--".
-        if isinstance(value, np.ma.core.MaskedConstant):
-            return None
-    except ImportError:
-        pass
-    return value
 
 
 def main() -> None:
@@ -294,7 +273,7 @@ def main() -> None:
         check_spot_row(rows_by_id, spec)
 
     rows = (
-        {col: coerce_masked(row[col]) for col in TSV_COLUMNS}
+        {col: rl.coerce_masked(row[col]) for col in TSV_COLUMNS}
         for row in table
     )
     written = rl.write_tsv(rows, columns=TSV_COLUMNS, output=OUT)
