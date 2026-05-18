@@ -9,6 +9,7 @@
     "build:catalog": "tsx scripts/build-catalog.ts",
     "build:lut": "tsx scripts/blackbody-lut.ts",
     "build:clouds": "python3 scripts/build-clouds.py",
+    "refresh:gaia-hip": "python3 scripts/refresh-gaia-hip-xmatch.py",
     "build:local-group": "tsx scripts/build-local-group.ts",
     "build:dust-sync": "tsx scripts/sync-dust.ts",
     "build:client": "vite build",

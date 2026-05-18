@@ -194,7 +194,17 @@ def _dtype_matches(dtype: Any, want: type | tuple[type, ...]) -> bool:
     try:
         import numpy as np
         if isinstance(dtype, np.dtype):
-            return any(np.issubdtype(dtype, w) for w in wants)
+            # NumPy 2.x: np.issubdtype(int32, int) is False — only int64 is
+            # a subdtype of Python int (similarly float32 vs float). Map
+            # Python builtins to numpy abstract supertypes so int / float
+            # match every width.
+            np_supertypes: dict[type, type] = {
+                int: np.integer,
+                float: np.floating,
+                bool: np.bool_,
+                complex: np.complexfloating,
+            }
+            return any(np.issubdtype(dtype, np_supertypes.get(w, w)) for w in wants)
     except ImportError:
         pass
     if isinstance(dtype, type):
@@ -284,7 +294,8 @@ def write_tsv(
 ) -> int:
     """Write `rows` to `output` as tab-separated values with a header line.
     Returns the row count written. None values become empty cells; floats
-    round to `round_floats` decimal places when set."""
+    (Python float OR numpy floating width) round to `round_floats` decimal
+    places when set."""
     output.parent.mkdir(parents=True, exist_ok=True)
     n = 0
     with output.open("w", encoding="utf-8") as f:
@@ -295,10 +306,23 @@ def write_tsv(
                 v = row.get(col)
                 if v is None:
                     cells.append("")
-                elif isinstance(v, float) and round_floats is not None:
-                    cells.append(f"{v:.{round_floats}f}")
+                elif round_floats is not None and _is_float(v):
+                    cells.append(f"{float(v):.{round_floats}f}")
                 else:
                     cells.append(str(v))
             f.write("\t".join(cells) + "\n")
             n += 1
     return n
+
+
+def _is_float(v: Any) -> bool:
+    """True for Python float or any numpy floating width. NumPy 2.x stopped
+    treating np.float32 as a Python-float subclass, so a plain isinstance
+    check would miss astroquery's float32 columns."""
+    if isinstance(v, float):
+        return True
+    try:
+        import numpy as np
+        return isinstance(v, np.floating)
+    except ImportError:
+        return False
