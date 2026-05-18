@@ -314,7 +314,7 @@ export class MilkyWay {
 
   /**
    * Chart-mode hook. The original design rendered an isobar contour pass
-   * here; for v1.0 the volumetric layer is hidden entirely in chart mode
+   * here; the volumetric layer is currently hidden entirely in chart mode
    * while the contour treatment is refined. The blending / uniform
    * switch is preserved against future re-enable.
    */

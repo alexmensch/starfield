@@ -59,7 +59,7 @@ export class LocalGroupLayer {
     this.objects = catalog.objects;
     this.group = new THREE.Group();
     // Behind the star pass but in front of the cloud layer (which is
-    // shelved for v1.0). renderOrder = -1 matches GalacticDisc; the two
+    // currently shelved). renderOrder = -1 matches GalacticDisc; the two
     // are sibling reference overlays.
     this.group.renderOrder = -1;
 

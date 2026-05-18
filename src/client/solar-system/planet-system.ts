@@ -1,8 +1,8 @@
 // Per-star planet data model for the solar-system layer.
 //
 // This module is intentionally generic: any focusable star *may* carry a
-// planet system, even though Sol is the only one populated in v1. The
-// future exoplanet epic plugs additional hosts in by extending the
+// planet system, even though Sol is currently the only one populated.
+// The future exoplanet epic plugs additional hosts in by extending the
 // resolver below without changing the renderer-side shape.
 //
 // Rendering layers (planet bodies, orbit rings, heliopause) gate on
@@ -211,9 +211,9 @@ export const SOL_PLANETS: readonly Planet[] = [
 
 // Sync probe — does this star have a planet system at all?
 //
-// v1 hardwires "planets ⇔ Sol". When the exoplanet epic lands an exoplanet
-// flag bit on the catalog record, this becomes a flag check; callers
-// stay unchanged.
+// Currently hardwires "planets ⇔ Sol". When the exoplanet epic lands an
+// exoplanet flag bit on the catalog record, this becomes a flag check;
+// callers stay unchanged.
 export function hasPlanets(catalog: Catalog, starIdx: number | null): boolean {
   if (starIdx === null || starIdx < 0) return false;
   return starIdx === catalog.solIndex;

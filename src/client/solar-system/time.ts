@@ -2,7 +2,7 @@
 // system layer.
 //
 // `t` is a Unix-seconds double. Anything driven by ephemerides reads
-// the live value via Stellata.getT(). Pinned to "now" in v1; the
+// the live value via Stellata.getT(). Currently pinned to "now"; the
 // time-scrubber overrides via Stellata.setT().
 //
 // Variable-star pulsation has its own cosmetic `uTime` clock — it

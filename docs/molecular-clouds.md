@@ -1,6 +1,6 @@
 # Molecular cloud overlay
 
-> **Status (v1.0):** Shelved. `FilterState.showMolecularClouds` defaults
+> **Status:** Shelved. `FilterState.showMolecularClouds` defaults
 > to `false`, the user-facing toggle is removed from the panel, and the
 > URL flag bit 2 is reserved (no longer encoded). The render path,
 > shaders, build script, and data files are all preserved so the layer
@@ -10,7 +10,7 @@
 
 `molecular-clouds.ts` renders ~96 named local SF clouds as soft warm
 ellipsoids. Originally default-on with a toggle in the Galactic-overlays
-panel section; in v1.0 the toggle is gone and the layer renders nothing.
+panel section; the toggle is now gone and the layer renders nothing.
 Stays visible during warp by design (flying past Taurus is a feature,
 not noise) — relevant once re-enabled.
 

@@ -15,7 +15,7 @@ export interface DustParticleSharedUniforms {
   uDustLogRatio: { value: number };
 }
 
-// Shelved for v1.0 — see docs/rendering.md § "Dust extinction + the
+// Currently shelved — see docs/rendering.md § "Dust extinction + the
 // shelved particle layer" and bd issue stellata-zq3 for the open
 // questions. Default strength = 0 → mesh.visible = false → zero
 // per-frame cost.
