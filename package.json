@@ -1,6 +1,6 @@
 {
   "name": "stellata",
-  "version": "1.15.0",
+  "version": "1.15.1",
   "private": true,
   "type": "module",
   "license": "AGPL-3.0-only",
@@ -11,6 +11,7 @@
     "build:clouds": "python3 scripts/build-clouds.py",
     "refresh:gaia-hip": "python3 scripts/refresh-gaia-hip-xmatch.py",
     "refresh:gaia-tyc": "python3 scripts/refresh-gaia-tyc-xmatch.py",
+    "refresh:gaia-nss": "python3 scripts/refresh-gaia-nss.py",
     "refresh:bailer-jones": "python3 scripts/refresh-bailer-jones.py",
     "refresh:hip2": "python3 scripts/refresh-hipparcos2.py",
     "build:local-group": "tsx scripts/build-local-group.ts",
