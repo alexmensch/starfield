@@ -1,0 +1,47 @@
+# stellata-zsr.1 Apsis empirical coverage probe
+
+Sample size (random Gaia source_ids from AT-HYG): 1000
+Rows returned by gaiadr3.astrophysical_parameters: 999
+  → astrophysical_parameters coverage of sample:  99.9%
+
+## Per-column coverage (over returned rows)
+  teff_gspphot             607  (60.8%)
+  logg_gspphot             607  (60.8%)
+  mh_gspphot               607  (60.8%)
+  azero_gspphot            607  (60.8%)
+  teff_gspspec             607  (60.8%)
+  logg_gspspec             605  (60.6%)
+  mh_gspspec               589  (59.0%)
+
+## Joint coverage (over returned rows)
+  (teff_gspphot AND logg_gspphot):                      607  (60.8%)
+  (teff_gspphot AND logg_gspphot AND mh_gspphot):       607  (60.8%)
+  (teff_gspspec AND logg_gspspec):                      605  (60.6%)
+  UNION — (teff+logg) from gspphot OR gspspec:          847  (84.8%)
+  INTERSECTION — both pipelines have (teff+logg):       365  (36.5%)
+
+  Note: gspphot uses BP/RP photometric spectra; gspspec uses RVS
+  high-resolution spectra. Failures are largely independent at
+  AT-HYG brightness, so the union is the realistic ingestable
+  bucket — either pipeline gives us a usable (Teff, logg) pair.
+
+## Coverage projected to the full AT-HYG.gaia subset
+  AT-HYG rows with Gaia source_id (from coverage.py): 314,865
+  Projected with astrophysical_parameters row:        ~314,550
+  Projected with joint (teff+logg) gspphot:           ~191,123
+  Projected with joint (teff+logg) gspspec:           ~190,493
+  Projected with (teff+logg) from EITHER pipeline:    ~266,690
+
+  Comparison vs status quo (catalog-pure.ts T_TABLE today):
+    Stars with parseable spectral class:               209,817
+    Stars with KNOWN luminosity class:                  92,995  (29.3% of catalog)
+    With Apsis ingest (union projection):             ~266,690  (85.1% of catalog)
+
+## teff_gspphot distribution (K)
+  N=607  min=3039  p25=5422  median=6238  p75=7750  max=31343
+
+## logg_gspphot distribution (dex)
+  N=607  min=0.49  p25=3.36  median=3.90  p75=4.13  max=4.65
+  Giant-like (logg < 3.5):         173  (28.5%)
+  Subgiant-like (3.5 ≤ logg < 4.0):   186  (30.6%)
+  MS-like (logg ≥ 4.0):            248  (40.9%)
