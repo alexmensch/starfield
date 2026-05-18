@@ -42,7 +42,7 @@ defaults do NOT apply to this codebase. They are overridden by:
 ## Folder & module conventions
 
 The codebase is organised by per-subsystem folder + cross-cutting type
-folder + a minimal root. Adding a new module follows three rules so we
+folder + a minimal root. Adding a new module follows four rules so we
 don't re-incur the kind of flat-folder / 4kloc-integration-shell drift
 that motivated `stellata-9mm.194`:
 
@@ -62,15 +62,20 @@ that motivated `stellata-9mm.194`:
   with the shape "state struct + tick + dispose + state-changes-via-method"
   lands as its own controller class. Camera-bound: `camera/<name>-controller.ts`.
   Layer-bound: in the layer folder.
+- **No multi-paragraph in-code prose.** Physics derivations,
+  calibration rationale, tuning history → `SCIENCE.md` or
+  `docs/<area>.md`, with a one-line code-side pointer (`// see
+  SCIENCE.md § Star size physics`). Soft ceiling: 12 lines per
+  comment block in `src/client/*.ts`. The pure-helpers-extract-at-
+  second-use companion to this rule is the DRY override stated in
+  "Code conventions" above.
 
-Rules 4 + 5 (pure-helpers extract at second use; no multi-paragraph
-in-code prose) live in bd memory
-`stellata-folder-and-controller-conventions` — run `bd memories
-<key>` to read. The memory plus this section form the authoritative
-convention surface; controller-specific architectural prose lives in
-the matching `docs/*.md` (`docs/architecture.md`, `docs/camera-warp.md`,
+Controller-specific architectural prose lives in the matching
+`docs/*.md` (`docs/architecture.md`, `docs/camera-warp.md`,
 `docs/camera-observe.md`, `docs/camera-arrival.md`), updated by each
-extraction PR as the boundary it documents stabilises.
+extraction PR as the boundary it documents stabilises. Code-review
+patterns that catch recurring bug shapes are in
+`docs/authoring-patterns.md`.
 
 ## Repo layout
 
@@ -259,6 +264,11 @@ Claude Code should read on demand when working on the relevant area.
   anything that reads star positions. The 194 extraction chain adds
   per-controller sections (Picker / Aim / Warp / ObserveTransition /
   Focus) here as each one lands.
+- **`docs/authoring-patterns.md`** — write-time consistency rules
+  (lifecycle pairing, sibling symmetry, sentinel-init for dirty-track,
+  single source of truth for time / camera state). Read before adding
+  a new `bus.on()` call, a sibling of an existing helper, a sentinel-
+  init dirty-track pattern, or any state struct shifted mid-animation.
 - **`docs/url-state.md`** — `?v=` URL wire format: v3 envelope,
   presence mask, per-component vec3 sub-masks, legacy v1/v2 decode,
   process for adding a field, console helpers. Read when touching
@@ -310,6 +320,12 @@ Claude Code should read on demand when working on the relevant area.
   `docs/galactic-overlay.md` alongside the rest of the galactic
   overlay feature.) Read when touching anything in `*-overlay.ts` or
   `*-mask.ts`.
+- **`docs/hover.md`** — hover-label engine, per-layer providers and
+  formatters, and the four UX conventions (spell out units, no
+  focus-gate on hover, whole-object hit surface for extended objects,
+  HTML monospace typography in chart mode). Read when touching
+  anything in `src/client/hover/` or adding a hover surface to a new
+  layer.
 - **`docs/ui-and-controls.md`** — layout containers, panel
   reverse-sync, magnitude presets + override flags, FOV / theme /
   debug-panel hooks, brand box, keyboard shortcuts (single capture-
