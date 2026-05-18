@@ -134,12 +134,17 @@ out float vAaWidth;
 
 const float LOG10 = 2.302585093;
 
+// Blackbody → sRGB lookup table indexed by B-V. 256×1 texture; the
+// Ballesteros 2012 B-V→Teff conversion and Planck + CIE 1931 + sRGB
+// D65 transform are baked in at LUT build time (see scripts/blackbody-lut.ts).
+// BV_MIN / BV_MAX must match src/client/shaders/blackbody-lut.ts.
+uniform sampler2D uColorLut;
+const float BV_MIN = -0.4;
+const float BV_MAX = 2.0;
+
 vec3 ciToColor(float ciVal) {
-    float t = clamp((ciVal + 0.4) / 2.4, 0.0, 1.0);
-    vec3 hot  = vec3(0.65, 0.78, 1.00);
-    vec3 mid  = vec3(1.00, 0.98, 0.92);
-    vec3 cool = vec3(1.00, 0.55, 0.35);
-    return t < 0.5 ? mix(hot, mid, t * 2.0) : mix(mid, cool, (t - 0.5) * 2.0);
+    float t = clamp((ciVal - BV_MIN) / (BV_MAX - BV_MIN), 0.0, 1.0);
+    return texture(uColorLut, vec2(t, 0.5)).rgb;
 }
 
 // Raymarch from the camera to the star through the dust texture and

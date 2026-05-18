@@ -5,6 +5,7 @@ import type { DustField, DustParticleData } from './loaders/dust-loader';
 import vertexShader from './shaders/star.vert.glsl?raw';
 import fragmentShader from './shaders/star.frag.glsl?raw';
 import perceptualDiscChunk from './shaders/perceptual-disc.glsl?raw';
+import { makeColorLutTexture } from './shaders/blackbody-lut';
 import {
   DustParticleLayer,
   type DustParticleSharedUniforms,
@@ -555,6 +556,9 @@ export class Stellata implements FrameAnchor {
       // three star passes (disc, glow, core mask) share these uniforms so
       // the suppression fires uniformly.
       uHideFocusIdx: { value: -1 },
+      // Blackbody → sRGB lookup for the star vertex shader's ciToColor.
+      // See SCIENCE.md § "Star colour calibration".
+      uColorLut: { value: makeColorLutTexture() },
       // Force-center the focused star at NDC (0,0). At the close-approach
       // orbit floor (~5×10⁻⁸ pc for Sol-class stars), float32 cancellation
       // in projectionMatrix * modelViewMatrix * (0,0,0,1) can drift the

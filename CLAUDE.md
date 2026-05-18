@@ -42,7 +42,7 @@ defaults do NOT apply to this codebase. They are overridden by:
 ## Folder & module conventions
 
 The codebase is organised by per-subsystem folder + cross-cutting type
-folder + a minimal root. Adding a new module follows four rules so we
+folder + a minimal root. Adding a new module follows five rules so we
 don't re-incur the kind of flat-folder / 4kloc-integration-shell drift
 that motivated `stellata-9mm.194`:
 
@@ -55,13 +55,27 @@ that motivated `stellata-9mm.194`:
   `solar-system/`, `local-group/`, `milkyway/`, `galactic/`,
   `molecular-clouds/`, `chart-mode/`.
 - **Cross-cutting plumbing lands in the matching type folder.**
-  `overlays/`, `camera/`, `loaders/`, `ui/`, `util/`, `typeahead/`,
-  `modals/`, `debug/`. A new top-level type folder is only justified
-  when 3+ files belong there.
+  Includes small one-off helpers — texture/buffer factories, parsers,
+  adapters, sentinel constants — not just large utilities. `overlays/`,
+  `camera/`, `loaders/`, `ui/`, `util/`, `typeahead/`, `modals/`,
+  `debug/`. A new top-level type folder is only justified when 3+
+  files belong there.
 - **Controllers extract at write time, not retrospectively.** State
   with the shape "state struct + tick + dispose + state-changes-via-method"
   lands as its own controller class. Camera-bound: `camera/<name>-controller.ts`.
   Layer-bound: in the layer folder.
+- **`stellata.ts` is the integration shell, not a default home.** New
+  module-scope functions — factories, adapters, pure transforms — go
+  in their matching subsystem folder even when small (a 5–20 line
+  helper still qualifies). Default question before adding a top-level
+  `function` / `const` in `stellata.ts`: would a future reader look
+  here, or in `shaders/` / `loaders/` / `camera/` / `util/` / the
+  layer's folder? If anywhere else, put it there. If genuinely nowhere
+  else, that's the signal a new subsystem folder is justified, not
+  that `stellata.ts` should grow. Generated artifacts marked
+  `// AUTO-GENERATED` cannot host hand-written helpers — pair them
+  with a sibling wrapper module (e.g. `foo-data.ts` generated +
+  `foo.ts` hand-written) so regen never clobbers the wrapper.
 - **No multi-paragraph in-code prose.** Physics derivations,
   calibration rationale, tuning history → `SCIENCE.md` or
   `docs/<area>.md`, with a one-line code-side pointer (`// see
