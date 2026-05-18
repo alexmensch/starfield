@@ -349,6 +349,43 @@ If the CCDM file is absent the build logs and continues — the
 geometric pass still runs and chart mode still works, just with the
 ~14-pair coverage.
 
+## Bailer-Jones DR3 distance override
+
+`scripts/build-catalog.ts` swaps AT-HYG's naive `1 / π` distances for
+the Bayesian posteriors published by Bailer-Jones et al. 2021 (CDS
+I/352). The pipeline:
+
+1. Load `data/bailer-jones-dr3.tsv` via `parseBailerJonesTsv` into a
+   `Map<source_id, distance_pc>` keyed by Gaia DR3 `source_id`. The
+   key is kept as a **string** — Gaia source_ids regularly exceed
+   `Number.MAX_SAFE_INTEGER`, so any numeric parse would silently
+   corrupt the join. Photogeometric `r_med_photogeo` is preferred;
+   `r_med_geo` is the fallback when photogeo is absent.
+2. During `readStars`, every AT-HYG row with a non-empty `gaia`
+   source_id is looked up in the map. On a hit, `applyBailerJonesOverride`
+   (in `catalog-pure.ts`) returns the new `{ dist, x, y, z, absmag }`:
+   - `x/y/z` via `icrsSphericalToCartesian(ra, dec, bjDist)` —
+     matches AT-HYG's own ICRS Cartesian basis so the override slots
+     back into the same coordinate space.
+   - `absmag = mag − 5·log₁₀(dist / 10)` — recomputed from the
+     original apparent magnitude with the new distance. Skipping
+     this step would place stars at the new distance but light them
+     for the old one, breaking the disc/glow size chain.
+3. The override fires for ~99.5% of Gaia-DR3-bearing AT-HYG rows.
+   The residual ~0.5% are source_ids absent from the Bailer-Jones
+   publication (small G_R2 / HIP / GJ tail) and keep their AT-HYG
+   values unchanged.
+4. The build also rescues ~15 stars previously dropped at the
+   `dist > 50,000 pc` filter: catastrophic-parallax-inversion
+   supergiants whose Bayesian distance falls below the cap.
+
+If `data/bailer-jones-dr3.tsv` is absent (fresh clone without LFS
+pulled), the build logs and continues — every star keeps its naive
+AT-HYG distance.
+
+Data refresh: `scripts/refresh-bailer-jones.py`. See SCIENCE.md
+§ Bailer-Jones DR3 distance override for the physics rationale.
+
 ## Reference epoch and proper motion
 
 Every stellar layer is a J2000.0 snapshot. The solar system is the

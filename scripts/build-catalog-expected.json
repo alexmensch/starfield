@@ -1,5 +1,5 @@
 {
-  "recordCount": 313242,
+  "recordCount": 313257,
   "binaryPairs": 28,
   "binaryMutualPairs": 14,
   "gcvsEntries": 38881,
@@ -8,11 +8,14 @@
   "gcvsMatched": 3677,
   "ccdmGroups": 12496,
   "ccdmResolved": 12393,
-  "ccdmFlagged": 12384,
+  "ccdmFlagged": 12383,
+  "bjEntries": 310952,
+  "bjEligible": 312024,
+  "bjOverridden": 310379,
   "nameTableEntries": 492,
   "variableCount": 3624,
-  "searchEntries": 313242,
-  "solIndex": 298240,
+  "searchEntries": 313257,
+  "solIndex": 298176,
   "figureCount": 219,
   "figureConstellations": 88
 }

@@ -29,6 +29,11 @@ import {
   type SpectralInfo,
   type BinaryStar,
   type DoublesStar,
+  parseBailerJonesTsv,
+  icrsSphericalToCartesian,
+  apparentToAbsoluteMagnitude,
+  applyBailerJonesOverride,
+  DIST_SRC_BAILER_JONES,
 } from './catalog-pure';
 
 describe('catalog-pure / spectClassIndex', () => {
@@ -741,5 +746,159 @@ describe('catalog-pure / binary-format constants', () => {
     }
     expect(recovered.map((r) => r.name)).toEqual(names);
     expect(recovered.map((r) => r.offset)).toEqual(expectedOffsets);
+  });
+});
+
+// ─── Bailer-Jones (DR3) distance override ──────────────────────────────
+
+describe('catalog-pure / parseBailerJonesTsv', () => {
+  it('parses source_id as string and prefers r_med_photogeo', () => {
+    const tsv =
+      'source_id\tr_med_geo\tr_lo_geo\tr_hi_geo\tr_med_photogeo\tr_lo_photogeo\tr_hi_photogeo\tflag\n' +
+      '204531088580182016\t6366.668\t6300\t6420\t6244.791\t6200\t6280\t10033\n' +
+      '4773096563064098432\t93.528\t92\t94\t92.871\t92\t93\t10023\n';
+    const map = parseBailerJonesTsv(tsv);
+    expect(map.size).toBe(2);
+    expect(map.get('204531088580182016')).toBe(6244.791);
+    expect(map.get('4773096563064098432')).toBe(92.871);
+  });
+
+  it('falls back to r_med_geo when r_med_photogeo is empty', () => {
+    const tsv =
+      'source_id\tr_med_geo\tr_lo_geo\tr_hi_geo\tr_med_photogeo\tr_lo_photogeo\tr_hi_photogeo\tflag\n' +
+      '123\t250.0\t245\t255\t\t\t\t33333\n';
+    const map = parseBailerJonesTsv(tsv);
+    expect(map.get('123')).toBe(250.0);
+  });
+
+  it('throws on missing required columns', () => {
+    expect(() => parseBailerJonesTsv('source_id\tr_med_geo\n1\t10\n'))
+      .toThrow(/r_med_photogeo/);
+  });
+
+  it('skips rows with non-positive distance and blank source_ids', () => {
+    const tsv =
+      'source_id\tr_med_geo\tr_lo_geo\tr_hi_geo\tr_med_photogeo\tr_lo_photogeo\tr_hi_photogeo\tflag\n' +
+      '\t10\t9\t11\t10\t9\t11\t1\n' +
+      '999\t-1\t-1\t-1\t\t\t\t1\n' +
+      '111\t100\t99\t101\t99\t98\t100\t1\n';
+    const map = parseBailerJonesTsv(tsv);
+    expect(map.size).toBe(1);
+    expect(map.get('111')).toBe(99);
+  });
+});
+
+describe('catalog-pure / icrsSphericalToCartesian', () => {
+  it('maps the cardinal RA/Dec triples to expected axes', () => {
+    // ra=0h dec=0° → +X
+    const a = icrsSphericalToCartesian(0, 0, 100);
+    expect(a.x).toBeCloseTo(100, 10);
+    expect(a.y).toBeCloseTo(0, 10);
+    expect(a.z).toBeCloseTo(0, 10);
+    // ra=6h dec=0° → +Y
+    const b = icrsSphericalToCartesian(6, 0, 100);
+    expect(b.x).toBeCloseTo(0, 10);
+    expect(b.y).toBeCloseTo(100, 10);
+    expect(b.z).toBeCloseTo(0, 10);
+    // dec=+90° → +Z (RA irrelevant)
+    const c = icrsSphericalToCartesian(0, 90, 100);
+    expect(c.x).toBeCloseTo(0, 10);
+    expect(c.y).toBeCloseTo(0, 10);
+    expect(c.z).toBeCloseTo(100, 10);
+  });
+
+  it('matches AT-HYG x0/y0/z0 for a representative star (HIP 22365)', () => {
+    // AT-HYG row: ra=4.81481859 h, dec=43.27557981°, dist=9963.4514 pc,
+    // x0=2214.84, y0=6907.647, z0=6830.027.
+    const { x, y, z } = icrsSphericalToCartesian(4.81481859, 43.27557981, 9963.4514);
+    expect(x).toBeCloseTo(2214.84, 1);
+    expect(y).toBeCloseTo(6907.647, 1);
+    expect(z).toBeCloseTo(6830.027, 1);
+    expect(Math.sqrt(x * x + y * y + z * z)).toBeCloseTo(9963.4514, 3);
+  });
+});
+
+describe('catalog-pure / apparentToAbsoluteMagnitude', () => {
+  it('is identity at 10 pc', () => {
+    expect(apparentToAbsoluteMagnitude(5.0, 10)).toBe(5.0);
+  });
+
+  it('M = m − 5·log₁₀(d/10)', () => {
+    // 100 pc is 5 magnitudes dimmer than 10 pc.
+    expect(apparentToAbsoluteMagnitude(15, 100)).toBeCloseTo(10, 10);
+    // 1000 pc is 10 magnitudes dimmer than 10 pc.
+    expect(apparentToAbsoluteMagnitude(20, 1000)).toBeCloseTo(10, 10);
+  });
+});
+
+describe('catalog-pure / applyBailerJonesOverride', () => {
+  // Tier-A fixtures: real AT-HYG + Bailer-Jones DR3 values for stars
+  // documented in stellata-dch.47 / dch.46 — the four catastrophic
+  // parallax-inversion supergiants and a well-measured F-dwarf control.
+  // Numbers pin the override outcome: drift here means the override
+  // changed semantics or the upstream catalogues drifted.
+  interface Fixture {
+    label: string;
+    ra: number; dec: number; mag: number; sourceId: string;
+    athygDist: number;       // AT-HYG dist (pre-override)
+    bjDist: number;          // r_med_photogeo from data/bailer-jones-dr3.tsv
+  }
+  const FIVE_HIPS: Fixture[] = [
+    { label: 'HIP 22365', ra: 4.81481859, dec:  43.27557981, mag:  7.7,  sourceId: '204531088580182016', athygDist:  9963.4514, bjDist: 6244.791 },
+    { label: 'HIP 25733', ra: 5.49517982, dec:  35.37501942, mag:  6.78, sourceId: '183255985260080896', athygDist: 14326.6476, bjDist: 5466.246 },
+    { label: 'HIP 38430', ra: 7.87230124, dec: -26.42963691, mag:  9.19, sourceId: '5602025904044961536', athygDist: 12658.2278, bjDist: 6215.232 },
+    { label: 'HIP 46144', ra: 9.41038175, dec:  62.43823034, mag: 10.14, sourceId: '1040043514891491968', athygDist:  9189.7878, bjDist: 7515.496 },
+    { label: 'HIP 23785', ra: 5.11164486, dec: -50.94139857, mag:  8.39, sourceId: '4773096563064098432', athygDist:    93.1801, bjDist:   92.871 },
+  ];
+  const bjMap = new Map(FIVE_HIPS.map((f) => [f.sourceId, f.bjDist] as const));
+
+  it('returns null when source_id is missing or absent from the map', () => {
+    expect(applyBailerJonesOverride(0, 0, 10, null, bjMap)).toBeNull();
+    expect(applyBailerJonesOverride(0, 0, 10, '', bjMap)).toBeNull();
+    expect(applyBailerJonesOverride(0, 0, 10, '0000', bjMap)).toBeNull();
+  });
+
+  it('pins the BJ distance and recomputes x/y/z + absmag consistently', () => {
+    for (const f of FIVE_HIPS) {
+      const out = applyBailerJonesOverride(f.ra, f.dec, f.mag, f.sourceId, bjMap);
+      expect(out, f.label).not.toBeNull();
+      expect(out!.dist, f.label).toBe(f.bjDist);
+      // Position vector matches the new distance.
+      expect(Math.sqrt(out!.x ** 2 + out!.y ** 2 + out!.z ** 2)).toBeCloseTo(f.bjDist, 3);
+      // Absolute magnitude follows m − 5·log₁₀(d/10).
+      expect(out!.absmag).toBeCloseTo(f.mag - 5 * Math.log10(f.bjDist / 10), 10);
+    }
+  });
+
+  it('pulls the three highest-S/N supergiants back by 37%-62%', () => {
+    // HIP 22365 / 25733 / 38430 are the showcase catastrophic-parallax
+    // pullbacks (37%, 62%, 51%). HIP 46144 is the fourth flagged outlier
+    // but only drops 18% — the test caps at three for the ≥25% headline,
+    // and HIP 46144's pullback is asserted separately below.
+    for (const label of ['HIP 22365', 'HIP 25733', 'HIP 38430']) {
+      const f = FIVE_HIPS.find((x) => x.label === label)!;
+      const out = applyBailerJonesOverride(f.ra, f.dec, f.mag, f.sourceId, bjMap)!;
+      const drop = (f.athygDist - out.dist) / f.athygDist;
+      expect(drop, `${label} drop ratio`).toBeGreaterThan(0.25);
+    }
+  });
+
+  it('HIP 46144 pulls back ~18% (lower-S/N outlier)', () => {
+    const f = FIVE_HIPS.find((x) => x.label === 'HIP 46144')!;
+    const out = applyBailerJonesOverride(f.ra, f.dec, f.mag, f.sourceId, bjMap)!;
+    const drop = (f.athygDist - out.dist) / f.athygDist;
+    expect(drop).toBeGreaterThan(0.15);
+    expect(drop).toBeLessThan(0.20);
+  });
+
+  it('leaves the well-measured F-dwarf HIP 23785 within 5%', () => {
+    const f = FIVE_HIPS.find((x) => x.label === 'HIP 23785')!;
+    const out = applyBailerJonesOverride(f.ra, f.dec, f.mag, f.sourceId, bjMap)!;
+    expect(Math.abs(f.athygDist - out.dist) / f.athygDist).toBeLessThan(0.05);
+  });
+
+  it('DIST_SRC_BAILER_JONES tag is "BJ" (distinct from AT-HYG namespace)', () => {
+    expect(DIST_SRC_BAILER_JONES).toBe('BJ');
+    expect(['G_R3', 'G_R2', 'HIP', 'GJ', 'N', 'OTHER']).not.toContain(DIST_SRC_BAILER_JONES);
   });
 });

@@ -10,6 +10,9 @@ import {
   parseGcvsNumber,
   inferBinaries,
   applyDoublesFlag as applyDoublesFlagPure,
+  parseBailerJonesTsv,
+  applyBailerJonesOverride,
+  DIST_SRC_BAILER_JONES,
   FLAG_HAS_NAME,
   FLAG_IS_SOL,
   FLAG_HAS_BAYER,
@@ -39,6 +42,7 @@ const SRC_STELLARIUM = resolve(ROOT, 'data/stellarium-modern-skyculture.json');
 const SRC_GCVS = resolve(ROOT, 'data/gcvs5.txt');
 const SRC_GCVS_XREF = resolve(ROOT, 'data/crossid.txt');
 const SRC_HIP_CCDM = resolve(ROOT, 'data/hip_ccdm.tsv');
+const SRC_BAILER_JONES = resolve(ROOT, 'data/bailer-jones-dr3.tsv');
 const OUT_BIN = resolve(ROOT, 'public/catalog.bin');
 const OUT_CON = resolve(ROOT, 'public/constellations.json');
 const OUT_SEARCH = resolve(ROOT, 'public/search-index.json');
@@ -202,6 +206,7 @@ function isUpToDate(): boolean {
   const gcvsMtime = existsSync(SRC_GCVS) ? statSync(SRC_GCVS).mtimeMs : 0;
   const xrefMtime = existsSync(SRC_GCVS_XREF) ? statSync(SRC_GCVS_XREF).mtimeMs : 0;
   const hipCcdmMtime = existsSync(SRC_HIP_CCDM) ? statSync(SRC_HIP_CCDM).mtimeMs : 0;
+  const bjMtime = existsSync(SRC_BAILER_JONES) ? statSync(SRC_BAILER_JONES).mtimeMs : 0;
   const scriptMtime = statSync(__filename).mtimeMs;
   return (
     binMtime > srcMtime &&
@@ -209,7 +214,8 @@ function isUpToDate(): boolean {
     binMtime > stellariumMtime &&
     binMtime > gcvsMtime &&
     binMtime > xrefMtime &&
-    binMtime > hipCcdmMtime
+    binMtime > hipCcdmMtime &&
+    binMtime > bjMtime
   );
 }
 
@@ -472,11 +478,22 @@ interface AthygRow {
   hd: string;
   hr: string;
   gl: string;
+  ra: string;
+  dec: string;
+  mag: string;
+  gaia: string;
 }
 
-async function readStars(): Promise<{
+async function readStars(
+  bjMap: Map<string, number>,
+): Promise<{
   stars: Star[];
-  stats: { total: number; dropped: Record<string, number> };
+  stats: {
+    total: number;
+    dropped: Record<string, number>;
+    bjEligible: number;       // rows with a Gaia DR3 source_id
+    bjOverridden: number;     // bjEligible rows that hit a B-J entry
+  };
 }> {
   const parser = createReadStream(SRC_CSV).pipe(
     parse({ columns: true, skip_empty_lines: true, cast: false })
@@ -490,22 +507,47 @@ async function readStars(): Promise<{
     unknownCon: 0,
   };
   let total = 0;
+  let bjEligible = 0;
+  let bjOverridden = 0;
 
   for await (const row of parser) {
     total++;
-    const x = parseFloatOrNull(row.x0);
-    const y = parseFloatOrNull(row.y0);
-    const z = parseFloatOrNull(row.z0);
+    let x = parseFloatOrNull(row.x0);
+    let y = parseFloatOrNull(row.y0);
+    let z = parseFloatOrNull(row.z0);
     if (x === null || y === null || z === null) {
       dropped.noCoords++;
       continue;
     }
-    const absmag = parseFloatOrNull(row.absmag);
+    let absmag = parseFloatOrNull(row.absmag);
     if (absmag === null) {
       dropped.noAbsmag++;
       continue;
     }
-    const dist = parseFloatOrNull(row.dist);
+
+    // Bailer-Jones (DR3) override: when this row has a Gaia source_id
+    // and a B-J posterior exists, swap dist/x/y/z/absmag for the
+    // posterior-derived values. Skipped silently otherwise — the row
+    // keeps its naive 1/π AT-HYG values. See SCIENCE.md § Distances /
+    // Bailer-Jones DR3 override.
+    const gaiaSourceId = nonEmpty(row.gaia);
+    let dist = parseFloatOrNull(row.dist);
+    if (gaiaSourceId) bjEligible++;
+    if (gaiaSourceId && bjMap.size > 0) {
+      const ra = parseFloatOrNull(row.ra);
+      const dec = parseFloatOrNull(row.dec);
+      const mag = parseFloatOrNull(row.mag);
+      if (ra !== null && dec !== null && mag !== null) {
+        const ovr = applyBailerJonesOverride(ra, dec, mag, gaiaSourceId, bjMap);
+        if (ovr) {
+          x = ovr.x; y = ovr.y; z = ovr.z;
+          absmag = ovr.absmag;
+          dist = ovr.dist;
+          bjOverridden++;
+        }
+      }
+    }
+
     if (dist !== null && dist > MAX_DIST_PC) {
       dropped.tooFar++;
       continue;
@@ -558,7 +600,7 @@ async function readStars(): Promise<{
     });
   }
 
-  return { stars, stats: { total, dropped } };
+  return { stars, stats: { total, dropped, bjEligible, bjOverridden } };
 }
 
 // Cross-match each star against GCVS via HIP (first) or HD (fallback). Most
@@ -669,6 +711,9 @@ async function main() {
     ccdmGroups: 0,
     ccdmResolved: 0,
     ccdmFlagged: 0,
+    bjEntries: 0,
+    bjEligible: 0,
+    bjOverridden: 0,
     nameTableEntries: 0,
     variableCount: 0,
     searchEntries: 0,
@@ -677,13 +722,36 @@ async function main() {
     figureConstellations: 0,
   };
 
+  // Bailer-Jones DR3 distance posteriors. Optional in CI / fresh-clone
+  // builds where the LFS file hasn't pulled yet — without it every star
+  // keeps its naive 1/π AT-HYG distance.
+  let bjMap = new Map<string, number>();
+  if (existsSync(SRC_BAILER_JONES)) {
+    console.log('Parsing Bailer-Jones DR3 distance posteriors...');
+    const tBj = Date.now();
+    bjMap = parseBailerJonesTsv(readFileSync(SRC_BAILER_JONES, 'utf8'));
+    console.log(`  ${bjMap.size} entries in ${Date.now() - tBj}ms`);
+    counts.bjEntries = bjMap.size;
+  } else {
+    console.log('Bailer-Jones DR3 file not found; skipping distance override.');
+  }
+
   console.log(`Reading ${SRC_CSV}...`);
   const t0 = Date.now();
-  const { stars, stats } = await readStars();
+  const { stars, stats } = await readStars(bjMap);
   console.log(`  parsed ${stats.total} rows in ${Date.now() - t0}ms`);
   console.log(`  kept ${stars.length} stars`);
   console.log(`  dropped:`, stats.dropped);
+  if (stats.bjEligible > 0) {
+    const pct = ((stats.bjOverridden / stats.bjEligible) * 100).toFixed(1);
+    console.log(
+      `  Bailer-Jones override: ${stats.bjOverridden} / ${stats.bjEligible} ` +
+        `Gaia-DR3-bearing stars (${pct}%) → dist_src='${DIST_SRC_BAILER_JONES}'`,
+    );
+  }
   counts.recordCount = stars.length;
+  counts.bjEligible = stats.bjEligible;
+  counts.bjOverridden = stats.bjOverridden;
 
   // Sort by absolute magnitude ascending (brightest first). Record indices
   // are final after this point.
