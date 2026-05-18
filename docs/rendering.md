@@ -48,7 +48,7 @@ mechanism.
 | Star glow + heliopause shell                     | WebGL   | `renderOrder: 1`                                   |       |
 | Star disc                                        | WebGL   | `renderOrder: 0`                                   |       |
 | Galactic disc + grid                             | WebGL   | `renderOrder: -1`                                  |       |
-| Molecular clouds (shelved v1.0)                  | WebGL   | `renderOrder: -2`                                  |       |
+| Molecular clouds (shelved)                       | WebGL   | `renderOrder: -2`                                  |       |
 | Milky Way volume                                 | WebGL   | `renderOrder: -3`                                  |       |
 | Star core depth-mask + planet core (depth-only)  | WebGL   | `renderOrder: -4`, `colorWrite: false`             | back  |
 

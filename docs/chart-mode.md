@@ -25,9 +25,9 @@ are set (FLAG_CHART = 1 << 6 in the flags byte; see
 
 Exit reverses each step.
 
-> **v1.0 caveat.** The molecular cloud layer is shelved (see
+> **Shelved layers.** The molecular cloud layer is shelved (see
 > `docs/molecular-clouds.md`), so its isobar pass is a no-op against an
-> invisible group. The Milky Way isobar is also disabled for v1.0 —
+> invisible group. The Milky Way isobar is also disabled —
 > `Milkyway.setIsobar(true)` now hard-hides the disc + bulge meshes
 > instead of emitting the contour. The blending / `uChartIsobar` switch
 > is preserved in code so the contour pass can return after refinement.

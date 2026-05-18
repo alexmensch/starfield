@@ -4,7 +4,7 @@ Solar-system layer (`stellata-3re`). When a focusable star carries a planet
 system, Stellata renders the planets as billboarded discs at their
 heliocentric positions, faint orbit rings on the host's orbital plane,
 and (Sol only) the heliopause boundary as a translucent asymmetric
-shell. Sol is the only populated host in v1; the framework is
+shell. Sol is the only populated host so far; the framework is
 deliberately generic so the future exoplanet epic (`stellata-bk5`)
 can plug in without changing the renderer.
 
@@ -21,7 +21,7 @@ satisfies:
   in the host's local orbital-plane frame, optional
   `orbitOrientations` for the orbit-ring renderer.
 
-Sync probe: `hasPlanets(catalog, idx)` — v1 hardwires "planets ⇔ Sol".
+Sync probe: `hasPlanets(catalog, idx)` — currently hardwires "planets ⇔ Sol".
 Async resolver: `getPlanetSystem(catalog, idx)` returns the system or
 `null`. The Promise wrapper is intentional so `bk5` can lazily fetch
 per-host JSON shards without changing the call sites.
@@ -58,9 +58,9 @@ sub-second is straightforward — the cache key just bucketises finer.
 
 ## Time `t` and the readout
 
-`time.ts` defines `t` as a Unix-seconds double. v1 pins it to "now"
-via `Stellata.getT()` returning `Date.now() / 1000`; the time scrubber
-(`stellata-nmu`) plugs in via `Stellata.setT()`.
+`time.ts` defines `t` as a Unix-seconds double. It is currently pinned
+to "now" via `Stellata.getT()` returning `Date.now() / 1000`; the time
+scrubber (`stellata-nmu`) plugs in via `Stellata.setT()`.
 
 `time-readout.ts` renders the live UTC timestamp the planet positions
 correspond to in `.ui-bottom`'s `#time-readout`. Visibility tracks two
@@ -178,8 +178,8 @@ contract isn't doubled up.
 
 The orbit-ring layer (`orbit-rings-layer.ts`) draws each planet's
 orbit as an ellipse with the host star at one focus. Geometry:
-`b = a · √(1 − e²)`, focal offset `c = a · e`. v1 places the
-perihelion along the local +x axis as a placeholder; per-planet
+`b = a · √(1 − e²)`, focal offset `c = a · e`. The perihelion is placed
+along the local +x axis as a placeholder; per-planet
 longitude-of-perihelion landed alongside Standish elements in 3re.13.
 
 Ring visibility is gated on an angular-separation heuristic so
@@ -306,7 +306,7 @@ so very-close planet inspection isn't culled. The strict-less-than
   focus's recenter pulls the camera in. `setFocus` is the right hook
   and already handles this; any new focus path must as well.
 - **Planet-system attach is async.** `getPlanetSystem` is a Promise
-  even for Sol (which resolves synchronously in v1). Don't assume the
+  even for Sol (which currently resolves synchronously). Don't assume the
   system is attached the same frame `setFocus` fires; the renderer
   handles `planetSystem === null` gracefully.
 - **Heliopause label visibility.** Hidden when the camera is inside

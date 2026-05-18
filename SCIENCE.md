@@ -92,10 +92,10 @@ bodies) and ship the layer without it. Don't reach for shader
 complexity to compensate for a perceptual constraint that's better
 fixed by a camera affordance.
 
-Same logic generalises beyond planets — any catalog object whose v1
-visual is a billboarded disc has the same regime: detail beyond a
-single representative colour earns its keep only when the user can fly
-close enough to see it.
+Same logic generalises beyond planets — any catalog object rendered as
+a billboarded disc has the same regime: detail beyond a single
+representative colour earns its keep only when the user can fly close
+enough to see it.
 
 ## Data sources
 
@@ -134,9 +134,9 @@ close enough to see it.
   `data/dust/particles.bin` (50K importance-sampled dust points, LFS).
   Density in E_ZGR per parsec; A_V/E_ZGR ≈ 2.742 at V band.
 
-> **Molecular cloud sources shelved for v1.0.** Zucker et al. 2020 +
+> **Molecular cloud sources currently shelved.** Zucker et al. 2020 +
 > 2021 cloud distances and 3D bounding boxes drive the molecular-cloud
-> ellipsoid layer, which is committed but not rendered in v1.0 while
+> ellipsoid layer, which is committed but not currently rendered while
 > the visual treatment is being refined. The build script
 > (`scripts/build-clouds.py`) and source files
 > (`data/molecular-clouds/`) remain in the repository for the future
@@ -380,7 +380,7 @@ build-time matching rules.
 
 When a host star with planets is focused, Stellata renders the eight
 planets, Pluto, faint orbit rings, and the heliopause boundary in the
-local frame around the host. Sol is the only populated host in v1; the
+local frame around the host. Sol is the only populated host so far; the
 machinery is generic so future exoplanet-host work (`stellata-bk5`)
 can plug in without changing the renderer.
 
@@ -452,7 +452,7 @@ focus-only ring layer; `src/client/planet-body-field.ts` for the
 global, focus-independent body field).
 
 **Time `t`.** All planet positions are evaluated at a wall-clock `t`
-(Unix seconds, double). In v1 `t` is pinned to "now" with no scrubber
+(Unix seconds, double). `t` is currently pinned to "now" with no scrubber
 UI; the bottom-right time readout displays the live UTC timestamp the
 positions correspond to. `t` is independent of the cosmetic `uTime`
 clock that drives variable-star pulsation — they don't share a value.
@@ -731,7 +731,7 @@ science it relates to.
   The Standish ephemerides cover only the eight major planets +
   Earth-Moon barycentre stand-in for Earth. Adding satellite
   ephemerides is a separate effort and out of scope at the camera
-  framings v1 affords.
+  framings the app currently affords.
 - **Asteroids and minor planets.** Ceres, Vesta, the Trojans, NEOs.
   Same reason as moons — separate ephemeris source and not visible
   as discs at any camera distance the app currently exposes.

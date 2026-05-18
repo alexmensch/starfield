@@ -160,9 +160,9 @@ src/
     galactic/             galactic-disc, galactic-fade, galactic-grid,
                           galactic-coords (+ tests). Disc outline / b-l grid /
                           GALACTIC_CENTRE_PC / shared fade smoothstep
-    molecular-clouds/     molecular-clouds, cloud-loader (+ tests). Shelved for v1
+    molecular-clouds/     molecular-clouds, cloud-loader (+ tests). Shelved
     dust/                 dust-particle-layer (+ tests). Instanced additive
-                          billboards; shelved for v1 (strength=0 → mesh hidden
+                          billboards; shelved (strength=0 → mesh hidden
                           → zero per-frame cost). DustField + dust-loader stay
                           in loaders/. Extracted from stellata.ts in 9mm.194/70.
     chart-mode/           chart-mode, chart-labels, chart-disc-pure (+ tests).
@@ -377,7 +377,7 @@ Claude Code should read on demand when working on the relevant area.
   full-tick skip, sorted-distance core-mask window). Read when
   profiling, tuning a hot path, or wiring new instrumentation.
 
-## Temporarily shelved (v1.0)
+## Temporarily shelved
 
 Code paths preserved; rendering / visibility disabled until the visual
 treatment is refined. Don't refactor the underlying machinery away.
@@ -400,7 +400,7 @@ Noted here so we don't re-debate scope:
 - IAU constellation **boundary** datasets (only the asterism lines are
   included — boundaries would be a separate Stellarium dataset).
 - HR diagram side panel.
-- WASD / flight controls (removed after v1 review).
+- WASD / flight controls (removed after early review).
 - Desktop two-finger roll on Chrome / Firefox (no rotate gesture exists in
   those browsers; Safari-only on desktop by design).
 - Time-series proper motion (positions are snapshot-only, no T animation).
