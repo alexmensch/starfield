@@ -173,6 +173,32 @@ class SchemaTests(unittest.TestCase):
         table = {"hip": _FakeColumn(int), "source_id": _FakeColumn(int)}
         rl.validate_schema(table, {"hip": int, "source_id": int})
 
+    def test_matches_numpy_widths_against_python_builtins(self) -> None:
+        # NumPy 2.x: np.issubdtype(int32, int) is False; the supertype map in
+        # _dtype_matches restores the "int matches any integer width" contract
+        # so refresh scripts don't need to spell out np.int32 / np.float32.
+        import numpy as np
+        table = {
+            "hip": _FakeColumn(np.dtype("int32")),
+            "gaia_source_id": _FakeColumn(np.dtype("int64")),
+            "angular_distance": _FakeColumn(np.dtype("float32")),
+            "ra": _FakeColumn(np.dtype("float64")),
+            "flag": _FakeColumn(np.dtype("bool")),
+        }
+        rl.validate_schema(table, {
+            "hip": int,
+            "gaia_source_id": int,
+            "angular_distance": float,
+            "ra": float,
+            "flag": bool,
+        })
+
+    def test_rejects_mismatched_numpy_dtype(self) -> None:
+        import numpy as np
+        table = {"hip": _FakeColumn(np.dtype("float32"))}
+        with self.assertRaises(rl.SchemaError):
+            rl.validate_schema(table, {"hip": int})
+
 
 # ─── is_up_to_date ────────────────────────────────────────────────────
 
@@ -306,6 +332,19 @@ class WriteTsvTests(unittest.TestCase):
             [{"ra": 1.234567}], columns=["ra"], output=self.path, round_floats=3
         )
         self.assertEqual(self.path.read_text(), "ra\n1.235\n")
+
+    def test_rounds_numpy_float32(self) -> None:
+        # astroquery returns float32 columns; numpy 2.x stopped treating them
+        # as Python-float subclasses so the round_floats path used to skip
+        # them and emit full-precision repr() output instead.
+        import numpy as np
+        rl.write_tsv(
+            [{"angular_distance": np.float32(0.0016044503)}],
+            columns=["angular_distance"],
+            output=self.path,
+            round_floats=6,
+        )
+        self.assertEqual(self.path.read_text(), "angular_distance\n0.001604\n")
 
     def test_creates_parent_dir(self) -> None:
         target = self.path.parent / "nested" / "deep.tsv"
