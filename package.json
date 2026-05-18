@@ -12,6 +12,7 @@
     "refresh:gaia-hip": "python3 scripts/refresh-gaia-hip-xmatch.py",
     "refresh:gaia-tyc": "python3 scripts/refresh-gaia-tyc-xmatch.py",
     "refresh:bailer-jones": "python3 scripts/refresh-bailer-jones.py",
+    "refresh:hip2": "python3 scripts/refresh-hipparcos2.py",
     "build:local-group": "tsx scripts/build-local-group.ts",
     "build:dust-sync": "tsx scripts/sync-dust.ts",
     "build:client": "vite build",
