@@ -15,6 +15,7 @@
     "refresh:bailer-jones": "python3 scripts/refresh-bailer-jones.py",
     "refresh:gaia-apsis": "python3 scripts/refresh-gaia-apsis.py",
     "refresh:hip2": "python3 scripts/refresh-hipparcos2.py",
+    "refresh:simbad": "python3 scripts/refresh-simbad-sample.py",
     "build:local-group": "tsx scripts/build-local-group.ts",
     "build:dust-sync": "tsx scripts/sync-dust.ts",
     "build:client": "vite build",

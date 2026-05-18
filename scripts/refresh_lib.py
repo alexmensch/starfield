@@ -12,7 +12,9 @@ Provides:
   TapClient        — backend-agnostic TAP wrapper. Tries each backend in
                      order; auto-falls-back to the next on 5xx / connection
                      errors. Default backends: ESA Gaia archive via
-                     astroquery.gaia, then CDS TAP via pyvo.
+                     astroquery.gaia, then CDS TAP via pyvo. SIMBAD
+                     (simbad_backend) speaks a divergent ADQL dialect and
+                     is always used as a single-backend override.
   retry            — exponential-backoff retry over a callable, with
                      injectable transient-error classifier, sleep, and
                      RNG hooks for deterministic testing.
@@ -30,7 +32,7 @@ Venv setup:
     .venv/bin/pip install -r scripts/requirements-refresh.txt
 
 Test (no network):
-    .venv/bin/python -m unittest scripts/refresh_lib.test.py
+    .venv/bin/python scripts/refresh_lib.test.py
 """
 
 from __future__ import annotations
@@ -271,6 +273,7 @@ class TapClient:
 
 
 CDS_TAP_URL = "https://tapvizier.u-strasbg.fr/TAPVizieR/tap"
+SIMBAD_TAP_URL = "https://simbad.cds.unistra.fr/simbad/sim-tap"
 
 
 def _esa_run(query: str) -> Any:
@@ -284,6 +287,12 @@ def _cds_run(query: str) -> Any:
     return service.search(query).to_table()
 
 
+def _simbad_run(query: str) -> Any:
+    import pyvo
+    service = pyvo.dal.TAPService(SIMBAD_TAP_URL)
+    return service.search(query).to_table()
+
+
 def esa_backend() -> TapBackend:
     """ESA Gaia archive backend (gaiadr3.* tables, full DR3 catalogue)."""
     return TapBackend(name="ESA", run=_esa_run)
@@ -294,6 +303,16 @@ def cds_backend() -> TapBackend:
     Bailer-Jones I/352/gedr3dis, Hipparcos-2 I/311/hip2) that ESA does
     not host."""
     return TapBackend(name="CDS", run=_cds_run)
+
+
+def simbad_backend() -> TapBackend:
+    """SIMBAD TAP backend (basic, ident, allfluxes, otypedef, mes*
+    tables). Used by refresh-simbad-sample.py as a single-backend override
+    — SIMBAD speaks its own dialect (LIKE forbidden on basic.otype; MOD()
+    available but `%` operator is not) and is not interchangeable with
+    ESA or CDS for these tables, so callers pass `backends=[simbad_backend()]`
+    explicitly rather than relying on the default fallback list."""
+    return TapBackend(name="SIMBAD", run=_simbad_run)
 
 
 def _default_backends() -> list[TapBackend]:
