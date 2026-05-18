@@ -143,19 +143,105 @@ EXPECTED_SCHEMA: dict[str, type | tuple[type, ...]] = {
 EXPECTED_ROW_COUNT_MIN = 440_000
 EXPECTED_ROW_COUNT_MAX = 446_000
 
-# Self-consistency spot-check — replaces the bead's original 70 Oph
-# (HIP 88601) check, which is impossible: HIP 88601 is too bright (V=4.0)
-# for Gaia's Hipparcos2 cross-match, and 70 Oph's 88-year period is far
-# beyond NSS's max observed period (~9,936 d / 27 yr). The pinned values
-# are the actual DR3 NSS solution for the brightest HIP-mapped NSS entry
-# at 2026-05-18 probe time. Matches the Sirius pmRA/pmDE pattern in
-# refresh-hipparcos2.py.
-SPOT_SOURCE_ID = 5823248090239625088  # HIP 74946, G=2.88
-SPOT_SOLUTION_TYPE = "OrbitalTargetedSearch"
-SPOT_PERIOD = 488.4292
-SPOT_PERIOD_TOL = 0.01
-SPOT_ECCENTRICITY = 0.1495
-SPOT_ECCENTRICITY_TOL = 0.001
+# Self-consistency spot-checks against pinned DR3 NSS rows. DR3 is frozen
+# so values can be pinned tightly; tolerances are set to ~1% of the formal
+# uncertainty quoted in DR3 (looser than archive-side rounding, tighter
+# than any plausible drift the refresh script could itself introduce).
+#
+# Three rows across three solution types so a DR4 column-rename, unit
+# change, or solution-type re-routing surfaces against at least one row
+# whose code-path it touched:
+#   - Orbital                : pure-astrometric, exercises Thiele-Innes
+#   - OrbitalTargetedSearch  : variant routed through a different fit
+#   - SB1                    : spectroscopic-only, exercises masked
+#                              Thiele-Innes (a/b/f/g = NULL by design)
+#
+# Replaces the bead's original 70 Oph (HIP 88601) check, which is doubly
+# impossible: HIP 88601 saturates Gaia's HIP2 cross-match (V=4.03), and
+# 70 Oph's 88-year period is far beyond NSS's max observed period
+# (~9,936 d / 27 yr — DR3 NSS only fits orbits with phase coverage that
+# beats the 5-parameter astrometric solution's linear-trend absorption).
+#
+# Pattern matches refresh-hipparcos2.py's Sirius pmRA/pmDE check, but
+# extended to multiple rows so single-target drift can't pass silently.
+SPOT_CHECKS: list[dict[str, Any]] = [
+    {
+        "source_id":         6360853029303982592,  # Orbital — Thiele-Innes pinned
+        "nss_solution_type": "Orbital",
+        "period":            (466.2104, 0.001),
+        "eccentricity":      (0.7918, 0.001),
+        "a_thiele_innes":    (-4.6393, 0.001),
+        "b_thiele_innes":    (-0.0809, 0.001),
+        "f_thiele_innes":    (3.5245, 0.001),
+        "g_thiele_innes":    (1.1596, 0.001),
+        "mass_ratio":        None,                 # masked — null on write
+    },
+    {
+        "source_id":         5823248090239625088,  # OrbitalTargetedSearch (HIP 74946)
+        "nss_solution_type": "OrbitalTargetedSearch",
+        "period":            (488.4292, 0.001),
+        "eccentricity":      (0.1495, 0.001),
+        "a_thiele_innes":    (0.1156, 0.001),
+        "b_thiele_innes":    (-0.1710, 0.001),
+        "f_thiele_innes":    (1.2353, 0.001),
+        "g_thiele_innes":    (2.1121, 0.001),
+        "mass_ratio":        None,
+    },
+    {
+        "source_id":         4648984790038560256,  # SB1 — Thiele-Innes null
+        "nss_solution_type": "SB1",
+        "period":            (524.0654, 0.001),
+        "eccentricity":      (0.0815, 0.001),
+        "a_thiele_innes":    None,
+        "b_thiele_innes":    None,
+        "f_thiele_innes":    None,
+        "g_thiele_innes":    None,
+        "mass_ratio":        None,
+    },
+]
+
+
+def check_spot_row(rows_by_id: dict[int, Any], spec: dict[str, Any]) -> None:
+    """Assert one pinned row matches expectations; raise SystemExit listing
+    every mismatched field (not just the first) so a future DR4 column
+    rename / unit change / re-routing of solution types shows the full
+    delta in a single failure message.
+
+    Expected-value forms in `spec`:
+      - str                  : exact match (e.g. nss_solution_type)
+      - (float, float)       : (expected, abs-tolerance)
+      - None                 : the cell must be masked / null
+    """
+    sid = spec["source_id"]
+    row = rows_by_id.get(sid)
+    if row is None:
+        raise SystemExit(
+            f"refresh-gaia-nss: spot-check source_id {sid} missing from query result — "
+            f"upstream selection has changed."
+        )
+    deltas: list[str] = []
+    for field, expected in spec.items():
+        if field == "source_id":
+            continue
+        actual = coerce_masked(row[field])
+        if expected is None:
+            if actual is not None:
+                deltas.append(f"  {field}: expected NULL, got {actual!r}")
+        elif isinstance(expected, tuple):
+            want, tol = expected
+            if actual is None:
+                deltas.append(f"  {field}: expected ~{want} (±{tol}), got NULL")
+            elif abs(float(actual) - float(want)) > tol:
+                deltas.append(f"  {field}: expected ~{want} (±{tol}), got {float(actual)}")
+        else:
+            if str(actual) != str(expected):
+                deltas.append(f"  {field}: expected {expected!r}, got {actual!r}")
+    if deltas:
+        joined = "\n".join(deltas)
+        raise SystemExit(
+            f"refresh-gaia-nss: spot-check source_id {sid} drift — "
+            f"{len(deltas)} field(s) outside tolerance:\n{joined}"
+        )
 
 
 def coerce_masked(value: Any) -> Any:
@@ -203,27 +289,9 @@ def main() -> None:
             f"upstream schema or selection has changed; investigate before re-pinning."
         )
 
-    spot = [r for r in table if int(r["source_id"]) == SPOT_SOURCE_ID]
-    if not spot:
-        raise SystemExit(
-            f"refresh-gaia-nss: spot-check source_id {SPOT_SOURCE_ID} (HIP 74946) missing "
-            f"from query result — upstream selection has changed."
-        )
-    s = spot[0]
-    sol = str(s["nss_solution_type"])
-    if sol != SPOT_SOLUTION_TYPE:
-        raise SystemExit(
-            f"refresh-gaia-nss: spot-check source_id {SPOT_SOURCE_ID} nss_solution_type drift — "
-            f"got {sol!r}, expected {SPOT_SOLUTION_TYPE!r}."
-        )
-    p = float(s["period"])
-    e = float(s["eccentricity"])
-    if abs(p - SPOT_PERIOD) > SPOT_PERIOD_TOL or abs(e - SPOT_ECCENTRICITY) > SPOT_ECCENTRICITY_TOL:
-        raise SystemExit(
-            f"refresh-gaia-nss: spot-check source_id {SPOT_SOURCE_ID} (HIP 74946) drift — "
-            f"got P={p}, e={e}; expected ~{SPOT_PERIOD} d / {SPOT_ECCENTRICITY} "
-            f"(±{SPOT_PERIOD_TOL} d / ±{SPOT_ECCENTRICITY_TOL})."
-        )
+    rows_by_id = {int(r["source_id"]): r for r in table}
+    for spec in SPOT_CHECKS:
+        check_spot_row(rows_by_id, spec)
 
     rows = (
         {col: coerce_masked(row[col]) for col in TSV_COLUMNS}
