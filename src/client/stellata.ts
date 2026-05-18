@@ -5,7 +5,7 @@ import type { DustField, DustParticleData } from './loaders/dust-loader';
 import vertexShader from './shaders/star.vert.glsl?raw';
 import fragmentShader from './shaders/star.frag.glsl?raw';
 import perceptualDiscChunk from './shaders/perceptual-disc.glsl?raw';
-import { LUT_BYTES, LUT_SIZE } from './shaders/blackbody-lut';
+import { makeColorLutTexture } from './shaders/blackbody-lut';
 import {
   DustParticleLayer,
   type DustParticleSharedUniforms,
@@ -207,24 +207,6 @@ export let MAG_PRESETS: Record<MagPresetName, MagPreset> = computeMagPresets();
 // Default vertical FOV (degrees). User-tunable via the FOV slider; the
 // reset button snaps back to this value.
 export const DEFAULT_FOV = 50;
-
-function makeColorLutTexture(): THREE.DataTexture {
-  const rgba = new Uint8Array(LUT_SIZE * 4);
-  for (let i = 0; i < LUT_SIZE; i++) {
-    rgba[i * 4 + 0] = LUT_BYTES[i * 3 + 0];
-    rgba[i * 4 + 1] = LUT_BYTES[i * 3 + 1];
-    rgba[i * 4 + 2] = LUT_BYTES[i * 3 + 2];
-    rgba[i * 4 + 3] = 255;
-  }
-  const tex = new THREE.DataTexture(rgba, LUT_SIZE, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
-  tex.magFilter = THREE.LinearFilter;
-  tex.minFilter = THREE.LinearFilter;
-  tex.wrapS = THREE.ClampToEdgeWrapping;
-  tex.wrapT = THREE.ClampToEdgeWrapping;
-  tex.colorSpace = THREE.NoColorSpace;
-  tex.needsUpdate = true;
-  return tex;
-}
 
 export type CameraMode = 'navigate' | 'observe';
 
@@ -574,11 +556,8 @@ export class Stellata implements FrameAnchor {
       // three star passes (disc, glow, core mask) share these uniforms so
       // the suppression fires uniformly.
       uHideFocusIdx: { value: -1 },
-      // Blackbody → sRGB lookup, 256×1 RGBA. Bytes are precomputed at build
-      // time (Ballesteros 2012 B-V→Teff + Planck × CIE 1931 → sRGB) and
-      // baked into src/client/shaders/blackbody-lut.ts; see SCIENCE.md
-      // § "Star colour calibration". RGBA padding because three.js dropped
-      // RGBFormat — the .a byte is unused.
+      // Blackbody → sRGB lookup for the star vertex shader's ciToColor.
+      // See SCIENCE.md § "Star colour calibration".
       uColorLut: { value: makeColorLutTexture() },
       // Force-center the focused star at NDC (0,0). At the close-approach
       // orbit floor (~5×10⁻⁸ pc for Sol-class stars), float32 cancellation

@@ -245,7 +245,7 @@ ${formatBytesAsLines(bytes)}
 
 async function main(): Promise<void> {
   const here = dirname(fileURLToPath(import.meta.url));
-  const out = resolve(here, '..', 'src/client/shaders/blackbody-lut.ts');
+  const out = resolve(here, '..', 'src/client/shaders/blackbody-lut-data.ts');
   const bytes = buildLut();
   await writeFile(out, renderModule(bytes));
   console.log(`Wrote ${out} (${bytes.length} LUT bytes)`);

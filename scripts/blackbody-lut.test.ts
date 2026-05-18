@@ -14,7 +14,7 @@ import {
   LUT_SIZE as CONSUMER_LUT_SIZE,
   BV_MIN as CONSUMER_BV_MIN,
   BV_MAX as CONSUMER_BV_MAX,
-} from '../src/client/shaders/blackbody-lut';
+} from '../src/client/shaders/blackbody-lut-data';
 
 // ---- Ballesteros parity ----------------------------------------------
 //
