@@ -487,5 +487,43 @@ class WriteTsvTests(unittest.TestCase):
         self.assertFalse(target.with_suffix(target.suffix + ".tmp").exists())
 
 
+# ─── AT-HYG helpers ───────────────────────────────────────────────────
+
+
+class AthygMissingSentinelTests(unittest.TestCase):
+    def test_int_helper_collapses_empty_and_zero(self) -> None:
+        self.assertIsNone(rl.athyg_int_or_none(""))
+        self.assertIsNone(rl.athyg_int_or_none("  "))
+        self.assertIsNone(rl.athyg_int_or_none("0"))
+        self.assertIsNone(rl.athyg_int_or_none(None))
+        self.assertEqual(rl.athyg_int_or_none("42"), 42)
+        # malformed cell falls through to None rather than raising — the
+        # caller cannot distinguish "junk" from "missing" by design.
+        self.assertIsNone(rl.athyg_int_or_none("not-a-number"))
+
+    def test_str_helper_collapses_empty_and_zero(self) -> None:
+        self.assertIsNone(rl.athyg_str_or_none(""))
+        self.assertIsNone(rl.athyg_str_or_none("0"))
+        self.assertIsNone(rl.athyg_str_or_none(None))
+        self.assertEqual(rl.athyg_str_or_none("4669-731-1"), "4669-731-1")
+
+
+class ReadAthygSourceIdsTests(unittest.TestCase):
+    def test_round_trip_three_row_fixture(self) -> None:
+        # Per stellata-9mm.198 acceptance (c): one valid row, one empty
+        # gaia, one '0' gaia. The walker returns only the valid one.
+        body = (
+            "id,gaia,hip\n"
+            "1,2341871673090078592,2\n"      # valid Gaia source_id
+            "2,,5\n"                          # empty sentinel
+            "3,0,7\n"                         # '0' sentinel
+        )
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "athyg.csv"
+            p.write_text(body)
+            ids = rl.read_athyg_source_ids(p)
+        self.assertEqual(ids, [2341871673090078592])
+
+
 if __name__ == "__main__":
     unittest.main()

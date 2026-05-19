@@ -51,7 +51,6 @@ Venv setup (see scripts/requirements-refresh.txt):
 
 from __future__ import annotations
 
-import csv
 import sys
 import time
 from pathlib import Path
@@ -117,24 +116,6 @@ ADQL_TEMPLATE = (
 )
 
 
-def read_athyg_source_ids(csv_path: Path) -> list[int]:
-    """Return the non-empty, non-zero Gaia DR3 source_id list from AT-HYG.
-
-    Sol (id=1) and a handful of historical rows carry an empty `gaia`
-    field — we drop those; Bailer-Jones is defined per Gaia source only.
-    """
-    ids: list[int] = []
-    with csv_path.open(newline="") as f:
-        reader = csv.reader(f)
-        header = next(reader)
-        gi = header.index("gaia")
-        for row in reader:
-            cell = row[gi]
-            if cell and cell != "0":
-                ids.append(int(cell))
-    return ids
-
-
 def query_batch(client: rl.TapClient, ids: list[int]):
     inlist = ",".join(str(i) for i in ids)
     return client.run(ADQL_TEMPLATE.format(inlist=inlist))
@@ -151,7 +132,7 @@ def main() -> None:
         print(f"{OUT.relative_to(ROOT)} up to date — skipping (use --force to rebuild)")
         return
 
-    source_ids = read_athyg_source_ids(ATHYG)
+    source_ids = rl.read_athyg_source_ids(ATHYG)
     total = len(source_ids)
     if total == 0:
         raise SystemExit(f"refresh-bailer-jones: no source_ids in {ATHYG}")
