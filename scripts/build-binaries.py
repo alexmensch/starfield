@@ -645,15 +645,6 @@ def group_orb6_by_pair(
     return out
 
 
-def _gaia_from_hip(
-    hip: int, indices: IdentifierIndices,
-) -> int | None:
-    """Tier-1 inner lookup. Prefer the Gaia-published HIP cross-walk
-    (the canonical source); the caller checks AT-HYG natively as tier 2
-    when this returns ``None``."""
-    return indices.hip_to_gaia.get(hip)
-
-
 def _gaia_from_athyg_via_hip(
     hip: int, indices: IdentifierIndices,
 ) -> int | None:
@@ -688,6 +679,16 @@ def resolve_component(
     only applies to primaries. A SIMBAD-backed supplement for the
     residual set is tracked in ``stellata-dch.60``.
     """
+    def emit(gaia: int | None, via: str) -> ResolvedComponent:
+        return ResolvedComponent(
+            wds_id=pair.wds_id,
+            discoverer=pair.discoverer,
+            component=component,
+            is_primary=is_primary,
+            gaia_source_id=gaia,
+            resolve_via=via,
+        )
+
     candidate_hips: list[int] = []
 
     if is_primary:
@@ -695,37 +696,17 @@ def resolve_component(
             if e.hip is None:
                 continue
             candidate_hips.append(e.hip)
-            gaia = _gaia_from_hip(e.hip, indices)
+            # Tier 1: Gaia-published HIP xwalk is the canonical source.
+            gaia = indices.hip_to_gaia.get(e.hip)
             if gaia is not None:
-                return ResolvedComponent(
-                    wds_id=pair.wds_id,
-                    discoverer=pair.discoverer,
-                    component=component,
-                    is_primary=is_primary,
-                    gaia_source_id=gaia,
-                    resolve_via="orb6_hip",
-                )
+                return emit(gaia, "orb6_hip")
 
     for hip in candidate_hips:
         gaia = _gaia_from_athyg_via_hip(hip, indices)
         if gaia is not None:
-            return ResolvedComponent(
-                wds_id=pair.wds_id,
-                discoverer=pair.discoverer,
-                component=component,
-                is_primary=is_primary,
-                gaia_source_id=gaia,
-                resolve_via="athyg_gaia_native",
-            )
+            return emit(gaia, "athyg_gaia_native")
 
-    return ResolvedComponent(
-        wds_id=pair.wds_id,
-        discoverer=pair.discoverer,
-        component=component,
-        is_primary=is_primary,
-        gaia_source_id=None,
-        resolve_via="unresolved",
-    )
+    return emit(None, "unresolved")
 
 
 # ─── Tier 2 position-match path ──────────────────────────────────────
