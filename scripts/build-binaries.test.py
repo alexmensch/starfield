@@ -80,6 +80,86 @@ class AthygTests(unittest.TestCase):
         self.assertAlmostEqual(hip2.ci or 0.0, 1.46)
 
 
+class AthygMissingSentinelTests(unittest.TestCase):
+    """9mm.198 H5 + D7 — AT-HYG uses '' or '0' as the missing-sentinel
+    for hip/tyc/gaia/hd. Both must collapse to None at parse time so
+    downstream indices keyed on these ids never include a sentinel-0
+    row.
+    """
+
+    HEADER = AthygTests.HEADER
+
+    def test_zero_sentinel_yields_none_for_hip_and_gaia(self) -> None:
+        # hip='0' and gaia='0' are AT-HYG's "no identifier" sentinel —
+        # parse_athyg must collapse to None alongside the empty case.
+        body = "\n".join([
+            self.HEADER,
+            '99,"","0",0,0,,"","","","","",HistoricalEntry,1.0,10.0,OTHER,'
+            '100.0,80.0,40.0,40.0,OTHER,8.5,5.0,0.5,OTHER,,OTHER,,,'
+            'OTHER,,,,K0V,Hip',
+        ]) + "\n"
+        with tempfile.TemporaryDirectory() as td:
+            p = _write(Path(td), "athyg.csv", body)
+            rows = bb.parse_athyg(p)
+        self.assertEqual(len(rows), 1)
+        self.assertIsNone(rows[0].hip)
+        self.assertIsNone(rows[0].gaia)
+        # build_indices must not install rows under a sentinel-0 key.
+        idx = bb.build_indices(
+            athyg=rows, hip2=[],
+            hip_to_gaia={}, tyc_to_gaia={}, src_to_nss={},
+        )
+        self.assertNotIn(0, idx.hip_to_athyg)
+        self.assertNotIn(0, idx.src_to_athyg)
+
+    def test_zero_sentinel_yields_none_for_tyc(self) -> None:
+        # tyc='0' is the same sentinel — must not install a TYC key of '0'.
+        body = "\n".join([
+            AthygTests.HEADER,
+            '50,"0",,0,,,"","","","","",TycSentinel,2.0,20.0,OTHER,150.0,'
+            '50.0,40.0,40.0,OTHER,9.0,5.0,0.5,OTHER,,OTHER,,,OTHER,,,,'
+            'F8V,Hip',
+        ]) + "\n"
+        with tempfile.TemporaryDirectory() as td:
+            p = _write(Path(td), "athyg.csv", body)
+            rows = bb.parse_athyg(p)
+        self.assertEqual(len(rows), 1)
+        self.assertIsNone(rows[0].tyc)
+        idx = bb.build_indices(
+            athyg=rows, hip2=[],
+            hip_to_gaia={}, tyc_to_gaia={}, src_to_nss={},
+        )
+        self.assertNotIn("0", idx.tyc_to_athyg)
+
+
+class AthygMissingColumnRaisesTests(unittest.TestCase):
+    """9mm.198 H4 — parse_athyg must NOT silently drop every row when a
+    required column header is renamed. A missing required column is a
+    fatal misconfiguration; the build should surface it loudly.
+    """
+
+    def test_missing_required_column_raises(self) -> None:
+        # Header omits 'dist' — the body's positional alignment is
+        # irrelevant since DictReader keys by header name. Every row
+        # used to silently drop via `except KeyError`; now KeyError
+        # propagates to the caller on the first row.
+        header_missing_dist = (
+            '"id","tyc","gaia","hyg","hip","hd","hr","gl","bayer","flam",'
+            '"con","proper","ra","dec","pos_src","x0","y0","z0",'
+            '"dist_src","mag","absmag","ci","mag_src","rv","rv_src",'
+            '"pm_ra","pm_dec","pm_src","vx","vy","vz","spect","spect_src"'
+        )
+        body = (
+            header_missing_dist + "\n"
+            '1,"",,0,,,"","","","","",Sol,0.0,0.0,OTHER,0.000005,0.0,'
+            '0.0,OTHER,-26.7,4.85,0.656,OTHER,,OTHER,,,OTHER,,,,G2 V,OTHER\n'
+        )
+        with tempfile.TemporaryDirectory() as td:
+            p = _write(Path(td), "athyg.csv", body)
+            with self.assertRaises(KeyError):
+                bb.parse_athyg(p)
+
+
 class WdsSummTests(unittest.TestCase):
     def test_parses_precise_coord_and_components(self) -> None:
         # 130-char fixed-width WDS_SUMM record (synthetic, mirrors a real
@@ -752,8 +832,559 @@ class BuildIndicesTests(unittest.TestCase):
         self.assertEqual(idx.hip_to_gaia, {1: 999})
         self.assertEqual(idx.tyc_to_gaia, {"100-1-1": 998})
         self.assertEqual(idx.src_to_nss[111]["period"], "10.0")
-        # Astrometry index intentionally empty at Stage 1.
+        # Empty astrometry index when no Gaia astrometry passed.
         self.assertEqual(idx.src_to_astrometry, {})
+
+    def test_src_to_hip_inverts_hip_to_gaia(self) -> None:
+        idx = bb.build_indices(
+            athyg=[], hip2=[],
+            hip_to_gaia={1: 100, 2: 200, 3: 300},
+            tyc_to_gaia={}, src_to_nss={},
+        )
+        self.assertEqual(idx.src_to_hip, {100: 1, 200: 2, 300: 3})
+
+    def test_src_to_hip_collision_keeps_first(self) -> None:
+        # Tight systems can map two HIPs to one Gaia source. Either HIP
+        # is fine for HIP2 lookup; pick the first deterministically.
+        idx = bb.build_indices(
+            athyg=[], hip2=[],
+            hip_to_gaia={1: 100, 2: 100},
+            tyc_to_gaia={}, src_to_nss={},
+        )
+        # dict iteration order is insertion order in CPython 3.7+.
+        self.assertIn(idx.src_to_hip[100], {1, 2})
+
+    def test_src_to_astrometry_surfaced(self) -> None:
+        row = _gaia_astrometry_row(source_id=42, ruwe=0.9)
+        idx = bb.build_indices(
+            athyg=[], hip2=[],
+            hip_to_gaia={}, tyc_to_gaia={}, src_to_nss={},
+            src_to_astrometry={42: row},
+        )
+        self.assertEqual(idx.src_to_astrometry[42].ruwe, 0.9)
+
+
+# ─── Stage 3 fixtures + tests ────────────────────────────────────────
+
+
+def _gaia_astrometry_row(
+    *,
+    source_id: int = 100,
+    ra_deg: float = 100.0, dec_deg: float = 0.0,
+    parallax_mas: float | None = 10.0,
+    pmra_masyr: float | None = 1.0,
+    pmdec_masyr: float | None = -1.0,
+    ref_epoch: float = 2016.0,
+    ruwe: float | None = 1.0,
+    ipd_frac_multi_peak: float | None = 0.0,
+) -> "bb.GaiaAstrometryRow":
+    return bb.GaiaAstrometryRow(
+        source_id=source_id,
+        ra_deg=ra_deg, dec_deg=dec_deg,
+        parallax_mas=parallax_mas,
+        pmra_masyr=pmra_masyr, pmdec_masyr=pmdec_masyr,
+        ref_epoch=ref_epoch,
+        ruwe=ruwe, ipd_frac_multi_peak=ipd_frac_multi_peak,
+        g_mag=None, bp_mag=None, rp_mag=None,
+    )
+
+
+def _hip2_row(
+    *,
+    hip: int,
+    pm_ra_masyr: float | None = 1.0,
+    pm_de_masyr: float | None = -1.0,
+    plx_mas: float | None = 10.0,
+    ra_deg: float = 100.0, dec_deg: float = 0.0,
+) -> "bb.Hip2Row":
+    return bb.Hip2Row(
+        hip=hip,
+        ra_deg=ra_deg, dec_deg=dec_deg,
+        plx_mas=plx_mas, e_plx_mas=None,
+        pm_ra_masyr=pm_ra_masyr, pm_de_masyr=pm_de_masyr,
+        e_pm_ra_masyr=None, e_pm_de_masyr=None,
+        goodness_of_fit=None, n_transits=None,
+    )
+
+
+def _resolved(
+    *,
+    gaia: int | None,
+    wds_id: str = "WDS-1", discoverer: str = "TST   1",
+    component: str = "A", is_primary: bool = True,
+    via: str = "orb6_hip",
+    hip: int | None = None,
+) -> "bb.ResolvedComponent":
+    return bb.ResolvedComponent(
+        wds_id=wds_id, discoverer=discoverer,
+        component=component, is_primary=is_primary,
+        gaia_source_id=gaia, resolve_via=via,
+        hip=hip,
+    )
+
+
+def _indices_with_astrometry(
+    *,
+    src_to_astrometry: dict[int, "bb.GaiaAstrometryRow"] | None = None,
+    src_to_nss: dict[int, dict[str, str]] | None = None,
+    hip_to_gaia: dict[int, int] | None = None,
+    hip2: list["bb.Hip2Row"] | None = None,
+) -> "bb.IdentifierIndices":
+    return bb.build_indices(
+        athyg=[], hip2=hip2 or [],
+        hip_to_gaia=hip_to_gaia or {},
+        tyc_to_gaia={},
+        src_to_nss=src_to_nss or {},
+        src_to_astrometry=src_to_astrometry or {},
+    )
+
+
+class ParseGaiaAstrometryTests(unittest.TestCase):
+    def test_parses_row_with_all_fields(self) -> None:
+        body = (
+            "source_id\tra\tra_error\tdec\tdec_error\tparallax\tparallax_error"
+            "\tpmra\tpmra_error\tpmdec\tpmdec_error\tref_epoch\truwe"
+            "\tipd_frac_multi_peak\tphot_g_mean_mag\tphot_bp_mean_mag"
+            "\tphot_rp_mean_mag\n"
+            "2947050466531873024\t101.287155\t0.04\t-16.716116\t0.03\t"
+            "374.49\t0.23\t-461.57\t0.05\t-914.52\t0.03\t2016.00\t1.78\t"
+            "0.012\t-1.30\t-0.92\t-1.74\n"
+        )
+        with tempfile.TemporaryDirectory() as td:
+            p = _write(Path(td), "astrometry.tsv", body)
+            m = bb.parse_gaia_astrometry(p)
+        self.assertEqual(set(m.keys()), {2947050466531873024})
+        row = m[2947050466531873024]
+        self.assertAlmostEqual(row.pmra_masyr or 0.0, -461.57)
+        self.assertEqual(row.ref_epoch, 2016.00)
+        self.assertEqual(row.ruwe, 1.78)
+        self.assertEqual(row.ipd_frac_multi_peak, 0.012)
+
+    def test_skips_row_with_missing_required_fields(self) -> None:
+        # ra missing on the second row → must be skipped, not crash.
+        body = (
+            "source_id\tra\tdec\tparallax\tpmra\tpmdec\tref_epoch\truwe"
+            "\tipd_frac_multi_peak\n"
+            "1\t10.0\t20.0\t5.0\t1.0\t1.0\t2016.0\t1.0\t0.0\n"
+            "2\t\t30.0\t5.0\t1.0\t1.0\t2016.0\t1.0\t0.0\n"
+        )
+        with tempfile.TemporaryDirectory() as td:
+            p = _write(Path(td), "astrometry.tsv", body)
+            m = bb.parse_gaia_astrometry(p)
+        self.assertEqual(set(m.keys()), {1})
+
+
+class Gaia5pUnreliableTests(unittest.TestCase):
+    def test_clean_row_passes(self) -> None:
+        row = _gaia_astrometry_row(ruwe=1.0, ipd_frac_multi_peak=0.0)
+        self.assertFalse(bb.gaia_5p_unreliable(row))
+
+    def test_high_ruwe_trips(self) -> None:
+        row = _gaia_astrometry_row(ruwe=1.5, ipd_frac_multi_peak=0.0)
+        self.assertTrue(bb.gaia_5p_unreliable(row))
+
+    def test_at_threshold_does_not_trip(self) -> None:
+        # Threshold is strict-greater-than 1.4. Equal is fine.
+        row = _gaia_astrometry_row(ruwe=1.4, ipd_frac_multi_peak=0.0)
+        self.assertFalse(bb.gaia_5p_unreliable(row))
+
+    def test_high_ipd_trips(self) -> None:
+        row = _gaia_astrometry_row(ruwe=1.0, ipd_frac_multi_peak=0.05)
+        self.assertTrue(bb.gaia_5p_unreliable(row))
+
+    def test_missing_values_do_not_trip(self) -> None:
+        # Either flag missing must not force the source onto NSS-systemic.
+        row = _gaia_astrometry_row(ruwe=None, ipd_frac_multi_peak=None)
+        self.assertFalse(bb.gaia_5p_unreliable(row))
+
+
+class AttachAstrometryTests(unittest.TestCase):
+    def test_unresolved_when_no_gaia_source_id_and_no_hip(self) -> None:
+        idx = _indices_with_astrometry()
+        a = bb.attach_astrometry(_resolved(gaia=None), None, idx)
+        self.assertEqual(a.astrometry_via, "unresolved")
+        self.assertIsNone(a.ra_deg)
+        self.assertIsNone(a.pmra_masyr)
+
+    def test_unresolved_when_no_astrometry_and_no_hip(self) -> None:
+        # source_id resolved but astrometry table doesn't cover it,
+        # and the component carries no fallback HIP.
+        idx = _indices_with_astrometry(src_to_astrometry={})
+        a = bb.attach_astrometry(_resolved(gaia=42), 1.0, idx)
+        self.assertEqual(a.astrometry_via, "unresolved")
+
+    def test_hip2_fallback_when_no_gaia_source(self) -> None:
+        # Sirius-shape: Gaia saturates, no source_id, but ORB6 surfaced
+        # the HIP. HIP2 covers it → route via hip2_long_baseline
+        # without any PM-disagreement comparison (no Gaia to compare).
+        hip2 = _hip2_row(hip=32349, pm_ra_masyr=-546.0, pm_de_masyr=-1223.0)
+        idx = _indices_with_astrometry(hip2=[hip2])
+        a = bb.attach_astrometry(
+            _resolved(gaia=None, hip=32349), None, idx,
+        )
+        self.assertEqual(a.astrometry_via, "hip2_long_baseline")
+        self.assertEqual(a.pmra_masyr, -546.0)
+        self.assertEqual(a.ref_epoch, 1991.25)
+
+    def test_hip2_fallback_when_gaia_source_lacks_astrometry(self) -> None:
+        # The component has a Gaia source_id but the astrometry table
+        # doesn't cover it (e.g. dch.29 dropped the row). With a
+        # known HIP we still fall back to HIP2 rather than emit
+        # unresolved.
+        hip2 = _hip2_row(hip=99, pm_ra_masyr=10.0, pm_de_masyr=10.0)
+        idx = _indices_with_astrometry(
+            src_to_astrometry={},
+            hip2=[hip2],
+        )
+        a = bb.attach_astrometry(
+            _resolved(gaia=42, hip=99), None, idx,
+        )
+        self.assertEqual(a.astrometry_via, "hip2_long_baseline")
+
+    def test_no_gaia_no_hip2_still_unresolved(self) -> None:
+        # HIP known but HIP2 doesn't cover it — unresolved.
+        idx = _indices_with_astrometry(hip2=[])
+        a = bb.attach_astrometry(_resolved(gaia=None, hip=99), None, idx)
+        self.assertEqual(a.astrometry_via, "unresolved")
+
+    def test_gaia_5p_default_route(self) -> None:
+        gaia = _gaia_astrometry_row(source_id=42, ruwe=1.0, ipd_frac_multi_peak=0.0)
+        idx = _indices_with_astrometry(src_to_astrometry={42: gaia})
+        a = bb.attach_astrometry(_resolved(gaia=42), None, idx)
+        self.assertEqual(a.astrometry_via, "gaia_5p")
+        self.assertEqual(a.ra_deg, gaia.ra_deg)
+        self.assertEqual(a.pmra_masyr, gaia.pmra_masyr)
+        self.assertEqual(a.ref_epoch, 2016.0)
+
+    def test_nss_systemic_when_ruwe_high(self) -> None:
+        gaia = _gaia_astrometry_row(source_id=7, ruwe=2.5)
+        idx = _indices_with_astrometry(
+            src_to_astrometry={7: gaia},
+            src_to_nss={7: {"period": "100"}},
+        )
+        a = bb.attach_astrometry(_resolved(gaia=7), None, idx)
+        self.assertEqual(a.astrometry_via, "gaia_nss_systemic")
+        # Values come from the same Gaia row — Gaia DR3 refits to the
+        # centre-of-mass for NSS sources, so the tag is what changes.
+        self.assertEqual(a.ra_deg, gaia.ra_deg)
+
+    def test_nss_systemic_when_ipd_high(self) -> None:
+        gaia = _gaia_astrometry_row(
+            source_id=7, ruwe=1.0, ipd_frac_multi_peak=0.05,
+        )
+        idx = _indices_with_astrometry(
+            src_to_astrometry={7: gaia},
+            src_to_nss={7: {"period": "100"}},
+        )
+        a = bb.attach_astrometry(_resolved(gaia=7), None, idx)
+        self.assertEqual(a.astrometry_via, "gaia_nss_systemic")
+
+    def test_nss_present_but_5p_clean_routes_to_gaia_5p(self) -> None:
+        # NSS row alone is not sufficient — the 5p must also be flagged.
+        gaia = _gaia_astrometry_row(source_id=7, ruwe=1.0, ipd_frac_multi_peak=0.0)
+        idx = _indices_with_astrometry(
+            src_to_astrometry={7: gaia},
+            src_to_nss={7: {"period": "100"}},
+        )
+        a = bb.attach_astrometry(_resolved(gaia=7), 1.0, idx)
+        self.assertEqual(a.astrometry_via, "gaia_5p")
+
+    def test_hip2_long_baseline_when_pmra_disagrees(self) -> None:
+        # Sirius-like: Gaia pmra=-462, HIP2 pmra=-546. Δ=84 > 50.
+        gaia = _gaia_astrometry_row(
+            source_id=1000, pmra_masyr=-462.0, pmdec_masyr=-914.0,
+        )
+        hip2 = _hip2_row(hip=32349, pm_ra_masyr=-546.0, pm_de_masyr=-1223.0)
+        idx = _indices_with_astrometry(
+            src_to_astrometry={1000: gaia},
+            hip_to_gaia={32349: 1000},
+            hip2=[hip2],
+        )
+        a = bb.attach_astrometry(_resolved(gaia=1000), 3.0, idx)
+        self.assertEqual(a.astrometry_via, "hip2_long_baseline")
+        # Values come from HIP2, not Gaia.
+        self.assertEqual(a.pmra_masyr, -546.0)
+        self.assertEqual(a.ref_epoch, 1991.25)
+
+    def test_hip2_long_baseline_when_pmde_disagrees(self) -> None:
+        gaia = _gaia_astrometry_row(
+            source_id=1000, pmra_masyr=10.0, pmdec_masyr=-100.0,
+        )
+        hip2 = _hip2_row(hip=999, pm_ra_masyr=15.0, pm_de_masyr=-200.0)  # Δde=100 > 50
+        idx = _indices_with_astrometry(
+            src_to_astrometry={1000: gaia},
+            hip_to_gaia={999: 1000},
+            hip2=[hip2],
+        )
+        a = bb.attach_astrometry(_resolved(gaia=1000), 2.0, idx)
+        self.assertEqual(a.astrometry_via, "hip2_long_baseline")
+
+    def test_hip2_route_skipped_when_pair_too_wide(self) -> None:
+        # 50″ separation — no orbital contamination expected at this
+        # spacing, so even with a PM disagreement we stick with Gaia 5p.
+        gaia = _gaia_astrometry_row(
+            source_id=1000, pmra_masyr=10.0, pmdec_masyr=10.0,
+        )
+        hip2 = _hip2_row(hip=999, pm_ra_masyr=100.0, pm_de_masyr=100.0)
+        idx = _indices_with_astrometry(
+            src_to_astrometry={1000: gaia},
+            hip_to_gaia={999: 1000},
+            hip2=[hip2],
+        )
+        a = bb.attach_astrometry(_resolved(gaia=1000), 50.0, idx)
+        self.assertEqual(a.astrometry_via, "gaia_5p")
+
+    def test_hip2_route_skipped_when_pm_agrees(self) -> None:
+        gaia = _gaia_astrometry_row(
+            source_id=1000, pmra_masyr=10.0, pmdec_masyr=10.0,
+        )
+        hip2 = _hip2_row(hip=999, pm_ra_masyr=15.0, pm_de_masyr=5.0)  # Δ<50 on both
+        idx = _indices_with_astrometry(
+            src_to_astrometry={1000: gaia},
+            hip_to_gaia={999: 1000},
+            hip2=[hip2],
+        )
+        a = bb.attach_astrometry(_resolved(gaia=1000), 1.0, idx)
+        self.assertEqual(a.astrometry_via, "gaia_5p")
+
+    def test_hip2_route_skipped_when_source_has_no_hip(self) -> None:
+        # Tycho-only star — no HIP2 lookup possible.
+        gaia = _gaia_astrometry_row(source_id=1000)
+        idx = _indices_with_astrometry(
+            src_to_astrometry={1000: gaia},
+            hip_to_gaia={},
+            hip2=[],
+        )
+        a = bb.attach_astrometry(_resolved(gaia=1000), 1.0, idx)
+        self.assertEqual(a.astrometry_via, "gaia_5p")
+
+    def test_nss_beats_hip2_when_both_would_fire(self) -> None:
+        # Bright close binary with NSS row + bad ruwe AND big PM
+        # disagreement. NSS-systemic wins by priority.
+        gaia = _gaia_astrometry_row(
+            source_id=1000, ruwe=2.0, pmra_masyr=10.0, pmdec_masyr=10.0,
+        )
+        hip2 = _hip2_row(hip=999, pm_ra_masyr=200.0, pm_de_masyr=200.0)
+        idx = _indices_with_astrometry(
+            src_to_astrometry={1000: gaia},
+            src_to_nss={1000: {"period": "10"}},
+            hip_to_gaia={999: 1000},
+            hip2=[hip2],
+        )
+        a = bb.attach_astrometry(_resolved(gaia=1000), 1.0, idx)
+        self.assertEqual(a.astrometry_via, "gaia_nss_systemic")
+
+
+class ResolvedComponentHipTests(unittest.TestCase):
+    """9mm.198/dch.30 — Stage 2 records the HIP when known even if no
+    Gaia source_id could be resolved, so Stage 3's HIP2 fallback
+    engages for Gaia-saturated bright primaries.
+    """
+
+    def test_unresolved_primary_retains_orb6_hip(self) -> None:
+        pair = _wds_pair(wds_id="06451-1643", components="AB")
+        orb6 = [_orb6(wds_id=pair.wds_id, components="AB", hip=32349)]
+        # No Gaia xwalk entry for HIP 32349, no AT-HYG row carrying gaia.
+        idx = _indices(hip_to_gaia={}, athyg=[])
+        r = bb.resolve_component(
+            pair, "A", is_primary=True,
+            orb6_for_pair=orb6, indices=idx,
+        )
+        self.assertEqual(r.resolve_via, "unresolved")
+        self.assertIsNone(r.gaia_source_id)
+        # The ORB6 HIP propagates onto the component so Stage 3's HIP2
+        # fallback has something to dispatch on.
+        self.assertEqual(r.hip, 32349)
+
+    def test_orb6_hip_resolution_records_hip(self) -> None:
+        pair = _wds_pair(wds_id="W", components="AB")
+        orb6 = [_orb6(wds_id=pair.wds_id, components="AB", hip=42)]
+        idx = _indices(hip_to_gaia={42: 100})
+        r = bb.resolve_component(
+            pair, "A", is_primary=True,
+            orb6_for_pair=orb6, indices=idx,
+        )
+        self.assertEqual(r.resolve_via, "orb6_hip")
+        self.assertEqual(r.gaia_source_id, 100)
+        self.assertEqual(r.hip, 42)
+
+    def test_position_match_records_hip_from_athyg_row(self) -> None:
+        pair = _wds_pair_with_pos(
+            components="AB",
+            precise_ra=100.0, precise_dec=0.0,
+        )
+        # AT-HYG row at the same coord carrying both hip and gaia.
+        athyg = [bb.AthygRow(
+            hip=99, tyc=None, gaia=42, hd=None,
+            ra_deg=100.0, dec_deg=0.0,
+            x_pc=0.0, y_pc=0.0, z_pc=0.0,
+            dist_pc=1.0, v_mag=None, absmag=5.0,
+            ci=None, spect="", proper="",
+        )]
+        c = bb.ResolvedComponent(
+            wds_id=pair.wds_id, discoverer=pair.discoverer,
+            component="A", is_primary=True,
+            gaia_source_id=None, resolve_via="unresolved",
+        )
+        bb.resolve_via_position(
+            components=[c], pairs=[pair], athyg=athyg,
+            tolerance_arcsec=2.0,
+        )
+        self.assertEqual(c.gaia_source_id, 42)
+        self.assertEqual(c.hip, 99)
+
+
+class PropagateWithinSystemHipTests(unittest.TestCase):
+    """HIP propagates by component-letter across pair rows even when
+    Gaia source_id never resolved (Sirius A appears in AB/AC/AD/AE/AF
+    pair rows but only ORB6's AB row carries the HIP).
+    """
+
+    def test_hip_propagates_to_other_pair_rows(self) -> None:
+        ab_a = bb.ResolvedComponent(
+            wds_id="X", discoverer="D", component="A", is_primary=True,
+            gaia_source_id=None, resolve_via="unresolved", hip=32349,
+        )
+        ac_a = bb.ResolvedComponent(
+            wds_id="X", discoverer="D", component="A", is_primary=True,
+            gaia_source_id=None, resolve_via="unresolved", hip=None,
+        )
+        ad_a = bb.ResolvedComponent(
+            wds_id="X", discoverer="D", component="A", is_primary=True,
+            gaia_source_id=None, resolve_via="unresolved", hip=None,
+        )
+        bb.propagate_within_system([ab_a, ac_a, ad_a])
+        self.assertEqual(ac_a.hip, 32349)
+        self.assertEqual(ad_a.hip, 32349)
+
+
+class ComputeMinRhoPerSourceTests(unittest.TestCase):
+    def test_takes_minimum_across_pairs(self) -> None:
+        # Same source_id in a tight AB pair and a wide AC pair — the
+        # 2″ ρ wins so this star will trip the HIP2 5″ gate.
+        ab = bb.WdsPair(
+            wds_id="X", discoverer="D", components="AB",
+            date_last=None, rho_last=2.0, theta_last=0.0,
+            mag_pri=None, mag_sec=None, spectral="", notes="    ",
+            precise_ra_deg=None, precise_dec_deg=None,
+        )
+        ac = bb.WdsPair(
+            wds_id="X", discoverer="D", components="AC",
+            date_last=None, rho_last=50.0, theta_last=0.0,
+            mag_pri=None, mag_sec=None, spectral="", notes="    ",
+            precise_ra_deg=None, precise_dec_deg=None,
+        )
+        comp_ab = _resolved(gaia=42, wds_id="X", discoverer="D", component="A", is_primary=True)
+        comp_ac = _resolved(gaia=42, wds_id="X", discoverer="D", component="A", is_primary=True)
+        idx = bb.build_pair_by_wds_disc([ab, ac])
+        min_rho = bb.compute_min_rho_per_source([comp_ab, comp_ac], idx)
+        self.assertEqual(min_rho[42], 2.0)
+
+    def test_skips_components_with_no_pair_or_no_rho(self) -> None:
+        bare = bb.WdsPair(
+            wds_id="Y", discoverer="D", components="AB",
+            date_last=None, rho_last=None, theta_last=None,
+            mag_pri=None, mag_sec=None, spectral="", notes="    ",
+            precise_ra_deg=None, precise_dec_deg=None,
+        )
+        comp = _resolved(gaia=7, wds_id="Y", discoverer="D")
+        idx = bb.build_pair_by_wds_disc([bare])
+        min_rho = bb.compute_min_rho_per_source([comp], idx)
+        self.assertNotIn(7, min_rho)
+
+
+class AttachAstrometryAllTests(unittest.TestCase):
+    def test_parallel_list_contract(self) -> None:
+        gaia = _gaia_astrometry_row(source_id=42)
+        idx = _indices_with_astrometry(src_to_astrometry={42: gaia})
+        c1 = _resolved(gaia=42, wds_id="X", discoverer="D", component="A", is_primary=True)
+        c2 = _resolved(gaia=None, wds_id="X", discoverer="D", component="B", is_primary=False)
+        pair = bb.WdsPair(
+            wds_id="X", discoverer="D", components="AB",
+            date_last=None, rho_last=10.0, theta_last=0.0,
+            mag_pri=None, mag_sec=None, spectral="", notes="    ",
+            precise_ra_deg=None, precise_dec_deg=None,
+        )
+        out = bb.attach_astrometry_all([c1, c2], pairs=[pair], indices=idx)
+        self.assertEqual(len(out), 2)
+        self.assertEqual(out[0].astrometry_via, "gaia_5p")
+        self.assertEqual(out[1].astrometry_via, "unresolved")
+
+    def test_tight_pair_routes_to_hip2(self) -> None:
+        # End-to-end: AB pair with 2″ separation + PM disagreement →
+        # primary routes to hip2_long_baseline.
+        gaia = _gaia_astrometry_row(
+            source_id=42, pmra_masyr=-462.0, pmdec_masyr=-914.0,
+        )
+        hip2 = _hip2_row(hip=99, pm_ra_masyr=-546.0, pm_de_masyr=-1223.0)
+        idx = _indices_with_astrometry(
+            src_to_astrometry={42: gaia},
+            hip_to_gaia={99: 42},
+            hip2=[hip2],
+        )
+        c = _resolved(gaia=42, wds_id="X", discoverer="D", component="A", is_primary=True)
+        pair = bb.WdsPair(
+            wds_id="X", discoverer="D", components="AB",
+            date_last=None, rho_last=2.0, theta_last=0.0,
+            mag_pri=None, mag_sec=None, spectral="", notes="    ",
+            precise_ra_deg=None, precise_dec_deg=None,
+        )
+        out = bb.attach_astrometry_all([c], pairs=[pair], indices=idx)
+        self.assertEqual(out[0].astrometry_via, "hip2_long_baseline")
+
+    def test_min_rho_drives_routing_across_pair_rows(self) -> None:
+        # Same source A in both an AB (2″) and an AC (50″) row.
+        # The 2″ ρ trips the HIP2 5″ gate; both A-rows route together.
+        gaia = _gaia_astrometry_row(
+            source_id=42, pmra_masyr=10.0, pmdec_masyr=10.0,
+        )
+        hip2 = _hip2_row(hip=99, pm_ra_masyr=200.0, pm_de_masyr=10.0)
+        idx = _indices_with_astrometry(
+            src_to_astrometry={42: gaia},
+            hip_to_gaia={99: 42},
+            hip2=[hip2],
+        )
+        ab_a = _resolved(gaia=42, wds_id="X", discoverer="D", component="A", is_primary=True)
+        ac_a = _resolved(gaia=42, wds_id="X", discoverer="D", component="A", is_primary=True)
+        ab = bb.WdsPair(
+            wds_id="X", discoverer="D", components="AB",
+            date_last=None, rho_last=2.0, theta_last=0.0,
+            mag_pri=None, mag_sec=None, spectral="", notes="    ",
+            precise_ra_deg=None, precise_dec_deg=None,
+        )
+        ac = bb.WdsPair(
+            wds_id="X", discoverer="D", components="AC",
+            date_last=None, rho_last=50.0, theta_last=0.0,
+            mag_pri=None, mag_sec=None, spectral="", notes="    ",
+            precise_ra_deg=None, precise_dec_deg=None,
+        )
+        out = bb.attach_astrometry_all([ab_a, ac_a], pairs=[ab, ac], indices=idx)
+        # Both A-rows in the same system route together because the
+        # per-source min-ρ (2″) gates the HIP2 fallback.
+        self.assertEqual(out[0].astrometry_via, "hip2_long_baseline")
+        self.assertEqual(out[1].astrometry_via, "hip2_long_baseline")
+
+
+class AstrometryCountsTests(unittest.TestCase):
+    def test_every_canonical_key_present(self) -> None:
+        items = [
+            bb.ComponentAstrometry(
+                astrometry_via="gaia_5p",
+                ra_deg=1.0, dec_deg=1.0, parallax_mas=1.0,
+                pmra_masyr=1.0, pmdec_masyr=1.0, ref_epoch=2016.0,
+            ),
+            bb.ComponentAstrometry(
+                astrometry_via="unresolved",
+                ra_deg=None, dec_deg=None, parallax_mas=None,
+                pmra_masyr=None, pmdec_masyr=None, ref_epoch=None,
+            ),
+        ]
+        counts = bb.astrometry_counts(items)
+        self.assertEqual(set(counts.keys()), set(bb.ASTROMETRY_VIA_VALUES))
+        self.assertEqual(counts["gaia_5p"], 1)
+        self.assertEqual(counts["unresolved"], 1)
+        self.assertEqual(counts["gaia_nss_systemic"], 0)
+        self.assertEqual(counts["hip2_long_baseline"], 0)
 
 
 if __name__ == "__main__":
