@@ -33,6 +33,8 @@ import {
   icrsSphericalToCartesian,
   apparentToAbsoluteMagnitude,
   applyBailerJonesOverride,
+  isBailerJonesEligible,
+  BJ_ELIGIBLE_DIST_SRCS,
   DIST_SRC_BAILER_JONES,
   applyLmcKinematicOverride,
   angularSeparationDeg,
@@ -910,6 +912,34 @@ describe('catalog-pure / applyBailerJonesOverride', () => {
   it('DIST_SRC_BAILER_JONES tag is "BJ" (distinct from AT-HYG namespace)', () => {
     expect(DIST_SRC_BAILER_JONES).toBe('BJ');
     expect(['G_R3', 'G_R2', 'HIP', 'GJ', 'N', 'OTHER']).not.toContain(DIST_SRC_BAILER_JONES);
+  });
+});
+
+describe('catalog-pure / isBailerJonesEligible', () => {
+  it('admits only Gaia-inverse dist_src values when a source_id is present', () => {
+    expect(isBailerJonesEligible('123', 'G_R3')).toBe(true);
+    expect(isBailerJonesEligible('123', 'G_R2')).toBe(true);
+    expect(isBailerJonesEligible('123', 'HIP')).toBe(false);
+    expect(isBailerJonesEligible('123', 'GJ')).toBe(false);
+    expect(isBailerJonesEligible('123', 'N')).toBe(false);
+    expect(isBailerJonesEligible('123', 'OTHER')).toBe(false);
+  });
+
+  it('rejects rows without a Gaia source_id even if dist_src is Gaia-inverse', () => {
+    expect(isBailerJonesEligible(null, 'G_R3')).toBe(false);
+    expect(isBailerJonesEligible('', 'G_R3')).toBe(false);
+  });
+
+  it('rejects rows without a dist_src even if a source_id is present', () => {
+    expect(isBailerJonesEligible('123', null)).toBe(false);
+    expect(isBailerJonesEligible('123', '')).toBe(false);
+  });
+
+  it('BJ_ELIGIBLE_DIST_SRCS is exactly {G_R3, G_R2} — guards against namespace drift', () => {
+    expect(BJ_ELIGIBLE_DIST_SRCS.size).toBe(2);
+    expect(BJ_ELIGIBLE_DIST_SRCS.has('G_R3')).toBe(true);
+    expect(BJ_ELIGIBLE_DIST_SRCS.has('G_R2')).toBe(true);
+    expect(BJ_ELIGIBLE_DIST_SRCS.has('HIP')).toBe(false);
   });
 });
 

@@ -12,6 +12,7 @@ import {
   applyDoublesFlag as applyDoublesFlagPure,
   parseBailerJonesTsv,
   applyBailerJonesOverride,
+  isBailerJonesEligible,
   applyLmcKinematicOverride,
   angularSeparationDeg,
   LMC_CENTRE_RA_HOURS,
@@ -474,6 +475,7 @@ interface AthygRow {
   x0: string; y0: string; z0: string;
   absmag: string;
   dist: string;
+  dist_src: string;
   ci: string;
   spect: string;
   con: string;
@@ -538,17 +540,22 @@ async function readStars(
     }
 
     // Bailer-Jones (DR3) override: when this row has a Gaia source_id
-    // and a B-J posterior exists, swap dist/x/y/z/absmag for the
-    // posterior-derived values. Skipped silently otherwise — the row
-    // keeps its naive 1/π AT-HYG values. See SCIENCE.md § Distances /
+    // AND its AT-HYG dist_src marks the catalogued distance as a Gaia
+    // inverse (G_R3 / G_R2), swap dist/x/y/z/absmag for the B-J
+    // posterior. Rows with dist_src=HIP / GJ / N / OTHER already carry
+    // a non-Gaia parallax — leave them alone, since B-J's
+    // Galactic-density prior tail would silently move them to 10–40 kpc
+    // when the Gaia parallax has low S/N. See SCIENCE.md § Distances /
     // Bailer-Jones DR3 override.
     const gaiaSourceId = nonEmpty(row.gaia);
+    const distSrc = nonEmpty(row.dist_src);
+    const bjEligibleRow = isBailerJonesEligible(gaiaSourceId, distSrc);
     let dist = parseFloatOrNull(row.dist);
     const ra = parseFloatOrNull(row.ra);
     const dec = parseFloatOrNull(row.dec);
     const mag = parseFloatOrNull(row.mag);
-    if (gaiaSourceId) bjEligible++;
-    if (gaiaSourceId && bjMap.size > 0) {
+    if (bjEligibleRow) bjEligible++;
+    if (bjEligibleRow && bjMap.size > 0) {
       if (ra !== null && dec !== null && mag !== null) {
         const ovr = applyBailerJonesOverride(ra, dec, mag, gaiaSourceId, bjMap);
         if (ovr) {
@@ -784,7 +791,7 @@ async function main() {
     const pct = ((stats.bjOverridden / stats.bjEligible) * 100).toFixed(1);
     console.log(
       `  Bailer-Jones override: ${stats.bjOverridden} / ${stats.bjEligible} ` +
-        `Gaia-DR3-bearing stars (${pct}%) → dist_src='${DIST_SRC_BAILER_JONES}'`,
+        `Gaia-inverse-distance stars (${pct}%) → dist_src='${DIST_SRC_BAILER_JONES}'`,
     );
   }
   if (stats.lmcCandidates > 0) {

@@ -547,6 +547,28 @@ export function inferBinaries(
 // AT-HYG's existing namespace (G_R3, G_R2, HIP, GJ, N, OTHER).
 export const DIST_SRC_BAILER_JONES = 'BJ';
 
+// AT-HYG `dist_src` values whose underlying distance is a Gaia
+// inverse-parallax estimate. Only these rows are eligible for the
+// Bailer-Jones override — for low-S/N Gaia parallaxes the inverse is
+// catastrophic and B-J's posterior is the principled replacement.
+// Rows whose dist_src is HIP / GJ / N / OTHER already carry a
+// non-Gaia parallax or canonical distance; overriding them with B-J
+// regresses them onto B-J's Galactic-density prior tail (~10–40 kpc
+// at mid-latitudes), which is a strict loss of information.
+export const BJ_ELIGIBLE_DIST_SRCS: ReadonlySet<string> = new Set(['G_R3', 'G_R2']);
+
+/** Whether an AT-HYG row is eligible for the Bailer-Jones override:
+ *  has a Gaia DR3 source_id AND its AT-HYG dist_src marks the
+ *  catalogued distance as a Gaia inverse-parallax estimate. */
+export function isBailerJonesEligible(
+  gaiaSourceId: string | null,
+  distSrc: string | null,
+): boolean {
+  if (!gaiaSourceId) return false;
+  if (!distSrc) return false;
+  return BJ_ELIGIBLE_DIST_SRCS.has(distSrc);
+}
+
 /** Parse the TSV produced by `scripts/refresh-bailer-jones.py` into a
  *  Gaia DR3 source_id → distance (pc) map. `source_id` is kept as a
  *  string: Gaia source_ids exceed `Number.MAX_SAFE_INTEGER`, so any

@@ -31,11 +31,15 @@ export interface BuildCounts {
   ccdmFlagged: number;
   /** Total entries in the Bailer-Jones DR3 distance TSV (parsed map size). */
   bjEntries: number;
-  /** AT-HYG rows with a non-empty Gaia DR3 source_id — the override
-   *  population is this set ∩ Bailer-Jones source-ids. */
+  /** AT-HYG rows the Bailer-Jones override is allowed to fire on:
+   *  Gaia DR3 source_id present AND dist_src ∈ {G_R3, G_R2} (the Gaia
+   *  inverse-parallax population the posterior is the principled
+   *  replacement for). HIP / GJ / N / OTHER rows are excluded — their
+   *  underlying distance isn't a Gaia inverse and B-J would silently
+   *  move them to the prior's distant tail at low parallax S/N. */
   bjEligible: number;
-  /** Rows whose dist/x/y/z/absmag were overridden via a Bailer-Jones
-   *  posterior. Coverage = bjOverridden / bjEligible. */
+  /** bjEligible rows whose source_id was also in the B-J catalogue —
+   *  the count actually overridden. Coverage = bjOverridden / bjEligible. */
   bjOverridden: number;
   /** AT-HYG rows whose (ra, dec) falls inside the LMC sky cone — the
    *  population the LMC kinematic PM gate is evaluated against. */

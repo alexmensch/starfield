@@ -222,18 +222,30 @@ the photogeometric variant additionally combines the prior with G
 and BP–RP photometry. At high S/N the posterior collapses onto the
 likelihood (well-measured stars don't move); at low S/N it collapses
 onto the prior (catastrophic outliers get pulled back to plausible
-disc distances). This is the principled fix and we apply it
-uniformly: any AT-HYG row carrying a Gaia DR3 source_id swaps its
-`dist`, `x0`, `y0`, `z0`, and `absmag` for the Bailer-Jones-derived
-values (photogeometric `r_med_photogeo` preferred, geometric
-`r_med_geo` as fallback when photogeo is absent). Recomputing
-`absmag` matters as much as the positional update — without it,
-stars get *placed* at the new distance but *lit* for the old one,
-breaking the disc/glow size chain. The override fires for 99.5% of
-Gaia-DR3-bearing AT-HYG rows; the residual 0.5% are source_ids
-absent from the Bailer-Jones publication (mostly the small G_R2 /
-HIP / GJ tail) and keep their AT-HYG values. The override also
-rescues ~15 stars previously dropped at filter (3): catastrophic
+disc distances). This is the principled fix and we apply it where
+the underlying distance actually is a Gaia inverse-parallax estimate
+— i.e. AT-HYG rows whose `dist_src` is `G_R3` or `G_R2`. For those
+rows we swap `dist`, `x0`, `y0`, `z0`, and `absmag` for the
+Bailer-Jones-derived values (photogeometric `r_med_photogeo`
+preferred, geometric `r_med_geo` as fallback when photogeo is
+absent). Recomputing `absmag` matters as much as the positional
+update — without it, stars get *placed* at the new distance but
+*lit* for the old one, breaking the disc/glow size chain.
+
+Rows whose `dist_src` is `HIP` / `GJ` / `N` / `OTHER` are deliberately
+excluded from the override even when they also carry a Gaia DR3
+source_id: their catalogued distance is a Hipparcos parallax, a
+Gliese–Jahreiß nearby-star value, or a curated entry from another
+source, all of which are reliable at the close distances they
+typically cover. Overriding them with B-J would be a silent
+regression — when the Gaia parallax for a close, bright star has
+low S/N (a not-uncommon failure mode for very bright stars in DR3),
+B-J's posterior collapses onto its Galactic-density prior tail at
+10–40 kpc and pushes a well-known nearby star out by 1–2 orders of
+magnitude. The override fires for ~99.5% of Gaia-inverse-distanced
+AT-HYG rows; the residual 0.5% are source_ids absent from the
+Bailer-Jones publication and keep their AT-HYG values. The override
+also rescues ~15 stars previously dropped at filter (3): catastrophic
 parallax inversions whose Bayesian distance is < 50 kpc.
 
 Data file: `data/bailer-jones-dr3.tsv` (~310k rows, refreshed by
