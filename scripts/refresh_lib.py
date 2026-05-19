@@ -9,6 +9,14 @@ is then committed (LFS where >1 MB). These scripts are MANUAL-RUN — they
 are NOT part of `npm run build`.
 
 Provides:
+  athyg_int_or_none / athyg_str_or_none / read_athyg_source_ids
+                   — AT-HYG missing-sentinel handling. AT-HYG uses '' OR
+                     '0' as the missing-sentinel for hip/tyc/gaia/hd;
+                     these helpers collapse both to None so consumers
+                     cannot install rows under sentinel-0 keys.
+                     read_athyg_source_ids is the canonical "list of
+                     Gaia source_ids from AT-HYG" walker used by every
+                     Gaia-keyed refresh script.
   TapClient        — backend-agnostic TAP wrapper. Tries each backend in
                      order; auto-falls-back to the next on 5xx / connection
                      errors. Default backends: ESA Gaia archive via
@@ -37,6 +45,7 @@ Test (no network):
 
 from __future__ import annotations
 
+import csv
 import os
 import random
 import time
@@ -73,6 +82,63 @@ def is_up_to_date(output: Path, sources: Iterable[Path]) -> bool:
         if not src.exists() or src.stat().st_mtime > out_mtime:
             return False
     return True
+
+
+# ─── AT-HYG ingest conventions ────────────────────────────────────────
+
+# AT-HYG v3.3 uses an empty string OR the literal "0" as the missing-
+# sentinel for its classical identifier columns: hip, tyc, gaia, hd.
+# Sol (row id=1) carries "" for hip/tyc/gaia; a handful of historical
+# rows store the same intent as "0". Both must collapse to None so a
+# stray downstream lookup never returns a sentinel-0 star instead of
+# the absent row it meant to ask about.
+
+_ATHYG_MISSING_SENTINELS: frozenset[str] = frozenset({"", "0"})
+
+
+def athyg_int_or_none(cell: str | None) -> int | None:
+    """Parse an AT-HYG int identifier (hip / gaia / hd), treating
+    empty and '0' as missing. Whitespace is stripped before the
+    sentinel check; malformed values also return None.
+    """
+    if cell is None:
+        return None
+    s = cell.strip()
+    if s in _ATHYG_MISSING_SENTINELS:
+        return None
+    try:
+        return int(s)
+    except ValueError:
+        return None
+
+
+def athyg_str_or_none(cell: str | None) -> str | None:
+    """Parse an AT-HYG string identifier (tyc), treating empty and '0'
+    as missing. Same sentinel convention as ``athyg_int_or_none``."""
+    if cell is None:
+        return None
+    s = cell.strip()
+    if s in _ATHYG_MISSING_SENTINELS:
+        return None
+    return s
+
+
+def read_athyg_source_ids(csv_path: Path) -> list[int]:
+    """Return the AT-HYG Gaia DR3 source_id list. Empty- and '0'-
+    sentinel rows are dropped per the AT-HYG missing convention; the
+    Bailer-Jones and Apsis refresh scripts share this contract because
+    both queries are keyed on AT-HYG.gaia.
+    """
+    ids: list[int] = []
+    with csv_path.open(newline="") as fh:
+        reader = csv.reader(fh)
+        header = next(reader)
+        gi = header.index("gaia")
+        for row in reader:
+            sid = athyg_int_or_none(row[gi])
+            if sid is not None:
+                ids.append(sid)
+    return ids
 
 
 # ─── Retry ────────────────────────────────────────────────────────────

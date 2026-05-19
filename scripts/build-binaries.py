@@ -1,30 +1,43 @@
 #!/usr/bin/env python3
-"""Catalogue builder for the source-ID-anchored binary-system pipeline — Stages 1-2.
+"""Catalogue builder for the source-ID-anchored binary-system pipeline — Stages 1-3.
 
 Stage 1 (``stellata-dch.27``) loads every reference catalog the resolution
 chain needs (WDS + ORB6 + AT-HYG + GCVS + CCDM + HIP2 + Gaia HIP/Tyc
-cross-walks + Gaia NSS + optionally Gaia 5p astrometry) and builds the
-identifier indices that Stages 2-7 consume.
+cross-walks + Gaia NSS + Gaia 5p astrometry) and builds the identifier
+indices that Stages 2-7 consume.
 
 Stage 2 (``stellata-dch.28``) resolves each WDS component to a Gaia DR3
 ``source_id`` via a four-tier priority chain: ORB6's published HIP,
 AT-HYG's natively-stored ``gaia`` field reached either through a HIP or
 via a 2″ position match against the WDS precise coordinates, then PM-
 propagated and bare position match against ``data/gaia_dr3_astrometry.tsv``
-(the latter two stubbed until ``stellata-dch.29`` lands the astrometry
-table). A SIMBAD-backed supplement for the residual set is tracked in
-``stellata-dch.60`` and lands after the position-match tiers.
+(the latter two land in the same bead as Stage 3). A SIMBAD-backed
+supplement for the residual set is tracked in ``stellata-dch.60``.
 
-Stage 2 emits two side effects:
+Stage 3 (``stellata-dch.30``) attaches the most-trustworthy astrometric
+measurement to each resolved component, routing between Gaia DR3 5p,
+Gaia NSS-systemic, and Hipparcos-2 long-baseline solutions:
 
-* ``data/gaia_astrometry_source_id_request.tsv`` — the deduped union of
-  source_ids resolved in tiers 1-2, which ``stellata-dch.29`` reads to
-  drive its ADQL query.
-* Build log lines per tier so coverage drift is visible at every run.
+* ``gaia_nss_systemic`` — source has an NSS two-body-orbit row AND the
+  5p solution is flagged unreliable (``ruwe > 1.4`` OR
+  ``ipd_frac_multi_peak > 0.02``). Gaia DR3 refits ``gaia_source`` to
+  the centre-of-mass for NSS-modeled sources, so the same row's values
+  surface with this routing tag distinguishing provenance for Stage 4.
+* ``hip2_long_baseline`` — the WDS pair has a close companion (min
+  ρ across all pair rows the source participates in is ≤ 5″) AND
+  ``|pmRA_gaia − pmRA_hip2| > 50 mas/yr`` OR ``|pmDE_gaia − pmDE_hip2|
+  > 50 mas/yr``. Hipparcos's J1991.25-anchored long baseline averages
+  a different window of the orbit than Gaia's 2014-2017 window; for
+  bright close binaries (Sirius, α Cen, Castor) the long-baseline PM
+  is closer to the systemic motion of the centre of mass.
+* ``gaia_5p`` — default.
 
-The final ``data/multiples.tsv`` is produced by Stage 6
-(``stellata-dch.32``). Until Stages 3-7 land this script remains a
-load-and-resolve-and-report harness.
+Stage 2 emits ``data/gaia_astrometry_source_id_request.tsv`` (the deduped
+union of source_ids resolved in tiers 1-2), which
+``scripts/refresh-gaia-astrometry.py`` (dch.29) reads to drive its ADQL
+query. The final ``data/multiples.tsv`` is produced by Stage 6
+(``stellata-dch.32``); until Stages 4-7 land this script remains a
+load-resolve-attach-and-report harness.
 
 Run via ``npm run build:binaries`` (or directly: ``python3
 scripts/build-binaries.py``). Idempotent against ``data/multiples.tsv``;
@@ -49,7 +62,11 @@ DATA = ROOT / "data"
 SCRIPT = Path(__file__).resolve()
 
 sys.path.insert(0, str(SCRIPT.parent))
-from refresh_lib import is_up_to_date  # noqa: E402
+from refresh_lib import (  # noqa: E402
+    athyg_int_or_none,
+    athyg_str_or_none,
+    is_up_to_date,
+)
 
 SRC_WDS_SUMM = DATA / "wds_summ.txt"
 SRC_ORB6 = DATA / "orb6_orbits.txt"
@@ -61,7 +78,7 @@ SRC_HIP2 = DATA / "hip2_van_leeuwen.tsv"
 SRC_GAIA_HIP_XM = DATA / "gaia_dr3_hip_xmatch.tsv"
 SRC_GAIA_TYC_XM = DATA / "gaia_dr3_tyc_xmatch.tsv"
 SRC_GAIA_NSS = DATA / "gaia_dr3_nss_two_body.tsv"
-SRC_GAIA_ASTROMETRY = DATA / "gaia_dr3_astrometry.tsv"  # lands with dch.29
+SRC_GAIA_ASTROMETRY = DATA / "gaia_dr3_astrometry.tsv"
 
 OUT_MULTIPLES = DATA / "multiples.tsv"
 OUT_ASTROMETRY_REQUEST = DATA / "gaia_astrometry_source_id_request.tsv"
@@ -137,6 +154,17 @@ class AthygRow:
 
 
 def parse_athyg(path: Path) -> list[AthygRow]:
+    """Parse the AT-HYG v3.3 classic-IDs CSV. ValueError on a per-row
+    cell (e.g. dirty positional data) drops just that row; KeyError on
+    a missing required column propagates — a header rename is a fatal
+    misconfiguration, not per-row dirty data, and the build must fail
+    loudly rather than silently return ``loaded 0 AT-HYG rows``.
+
+    Classical identifier cells (hip / tyc / gaia / hd) are read through
+    ``refresh_lib.athyg_int_or_none`` / ``athyg_str_or_none`` so the
+    AT-HYG "'' or '0' = missing" sentinel collapses to None at the
+    boundary; downstream indices keyed on these ids never see a 0.
+    """
     rows: list[AthygRow] = []
     with path.open(newline="") as fh:
         reader = csv.DictReader(fh)
@@ -148,17 +176,16 @@ def parse_athyg(path: Path) -> list[AthygRow]:
                 y = float(r["y0"])
                 z = float(r["z0"])
                 dist = float(r["dist"])
-            except (KeyError, ValueError):
+            except ValueError:
                 continue
             absmag = safe_float(r.get("absmag") or "")
             if absmag is None:
                 continue
-            tyc = (r.get("tyc") or "").strip() or None
             rows.append(AthygRow(
-                hip=safe_int(r.get("hip") or ""),
-                tyc=tyc,
-                gaia=safe_int(r.get("gaia") or ""),
-                hd=safe_int(r.get("hd") or ""),
+                hip=athyg_int_or_none(r.get("hip")),
+                tyc=athyg_str_or_none(r.get("tyc")),
+                gaia=athyg_int_or_none(r.get("gaia")),
+                hd=athyg_int_or_none(r.get("hd")),
                 ra_deg=ra_h * 15.0,
                 dec_deg=dec_d,
                 x_pc=x, y_pc=y, z_pc=z,
@@ -526,6 +553,68 @@ def parse_gaia_tyc_xmatch(path: Path) -> dict[str, int]:
     return {tyc: src for tyc, (_, src) in by_tyc.items()}
 
 
+@dataclass
+class GaiaAstrometryRow:
+    """One row of ``gaia_dr3_astrometry.tsv``. Stage 3 reads the 5p
+    columns plus the two quality flags (``ruwe`` and
+    ``ipd_frac_multi_peak``) that gate the NSS-systemic fallback;
+    photometry columns are surfaced for future Stage 5 use (parallax-
+    3σ + mag-gap optical filter)."""
+
+    source_id: int
+    ra_deg: float
+    dec_deg: float
+    parallax_mas: float | None
+    pmra_masyr: float | None
+    pmdec_masyr: float | None
+    ref_epoch: float
+    ruwe: float | None
+    ipd_frac_multi_peak: float | None
+    g_mag: float | None
+    bp_mag: float | None
+    rp_mag: float | None
+
+
+def parse_gaia_astrometry(path: Path) -> dict[int, GaiaAstrometryRow]:
+    """Returns ``source_id -> GaiaAstrometryRow``. The TSV is produced by
+    ``scripts/refresh-gaia-astrometry.py`` (``stellata-dch.29``) and
+    contains one row per resolved source_id in
+    ``data/gaia_astrometry_source_id_request.tsv``.
+
+    Rows missing the four mandatory positional columns (``source_id``,
+    ``ra``, ``dec``, ``ref_epoch``) are skipped — those represent
+    rejected ADQL records, not a parser failure.
+    """
+    by_src: dict[int, GaiaAstrometryRow] = {}
+    with path.open(newline="") as fh:
+        reader = csv.DictReader(fh, delimiter="\t")
+        for r in reader:
+            src = safe_int(r.get("source_id") or "")
+            if src is None:
+                continue
+            try:
+                ra = float(r["ra"])
+                dec = float(r["dec"])
+                ref_epoch = float(r["ref_epoch"])
+            except (KeyError, ValueError):
+                continue
+            by_src[src] = GaiaAstrometryRow(
+                source_id=src,
+                ra_deg=ra,
+                dec_deg=dec,
+                parallax_mas=safe_float(r.get("parallax") or ""),
+                pmra_masyr=safe_float(r.get("pmra") or ""),
+                pmdec_masyr=safe_float(r.get("pmdec") or ""),
+                ref_epoch=ref_epoch,
+                ruwe=safe_float(r.get("ruwe") or ""),
+                ipd_frac_multi_peak=safe_float(r.get("ipd_frac_multi_peak") or ""),
+                g_mag=safe_float(r.get("phot_g_mean_mag") or ""),
+                bp_mag=safe_float(r.get("phot_bp_mean_mag") or ""),
+                rp_mag=safe_float(r.get("phot_rp_mean_mag") or ""),
+            )
+    return by_src
+
+
 def parse_gaia_nss(path: Path) -> dict[int, dict[str, str]]:
     """Returns ``source_id -> NSS two-body row`` (raw dict per record).
     Schema is wide (28 columns) and Stage 4 reads only the orbital subset;
@@ -553,8 +642,9 @@ class IdentifierIndices:
 
     hip_to_gaia: dict[int, int]
     tyc_to_gaia: dict[str, int]
+    src_to_hip: dict[int, int]    # inverse of hip_to_gaia
     src_to_nss: dict[int, dict[str, str]]
-    src_to_astrometry: dict[int, dict[str, str]]   # empty pre-Stage-2-I (dch.29)
+    src_to_astrometry: dict[int, GaiaAstrometryRow]
     hip_to_athyg: dict[int, AthygRow]
     tyc_to_athyg: dict[str, AthygRow]
     src_to_athyg: dict[int, AthygRow]
@@ -567,6 +657,7 @@ def build_indices(
     hip_to_gaia: dict[int, int],
     tyc_to_gaia: dict[str, int],
     src_to_nss: dict[int, dict[str, str]],
+    src_to_astrometry: dict[int, GaiaAstrometryRow] | None = None,
 ) -> IdentifierIndices:
     hip_to_athyg: dict[int, AthygRow] = {}
     tyc_to_athyg: dict[str, AthygRow] = {}
@@ -579,11 +670,21 @@ def build_indices(
         if row.gaia is not None:
             src_to_athyg[row.gaia] = row
     hip_to_hip2: dict[int, Hip2Row] = {row.hip: row for row in hip2}
+    # Inverse of hip_to_gaia. The Gaia HIP cross-walk is many-to-one
+    # (multiple HIPs can resolve to the same Gaia source for tight
+    # systems), so collisions here pick whichever HIP appears first.
+    # Stage 3's HIP2 fallback only needs *some* HIP to look up the
+    # van Leeuwen row, not the canonical one — any HIP wholly inside
+    # the Gaia source's footprint suffices.
+    src_to_hip: dict[int, int] = {}
+    for hip, src in hip_to_gaia.items():
+        src_to_hip.setdefault(src, hip)
     return IdentifierIndices(
         hip_to_gaia=hip_to_gaia,
         tyc_to_gaia=tyc_to_gaia,
+        src_to_hip=src_to_hip,
         src_to_nss=src_to_nss,
-        src_to_astrometry={},
+        src_to_astrometry=src_to_astrometry or {},
         hip_to_athyg=hip_to_athyg,
         tyc_to_athyg=tyc_to_athyg,
         src_to_athyg=src_to_athyg,
@@ -597,7 +698,14 @@ def build_indices(
 @dataclass
 class ResolvedComponent:
     """One row of Stage 2's output. ``gaia_source_id`` is ``None`` only
-    when ``resolve_via == 'unresolved'``."""
+    when ``resolve_via == 'unresolved'``. ``hip`` is populated whenever
+    a classical Hipparcos identifier is known for the component —
+    either from an ORB6 entry (primary) or from a position-matched
+    AT-HYG row — regardless of whether Gaia could be reached from it.
+    Stage 3 reads ``hip`` for its HIP2 fallback so saturated bright
+    stars (Sirius, α Cen) that have no Gaia source still attach
+    astrometry.
+    """
 
     wds_id: str
     discoverer: str
@@ -605,6 +713,7 @@ class ResolvedComponent:
     is_primary: bool
     gaia_source_id: int | None
     resolve_via: str
+    hip: int | None = None
 
 
 def split_components(comp_str: str) -> tuple[str, str] | None:
@@ -688,7 +797,7 @@ def resolve_component(
     only applies to primaries. A SIMBAD-backed supplement for the
     residual set is tracked in ``stellata-dch.60``.
     """
-    def emit(gaia: int | None, via: str) -> ResolvedComponent:
+    def emit(gaia: int | None, via: str, hip: int | None) -> ResolvedComponent:
         return ResolvedComponent(
             wds_id=pair.wds_id,
             discoverer=pair.discoverer,
@@ -696,6 +805,7 @@ def resolve_component(
             is_primary=is_primary,
             gaia_source_id=gaia,
             resolve_via=via,
+            hip=hip,
         )
 
     candidate_hips: list[int] = []
@@ -708,14 +818,17 @@ def resolve_component(
             # Tier 1: Gaia-published HIP xwalk is the canonical source.
             gaia = indices.hip_to_gaia.get(e.hip)
             if gaia is not None:
-                return emit(gaia, "orb6_hip")
+                return emit(gaia, "orb6_hip", e.hip)
 
     for hip in candidate_hips:
         gaia = _gaia_from_athyg_via_hip(hip, indices)
         if gaia is not None:
-            return emit(gaia, "athyg_gaia_native")
+            return emit(gaia, "athyg_gaia_native", hip)
 
-    return emit(None, "unresolved")
+    # Tier 1+2 both missed. Keep the first ORB6-published HIP (if any)
+    # so Stage 3's HIP2 fallback can still attach astrometry for stars
+    # Gaia couldn't observe — Sirius / α Cen-shaped saturated primaries.
+    return emit(None, "unresolved", candidate_hips[0] if candidate_hips else None)
 
 
 # ─── Tier 2 position-match path ──────────────────────────────────────
@@ -824,6 +937,36 @@ def predict_secondary_position(
     return new_ra, new_dec
 
 
+def build_pair_by_wds_disc(
+    pairs: list[WdsPair],
+) -> dict[tuple[str, str], list[WdsPair]]:
+    """Bucket WDS pairs by ``(wds_id, discoverer)`` — the canonical
+    component-letter-to-pair lookup key. For typical WDS_SUMM data each
+    bucket holds one pair, so per-component lookup via
+    ``find_owning_pair`` is O(1) in practice.
+    """
+    out: dict[tuple[str, str], list[WdsPair]] = {}
+    for p in pairs:
+        out.setdefault((p.wds_id, p.discoverer), []).append(p)
+    return out
+
+
+def find_owning_pair(
+    c: ResolvedComponent,
+    pair_by_wds_disc: dict[tuple[str, str], list[WdsPair]],
+) -> WdsPair | None:
+    """Resolve a component back to the WDS pair whose components-string
+    decomposition assigns this letter to the matching primary/secondary
+    slot. Returns ``None`` if no such pair exists in the index.
+    """
+    slot = 0 if c.is_primary else 1
+    for p in pair_by_wds_disc.get((c.wds_id, c.discoverer), ()):
+        split = split_components(p.components)
+        if split is not None and split[slot] == c.component:
+            return p
+    return None
+
+
 def resolve_via_position(
     components: list[ResolvedComponent],
     pairs: list[WdsPair],
@@ -841,28 +984,10 @@ def resolve_via_position(
     plus the pair's last-reported ``(ρ, θ)`` offset, EXCLUDING the
     primary's matched row so a close-binary primary cannot claim its own
     secondary slot. Components without precise coords (or, for
-    secondaries, without ρ/θ) stay unresolved here and roll forward to
-    tiers 3-4 once ``stellata-dch.29`` lands.
+    secondaries, without ρ/θ) stay unresolved here.
     """
     grid = build_athyg_position_grid(athyg)
-
-    # ResolvedComponent carries the component letter, not the pair's
-    # components string — relink each unresolved component to its WDS
-    # pair via (wds_id, discoverer) + the component letter matching
-    # split_components(pair.components)[primary/secondary]. For typical
-    # WDS_SUMM data each (wds_id, discoverer) yields one pair, so this
-    # is O(1) per component in practice.
-    pair_by_id: dict[tuple[str, str], list[WdsPair]] = {}
-    for p in pairs:
-        pair_by_id.setdefault((p.wds_id, p.discoverer), []).append(p)
-
-    def _find_owning_pair(c: ResolvedComponent) -> WdsPair | None:
-        slot = 0 if c.is_primary else 1
-        for p in pair_by_id.get((c.wds_id, c.discoverer), ()):
-            split = split_components(p.components)
-            if split is not None and split[slot] == c.component:
-                return p
-        return None
+    pair_by_wds_disc = build_pair_by_wds_disc(pairs)
 
     # Pass 1 — primaries. Cache the AT-HYG row each primary claims so
     # the secondary pass can exclude it (close-binary primaries must not
@@ -871,7 +996,7 @@ def resolve_via_position(
     for c in components:
         if c.gaia_source_id is not None or not c.is_primary:
             continue
-        pair = _find_owning_pair(c)
+        pair = find_owning_pair(c, pair_by_wds_disc)
         if pair is None or pair.precise_ra_deg is None or pair.precise_dec_deg is None:
             continue
         match_idx = find_nearest_athyg_at_position(
@@ -881,18 +1006,19 @@ def resolve_via_position(
         if match_idx is None:
             continue
         row = athyg[match_idx]
-        if row.gaia is None:
-            continue
-        c.gaia_source_id = row.gaia
-        c.resolve_via = "athyg_gaia_native"
         primary_athyg_idx[(c.wds_id, c.discoverer, pair.components)] = match_idx
+        if c.hip is None and row.hip is not None:
+            c.hip = row.hip
+        if row.gaia is not None:
+            c.gaia_source_id = row.gaia
+            c.resolve_via = "athyg_gaia_native"
 
     # Pass 2 — secondaries. Predict position from primary + (ρ, θ),
     # exclude the primary's AT-HYG row.
     for c in components:
         if c.gaia_source_id is not None or c.is_primary:
             continue
-        pair = _find_owning_pair(c)
+        pair = find_owning_pair(c, pair_by_wds_disc)
         if (
             pair is None
             or pair.precise_ra_deg is None
@@ -915,10 +1041,11 @@ def resolve_via_position(
         if match_idx is None:
             continue
         row = athyg[match_idx]
-        if row.gaia is None:
-            continue
-        c.gaia_source_id = row.gaia
-        c.resolve_via = "athyg_gaia_native"
+        if c.hip is None and row.hip is not None:
+            c.hip = row.hip
+        if row.gaia is not None:
+            c.gaia_source_id = row.gaia
+            c.resolve_via = "athyg_gaia_native"
 
 
 def resolve_all_pairs(
@@ -977,20 +1104,31 @@ def propagate_within_system(components: list[ResolvedComponent]) -> None:
     ``resolve_via`` classification is preserved so the per-tier counts
     log the strategy that actually fetched the source_id, not a
     synthetic propagation tag.
+
+    HIP propagation runs alongside source_id propagation but is
+    independent: a saturated bright primary (Sirius / α Cen) has no
+    Gaia source_id to propagate but still surfaces its HIP across
+    every pair row in the system so Stage 3's HIP2 fallback engages
+    consistently across the wide companions too.
     """
     by_system_letter: dict[tuple[str, str], tuple[int, str]] = {}
+    hip_by_system_letter: dict[tuple[str, str], int] = {}
     for c in components:
-        if c.gaia_source_id is None:
-            continue
         key = (c.wds_id, c.component)
-        by_system_letter.setdefault(key, (c.gaia_source_id, c.resolve_via))
-    for c in components:
         if c.gaia_source_id is not None:
-            continue
-        binding = by_system_letter.get((c.wds_id, c.component))
-        if binding is None:
-            continue
-        c.gaia_source_id, c.resolve_via = binding
+            by_system_letter.setdefault(key, (c.gaia_source_id, c.resolve_via))
+        if c.hip is not None:
+            hip_by_system_letter.setdefault(key, c.hip)
+    for c in components:
+        key = (c.wds_id, c.component)
+        if c.gaia_source_id is None:
+            binding = by_system_letter.get(key)
+            if binding is not None:
+                c.gaia_source_id, c.resolve_via = binding
+        if c.hip is None:
+            hip = hip_by_system_letter.get(key)
+            if hip is not None:
+                c.hip = hip
 
 
 def resolution_counts(
@@ -1022,6 +1160,283 @@ def write_astrometry_request(
     return len(ids)
 
 
+# ─── Stage 3: per-component astrometry attachment ────────────────────
+
+
+# Routing tags Stage 3 may emit for any component, in priority order.
+# `astrometry_counts` and the canonical build-time log line read from
+# this tuple so renaming a route only edits one place.
+ASTROMETRY_VIA_VALUES: tuple[str, ...] = (
+    "gaia_nss_systemic",
+    "hip2_long_baseline",
+    "gaia_5p",
+    "unresolved",
+)
+
+# Gaia DR3 5p reliability thresholds. The NSS-systemic route engages
+# only when the 5p solution shows orbit-corrupted fit indicators, so a
+# clean 5p with an NSS row alongside still uses the 5p directly.
+GAIA_RUWE_UNRELIABLE_THRESHOLD = 1.4
+GAIA_IPD_FRAC_MULTI_PEAK_THRESHOLD = 0.02
+
+# HIP2 long-baseline fallback thresholds. The separation gate is
+# checked against the *minimum* WDS ρ across all pair rows the source
+# participates in (a star in both a tight AB and a wide AC pair counts
+# as close), not the current pair row's ρ in isolation. Stars Gaia
+# could not observe (saturated bright primaries like Sirius / α Cen)
+# bypass both gates entirely — they take the no-Gaia HIP2 branch
+# below, where HIP2 is the only available astrometry by construction.
+HIP2_COMPANION_SEPARATION_ARCSEC = 5.0
+HIP2_PM_DELTA_THRESHOLD_MASYR = 50.0
+
+
+@dataclass
+class ComponentAstrometry:
+    """Per-component astrometric payload, parallel to ``ResolvedComponent``.
+    ``astrometry_via`` is always set; the remaining fields are ``None``
+    when the route is ``"unresolved"`` (component had no gaia_source_id,
+    or its source_id was not covered by ``gaia_dr3_astrometry.tsv``).
+
+    ``ref_epoch`` is the native catalog epoch — Gaia DR3 J2016.0 for
+    the Gaia routes, J1991.25 for hip2_long_baseline. Downstream
+    propagation to J2000 happens at multiples.tsv emit time so we
+    don't drop information here.
+    """
+
+    astrometry_via: str
+    ra_deg: float | None
+    dec_deg: float | None
+    parallax_mas: float | None
+    pmra_masyr: float | None
+    pmdec_masyr: float | None
+    ref_epoch: float | None
+
+
+# Hipparcos-2 reference epoch (van Leeuwen 2007 reduction). Stored at
+# module scope so the HIP2 branch and downstream J2000 propagation
+# both pull from the same constant.
+HIP2_REF_EPOCH = 1991.25
+
+
+def _from_gaia(row: GaiaAstrometryRow, via: str) -> ComponentAstrometry:
+    return ComponentAstrometry(
+        astrometry_via=via,
+        ra_deg=row.ra_deg,
+        dec_deg=row.dec_deg,
+        parallax_mas=row.parallax_mas,
+        pmra_masyr=row.pmra_masyr,
+        pmdec_masyr=row.pmdec_masyr,
+        ref_epoch=row.ref_epoch,
+    )
+
+
+def _unresolved_astrometry() -> ComponentAstrometry:
+    return ComponentAstrometry(
+        astrometry_via="unresolved",
+        ra_deg=None, dec_deg=None,
+        parallax_mas=None,
+        pmra_masyr=None, pmdec_masyr=None,
+        ref_epoch=None,
+    )
+
+
+def gaia_5p_unreliable(row: GaiaAstrometryRow) -> bool:
+    """The 5p fit shows orbit-corrupted indicators. Either gate alone
+    is sufficient — ruwe captures residual normalised to per-transit
+    error, ipd_frac_multi_peak captures contaminated-image detections
+    on a different sample of the same Gaia transits.
+    """
+    if (
+        row.ruwe is not None
+        and row.ruwe > GAIA_RUWE_UNRELIABLE_THRESHOLD
+    ):
+        return True
+    if (
+        row.ipd_frac_multi_peak is not None
+        and row.ipd_frac_multi_peak > GAIA_IPD_FRAC_MULTI_PEAK_THRESHOLD
+    ):
+        return True
+    return False
+
+
+def _hip2_pm_disagrees(
+    gaia: GaiaAstrometryRow, hip2: Hip2Row,
+) -> bool:
+    """``|Δ pmRA| > 50 mas/yr`` OR ``|Δ pmDE| > 50 mas/yr``. Either
+    axis alone trips the fallback — orbit contamination doesn't have
+    to show on both axes simultaneously to flag the 5p PM as suspect.
+    Returns ``False`` when either input is missing a PM value (no
+    comparison possible).
+    """
+    if (
+        gaia.pmra_masyr is None
+        or gaia.pmdec_masyr is None
+        or hip2.pm_ra_masyr is None
+        or hip2.pm_de_masyr is None
+    ):
+        return False
+    if abs(gaia.pmra_masyr - hip2.pm_ra_masyr) > HIP2_PM_DELTA_THRESHOLD_MASYR:
+        return True
+    if abs(gaia.pmdec_masyr - hip2.pm_de_masyr) > HIP2_PM_DELTA_THRESHOLD_MASYR:
+        return True
+    return False
+
+
+def _from_hip2(hip2: Hip2Row) -> ComponentAstrometry:
+    return ComponentAstrometry(
+        astrometry_via="hip2_long_baseline",
+        ra_deg=hip2.ra_deg,
+        dec_deg=hip2.dec_deg,
+        parallax_mas=hip2.plx_mas,
+        pmra_masyr=hip2.pm_ra_masyr,
+        pmdec_masyr=hip2.pm_de_masyr,
+        ref_epoch=HIP2_REF_EPOCH,
+    )
+
+
+def _component_hip(
+    component: ResolvedComponent, indices: IdentifierIndices,
+) -> int | None:
+    """The HIP for this component if known. Prefers ``component.hip``
+    (set by Stage 2 from ORB6 / AT-HYG), falls back to inverting the
+    Gaia HIP cross-walk via the component's resolved Gaia source_id.
+    """
+    if component.hip is not None:
+        return component.hip
+    if component.gaia_source_id is None:
+        return None
+    return indices.src_to_hip.get(component.gaia_source_id)
+
+
+def attach_astrometry(
+    component: ResolvedComponent,
+    min_rho_arcsec: float | None,
+    indices: IdentifierIndices,
+) -> ComponentAstrometry:
+    """Route to the most-trustworthy astrometric measurement for a
+    single resolved component. Priority order:
+
+    1. ``gaia_nss_systemic`` — Gaia astrometry exists, source has an
+       NSS row, AND the 5p solution is flagged unreliable (``ruwe >
+       1.4`` OR ``ipd_frac_multi_peak > 0.02``). Gaia DR3 refits
+       ``gaia_source`` to the centre-of-mass for NSS-modeled sources,
+       so the same row's values surface here with the NSS tag
+       distinguishing provenance for Stage 4 (which prefers NSS
+       orbital elements over ORB6 for these sources).
+    2. ``hip2_long_baseline`` (Gaia-vs-HIP2 disagreement) — the system
+       has a known companion within 5″ (``min_rho_arcsec ≤ 5.0``) AND
+       ``|Δ pmRA| > 50 mas/yr`` OR ``|Δ pmDE| > 50 mas/yr`` between
+       Gaia and HIP2. Hipparcos's J1991.25-anchored measurement
+       averages a different window of the orbit than Gaia's 2014-2017
+       window; for bright close binaries with both available, HIP2 is
+       closer to the systemic motion of the centre of mass.
+    3. ``gaia_5p`` — default.
+    4. ``hip2_long_baseline`` (Gaia-saturated fallback) — no Gaia
+       source resolved at all but a HIP is known and HIP2 covers it.
+       Sirius / α Cen / Algol / Procyon-shaped bright primaries Gaia
+       saturated out of its catalog get astrometry from HIP2 because
+       it's the only measurement available.
+
+    ``min_rho_arcsec`` is the minimum WDS ρ across every pair row this
+    source_id participates in. A star in both a tight AB pair and a
+    wide AC pair takes the tight ρ — the same physical star always
+    gets the same routing across all its system rows.
+
+    Returns ``ComponentAstrometry`` tagged ``"unresolved"`` (all
+    values ``None``) when neither a Gaia astrometry row nor a HIP2
+    row can be reached — Stage 5 can still emit the row with whatever
+    upstream signals exist.
+    """
+    gaia = (
+        indices.src_to_astrometry.get(component.gaia_source_id)
+        if component.gaia_source_id is not None
+        else None
+    )
+
+    if gaia is None:
+        # No Gaia astrometry — try HIP2 directly. Bright saturated
+        # stars never get past this branch.
+        hip = _component_hip(component, indices)
+        if hip is not None:
+            hip2 = indices.hip_to_hip2.get(hip)
+            if hip2 is not None:
+                return _from_hip2(hip2)
+        return _unresolved_astrometry()
+
+    has_nss = component.gaia_source_id in indices.src_to_nss
+    if has_nss and gaia_5p_unreliable(gaia):
+        return _from_gaia(gaia, "gaia_nss_systemic")
+
+    if (
+        min_rho_arcsec is not None
+        and min_rho_arcsec <= HIP2_COMPANION_SEPARATION_ARCSEC
+    ):
+        hip = _component_hip(component, indices)
+        if hip is not None:
+            hip2 = indices.hip_to_hip2.get(hip)
+            if hip2 is not None and _hip2_pm_disagrees(gaia, hip2):
+                return _from_hip2(hip2)
+
+    return _from_gaia(gaia, "gaia_5p")
+
+
+def compute_min_rho_per_source(
+    components: list[ResolvedComponent],
+    pair_by_wds_disc: dict[tuple[str, str], list[WdsPair]],
+) -> dict[int, float]:
+    """Smallest WDS ρ across every pair row each gaia_source_id appears
+    in. The HIP2 5″ gate runs against this per-source minimum so a
+    physical star whose system has any close pair always routes
+    consistently across the system's wider pair rows.
+    """
+    out: dict[int, float] = {}
+    for c in components:
+        if c.gaia_source_id is None:
+            continue
+        pair = find_owning_pair(c, pair_by_wds_disc)
+        if pair is None or pair.rho_last is None:
+            continue
+        prev = out.get(c.gaia_source_id)
+        if prev is None or pair.rho_last < prev:
+            out[c.gaia_source_id] = pair.rho_last
+    return out
+
+
+def attach_astrometry_all(
+    components: list[ResolvedComponent],
+    pairs: list[WdsPair],
+    indices: IdentifierIndices,
+) -> list[ComponentAstrometry]:
+    """Route astrometry for every component. The returned list is
+    parallel to ``components`` (same order, same length) so Stage 4-7
+    can zip the two together. The HIP2 5″ gate uses the per-source
+    min ρ (see ``compute_min_rho_per_source``) rather than the current
+    pair row's ρ in isolation.
+    """
+    pair_by_wds_disc = build_pair_by_wds_disc(pairs)
+    min_rho = compute_min_rho_per_source(components, pair_by_wds_disc)
+    return [
+        attach_astrometry(
+            c,
+            min_rho.get(c.gaia_source_id) if c.gaia_source_id is not None else None,
+            indices,
+        )
+        for c in components
+    ]
+
+
+def astrometry_counts(
+    astrometry: list[ComponentAstrometry],
+) -> dict[str, int]:
+    """Per-route counters in canonical ``ASTROMETRY_VIA_VALUES`` order.
+    Every key is present (zero-filled) so the log line shape stays
+    stable across runs."""
+    counts: dict[str, int] = {k: 0 for k in ASTROMETRY_VIA_VALUES}
+    for a in astrometry:
+        counts[a.astrometry_via] = counts.get(a.astrometry_via, 0) + 1
+    return counts
+
+
 # ─── Driver ──────────────────────────────────────────────────────────
 
 
@@ -1037,7 +1452,7 @@ def _iter_input_paths() -> Iterator[Path]:
     yield SRC_GAIA_HIP_XM
     yield SRC_GAIA_TYC_XM
     yield SRC_GAIA_NSS
-    # SRC_GAIA_ASTROMETRY skipped: optional, lands with dch.29.
+    yield SRC_GAIA_ASTROMETRY
 
 
 def log(msg: str) -> None:
@@ -1107,18 +1522,15 @@ def run(force: bool) -> int:
         f"cardinality {len(src_to_nss):,}"
     )
 
-    if SRC_GAIA_ASTROMETRY.exists():
-        log(
-            f"NOTE: {SRC_GAIA_ASTROMETRY.name} present but Stage 2-I "
-            "ingestion (stellata-dch.29) has not landed yet — file ignored"
-        )
-    else:
-        log(
-            f"{SRC_GAIA_ASTROMETRY.name} not yet present "
-            "(expected — produced by stellata-dch.29)"
-        )
+    src_to_astrometry = parse_gaia_astrometry(SRC_GAIA_ASTROMETRY)
+    log(
+        f"loaded Gaia 5p astrometry for {len(src_to_astrometry):,} source_ids"
+    )
 
-    indices = build_indices(athyg, hip2, hip_to_gaia, tyc_to_gaia, src_to_nss)
+    indices = build_indices(
+        athyg, hip2, hip_to_gaia, tyc_to_gaia, src_to_nss,
+        src_to_astrometry=src_to_astrometry,
+    )
     log(
         f"built AT-HYG identifier views: "
         f"hip -> row {len(indices.hip_to_athyg):,}, "
@@ -1126,7 +1538,8 @@ def run(force: bool) -> int:
         f"gaia_source_id -> row {len(indices.src_to_athyg):,}"
     )
     log(
-        f"built hip -> hip2_row of cardinality {len(indices.hip_to_hip2):,}"
+        f"built hip -> hip2_row of cardinality {len(indices.hip_to_hip2):,}, "
+        f"gaia_source_id -> hip of cardinality {len(indices.src_to_hip):,}"
     )
 
     log("Stage 1 complete. Resolving WDS components (Stage 2) …")
@@ -1147,7 +1560,18 @@ def run(force: bool) -> int:
         f"{n_requested:,} unique source_ids (input for stellata-dch.29)"
     )
 
-    log("Stage 2 complete. Stages 3-7 (astrometry-attach / orbit-fit / optical-filter / emit) land in stellata-dch.29-32.")
+    log("Stage 2 complete. Attaching per-component astrometry (Stage 3) …")
+
+    astrometry = attach_astrometry_all(
+        components=components, pairs=wds_pairs, indices=indices,
+    )
+    a_counts = astrometry_counts(astrometry)
+    log(
+        "astrometry routing: "
+        + ", ".join(f"{k}={a_counts[k]:,}" for k in ASTROMETRY_VIA_VALUES)
+    )
+
+    log("Stage 3 complete. Stages 4-7 (orbit-fit / optical-filter / emit) land in stellata-dch.31-32.")
     return 0
 
 
