@@ -34,6 +34,16 @@ import {
   apparentToAbsoluteMagnitude,
   applyBailerJonesOverride,
   DIST_SRC_BAILER_JONES,
+  applyLmcKinematicOverride,
+  angularSeparationDeg,
+  DIST_SRC_LMC_KIN,
+  LMC_DISTANCE_PC,
+  LMC_CENTRE_RA_HOURS,
+  LMC_CENTRE_DEC_DEG,
+  LMC_CONE_HALF_ANGLE_DEG,
+  LMC_PM_RA_CENTRE,
+  LMC_PM_DEC_CENTRE,
+  LMC_PM_TOLERANCE,
 } from './catalog-pure';
 
 describe('catalog-pure / spectClassIndex', () => {
@@ -900,5 +910,155 @@ describe('catalog-pure / applyBailerJonesOverride', () => {
   it('DIST_SRC_BAILER_JONES tag is "BJ" (distinct from AT-HYG namespace)', () => {
     expect(DIST_SRC_BAILER_JONES).toBe('BJ');
     expect(['G_R3', 'G_R2', 'HIP', 'GJ', 'N', 'OTHER']).not.toContain(DIST_SRC_BAILER_JONES);
+  });
+});
+
+describe('catalog-pure / angularSeparationDeg', () => {
+  it('returns 0 for identical positions', () => {
+    expect(angularSeparationDeg(5, -30, 5, -30)).toBeCloseTo(0, 10);
+  });
+
+  it('returns 90° between RA-axis pole and equator at RA=0', () => {
+    expect(angularSeparationDeg(0, 90, 0, 0)).toBeCloseTo(90, 6);
+  });
+
+  it('returns ~90° for two equatorial points 6h apart', () => {
+    expect(angularSeparationDeg(0, 0, 6, 0)).toBeCloseTo(90, 6);
+  });
+
+  it('matches a known LMC-direction great-circle distance', () => {
+    // HD 268749 at (4.8915 h, -69.409°) → LMC centre (5.25067 h, -69.19°).
+    // Compute by hand: small-angle approximation says ~2.5° separation;
+    // exact vector form here is the canonical value.
+    const sep = angularSeparationDeg(4.8915, -69.409, LMC_CENTRE_RA_HOURS, LMC_CENTRE_DEC_DEG);
+    expect(sep).toBeGreaterThan(0.5);
+    expect(sep).toBeLessThan(LMC_CONE_HALF_ANGLE_DEG);
+  });
+});
+
+describe('catalog-pure / applyLmcKinematicOverride', () => {
+  // Tier-A fixtures from AT-HYG / Gaia DR3 — three real LMC supergiants
+  // (HDE 268xxx range), one halo-direction control, and one halo-PM
+  // outlier inside the LMC cone. AT-HYG distances are the pre-override
+  // values that get smeared 5-200 kpc by 1/π inversion.
+  interface Fixture {
+    label: string;
+    ra: number; dec: number; mag: number;
+    pmRa: number | null; pmDec: number | null;
+    athygDist: number;
+  }
+  const LMC_HITS: Fixture[] = [
+    { label: 'HD 268749 (B7 IAB LMC supergiant)', ra: 4.8915, dec: -69.409, mag: 12.029, pmRa: 2.044, pmDec: -0.096, athygDist: 13368.7 },
+    { label: 'HD 268718',                         ra: 4.866, dec: -69.426, mag: 10.596, pmRa: 2.093, pmDec: -0.138, athygDist: 46323.4 },
+    { label: 'HD 268654 (smeared to 196 kpc)',    ra: 4.820, dec: -69.457, mag: 10.5,   pmRa: 2.033, pmDec: -0.198, athygDist: 196078.4 },
+  ];
+  const LMC_PM_NON_HITS: Fixture[] = [
+    // Inside the LMC cone but PM ≠ LMC bulk — a halo star or runaway,
+    // should pass through unchanged.
+    { label: 'HD 270752 (halo in LMC direction)', ra: 4.792, dec: -65.331, mag: 11.214, pmRa: 14.925, pmDec: -3.62, athygDist: 5298.5 },
+  ];
+
+  it('LMC-direction + LMC-PM star is snapped to 49.594 kpc', () => {
+    for (const f of LMC_HITS) {
+      const out = applyLmcKinematicOverride(f.ra, f.dec, f.mag, f.pmRa, f.pmDec);
+      expect(out, f.label).not.toBeNull();
+      expect(out!.dist, f.label).toBe(LMC_DISTANCE_PC);
+      // Position vector length matches the override distance.
+      expect(Math.sqrt(out!.x ** 2 + out!.y ** 2 + out!.z ** 2)).toBeCloseTo(LMC_DISTANCE_PC, 3);
+      // Absolute magnitude recomputed at the new distance.
+      expect(out!.absmag).toBeCloseTo(f.mag - 5 * Math.log10(LMC_DISTANCE_PC / 10), 10);
+    }
+  });
+
+  it('LMC-direction + non-LMC-PM star is unchanged (null override)', () => {
+    for (const f of LMC_PM_NON_HITS) {
+      const out = applyLmcKinematicOverride(f.ra, f.dec, f.mag, f.pmRa, f.pmDec);
+      expect(out, f.label).toBeNull();
+    }
+  });
+
+  it('non-LMC-direction + LMC-like PM is unchanged (null override)', () => {
+    // Solar Neighbourhood star with coincidentally LMC-like PM — fails
+    // the cone test. Use (RA=12h, Dec=0°) — diametrically opposite the
+    // LMC field — with the LMC bulk PM exactly.
+    const out = applyLmcKinematicOverride(
+      12, 0, 8, LMC_PM_RA_CENTRE, LMC_PM_DEC_CENTRE,
+    );
+    expect(out).toBeNull();
+  });
+
+  it('SMC-direction + SMC-like PM is unchanged (out of scope)', () => {
+    // SMC centre ≈ (00h 52m 38s, −72.8°) = (0.877 h, −72.8°). SMC bulk
+    // PM ≈ (+0.69, −1.23) — distinct enough from the LMC cone and PM
+    // window that even passing SMC values should not trigger the LMC
+    // override. Confirms the bead's "SMC out of scope" contract.
+    const out = applyLmcKinematicOverride(0.877, -72.8, 10, 0.69, -1.23);
+    expect(out).toBeNull();
+  });
+
+  it('returns null when pm_ra or pm_dec is missing', () => {
+    // A star in the LMC cone with null proper motion — should NOT be
+    // overridden. AT-HYG carries blank pm_ra/pm_dec for pre-Hipparcos
+    // entries; treat them as ineligible for the kinematic gate.
+    expect(applyLmcKinematicOverride(LMC_CENTRE_RA_HOURS, LMC_CENTRE_DEC_DEG, 10, null, 0)).toBeNull();
+    expect(applyLmcKinematicOverride(LMC_CENTRE_RA_HOURS, LMC_CENTRE_DEC_DEG, 10, 0, null)).toBeNull();
+  });
+
+  it('ordering: LMC_KIN wins over BJ for an LMC-cone star with both', () => {
+    // Synthetic LMC-cone + LMC-PM star with a B-J entry. Simulates the
+    // build-catalog.ts ordering: B-J runs first and writes its posterior;
+    // LMC_KIN runs after and clobbers it. Test by composing the two
+    // overrides in the same order as the build script.
+    const f = LMC_HITS[0]; // HD 268749
+    const sourceId = 'fake-lmc-source-id';
+    const bjMap = new Map([[sourceId, 8000]]); // arbitrary B-J posterior ≠ LMC distance
+    const bj = applyBailerJonesOverride(f.ra, f.dec, f.mag, sourceId, bjMap);
+    expect(bj!.dist).toBe(8000);
+    const lmc = applyLmcKinematicOverride(f.ra, f.dec, f.mag, f.pmRa, f.pmDec);
+    expect(lmc!.dist).toBe(LMC_DISTANCE_PC);
+    // Final state mirrors what build-catalog.ts ends up with.
+    expect(lmc!.dist).not.toBe(bj!.dist);
+  });
+
+  it('boundary: just inside the cone passes, just outside fails', () => {
+    // A star inside the LMC cone half-angle minus epsilon, with LMC PM:
+    // expect override. Same star pushed just outside the cone: expect
+    // null. Confirms the cone gate is the half-angle, not something
+    // tighter like a great-circle box.
+    const epsilon = 0.01;
+    const inDec = LMC_CENTRE_DEC_DEG + (LMC_CONE_HALF_ANGLE_DEG - epsilon);
+    const outDec = LMC_CENTRE_DEC_DEG + (LMC_CONE_HALF_ANGLE_DEG + epsilon);
+    const inOut = applyLmcKinematicOverride(LMC_CENTRE_RA_HOURS, inDec, 10, LMC_PM_RA_CENTRE, LMC_PM_DEC_CENTRE);
+    expect(inOut).not.toBeNull();
+    const outOut = applyLmcKinematicOverride(LMC_CENTRE_RA_HOURS, outDec, 10, LMC_PM_RA_CENTRE, LMC_PM_DEC_CENTRE);
+    expect(outOut).toBeNull();
+  });
+
+  it('boundary: PM tolerance is per-component, not radial', () => {
+    // |Δpm_ra| at the tolerance, |Δpm_dec| at 0 → pass. Mirror case → pass.
+    // Both at the tolerance → still pass (per-component, not Euclidean).
+    const eps = 1e-9;
+    const passEdgeRa = applyLmcKinematicOverride(
+      LMC_CENTRE_RA_HOURS, LMC_CENTRE_DEC_DEG, 10,
+      LMC_PM_RA_CENTRE + LMC_PM_TOLERANCE - eps, LMC_PM_DEC_CENTRE,
+    );
+    expect(passEdgeRa).not.toBeNull();
+    const passBothEdges = applyLmcKinematicOverride(
+      LMC_CENTRE_RA_HOURS, LMC_CENTRE_DEC_DEG, 10,
+      LMC_PM_RA_CENTRE + LMC_PM_TOLERANCE - eps, LMC_PM_DEC_CENTRE - LMC_PM_TOLERANCE + eps,
+    );
+    expect(passBothEdges).not.toBeNull();
+    const failJustOver = applyLmcKinematicOverride(
+      LMC_CENTRE_RA_HOURS, LMC_CENTRE_DEC_DEG, 10,
+      LMC_PM_RA_CENTRE + LMC_PM_TOLERANCE + eps, LMC_PM_DEC_CENTRE,
+    );
+    expect(failJustOver).toBeNull();
+  });
+
+  it('DIST_SRC_LMC_KIN tag is "LMC_KIN" (distinct from BJ + AT-HYG namespace)', () => {
+    expect(DIST_SRC_LMC_KIN).toBe('LMC_KIN');
+    expect([
+      'G_R3', 'G_R2', 'HIP', 'GJ', 'N', 'OTHER', DIST_SRC_BAILER_JONES,
+    ]).not.toContain(DIST_SRC_LMC_KIN);
   });
 });

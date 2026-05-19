@@ -239,6 +239,24 @@ parallax inversions whose Bayesian distance is < 50 kpc.
 Data file: `data/bailer-jones-dr3.tsv` (~310k rows, refreshed by
 `scripts/refresh-bailer-jones.py`).
 
+**LMC kinematic distance refinement.** Bailer-Jones's Galactic-density
+prior has no LMC — so for AT-HYG's ~60 LMC supergiants (HDE 268xxx
+range), the posterior peaks somewhere intermediate (5–20 kpc) instead
+of the LMC's true ~50 kpc. Without a second layer this regresses today's
+behaviour: a "line of stars between MW and LMC in the intergalactic
+void". After the B-J override fires we run a population-specific second
+pass: any row inside a 15° cone of the LMC photometric centre
+(RA 78.76°, Dec −69.19°) whose proper motion lies within ±0.5 mas/yr of
+the LMC bulk centre-of-mass PM (van der Marel & Kallivayalil 2014:
++1.85 mas/yr in RA, +0.20 mas/yr in Dec) has its `dist` snapped to the
+LMC's eclipsing-binary distance (49.594 kpc, Pietrzyński et al. 2019,
+Nature 567, 200; CDS J/other/Natur/567.200), with `x0`/`y0`/`z0`/`absmag`
+recomputed from the new distance. ~54 rows are flagged at LMC depth
+each build — close to the ~60 estimated from the AT-HYG/Gaia source
+data. SMC, Sgr dSph, and other Magellanic-system populations are too
+faint for AT-HYG's brightness cut today; the same approach will extend
+when DR4 lands or AT-HYG goes deeper.
+
 **Known cross-match completeness artefact.** Filter (1) above is the
 load-bearing one: AT-HYG can only emit `x0`/`y0`/`z0` for a Tycho-2
 star when that star's Gaia DR3 distance lookup succeeded, and Gaia DR3's

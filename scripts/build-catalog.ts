@@ -12,7 +12,13 @@ import {
   applyDoublesFlag as applyDoublesFlagPure,
   parseBailerJonesTsv,
   applyBailerJonesOverride,
+  applyLmcKinematicOverride,
+  angularSeparationDeg,
+  LMC_CENTRE_RA_HOURS,
+  LMC_CENTRE_DEC_DEG,
+  LMC_CONE_HALF_ANGLE_DEG,
   DIST_SRC_BAILER_JONES,
+  DIST_SRC_LMC_KIN,
   FLAG_HAS_NAME,
   FLAG_IS_SOL,
   FLAG_HAS_BAYER,
@@ -482,6 +488,8 @@ interface AthygRow {
   dec: string;
   mag: string;
   gaia: string;
+  pm_ra: string;
+  pm_dec: string;
 }
 
 async function readStars(
@@ -493,6 +501,8 @@ async function readStars(
     dropped: Record<string, number>;
     bjEligible: number;       // rows with a Gaia DR3 source_id
     bjOverridden: number;     // bjEligible rows that hit a B-J entry
+    lmcCandidates: number;    // rows inside the LMC sky cone (any PM)
+    lmcOverridden: number;    // lmcCandidates passing the PM gate (snapped to LMC)
   };
 }> {
   const parser = createReadStream(SRC_CSV).pipe(
@@ -509,6 +519,8 @@ async function readStars(
   let total = 0;
   let bjEligible = 0;
   let bjOverridden = 0;
+  let lmcCandidates = 0;
+  let lmcOverridden = 0;
 
   for await (const row of parser) {
     total++;
@@ -532,11 +544,11 @@ async function readStars(
     // Bailer-Jones DR3 override.
     const gaiaSourceId = nonEmpty(row.gaia);
     let dist = parseFloatOrNull(row.dist);
+    const ra = parseFloatOrNull(row.ra);
+    const dec = parseFloatOrNull(row.dec);
+    const mag = parseFloatOrNull(row.mag);
     if (gaiaSourceId) bjEligible++;
     if (gaiaSourceId && bjMap.size > 0) {
-      const ra = parseFloatOrNull(row.ra);
-      const dec = parseFloatOrNull(row.dec);
-      const mag = parseFloatOrNull(row.mag);
       if (ra !== null && dec !== null && mag !== null) {
         const ovr = applyBailerJonesOverride(ra, dec, mag, gaiaSourceId, bjMap);
         if (ovr) {
@@ -545,6 +557,27 @@ async function readStars(
           dist = ovr.dist;
           bjOverridden++;
         }
+      }
+    }
+
+    // LMC kinematic override: B-J's Galactic-density prior pulls real
+    // LMC supergiants to ~5-20 kpc instead of 49.59 kpc. Sky-cone + bulk-PM
+    // filter snaps the ~60 affected AT-HYG rows back to Pietrzyński 2019's
+    // eclipsing-binary distance. Runs AFTER B-J so it overrides B-J's
+    // mis-anchored value on the same rows.
+    if (ra !== null && dec !== null && mag !== null) {
+      const sep = angularSeparationDeg(
+        ra, dec, LMC_CENTRE_RA_HOURS, LMC_CENTRE_DEC_DEG,
+      );
+      if (sep <= LMC_CONE_HALF_ANGLE_DEG) lmcCandidates++;
+      const pmRa = parseFloatOrNull(row.pm_ra);
+      const pmDec = parseFloatOrNull(row.pm_dec);
+      const ovr = applyLmcKinematicOverride(ra, dec, mag, pmRa, pmDec);
+      if (ovr) {
+        x = ovr.x; y = ovr.y; z = ovr.z;
+        absmag = ovr.absmag;
+        dist = ovr.dist;
+        lmcOverridden++;
       }
     }
 
@@ -600,7 +633,10 @@ async function readStars(
     });
   }
 
-  return { stars, stats: { total, dropped, bjEligible, bjOverridden } };
+  return {
+    stars,
+    stats: { total, dropped, bjEligible, bjOverridden, lmcCandidates, lmcOverridden },
+  };
 }
 
 // Cross-match each star against GCVS via HIP (first) or HD (fallback). Most
@@ -714,6 +750,8 @@ async function main() {
     bjEntries: 0,
     bjEligible: 0,
     bjOverridden: 0,
+    lmcCandidates: 0,
+    lmcOverridden: 0,
     nameTableEntries: 0,
     variableCount: 0,
     searchEntries: 0,
@@ -749,9 +787,18 @@ async function main() {
         `Gaia-DR3-bearing stars (${pct}%) → dist_src='${DIST_SRC_BAILER_JONES}'`,
     );
   }
+  if (stats.lmcCandidates > 0) {
+    const pct = ((stats.lmcOverridden / stats.lmcCandidates) * 100).toFixed(1);
+    console.log(
+      `  LMC kinematic override: ${stats.lmcOverridden} / ${stats.lmcCandidates} ` +
+        `LMC-cone stars (${pct}%) → dist_src='${DIST_SRC_LMC_KIN}'`,
+    );
+  }
   counts.recordCount = stars.length;
   counts.bjEligible = stats.bjEligible;
   counts.bjOverridden = stats.bjOverridden;
+  counts.lmcCandidates = stats.lmcCandidates;
+  counts.lmcOverridden = stats.lmcOverridden;
 
   // Sort by absolute magnitude ascending (brightest first). Record indices
   // are final after this point.

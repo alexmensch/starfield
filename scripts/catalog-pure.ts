@@ -641,3 +641,89 @@ export function applyBailerJonesOverride(
   const { x, y, z } = icrsSphericalToCartesian(raHours, decDegrees, dist);
   return { dist, x, y, z, absmag: apparentToAbsoluteMagnitude(mag, dist) };
 }
+
+// ---- LMC kinematic distance override (stellata-dch.8l0) -----------------
+
+// dist_src tag for stars whose distance was set by the LMC kinematic
+// filter (sky cone + bulk proper motion). Runs AFTER the Bailer-Jones
+// override so it wins on stars that also have a Gaia source_id — without
+// this layer, B-J's smooth Galactic prior smears LMC supergiants to
+// ~5-20 kpc (B-J's prior has no LMC), regressing today's behaviour for
+// ~60 AT-HYG entries in the LMC field.
+export const DIST_SRC_LMC_KIN = 'LMC_KIN';
+
+// LMC kinematic parameters. References:
+//   - Pietrzyński et al. 2019 (Nature 567, 200): eclipsing-binary distance
+//     49.594 ± 0.55 kpc.
+//   - van der Marel & Kallivayalil 2014 (ApJ 781, 121): LMC centre of mass
+//     bulk proper motion μ_α* cos δ ≈ +1.91 ± 0.02, μ_δ ≈ +0.23 ± 0.05 mas/yr.
+//   - LMC photometric centre: (RA, Dec) ≈ (05h 23m 34s, −69° 45′) = (78.76°,
+//     −69.19°). The 15° cone is wide enough to admit the visible disc and
+//     30 Doradus while keeping confusion with Galactic foreground low.
+// Tolerances chosen so AT-HYG halo / runaway stars in the same sky region
+// (which have very different PMs) fail the test — see catalog-pure.test.ts.
+export const LMC_DISTANCE_PC = 49_594;
+export const LMC_CENTRE_RA_HOURS = 5.25067;       // 78.76° / 15
+export const LMC_CENTRE_DEC_DEG = -69.19;
+export const LMC_CONE_HALF_ANGLE_DEG = 15;
+export const LMC_PM_RA_CENTRE = 1.85;             // mas/yr
+export const LMC_PM_DEC_CENTRE = 0.20;            // mas/yr
+export const LMC_PM_TOLERANCE = 0.5;              // mas/yr per component
+
+/** Angular separation (degrees) between two ICRS positions. Vector
+ *  dot-product form — stable for small and wide separations alike, no
+ *  cos/sin of differences. Input RA is hours, Dec is degrees. */
+export function angularSeparationDeg(
+  raHoursA: number,
+  decDegA: number,
+  raHoursB: number,
+  decDegB: number,
+): number {
+  const raA = raHoursA * (Math.PI / 12);
+  const raB = raHoursB * (Math.PI / 12);
+  const decA = decDegA * (Math.PI / 180);
+  const decB = decDegB * (Math.PI / 180);
+  const cosDecA = Math.cos(decA);
+  const cosDecB = Math.cos(decB);
+  const ax = cosDecA * Math.cos(raA);
+  const ay = cosDecA * Math.sin(raA);
+  const az = Math.sin(decA);
+  const bx = cosDecB * Math.cos(raB);
+  const by = cosDecB * Math.sin(raB);
+  const bz = Math.sin(decB);
+  const dot = Math.max(-1, Math.min(1, ax * bx + ay * by + az * bz));
+  return Math.acos(dot) * (180 / Math.PI);
+}
+
+export interface LmcKinematicOverride {
+  dist: number;
+  x: number;
+  y: number;
+  z: number;
+  absmag: number;
+}
+
+/** When (ra, dec) lies inside the LMC sky cone AND (pmRa, pmDec) lies
+ *  within tolerance of the LMC bulk-PM centre, returns the override
+ *  (dist, x, y, z, absmag) snapped to Pietrzyński 2019's distance.
+ *  Otherwise null — caller leaves the row's existing values in place
+ *  (which after B-J is either the B-J posterior or AT-HYG's 1/π). */
+export function applyLmcKinematicOverride(
+  raHours: number,
+  decDegrees: number,
+  mag: number,
+  pmRa: number | null,
+  pmDec: number | null,
+): LmcKinematicOverride | null {
+  if (pmRa === null || pmDec === null) return null;
+  const sep = angularSeparationDeg(
+    raHours, decDegrees,
+    LMC_CENTRE_RA_HOURS, LMC_CENTRE_DEC_DEG,
+  );
+  if (sep > LMC_CONE_HALF_ANGLE_DEG) return null;
+  if (Math.abs(pmRa - LMC_PM_RA_CENTRE) > LMC_PM_TOLERANCE) return null;
+  if (Math.abs(pmDec - LMC_PM_DEC_CENTRE) > LMC_PM_TOLERANCE) return null;
+  const dist = LMC_DISTANCE_PC;
+  const { x, y, z } = icrsSphericalToCartesian(raHours, decDegrees, dist);
+  return { dist, x, y, z, absmag: apparentToAbsoluteMagnitude(mag, dist) };
+}

@@ -37,6 +37,12 @@ export interface BuildCounts {
   /** Rows whose dist/x/y/z/absmag were overridden via a Bailer-Jones
    *  posterior. Coverage = bjOverridden / bjEligible. */
   bjOverridden: number;
+  /** AT-HYG rows whose (ra, dec) falls inside the LMC sky cone — the
+   *  population the LMC kinematic PM gate is evaluated against. */
+  lmcCandidates: number;
+  /** Rows that ALSO pass the LMC bulk-PM gate; their dist/x/y/z/absmag
+   *  were snapped to Pietrzyński 2019's eclipsing-binary distance. */
+  lmcOverridden: number;
   /** Stars with a proper name written into the name table. */
   nameTableEntries: number;
   /** Stars with both nonzero amplitude and period after quantisation —
