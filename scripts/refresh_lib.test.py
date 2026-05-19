@@ -238,18 +238,39 @@ class IdempotencyTests(unittest.TestCase):
         self.assertFalse(rl.is_up_to_date(self.path / "missing.tsv", [src]))
 
     def test_true_when_output_newer(self) -> None:
-        src = self._touch("src.py", mtime=1000.0)
-        out = self._touch("out.tsv", mtime=2000.0)
+        # Output mtime must clear refresh_lib's own mtime since it's auto-
+        # included in the comparison — use future-from-now anchors so the
+        # test is invariant to when refresh_lib was last edited.
+        lib_mtime = rl._LIB_PATH.stat().st_mtime
+        src = self._touch("src.py", mtime=lib_mtime - 100.0)
+        out = self._touch("out.tsv", mtime=lib_mtime + 100.0)
         self.assertTrue(rl.is_up_to_date(out, [src]))
 
     def test_false_when_source_newer(self) -> None:
-        out = self._touch("out.tsv", mtime=1000.0)
-        src = self._touch("src.py", mtime=2000.0)
+        lib_mtime = rl._LIB_PATH.stat().st_mtime
+        out = self._touch("out.tsv", mtime=lib_mtime + 100.0)
+        src = self._touch("src.py", mtime=lib_mtime + 200.0)
         self.assertFalse(rl.is_up_to_date(out, [src]))
 
     def test_false_when_source_missing(self) -> None:
-        out = self._touch("out.tsv", mtime=2000.0)
+        lib_mtime = rl._LIB_PATH.stat().st_mtime
+        out = self._touch("out.tsv", mtime=lib_mtime + 100.0)
         self.assertFalse(rl.is_up_to_date(out, [self.path / "missing.py"]))
+
+    def test_false_when_refresh_lib_newer_than_output(self) -> None:
+        # is_up_to_date folds refresh_lib's own mtime into the comparison so
+        # a bug fix in write_tsv / coerce_masked / _dtype_matches invalidates
+        # every cached TSV without requiring each caller to pass
+        # Path(refresh_lib.__file__) explicitly.
+        import os
+        out = self._touch("out.tsv", mtime=1000.0)
+        src = self._touch("src.py", mtime=500.0)
+        # Backdate the output below refresh_lib's mtime — the auto-inclusion
+        # should make is_up_to_date return False even though the caller's
+        # explicit `sources` list is older than the output.
+        lib_mtime = rl._LIB_PATH.stat().st_mtime
+        os.utime(out, (lib_mtime - 1.0, lib_mtime - 1.0))
+        self.assertFalse(rl.is_up_to_date(out, [src]))
 
 
 # ─── TapClient ────────────────────────────────────────────────────────
@@ -424,6 +445,46 @@ class WriteTsvTests(unittest.TestCase):
         target = self.path.parent / "nested" / "deep.tsv"
         rl.write_tsv([{"a": 1}], columns=["a"], output=target)
         self.assertTrue(target.exists())
+
+    def test_mid_write_failure_leaves_existing_output_intact(self) -> None:
+        # A coerce raising / KeyboardInterrupt / OOM mid-row used to leave a
+        # partially-written TSV whose mtime was newer than the source, so
+        # the next is_up_to_date returned True against silently broken data.
+        # The atomic write contract: the committed output is either the
+        # last good version or absent, never half-written.
+        self.path.write_text("OLD\nrow1\trow2\n")
+        original = self.path.read_text()
+
+        def explode():
+            yield {"a": 1, "b": 2}
+            yield {"a": 2, "b": 3}
+            raise RuntimeError("simulated mid-stream failure")
+            yield {"a": 3, "b": 4}  # unreachable
+
+        with self.assertRaises(RuntimeError):
+            rl.write_tsv(explode(), columns=["a", "b"], output=self.path)
+        self.assertEqual(self.path.read_text(), original)
+        # The .tmp sibling must be cleaned up; otherwise a future
+        # is_up_to_date probe (or an `ls data/` audit) sees stale partial.
+        self.assertFalse(
+            self.path.with_suffix(self.path.suffix + ".tmp").exists()
+        )
+
+    def test_mid_write_failure_leaves_no_output_when_none_existed(self) -> None:
+        # Symmetric to the previous case for the "first run that crashed"
+        # path — there's nothing to preserve, so the committed output must
+        # remain absent (and the .tmp sibling cleaned up).
+        target = self.path.parent / "fresh.tsv"
+        self.assertFalse(target.exists())
+
+        def explode():
+            yield {"a": 1}
+            raise RuntimeError("crash before first commit")
+
+        with self.assertRaises(RuntimeError):
+            rl.write_tsv(explode(), columns=["a"], output=target)
+        self.assertFalse(target.exists())
+        self.assertFalse(target.with_suffix(target.suffix + ".tmp").exists())
 
 
 if __name__ == "__main__":
