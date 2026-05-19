@@ -37,6 +37,7 @@ Test (no network):
 
 from __future__ import annotations
 
+import os
 import random
 import time
 from pathlib import Path
@@ -48,17 +49,26 @@ R = TypeVar("R")
 
 # ─── Idempotency ──────────────────────────────────────────────────────
 
-def is_up_to_date(output: Path, sources: Iterable[Path]) -> bool:
-    """True iff `output` exists and is newer than every path in `sources`.
+_LIB_PATH = Path(__file__).resolve()
 
-    Callers should include `Path(__file__)` of the refresh script so logic
-    changes invalidate the cached output. A missing source is treated as
-    stale rather than ignored — refusing to skip is safer than silently
-    keeping a possibly-out-of-date output.
+
+def is_up_to_date(output: Path, sources: Iterable[Path]) -> bool:
+    """True iff `output` exists and is newer than every path in `sources`
+    AND newer than refresh_lib.py itself.
+
+    Callers pass the refresh script's `Path(__file__)` plus any data
+    inputs; refresh_lib's own mtime is folded in automatically so a fix
+    to `coerce_masked`, `write_tsv`, `_dtype_matches`, or the atomic-
+    rename plumbing invalidates every cached output without each caller
+    having to list `Path(refresh_lib.__file__)` explicitly. A missing
+    source is treated as stale rather than ignored — refusing to skip
+    is safer than silently keeping a possibly-out-of-date output.
     """
     if not output.exists():
         return False
     out_mtime = output.stat().st_mtime
+    if _LIB_PATH.stat().st_mtime > out_mtime:
+        return False
     for src in sources:
         if not src.exists() or src.stat().st_mtime > out_mtime:
             return False
@@ -356,23 +366,39 @@ def write_tsv(
     """Write `rows` to `output` as tab-separated values with a header line.
     Returns the row count written. None values become empty cells; floats
     (Python float OR numpy floating width) round to `round_floats` decimal
-    places when set."""
+    places when set.
+
+    Atomic: writes to ``output.with_suffix(output.suffix + ".tmp")`` and
+    swaps in via ``os.replace`` once the row stream completes. Any
+    mid-stream failure (disk full, KeyboardInterrupt, masked-cell coerce
+    raising, OOM on a large batch) leaves the committed output untouched
+    — never half-written — and the ``.tmp`` sibling is cleaned up so a
+    future ``is_up_to_date`` check can't be fooled by a stale partial.
+    POSIX ``rename(2)`` guarantees the swap is atomic on the same
+    filesystem, which the sibling-path layout ensures.
+    """
     output.parent.mkdir(parents=True, exist_ok=True)
+    tmp = output.with_suffix(output.suffix + ".tmp")
     n = 0
-    with output.open("w", encoding="utf-8") as f:
-        f.write("\t".join(columns) + "\n")
-        for row in rows:
-            cells: list[str] = []
-            for col in columns:
-                v = row.get(col)
-                if v is None:
-                    cells.append("")
-                elif round_floats is not None and _is_float(v):
-                    cells.append(f"{float(v):.{round_floats}f}")
-                else:
-                    cells.append(str(v))
-            f.write("\t".join(cells) + "\n")
-            n += 1
+    try:
+        with tmp.open("w", encoding="utf-8") as f:
+            f.write("\t".join(columns) + "\n")
+            for row in rows:
+                cells: list[str] = []
+                for col in columns:
+                    v = row.get(col)
+                    if v is None:
+                        cells.append("")
+                    elif round_floats is not None and _is_float(v):
+                        cells.append(f"{float(v):.{round_floats}f}")
+                    else:
+                        cells.append(str(v))
+                f.write("\t".join(cells) + "\n")
+                n += 1
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    os.replace(tmp, output)
     return n
 
 
