@@ -237,6 +237,24 @@ class GaiaXmatchTests(unittest.TestCase):
         self.assertEqual(m[2], 2341871673090078592)
         self.assertEqual(m[3], 2881742980523997824)
 
+    def test_hip_xmatch_malformed_angular_distance_loses(self) -> None:
+        # stellata-9mm.197: a row with empty / malformed angular_distance
+        # used to coerce to 0.0 — the most-preferred value — and silently
+        # displace a real match. Confirm the real match (0.5″) wins over
+        # the malformed row.
+        body = (
+            "hip\tgaia_source_id\tangular_distance\tnumber_of_neighbours\txm_flag\n"
+            "42\t1111111111111111111\t\t1\t8\n"      # malformed: empty
+            "42\t2222222222222222222\t0.5\t1\t8\n"   # real match
+            "43\t3333333333333333333\tnope\t1\t8\n"  # malformed: garbage
+            "43\t4444444444444444444\t0.7\t1\t8\n"   # real match
+        )
+        with tempfile.TemporaryDirectory() as td:
+            p = _write(Path(td), "xm.tsv", body)
+            m = bb.parse_gaia_hip_xmatch(p)
+        self.assertEqual(m[42], 2222222222222222222)
+        self.assertEqual(m[43], 4444444444444444444)
+
     def test_tyc_xmatch(self) -> None:
         body = (
             "tyc\tgaia_source_id\tangular_distance\tnumber_of_neighbours\txm_flag\n"
@@ -246,6 +264,20 @@ class GaiaXmatchTests(unittest.TestCase):
             p = _write(Path(td), "tyc.tsv", body)
             m = bb.parse_gaia_tyc_xmatch(p)
         self.assertEqual(m["1000-1006-1"], 4493609606459508864)
+
+    def test_tyc_xmatch_malformed_angular_distance_loses(self) -> None:
+        # Companion to test_hip_xmatch_malformed_angular_distance_loses
+        # (stellata-9mm.197). Same coercion rule applies to the Tycho
+        # cross-walk.
+        body = (
+            "tyc\tgaia_source_id\tangular_distance\tnumber_of_neighbours\txm_flag\n"
+            "9-1-1\t5555555555555555555\t\t1\t8\n"      # malformed
+            "9-1-1\t6666666666666666666\t0.3\t1\t8\n"   # real match
+        )
+        with tempfile.TemporaryDirectory() as td:
+            p = _write(Path(td), "tyc.tsv", body)
+            m = bb.parse_gaia_tyc_xmatch(p)
+        self.assertEqual(m["9-1-1"], 6666666666666666666)
 
     def test_nss_returns_raw_row(self) -> None:
         body = (

@@ -484,16 +484,21 @@ def parse_hip2(path: Path) -> list[Hip2Row]:
 
 def parse_gaia_hip_xmatch(path: Path) -> dict[int, int]:
     """Returns ``hip -> gaia_source_id``. Many-to-one collisions keep the
-    nearest match (lowest ``angular_distance``)."""
+    nearest match (lowest ``angular_distance``). Rows with missing /
+    malformed ``angular_distance`` are coerced to ``+inf`` so they
+    cannot win the tie-break and silently displace a real match (see
+    stellata-9mm.197)."""
     by_hip: dict[int, tuple[float, int]] = {}
     with path.open(newline="") as fh:
         reader = csv.DictReader(fh, delimiter="\t")
         for r in reader:
             hip = safe_int(r.get("hip") or "")
             src = safe_int(r.get("gaia_source_id") or "")
-            ang = safe_float(r.get("angular_distance") or "") or 0.0
             if hip is None or src is None:
                 continue
+            ang = safe_float(r.get("angular_distance") or "")
+            if ang is None:
+                ang = float("inf")
             best = by_hip.get(hip)
             if best is None or ang < best[0]:
                 by_hip[hip] = (ang, src)
@@ -501,16 +506,20 @@ def parse_gaia_hip_xmatch(path: Path) -> dict[int, int]:
 
 
 def parse_gaia_tyc_xmatch(path: Path) -> dict[str, int]:
-    """Returns ``tyc -> gaia_source_id`` (nearest match per Tycho ID)."""
+    """Returns ``tyc -> gaia_source_id`` (nearest match per Tycho ID).
+    Same malformed-``angular_distance`` handling as
+    ``parse_gaia_hip_xmatch`` (stellata-9mm.197)."""
     by_tyc: dict[str, tuple[float, int]] = {}
     with path.open(newline="") as fh:
         reader = csv.DictReader(fh, delimiter="\t")
         for r in reader:
             tyc = (r.get("tyc") or "").strip()
             src = safe_int(r.get("gaia_source_id") or "")
-            ang = safe_float(r.get("angular_distance") or "") or 0.0
             if not tyc or src is None:
                 continue
+            ang = safe_float(r.get("angular_distance") or "")
+            if ang is None:
+                ang = float("inf")
             best = by_tyc.get(tyc)
             if best is None or ang < best[0]:
                 by_tyc[tyc] = (ang, src)
