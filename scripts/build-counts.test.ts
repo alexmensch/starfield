@@ -20,6 +20,8 @@ function baseCounts(): BuildCounts {
     bjEntries: 310000,
     bjEligible: 305000,
     bjOverridden: 304000,
+    lmcCandidates: 1200,
+    lmcOverridden: 60,
     nameTableEntries: 350,
     variableCount: 3677,
     searchEntries: 290000,

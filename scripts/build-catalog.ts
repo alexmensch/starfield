@@ -12,7 +12,14 @@ import {
   applyDoublesFlag as applyDoublesFlagPure,
   parseBailerJonesTsv,
   applyBailerJonesOverride,
+  isBailerJonesEligible,
+  applyLmcKinematicOverride,
+  angularSeparationDeg,
+  LMC_CENTRE_RA_HOURS,
+  LMC_CENTRE_DEC_DEG,
+  LMC_CONE_HALF_ANGLE_DEG,
   DIST_SRC_BAILER_JONES,
+  DIST_SRC_LMC_KIN,
   FLAG_HAS_NAME,
   FLAG_IS_SOL,
   FLAG_HAS_BAYER,
@@ -468,6 +475,7 @@ interface AthygRow {
   x0: string; y0: string; z0: string;
   absmag: string;
   dist: string;
+  dist_src: string;
   ci: string;
   spect: string;
   con: string;
@@ -482,6 +490,8 @@ interface AthygRow {
   dec: string;
   mag: string;
   gaia: string;
+  pm_ra: string;
+  pm_dec: string;
 }
 
 async function readStars(
@@ -493,6 +503,8 @@ async function readStars(
     dropped: Record<string, number>;
     bjEligible: number;       // rows with a Gaia DR3 source_id
     bjOverridden: number;     // bjEligible rows that hit a B-J entry
+    lmcCandidates: number;    // rows inside the LMC sky cone (any PM)
+    lmcOverridden: number;    // lmcCandidates passing the PM gate (snapped to LMC)
   };
 }> {
   const parser = createReadStream(SRC_CSV).pipe(
@@ -509,6 +521,8 @@ async function readStars(
   let total = 0;
   let bjEligible = 0;
   let bjOverridden = 0;
+  let lmcCandidates = 0;
+  let lmcOverridden = 0;
 
   for await (const row of parser) {
     total++;
@@ -526,17 +540,22 @@ async function readStars(
     }
 
     // Bailer-Jones (DR3) override: when this row has a Gaia source_id
-    // and a B-J posterior exists, swap dist/x/y/z/absmag for the
-    // posterior-derived values. Skipped silently otherwise — the row
-    // keeps its naive 1/π AT-HYG values. See SCIENCE.md § Distances /
+    // AND its AT-HYG dist_src marks the catalogued distance as a Gaia
+    // inverse (G_R3 / G_R2), swap dist/x/y/z/absmag for the B-J
+    // posterior. Rows with dist_src=HIP / GJ / N / OTHER already carry
+    // a non-Gaia parallax — leave them alone, since B-J's
+    // Galactic-density prior tail would silently move them to 10–40 kpc
+    // when the Gaia parallax has low S/N. See SCIENCE.md § Distances /
     // Bailer-Jones DR3 override.
     const gaiaSourceId = nonEmpty(row.gaia);
+    const distSrc = nonEmpty(row.dist_src);
+    const bjEligibleRow = isBailerJonesEligible(gaiaSourceId, distSrc);
     let dist = parseFloatOrNull(row.dist);
-    if (gaiaSourceId) bjEligible++;
-    if (gaiaSourceId && bjMap.size > 0) {
-      const ra = parseFloatOrNull(row.ra);
-      const dec = parseFloatOrNull(row.dec);
-      const mag = parseFloatOrNull(row.mag);
+    const ra = parseFloatOrNull(row.ra);
+    const dec = parseFloatOrNull(row.dec);
+    const mag = parseFloatOrNull(row.mag);
+    if (bjEligibleRow) bjEligible++;
+    if (bjEligibleRow && bjMap.size > 0) {
       if (ra !== null && dec !== null && mag !== null) {
         const ovr = applyBailerJonesOverride(ra, dec, mag, gaiaSourceId, bjMap);
         if (ovr) {
@@ -545,6 +564,27 @@ async function readStars(
           dist = ovr.dist;
           bjOverridden++;
         }
+      }
+    }
+
+    // LMC kinematic override: B-J's Galactic-density prior pulls real
+    // LMC supergiants to ~5-20 kpc instead of 49.59 kpc. Sky-cone + bulk-PM
+    // filter snaps the ~60 affected AT-HYG rows back to Pietrzyński 2019's
+    // eclipsing-binary distance. Runs AFTER B-J so it overrides B-J's
+    // mis-anchored value on the same rows.
+    if (ra !== null && dec !== null && mag !== null) {
+      const sep = angularSeparationDeg(
+        ra, dec, LMC_CENTRE_RA_HOURS, LMC_CENTRE_DEC_DEG,
+      );
+      if (sep <= LMC_CONE_HALF_ANGLE_DEG) lmcCandidates++;
+      const pmRa = parseFloatOrNull(row.pm_ra);
+      const pmDec = parseFloatOrNull(row.pm_dec);
+      const ovr = applyLmcKinematicOverride(ra, dec, mag, pmRa, pmDec);
+      if (ovr) {
+        x = ovr.x; y = ovr.y; z = ovr.z;
+        absmag = ovr.absmag;
+        dist = ovr.dist;
+        lmcOverridden++;
       }
     }
 
@@ -600,7 +640,10 @@ async function readStars(
     });
   }
 
-  return { stars, stats: { total, dropped, bjEligible, bjOverridden } };
+  return {
+    stars,
+    stats: { total, dropped, bjEligible, bjOverridden, lmcCandidates, lmcOverridden },
+  };
 }
 
 // Cross-match each star against GCVS via HIP (first) or HD (fallback). Most
@@ -714,6 +757,8 @@ async function main() {
     bjEntries: 0,
     bjEligible: 0,
     bjOverridden: 0,
+    lmcCandidates: 0,
+    lmcOverridden: 0,
     nameTableEntries: 0,
     variableCount: 0,
     searchEntries: 0,
@@ -746,12 +791,21 @@ async function main() {
     const pct = ((stats.bjOverridden / stats.bjEligible) * 100).toFixed(1);
     console.log(
       `  Bailer-Jones override: ${stats.bjOverridden} / ${stats.bjEligible} ` +
-        `Gaia-DR3-bearing stars (${pct}%) → dist_src='${DIST_SRC_BAILER_JONES}'`,
+        `Gaia-inverse-distance stars (${pct}%) → dist_src='${DIST_SRC_BAILER_JONES}'`,
+    );
+  }
+  if (stats.lmcCandidates > 0) {
+    const pct = ((stats.lmcOverridden / stats.lmcCandidates) * 100).toFixed(1);
+    console.log(
+      `  LMC kinematic override: ${stats.lmcOverridden} / ${stats.lmcCandidates} ` +
+        `LMC-cone stars (${pct}%) → dist_src='${DIST_SRC_LMC_KIN}'`,
     );
   }
   counts.recordCount = stars.length;
   counts.bjEligible = stats.bjEligible;
   counts.bjOverridden = stats.bjOverridden;
+  counts.lmcCandidates = stats.lmcCandidates;
+  counts.lmcOverridden = stats.lmcOverridden;
 
   // Sort by absolute magnitude ascending (brightest first). Record indices
   // are final after this point.
