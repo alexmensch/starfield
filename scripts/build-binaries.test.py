@@ -114,40 +114,6 @@ class WdsSummTests(unittest.TestCase):
         self.assertAlmostEqual(pr.precise_dec_deg, 75.4833, places=2)
 
 
-class WdsNotesTests(unittest.TestCase):
-    def test_component_anchored_hip_bindings(self) -> None:
-        # Each HIP must be anchored to a specific component letter.
-        # Bare HIP mentions with no anchor are dropped — they are
-        # ambiguous between primary and secondary slots.
-        body = (
-            "<header\n"
-            "USNO header line\n"
-            "00006-5306 HJ 5437        Component B is HIP 12345.\n"
-            "                          HIP 67890 = Aa.\n"
-            "                          Also mentions HIP 99999 with no anchor.\n"
-            "00010+1234 OTHER          No HIPs here.\n"
-        )
-        with tempfile.TemporaryDirectory() as td:
-            p = _write(Path(td), "notes.txt", body)
-            notes = bb.parse_wds_notes(p)
-        self.assertEqual(set(notes.keys()), {"00006-5306"})
-        self.assertEqual(notes["00006-5306"], {"B": 12345, "Aa": 67890})
-
-    def test_drops_unanchored_hip_mentions(self) -> None:
-        # α-Cen-style prose mentions HIP 71681 in context of the
-        # secondary — anchoring requires either "B is HIP NNN" or
-        # "HIP NNN = B", which "secondary (= HIP NNN)" doesn't match.
-        # A follow-up bead will handle the "primary"/"secondary"
-        # synonyms; this commit refuses to guess.
-        body = (
-            "14396-6050 RHD   1     Difficult with secondary (= HIP 71681).\n"
-        )
-        with tempfile.TemporaryDirectory() as td:
-            p = _write(Path(td), "notes.txt", body)
-            notes = bb.parse_wds_notes(p)
-        self.assertEqual(notes.get("14396-6050"), None)
-
-
 class Orb6Tests(unittest.TestCase):
     def test_parses_row_with_components(self) -> None:
         # Real-shape ORB6 line with an Aa,Ab component designator at the
@@ -365,7 +331,7 @@ class ResolveComponentTests(unittest.TestCase):
         idx = _indices(hip_to_gaia={32349: 2947050466531873024})
         r = bb.resolve_component(
             pair, "A", is_primary=True,
-            orb6_for_pair=orb6, notes_hips_by_component={}, indices=idx,
+            orb6_for_pair=orb6, indices=idx,
         )
         self.assertEqual(r.resolve_via, "orb6_hip")
         self.assertEqual(r.gaia_source_id, 2947050466531873024)
@@ -378,47 +344,12 @@ class ResolveComponentTests(unittest.TestCase):
         idx = _indices(hip_to_gaia={100: 999})
         r = bb.resolve_component(
             pair, "B", is_primary=False,
-            orb6_for_pair=orb6, notes_hips_by_component={}, indices=idx,
+            orb6_for_pair=orb6, indices=idx,
         )
         self.assertEqual(r.resolve_via, "unresolved")
         self.assertIsNone(r.gaia_source_id)
 
-    def test_tier2_notes_component_anchored(self) -> None:
-        pair = _wds_pair(components="AB")
-        idx = _indices(hip_to_gaia={500: 5000, 501: 5001})
-        # Primary picks up A's anchored HIP; B's stays for the secondary.
-        r_a = bb.resolve_component(
-            pair, "A", is_primary=True,
-            orb6_for_pair=[],
-            notes_hips_by_component={"A": 500, "B": 501},
-            indices=idx,
-        )
-        r_b = bb.resolve_component(
-            pair, "B", is_primary=False,
-            orb6_for_pair=[],
-            notes_hips_by_component={"A": 500, "B": 501},
-            indices=idx,
-        )
-        self.assertEqual(r_a.resolve_via, "wds_notes_hip")
-        self.assertEqual(r_a.gaia_source_id, 5000)
-        self.assertEqual(r_b.resolve_via, "wds_notes_hip")
-        self.assertEqual(r_b.gaia_source_id, 5001)
-
-    def test_tier2_skipped_when_only_other_component_anchored(self) -> None:
-        # The α Cen failure mode: notes only anchor a HIP to the
-        # secondary; the primary slot must NOT silently steal it.
-        pair = _wds_pair(components="AB")
-        idx = _indices(hip_to_gaia={500: 5000})
-        r = bb.resolve_component(
-            pair, "A", is_primary=True,
-            orb6_for_pair=[],
-            notes_hips_by_component={"B": 500},
-            indices=idx,
-        )
-        self.assertEqual(r.resolve_via, "unresolved")
-        self.assertIsNone(r.gaia_source_id)
-
-    def test_tier3_athyg_when_orb6_hip_misses_xwalk(self) -> None:
+    def test_tier2_athyg_when_orb6_hip_misses_xwalk(self) -> None:
         # ORB6 hip exists, Gaia HIP xwalk misses; AT-HYG carries gaia
         # natively for that HIP.
         pair = _wds_pair(components="AB")
@@ -429,54 +360,25 @@ class ResolveComponentTests(unittest.TestCase):
         )
         r = bb.resolve_component(
             pair, "A", is_primary=True,
-            orb6_for_pair=orb6, notes_hips_by_component={}, indices=idx,
+            orb6_for_pair=orb6, indices=idx,
         )
         self.assertEqual(r.resolve_via, "athyg_gaia_native")
         self.assertEqual(r.gaia_source_id, 12345)
-
-    def test_tier3_athyg_via_notes_hip(self) -> None:
-        # Notes-derived HIP missing from Gaia xwalk; AT-HYG fills.
-        pair = _wds_pair(components="AB")
-        idx = _indices(
-            hip_to_gaia={},
-            athyg=[_athyg_row(hip=77, gaia=7700)],
-        )
-        r = bb.resolve_component(
-            pair, "A", is_primary=True,
-            orb6_for_pair=[],
-            notes_hips_by_component={"A": 77},
-            indices=idx,
-        )
-        self.assertEqual(r.resolve_via, "athyg_gaia_native")
-        self.assertEqual(r.gaia_source_id, 7700)
 
     def test_unresolved_when_no_hip_signal(self) -> None:
         pair = _wds_pair(components="AB")
         idx = _indices(hip_to_gaia={1: 1})
         r = bb.resolve_component(
             pair, "A", is_primary=True,
-            orb6_for_pair=[], notes_hips_by_component={}, indices=idx,
+            orb6_for_pair=[], indices=idx,
         )
         self.assertEqual(r.resolve_via, "unresolved")
         self.assertIsNone(r.gaia_source_id)
 
-    def test_priority_orb6_beats_notes(self) -> None:
-        # Both tiers 1 and 2 would succeed — orb6_hip wins.
-        pair = _wds_pair(components="AB")
-        orb6 = [_orb6(wds_id=pair.wds_id, components="AB", hip=10)]
-        idx = _indices(hip_to_gaia={10: 100, 20: 200})
-        r = bb.resolve_component(
-            pair, "A", is_primary=True,
-            orb6_for_pair=orb6,
-            notes_hips_by_component={"A": 20},
-            indices=idx,
-        )
-        self.assertEqual(r.resolve_via, "orb6_hip")
-        self.assertEqual(r.gaia_source_id, 100)
-
     def test_priority_xwalk_beats_athyg(self) -> None:
-        # Both tier 1 and tier 3 would succeed for the same HIP —
-        # tier 1 wins because the Gaia HIP xwalk is canonical.
+        # Both tier 1 and the HIP branch of tier 2 would succeed for
+        # the same HIP — tier 1 wins because the Gaia HIP xwalk is
+        # canonical.
         pair = _wds_pair(components="AB")
         orb6 = [_orb6(wds_id=pair.wds_id, components="AB", hip=10)]
         idx = _indices(
@@ -485,8 +387,7 @@ class ResolveComponentTests(unittest.TestCase):
         )
         r = bb.resolve_component(
             pair, "A", is_primary=True,
-            orb6_for_pair=orb6,
-            notes_hips_by_component={}, indices=idx,
+            orb6_for_pair=orb6, indices=idx,
         )
         self.assertEqual(r.resolve_via, "orb6_hip")
         self.assertEqual(r.gaia_source_id, 100)
@@ -505,13 +406,14 @@ class GroupOrb6ByPairTests(unittest.TestCase):
 
 class ResolveAllPairsTests(unittest.TestCase):
     def test_pipeline_emits_primary_and_secondary(self) -> None:
+        # Primary resolves via ORB6's HIP; secondary has no HIP signal
+        # and falls through to ``unresolved`` (the SIMBAD-backed tier
+        # 2 supplement, dch.60, would pick this case up later).
         pair = _wds_pair(components="AB")
         orb6 = [_orb6(wds_id=pair.wds_id, components="AB", hip=1)]
-        idx = _indices(hip_to_gaia={1: 1001, 2: 1002})
+        idx = _indices(hip_to_gaia={1: 1001})
         results = bb.resolve_all_pairs(
-            pairs=[pair], orb6=orb6,
-            wds_notes={pair.wds_id: {"A": 1, "B": 2}},
-            indices=idx, athyg=[],
+            pairs=[pair], orb6=orb6, indices=idx, athyg=[],
         )
         self.assertEqual(len(results), 2)
         primary, secondary = results
@@ -519,14 +421,14 @@ class ResolveAllPairsTests(unittest.TestCase):
         self.assertEqual(primary.resolve_via, "orb6_hip")
         self.assertEqual(primary.gaia_source_id, 1001)
         self.assertFalse(secondary.is_primary)
-        self.assertEqual(secondary.resolve_via, "wds_notes_hip")
-        self.assertEqual(secondary.gaia_source_id, 1002)
+        self.assertEqual(secondary.resolve_via, "unresolved")
+        self.assertIsNone(secondary.gaia_source_id)
 
     def test_skips_system_level_rows(self) -> None:
         pair = _wds_pair(components="")
         idx = _indices()
         results = bb.resolve_all_pairs(
-            pairs=[pair], orb6=[], wds_notes={}, indices=idx, athyg=[],
+            pairs=[pair], orb6=[], indices=idx, athyg=[],
         )
         self.assertEqual(results, [])
 
@@ -768,7 +670,7 @@ class AstrometryRequestTests(unittest.TestCase):
             ),
             bb.ResolvedComponent(
                 wds_id="X", discoverer="D", component="B", is_primary=False,
-                gaia_source_id=111, resolve_via="wds_notes_hip",
+                gaia_source_id=111, resolve_via="athyg_gaia_native",
             ),
             bb.ResolvedComponent(
                 wds_id="Y", discoverer="D", component="A", is_primary=True,
