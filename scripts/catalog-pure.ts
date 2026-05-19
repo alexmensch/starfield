@@ -539,3 +539,105 @@ export function inferBinaries(
 
   return { pairs, mutualPairs };
 }
+
+// ---- Bailer-Jones (DR3) distance override -------------------------------
+
+// dist_src tag emitted when a star's distance was supplanted by the
+// Bailer-Jones 2021 (DR3) photogeometric / geometric posterior. Joins
+// AT-HYG's existing namespace (G_R3, G_R2, HIP, GJ, N, OTHER).
+export const DIST_SRC_BAILER_JONES = 'BJ';
+
+/** Parse the TSV produced by `scripts/refresh-bailer-jones.py` into a
+ *  Gaia DR3 source_id → distance (pc) map. `source_id` is kept as a
+ *  string: Gaia source_ids exceed `Number.MAX_SAFE_INTEGER`, so any
+ *  numeric parse would silently corrupt the join key.
+ *
+ *  Per Bailer-Jones 2021, `r_med_photogeo` is preferred when available
+ *  (combines the parallax likelihood with a colour-and-magnitude
+ *  population prior); `r_med_geo` is the geometric-only fallback for
+ *  rows without photogeo (no usable G or BP–RP). */
+export function parseBailerJonesTsv(text: string): Map<string, number> {
+  const out = new Map<string, number>();
+  const lines = text.split(/\r?\n/);
+  if (lines.length === 0) return out;
+  const header = lines[0].split('\t').map((h) => h.trim());
+  const idIdx = header.indexOf('source_id');
+  const geoIdx = header.indexOf('r_med_geo');
+  const photogeoIdx = header.indexOf('r_med_photogeo');
+  const missing: string[] = [];
+  if (idIdx < 0) missing.push('source_id');
+  if (geoIdx < 0) missing.push('r_med_geo');
+  if (photogeoIdx < 0) missing.push('r_med_photogeo');
+  if (missing.length) {
+    throw new Error(
+      `Bailer-Jones TSV is missing required columns: ${missing.join(', ')}. ` +
+        `Re-run scripts/refresh-bailer-jones.py.`,
+    );
+  }
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.trim()) continue;
+    const cells = line.split('\t');
+    const sourceId = (cells[idIdx] ?? '').trim();
+    if (!sourceId) continue;
+    const photogeo = parseFloat((cells[photogeoIdx] ?? '').trim());
+    const geo = parseFloat((cells[geoIdx] ?? '').trim());
+    const d = Number.isFinite(photogeo)
+      ? photogeo
+      : Number.isFinite(geo) ? geo : NaN;
+    if (!Number.isFinite(d) || d <= 0) continue;
+    out.set(sourceId, d);
+  }
+  return out;
+}
+
+/** ICRS spherical → AT-HYG Cartesian (parsec). RA in hours, Dec in
+ *  degrees, distance in pc. Mirrors AT-HYG's own (x0, y0, z0) basis so
+ *  override outputs slot back into the same coordinate space. */
+export function icrsSphericalToCartesian(
+  raHours: number,
+  decDegrees: number,
+  distPc: number,
+): { x: number; y: number; z: number } {
+  const ra = raHours * (Math.PI / 12);
+  const dec = decDegrees * (Math.PI / 180);
+  const cosDec = Math.cos(dec);
+  return {
+    x: distPc * cosDec * Math.cos(ra),
+    y: distPc * cosDec * Math.sin(ra),
+    z: distPc * Math.sin(dec),
+  };
+}
+
+/** Apparent magnitude → absolute magnitude at given distance.
+ *  M = m − 5·log₁₀(d / 10 pc). */
+export function apparentToAbsoluteMagnitude(mag: number, distPc: number): number {
+  return mag - 5 * Math.log10(distPc / 10);
+}
+
+export interface BailerJonesOverride {
+  dist: number;
+  x: number;
+  y: number;
+  z: number;
+  absmag: number;
+}
+
+/** When `gaiaSourceId` has a Bailer-Jones entry, returns the override
+ *  (dist, x, y, z, absmag) for that star; otherwise null. The caller
+ *  swaps these into the star record and tags `dist_src = "BJ"`.
+ *  Recomputing absmag with the new distance is essential — without it,
+ *  stars get placed at the new distance but lit for the old one. */
+export function applyBailerJonesOverride(
+  raHours: number,
+  decDegrees: number,
+  mag: number,
+  gaiaSourceId: string | null,
+  bjMap: Map<string, number>,
+): BailerJonesOverride | null {
+  if (!gaiaSourceId) return null;
+  const dist = bjMap.get(gaiaSourceId);
+  if (dist === undefined) return null;
+  const { x, y, z } = icrsSphericalToCartesian(raHours, decDegrees, dist);
+  return { dist, x, y, z, absmag: apparentToAbsoluteMagnitude(mag, dist) };
+}

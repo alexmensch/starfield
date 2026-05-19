@@ -29,6 +29,14 @@ export interface BuildCounts {
   /** New FLAG_BINARY_PRIMARY bits set by the CCDM pass (excludes ones
    *  already set by `inferBinaries`). */
   ccdmFlagged: number;
+  /** Total entries in the Bailer-Jones DR3 distance TSV (parsed map size). */
+  bjEntries: number;
+  /** AT-HYG rows with a non-empty Gaia DR3 source_id — the override
+   *  population is this set ∩ Bailer-Jones source-ids. */
+  bjEligible: number;
+  /** Rows whose dist/x/y/z/absmag were overridden via a Bailer-Jones
+   *  posterior. Coverage = bjOverridden / bjEligible. */
+  bjOverridden: number;
   /** Stars with a proper name written into the name table. */
   nameTableEntries: number;
   /** Stars with both nonzero amplitude and period after quantisation —

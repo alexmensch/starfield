@@ -208,6 +208,37 @@ distinguish a Tycho-positioned, Gaia-distanced row from a "pure"
 Hipparcos one — every star is shaded by the same physical model
 (§Stellar physics, §Stellar perception model).
 
+**Bailer-Jones DR3 distance override.** AT-HYG's `dist` for the
+~98% G_R3 majority is Gaia DR3's naive `1 / π` parallax inversion —
+unbiased only when parallax S/N is high. For low-S/N parallaxes (the
+distant luminous stars that dominate the visual scene's outer
+volume) the inverse-parallax estimator catastrophically fails:
+its sampling distribution has a long tail to large distances, and a
+handful of supergiants end up at 9–14 kpc instead of their true
+2–5 kpc. Bailer-Jones et al. 2021 (AJ 161, 147 — CDS I/352)
+publishes Bayesian distance posteriors for every Gaia DR3 source
+that combine the parallax likelihood with a Galactic-density prior;
+the photogeometric variant additionally combines the prior with G
+and BP–RP photometry. At high S/N the posterior collapses onto the
+likelihood (well-measured stars don't move); at low S/N it collapses
+onto the prior (catastrophic outliers get pulled back to plausible
+disc distances). This is the principled fix and we apply it
+uniformly: any AT-HYG row carrying a Gaia DR3 source_id swaps its
+`dist`, `x0`, `y0`, `z0`, and `absmag` for the Bailer-Jones-derived
+values (photogeometric `r_med_photogeo` preferred, geometric
+`r_med_geo` as fallback when photogeo is absent). Recomputing
+`absmag` matters as much as the positional update — without it,
+stars get *placed* at the new distance but *lit* for the old one,
+breaking the disc/glow size chain. The override fires for 99.5% of
+Gaia-DR3-bearing AT-HYG rows; the residual 0.5% are source_ids
+absent from the Bailer-Jones publication (mostly the small G_R2 /
+HIP / GJ tail) and keep their AT-HYG values. The override also
+rescues ~15 stars previously dropped at filter (3): catastrophic
+parallax inversions whose Bayesian distance is < 50 kpc.
+
+Data file: `data/bailer-jones-dr3.tsv` (~310k rows, refreshed by
+`scripts/refresh-bailer-jones.py`).
+
 **Known cross-match completeness artefact.** Filter (1) above is the
 load-bearing one: AT-HYG can only emit `x0`/`y0`/`z0` for a Tycho-2
 star when that star's Gaia DR3 distance lookup succeeded, and Gaia DR3's

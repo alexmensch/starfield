@@ -110,6 +110,7 @@ data/                                All large catalogs tracked via Git LFS.
   gcvs5.txt                          GCVS main catalogue (~14 MB, LFS)
   crossid.txt                        GCVS cross-reference (~12 MB, LFS)
   hip_ccdm.tsv                       Hipparcos HIP↔CCDM cross-reference (LFS) — visual-doubles flag
+  bailer-jones-dr3.tsv               Bailer-Jones 2021 DR3 Bayesian distance posteriors (~14 MB, LFS)
   stellarium-modern-skyculture.json  Stellarium constellation lines (~200 KB)
   molecular-clouds/
     zucker2020-tablea1.tsv           Zucker 2020 cloud distances (~88 KB)
