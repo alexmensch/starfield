@@ -1,26 +1,42 @@
 #!/usr/bin/env python3
-"""Catalogue builder for the source-ID-anchored binary-system pipeline — Stage 1.
+"""Catalogue builder for the source-ID-anchored binary-system pipeline — Stages 1-2.
 
-Stage 1 is the foundation: load every reference catalog the resolution chain
-needs (WDS + ORB6 + AT-HYG + GCVS + CCDM + HIP2 + Gaia HIP/Tyc cross-walks +
-Gaia NSS + optionally Gaia 5p astrometry) and build the identifier indices
-that Stages 2-7 consume. Stage 1 emits no output of its own — the per-stage
-indices live in memory and the final `data/multiples.tsv` is produced by
-Stage 6 (stellata-dch.32). Until Stages 2-7 land this script is a
-load-and-report harness with the build log as its only side effect.
+Stage 1 (``stellata-dch.27``) loads every reference catalog the resolution
+chain needs (WDS + ORB6 + AT-HYG + GCVS + CCDM + HIP2 + Gaia HIP/Tyc
+cross-walks + Gaia NSS + optionally Gaia 5p astrometry) and builds the
+identifier indices that Stages 2-7 consume.
+
+Stage 2 (``stellata-dch.28``) resolves each WDS component to a Gaia DR3
+``source_id`` via a five-tier priority chain. Tiers 1-3 are identifier-
+anchored (no position cone-match): ORB6's published HIP, then a HIP
+extracted from WDS Notes prose, then AT-HYG's natively-stored ``gaia``
+field reached via the same HIP. Tiers 4-5 (PM-propagated position match
+and bare position match against ``data/gaia_dr3_astrometry.tsv``) are
+stubbed until ``stellata-dch.29`` lands the astrometry table; until then
+their counters report zero and components that fall through all tiers
+are recorded as ``unresolved``. Stage 2 emits two side effects:
+
+* ``data/gaia_astrometry_source_id_request.tsv`` — the deduped union of
+  source_ids resolved in tiers 1-3, which ``stellata-dch.29`` reads to
+  drive its ADQL query.
+* Build log lines per tier so coverage drift is visible at every run.
+
+The final ``data/multiples.tsv`` is produced by Stage 6
+(``stellata-dch.32``). Until Stages 3-7 land this script remains a
+load-and-resolve-and-report harness.
 
 Run via ``npm run build:binaries`` (or directly: ``python3
 scripts/build-binaries.py``). Idempotent against ``data/multiples.tsv``;
 pass ``--force`` to ignore the mtime check and reload everything.
 
-See ``stellata-dch.27`` for Stage 1 acceptance and the parent epic
-``stellata-dch`` for the seven-stage architecture.
+See the parent epic ``stellata-dch`` for the seven-stage architecture.
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+import math
 import re
 import sys
 from dataclasses import dataclass
@@ -48,12 +64,26 @@ SRC_GAIA_NSS = DATA / "gaia_dr3_nss_two_body.tsv"
 SRC_GAIA_ASTROMETRY = DATA / "gaia_dr3_astrometry.tsv"  # lands with dch.29
 
 OUT_MULTIPLES = DATA / "multiples.tsv"
+OUT_ASTROMETRY_REQUEST = DATA / "gaia_astrometry_source_id_request.tsv"
 
 # Expected fraction of AT-HYG rows that carry a Gaia DR3 source_id. AT-HYG
 # documentation reports ~98% coverage (the remainder are bright stars Gaia
 # saturated or systems Gaia could not detect). Coverage outside this band
 # signals an input drift worth flagging at build time.
 ATHYG_GAIA_COVERAGE_BOUNDS = (0.90, 1.00)
+
+# Strict priority order Stage 2 attempts for every WDS component. The
+# log line and unit tests both read from this tuple so adding a tier or
+# renaming one only edits the canonical list. Order is significant —
+# earlier strategies win when more than one would succeed.
+RESOLVE_VIA_VALUES: tuple[str, ...] = (
+    "orb6_hip",
+    "wds_notes_hip",
+    "athyg_gaia_native",
+    "position_pm",
+    "position_nopm",
+    "unresolved",
+)
 
 # ─── Parsing primitives ──────────────────────────────────────────────
 
@@ -221,19 +251,45 @@ def parse_wds_summ(path: Path) -> list[WdsPair]:
 
 # ─── WDS notes (prose HIP supplement) ────────────────────────────────
 
-_WDS_NOTES_HIP_RE = re.compile(r"HIP\s+(\d+)")
 _WDS_NOTES_ID_RE = re.compile(r"^\d{5}[+-]\d{4}")
 
+# Patterns that ANCHOR a HIP token to a specific WDS component letter.
+# Stage 2's tier-2 resolution requires this anchoring — positional
+# ordering of HIPs in free-form prose is unreliable (e.g. α Cen's notes
+# mention "secondary (= HIP 71681)" with NO mention of α Cen A's HIP,
+# which a positional reader would mis-assign to the primary slot). Each
+# regex captures the component label in group(1) and the HIP in group(2).
+# Component labels are matched case-insensitively against single- or
+# two-letter WDS component designators (A, B, C, Aa, Ab, Ba, etc.).
+_WDS_NOTES_HIP_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # "Component X is HIP NNN" / "Comp. X = HIP NNN"
+    re.compile(r"\bcomp(?:onent)?\.?\s+([A-Z][a-z]?)\b[^.\n]{0,40}?HIP\s+(\d+)", re.IGNORECASE),
+    # "X is HIP NNN" / "X = HIP NNN" — short anchor, must be on a word boundary
+    # and within ~10 chars of the HIP to avoid spurious bindings.
+    re.compile(r"(?<![A-Za-z])([A-Z][a-z]?)\s*(?:is|=)\s*HIP\s+(\d+)"),
+    # "HIP NNN is X" / "HIP NNN = X"
+    re.compile(r"HIP\s+(\d+)\s*(?:is|=)\s*(?![A-Za-z]{3,})([A-Z][a-z]?)\b", flags=0),
+)
 
-def parse_wds_notes(path: Path) -> dict[str, list[int]]:
-    """Returns ``{wds_id: [HIPs mentioned in the prose]}``.
+
+def parse_wds_notes(path: Path) -> dict[str, dict[str, int]]:
+    """Returns ``{wds_id: {component_letter: HIP}}`` for prose lines that
+    explicitly bind a HIP token to a component letter.
 
     Notes are free-form continuation lines that begin either with a WDS id
-    (cols 0-9) or with spaces (continuation of the previous note). Stage 2's
-    resolution chain consults this to recover identifiers WDS_SUMM's
-    fixed-width row could not encode.
+    (cols 0-9) or with spaces (continuation of the previous note). Stage 2
+    tier 2 only honours bindings whose prose context names the component
+    — "B is HIP 12345", "Comp Aa = HIP 12345", "HIP 12345 = Ab". Bare
+    "HIP NNN" mentions with no anchor are dropped (ambiguous; mis-binding
+    is worse than no binding).
+
+    First binding per (wds_id, component_letter) wins so later corrigenda
+    don't silently overwrite the canonical one. Future enhancement
+    (filed as a follow-up to ``stellata-dch.28``) widens this to handle
+    "primary"/"secondary" synonyms when the WDS pair's components string
+    disambiguates the letter.
     """
-    notes: dict[str, list[int]] = {}
+    notes: dict[str, dict[str, int]] = {}
     current: str | None = None
     with path.open(errors="replace") as fh:
         for line in fh:
@@ -245,11 +301,19 @@ def parse_wds_notes(path: Path) -> dict[str, list[int]]:
                 current = head.strip()
             if not current:
                 continue
-            for m in _WDS_NOTES_HIP_RE.finditer(line):
-                hip = int(m.group(1))
-                bucket = notes.setdefault(current, [])
-                if hip not in bucket:
-                    bucket.append(hip)
+            bucket = notes.get(current)
+            for pat in _WDS_NOTES_HIP_PATTERNS:
+                for m in pat.finditer(line):
+                    # The first capture group can be either side depending
+                    # on the pattern; detect numeric vs alphabetic to assign.
+                    g1, g2 = m.group(1), m.group(2)
+                    if g1.isdigit():
+                        hip_str, comp = g1, g2
+                    else:
+                        comp, hip_str = g1, g2
+                    if bucket is None:
+                        bucket = notes.setdefault(current, {})
+                    bucket.setdefault(comp, int(hip_str))
     return notes
 
 
@@ -587,6 +651,472 @@ def build_indices(
     )
 
 
+# ─── Stage 2: WDS-component → gaia_source_id resolution ─────────────
+
+
+@dataclass
+class ResolvedComponent:
+    """One row of Stage 2's output. ``gaia_source_id`` is ``None`` only
+    when ``resolve_via == 'unresolved'``."""
+
+    wds_id: str
+    discoverer: str
+    component: str            # e.g. 'A', 'B', 'Aa', 'Ab'
+    is_primary: bool
+    gaia_source_id: int | None
+    resolve_via: str
+
+
+def split_components(comp_str: str) -> tuple[str, str] | None:
+    """Decompose a WDS ``components`` field into (primary, secondary).
+
+    Returns ``None`` for system-level rows (empty field) and for rows we
+    cannot confidently split. Stage 2 treats ``None`` as "skip this pair"
+    rather than guessing.
+
+    The WDS convention is:
+
+    * ``"AB"``  → ("A", "B")
+    * ``"Aa,Ab"`` → ("Aa", "Ab")  — comma separates multi-character labels
+    * ``"BC,D"`` → ("BC", "D")    — first part can be multi-letter
+
+    Three-letter unbraced forms like ``"ABC"`` are ambiguous (could mean
+    A vs BC, or AB vs C) and are skipped rather than partitioned wrong.
+    """
+    s = comp_str.strip()
+    if not s:
+        return None
+    if "," in s:
+        parts = [p.strip() for p in s.split(",") if p.strip()]
+        if len(parts) == 2:
+            return parts[0], parts[1]
+        return None
+    if len(s) == 2:
+        return s[0], s[1]
+    return None
+
+
+def group_orb6_by_pair(
+    orb6: list[Orb6Entry],
+) -> dict[tuple[str, str], list[Orb6Entry]]:
+    """Index ORB6 entries by ``(wds_id, components)`` so Stage 2 can fetch
+    every fit for a given WDS pair in O(1).
+
+    Components-string match is strict: ``"AB"`` and ``""`` (system-level)
+    are different keys. Stage 2 only consults the entry whose components
+    string exactly matches the pair it is resolving — using a system-level
+    ORB6 HIP for an ``"AC"`` pair would attribute the primary's gaia
+    source to the wrong component when multiple orbit fits coexist.
+    """
+    out: dict[tuple[str, str], list[Orb6Entry]] = {}
+    for e in orb6:
+        out.setdefault((e.wds_id, e.components), []).append(e)
+    return out
+
+
+def _gaia_from_hip(
+    hip: int, indices: IdentifierIndices,
+) -> int | None:
+    """Tier-1/2 inner lookup. Prefer the Gaia-published HIP cross-walk
+    (the canonical source); the caller checks AT-HYG natively as tier 3
+    when this returns ``None``."""
+    return indices.hip_to_gaia.get(hip)
+
+
+def _gaia_from_athyg_via_hip(
+    hip: int, indices: IdentifierIndices,
+) -> int | None:
+    """Tier 3 lookup. AT-HYG's gaia field (~98% coverage) is broader than
+    Gaia's HIP cross-walk because AT-HYG ingests source_ids through its
+    own pipeline. When a HIP exists but Gaia's published xwalk misses
+    it, AT-HYG often still carries a gaia value."""
+    row = indices.hip_to_athyg.get(hip)
+    if row is None or row.gaia is None:
+        return None
+    return row.gaia
+
+
+def resolve_component(
+    pair: WdsPair,
+    component: str,
+    is_primary: bool,
+    orb6_for_pair: list[Orb6Entry],
+    notes_hips_by_component: dict[str, int],
+    indices: IdentifierIndices,
+) -> ResolvedComponent:
+    """Resolve a single WDS component to a Gaia DR3 source_id via the
+    identifier-anchored tiers 1-3. Returns an ``unresolved`` record when
+    none of the three tiers fire — tiers 4-5 (position match against
+    ``data/gaia_dr3_astrometry.tsv``) are stubbed until
+    ``stellata-dch.29`` lands.
+
+    Secondary components have no direct ORB6 signal (ORB6 publishes one
+    HIP per orbit row, which by convention is the primary's), so tier 1
+    only applies to primaries. Tier 2 reads from a component-letter-
+    keyed dict — only HIPs whose prose context explicitly names *this*
+    component letter are honoured, so e.g. "secondary (= HIP NNN)" in
+    α Cen's notes is not silently mis-attributed to the primary slot.
+    """
+    candidate_hips: list[int] = []
+
+    if is_primary:
+        for e in orb6_for_pair:
+            if e.hip is None:
+                continue
+            candidate_hips.append(e.hip)
+            gaia = _gaia_from_hip(e.hip, indices)
+            if gaia is not None:
+                return ResolvedComponent(
+                    wds_id=pair.wds_id,
+                    discoverer=pair.discoverer,
+                    component=component,
+                    is_primary=is_primary,
+                    gaia_source_id=gaia,
+                    resolve_via="orb6_hip",
+                )
+
+    notes_hip = notes_hips_by_component.get(component)
+    if notes_hip is not None:
+        candidate_hips.append(notes_hip)
+        gaia = _gaia_from_hip(notes_hip, indices)
+        if gaia is not None:
+            return ResolvedComponent(
+                wds_id=pair.wds_id,
+                discoverer=pair.discoverer,
+                component=component,
+                is_primary=is_primary,
+                gaia_source_id=gaia,
+                resolve_via="wds_notes_hip",
+            )
+
+    for hip in candidate_hips:
+        gaia = _gaia_from_athyg_via_hip(hip, indices)
+        if gaia is not None:
+            return ResolvedComponent(
+                wds_id=pair.wds_id,
+                discoverer=pair.discoverer,
+                component=component,
+                is_primary=is_primary,
+                gaia_source_id=gaia,
+                resolve_via="athyg_gaia_native",
+            )
+
+    return ResolvedComponent(
+        wds_id=pair.wds_id,
+        discoverer=pair.discoverer,
+        component=component,
+        is_primary=is_primary,
+        gaia_source_id=None,
+        resolve_via="unresolved",
+    )
+
+
+# ─── Tier 3 position-match path ──────────────────────────────────────
+
+
+# Position-match tolerance for tier 3 (WDS precise coords → AT-HYG row).
+# 2″ matches the bead's stated bar and is well below the typical AT-HYG
+# inter-source separation away from the densest clusters. High-PM stars
+# may miss at this tolerance — that's intentional; tier 4 (PM-propagated
+# match against Gaia astrometry, stubbed until ``stellata-dch.29``) is
+# the principled fix for the PM-driven epoch-residual class.
+ATHYG_POSITION_MATCH_TOLERANCE_ARCSEC = 2.0
+
+
+def _spherical_to_unit_vec(ra_deg: float, dec_deg: float) -> tuple[float, float, float]:
+    """ICRS spherical (degrees) → unit vector on the celestial sphere.
+    Chord distance squared between two such vectors is monotone with
+    angular separation, so the squared dot/chord forms can be compared
+    directly without trig in the hot loop.
+    """
+    ra_rad = math.radians(ra_deg)
+    dec_rad = math.radians(dec_deg)
+    c = math.cos(dec_rad)
+    return c * math.cos(ra_rad), c * math.sin(ra_rad), math.sin(dec_rad)
+
+
+def build_athyg_position_grid(
+    athyg: list[AthygRow],
+) -> dict[tuple[int, int], list[int]]:
+    """Bucket AT-HYG rows by ``(int(ra_deg) % 360, int(dec_deg) + 90)`` —
+    1°×1° cells with the dec axis shifted into ``[0, 180)`` so the key is
+    always non-negative. Cell occupancy averages ~5 rows; the query walks
+    a 3-cell-tall dec strip whose ra width is widened by ``1/cos(dec)``
+    so the search radius stays consistent at high declinations.
+    """
+    grid: dict[tuple[int, int], list[int]] = {}
+    for i, row in enumerate(athyg):
+        key = (int(row.ra_deg) % 360, int(row.dec_deg) + 90)
+        grid.setdefault(key, []).append(i)
+    return grid
+
+
+def find_nearest_athyg_at_position(
+    ra_deg: float,
+    dec_deg: float,
+    grid: dict[tuple[int, int], list[int]],
+    athyg: list[AthygRow],
+    tol_arcsec: float,
+    exclude_idx: int | None = None,
+) -> int | None:
+    """Return the AT-HYG list index nearest to ``(ra_deg, dec_deg)`` within
+    ``tol_arcsec`` (or ``None`` if no row is within tolerance).
+
+    ``exclude_idx`` skips a known row — used when matching a secondary
+    component so the primary's own AT-HYG row cannot win.
+    """
+    cos_dec = max(math.cos(math.radians(dec_deg)), 1e-3)
+    ra_window = max(1, int(math.ceil(1.0 / cos_dec)))
+    base_ra = int(ra_deg) % 360
+    base_dec = int(dec_deg) + 90
+    qx, qy, qz = _spherical_to_unit_vec(ra_deg, dec_deg)
+    threshold_chord_sq = (2.0 * math.sin(math.radians(tol_arcsec / 3600.0) / 2.0)) ** 2
+
+    best_idx: int | None = None
+    best_chord_sq = float("inf")
+    for ddec in (-1, 0, 1):
+        dec_key = base_dec + ddec
+        for dra in range(-ra_window, ra_window + 1):
+            ra_key = (base_ra + dra) % 360
+            for i in grid.get((ra_key, dec_key), ()):
+                if i == exclude_idx:
+                    continue
+                rx, ry, rz = _spherical_to_unit_vec(
+                    athyg[i].ra_deg, athyg[i].dec_deg,
+                )
+                dx = rx - qx
+                dy = ry - qy
+                dz = rz - qz
+                d_sq = dx * dx + dy * dy + dz * dz
+                if d_sq < best_chord_sq:
+                    best_chord_sq = d_sq
+                    best_idx = i
+    if best_idx is None or best_chord_sq > threshold_chord_sq:
+        return None
+    return best_idx
+
+
+def predict_secondary_position(
+    primary_ra_deg: float,
+    primary_dec_deg: float,
+    rho_arcsec: float,
+    theta_deg: float,
+) -> tuple[float, float]:
+    """Offset a primary's ICRS position by the WDS (ρ, θ) pair last-seen
+    relative motion — θ measured east of north, ρ in arcseconds. The
+    small-offset approximation is fine at WDS separations (<1000″ for
+    the vast majority of pairs); larger separations are rare and the
+    secondary is usually individually catalogued in AT-HYG.
+    """
+    theta_rad = math.radians(theta_deg)
+    rho_deg = rho_arcsec / 3600.0
+    new_dec = primary_dec_deg + rho_deg * math.cos(theta_rad)
+    cos_dec = max(math.cos(math.radians(primary_dec_deg)), 1e-3)
+    new_ra = (primary_ra_deg + (rho_deg * math.sin(theta_rad)) / cos_dec) % 360.0
+    return new_ra, new_dec
+
+
+def resolve_via_position(
+    components: list[ResolvedComponent],
+    pairs: list[WdsPair],
+    athyg: list[AthygRow],
+    tolerance_arcsec: float = ATHYG_POSITION_MATCH_TOLERANCE_ARCSEC,
+) -> None:
+    """Second-pass tier-3 resolution for components that fell through
+    tiers 1-3 by identifier. Position-matches WDS precise coordinates
+    into AT-HYG and reads the resulting row's natively-stored gaia field.
+    Mutates ``components`` in place — sets ``gaia_source_id`` and rewrites
+    ``resolve_via`` from ``unresolved`` to ``athyg_gaia_native`` on hit.
+
+    Primary uses the WDS pair's ``precise_ra/dec``; secondary uses that
+    plus the pair's last-reported ``(ρ, θ)`` offset, EXCLUDING the
+    primary's matched row so a close-binary primary cannot claim its own
+    secondary slot. Components without precise coords (or, for
+    secondaries, without ρ/θ) stay unresolved here and roll forward to
+    tiers 4-5 once ``stellata-dch.29`` lands.
+    """
+    grid = build_athyg_position_grid(athyg)
+
+    # ResolvedComponent carries the component letter, not the pair's
+    # components string — relink each unresolved component to its WDS
+    # pair via (wds_id, discoverer) + the component letter matching
+    # split_components(pair.components)[primary/secondary]. For typical
+    # WDS_SUMM data each (wds_id, discoverer) yields one pair, so this
+    # is O(1) per component in practice.
+    pair_by_id: dict[tuple[str, str], list[WdsPair]] = {}
+    for p in pairs:
+        pair_by_id.setdefault((p.wds_id, p.discoverer), []).append(p)
+
+    def _find_owning_pair(c: ResolvedComponent) -> WdsPair | None:
+        slot = 0 if c.is_primary else 1
+        for p in pair_by_id.get((c.wds_id, c.discoverer), ()):
+            split = split_components(p.components)
+            if split is not None and split[slot] == c.component:
+                return p
+        return None
+
+    # Pass 1 — primaries. Cache the AT-HYG row each primary claims so
+    # the secondary pass can exclude it (close-binary primaries must not
+    # be matched twice for both slots of the same pair).
+    primary_athyg_idx: dict[tuple[str, str, str], int] = {}
+    for c in components:
+        if c.gaia_source_id is not None or not c.is_primary:
+            continue
+        pair = _find_owning_pair(c)
+        if pair is None or pair.precise_ra_deg is None or pair.precise_dec_deg is None:
+            continue
+        match_idx = find_nearest_athyg_at_position(
+            pair.precise_ra_deg, pair.precise_dec_deg,
+            grid, athyg, tolerance_arcsec,
+        )
+        if match_idx is None:
+            continue
+        row = athyg[match_idx]
+        if row.gaia is None:
+            continue
+        c.gaia_source_id = row.gaia
+        c.resolve_via = "athyg_gaia_native"
+        primary_athyg_idx[(c.wds_id, c.discoverer, pair.components)] = match_idx
+
+    # Pass 2 — secondaries. Predict position from primary + (ρ, θ),
+    # exclude the primary's AT-HYG row.
+    for c in components:
+        if c.gaia_source_id is not None or c.is_primary:
+            continue
+        pair = _find_owning_pair(c)
+        if (
+            pair is None
+            or pair.precise_ra_deg is None
+            or pair.precise_dec_deg is None
+            or pair.rho_last is None
+            or pair.theta_last is None
+        ):
+            continue
+        secondary_ra, secondary_dec = predict_secondary_position(
+            pair.precise_ra_deg, pair.precise_dec_deg,
+            pair.rho_last, pair.theta_last,
+        )
+        primary_idx = primary_athyg_idx.get(
+            (c.wds_id, c.discoverer, pair.components),
+        )
+        match_idx = find_nearest_athyg_at_position(
+            secondary_ra, secondary_dec,
+            grid, athyg, tolerance_arcsec, exclude_idx=primary_idx,
+        )
+        if match_idx is None:
+            continue
+        row = athyg[match_idx]
+        if row.gaia is None:
+            continue
+        c.gaia_source_id = row.gaia
+        c.resolve_via = "athyg_gaia_native"
+
+
+def resolve_all_pairs(
+    pairs: list[WdsPair],
+    orb6: list[Orb6Entry],
+    wds_notes: dict[str, dict[str, int]],
+    indices: IdentifierIndices,
+    athyg: list[AthygRow],
+    position_tolerance_arcsec: float = ATHYG_POSITION_MATCH_TOLERANCE_ARCSEC,
+) -> list[ResolvedComponent]:
+    """Run Stage 2's full resolution chain — tiers 1-3 identifier-then-
+    position pass over every WDS pair that decomposes into two components.
+    System-level rows (empty ``components``) and rows we cannot split are
+    skipped.
+
+    Pass 1 (identifier): for each component, run tiers 1-3 by HIP.
+    Pass 2 (position): for components left unresolved, match WDS precise
+    coordinates against AT-HYG and read AT-HYG's gaia field directly.
+    Position match runs in tier 3 because it does NOT touch
+    ``data/gaia_dr3_astrometry.tsv`` — that file backs tiers 4-5 (stubbed
+    until ``stellata-dch.29``).
+    """
+    orb6_by_pair = group_orb6_by_pair(orb6)
+    out: list[ResolvedComponent] = []
+    for pair in pairs:
+        split = split_components(pair.components)
+        if split is None:
+            continue
+        primary, secondary = split
+        orb6_for_pair = orb6_by_pair.get((pair.wds_id, pair.components), [])
+        notes_hips_by_component = wds_notes.get(pair.wds_id, {})
+        out.append(resolve_component(
+            pair, primary, is_primary=True,
+            orb6_for_pair=orb6_for_pair,
+            notes_hips_by_component=notes_hips_by_component,
+            indices=indices,
+        ))
+        out.append(resolve_component(
+            pair, secondary, is_primary=False,
+            orb6_for_pair=orb6_for_pair,
+            notes_hips_by_component=notes_hips_by_component,
+            indices=indices,
+        ))
+    resolve_via_position(
+        components=out, pairs=pairs, athyg=athyg,
+        tolerance_arcsec=position_tolerance_arcsec,
+    )
+    propagate_within_system(out)
+    return out
+
+
+def propagate_within_system(components: list[ResolvedComponent]) -> None:
+    """Within each WDS system, the same component letter always refers
+    to the same physical star (e.g. component A of WDS 00491+5749 is η
+    Cas A whether it appears in the AB, AC, AD, …, AH pair rows). When
+    one pair's A primary resolves via tier 3 HIP-mediated lookup but the
+    other A primaries can't (their pair has no ORB6 entry and the WDS
+    precise coord drift exceeds the 2″ position tolerance), this pass
+    copies the resolved binding forward. The inherited ``resolve_via``
+    classification is preserved so the per-tier counts log the strategy
+    that actually fetched the source_id, not a synthetic propagation
+    tag.
+    """
+    by_system_letter: dict[tuple[str, str], tuple[int, str]] = {}
+    for c in components:
+        if c.gaia_source_id is None:
+            continue
+        key = (c.wds_id, c.component)
+        by_system_letter.setdefault(key, (c.gaia_source_id, c.resolve_via))
+    for c in components:
+        if c.gaia_source_id is not None:
+            continue
+        binding = by_system_letter.get((c.wds_id, c.component))
+        if binding is None:
+            continue
+        c.gaia_source_id, c.resolve_via = binding
+
+
+def resolution_counts(
+    components: list[ResolvedComponent],
+) -> dict[str, int]:
+    """Per-strategy counters in canonical ``RESOLVE_VIA_VALUES`` order.
+    Every key present so the log line shape stays stable across runs."""
+    counts: dict[str, int] = {k: 0 for k in RESOLVE_VIA_VALUES}
+    for c in components:
+        counts[c.resolve_via] = counts.get(c.resolve_via, 0) + 1
+    return counts
+
+
+def write_astrometry_request(
+    components: list[ResolvedComponent], path: Path,
+) -> int:
+    """Emit the deduped union of source_ids resolved in tiers 1-3.
+
+    ``stellata-dch.29`` (``scripts/refresh-gaia-astrometry.py``) reads
+    this file to drive its ADQL ``WHERE source_id IN (...)`` query — so
+    Stage 3 onward has 5-parameter Gaia astrometry for exactly the
+    sources we resolved here.
+    """
+    ids = sorted({c.gaia_source_id for c in components if c.gaia_source_id is not None})
+    with path.open("w") as fh:
+        fh.write("gaia_source_id\n")
+        for sid in ids:
+            fh.write(f"{sid}\n")
+    return len(ids)
+
+
 # ─── Driver ──────────────────────────────────────────────────────────
 
 
@@ -701,7 +1231,25 @@ def run(force: bool) -> int:
         f"built hip -> hip2_row of cardinality {len(indices.hip_to_hip2):,}"
     )
 
-    log("Stage 1 complete. Stages 2-7 (resolution / orbit-fit / optical-filter / emit) land in stellata-dch.28-32.")
+    log("Stage 1 complete. Resolving WDS components (Stage 2) …")
+
+    components = resolve_all_pairs(
+        pairs=wds_pairs, orb6=orb6, wds_notes=wds_notes,
+        indices=indices, athyg=athyg,
+    )
+    counts = resolution_counts(components)
+    log(
+        "Resolution: "
+        + ", ".join(f"{k}={counts[k]:,}" for k in RESOLVE_VIA_VALUES)
+    )
+
+    n_requested = write_astrometry_request(components, OUT_ASTROMETRY_REQUEST)
+    log(
+        f"wrote {OUT_ASTROMETRY_REQUEST.relative_to(ROOT)} with "
+        f"{n_requested:,} unique source_ids (input for stellata-dch.29)"
+    )
+
+    log("Stage 2 complete. Stages 3-7 (astrometry-attach / orbit-fit / optical-filter / emit) land in stellata-dch.29-32.")
     return 0
 
 
